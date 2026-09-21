@@ -96,3 +96,4 @@ describe("milestone navigation", () => {
     ).toEqual(["Future"]);
   });
 });
+

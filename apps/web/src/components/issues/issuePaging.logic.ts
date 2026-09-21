@@ -6,6 +6,7 @@ export interface IssueListPage {
   readonly cursor: string | null;
   readonly result: IssueListResult;
 }
+
 export interface IssueListSnapshot {
   readonly scopeKey: string;
   readonly generation: number;
@@ -79,3 +80,4 @@ export function acceptIssueListPage(
     acceptedCursors: new Set([...(replace ? [] : current.acceptedCursors), page.cursor ?? ""]),
   };
 }
+

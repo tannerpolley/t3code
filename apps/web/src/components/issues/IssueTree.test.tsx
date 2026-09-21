@@ -36,6 +36,7 @@ afterEach(async () => {
   renderer = undefined;
   vi.unstubAllGlobals();
 });
+
 it("expands a milestone when its first issue arrives and preserves a user's collapse on refresh", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const render = (issues: readonly IssueSummary[], complete: boolean) => (
@@ -75,3 +76,4 @@ it("expands a milestone when its first issue arrives and preserves a user's coll
   });
   expect(renderer!.root.findAllByType("li")).toHaveLength(1);
 });
+
