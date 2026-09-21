@@ -62,6 +62,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
   hasMarkdownFilePrimaryAction,
+  normalizeProviderMathDelimiters,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
 
@@ -72,6 +73,39 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown math", () => {
+  it("renders inline, display, and provider math while leaving code examples literal", () => {
+    const markdown = [
+      "Inline $x^2 + y^2$.",
+      "",
+      "$$\\frac{a}{b}$$",
+      "",
+      "Provider \\(z + 1\\).",
+      "",
+      "\\[w^2\\]",
+    ].join("\n");
+    const html = renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={markdown} />);
+
+    expect(html.match(/class="katex"/gu)).toHaveLength(4);
+    expect(html.match(/<math/gu)).toHaveLength(4);
+    expect(normalizeProviderMathDelimiters("`\\(literal\\)`\n\n```tex\n\\[literal\\]\n```")).toBe(
+      "`\\(literal\\)`\n\n```tex\n\\[literal\\]\n```",
+    );
+  });
+
+  it("renders provider math once a streaming delimiter closes", () => {
+    const incomplete = renderToStaticMarkup(
+      <ChatMarkdown cwd={undefined} text="\\(x^2" isStreaming />,
+    );
+    const complete = renderToStaticMarkup(
+      <ChatMarkdown cwd={undefined} text="\\(x^2\\)" isStreaming />,
+    );
+
+    expect(incomplete).not.toContain('class="katex"');
+    expect(complete).toContain('class="katex"');
+  });
+});
 
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {
