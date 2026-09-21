@@ -96,6 +96,8 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/stripe@1.0.0-rc.12"
 
 overrides:
+  # A split HAST type graph makes Shiki's 3.0.4 trees incompatible with unified plugins.
+  "@types/hast": 3.0.4
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
   "@react-navigation/core": 7.21.13
   # The dbus-next patch drops usocket from the package, but pnpm resolves from the
