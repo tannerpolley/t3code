@@ -790,7 +790,8 @@ const THREAD_STATUS_DOT_CLASS: Record<SidebarThreadStatus, string> = {
   failed: "bg-red-500",
   input: "bg-indigo-500",
   ready: "bg-emerald-500/70",
-  monitoring: "bg-sky-500/60",
+  waiting: "bg-sky-500/60",
+  limited: "bg-amber-500/60",
   working: "bg-sky-500",
 };
 

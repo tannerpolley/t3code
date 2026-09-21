@@ -1,8 +1,11 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  ISSUES_PANEL_REF,
+  issueSurface,
+  issueSurfaceId,
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
@@ -841,6 +844,106 @@ describe("rightPanelStore", () => {
       pullRequestSurfaceId(local),
       pullRequestSurfaceId(remote),
     ]);
+  });
+
+  it("deduplicates canonical issues while keeping hosts and environments separate", () => {
+    const first = {
+      environmentId: "local",
+      projectId: "project-a",
+      host: " github.com ",
+      repository: "PingDotGG/T3Code",
+      number: 4909,
+    };
+    const otherHost = { ...first, host: "github.example.com" };
+    const otherEnvironment = { ...first, environmentId: "remote" };
+
+    useRightPanelStore.getState().openIssue(refA, first);
+    useRightPanelStore
+      .getState()
+      .openIssue(refA, { ...first, host: "GITHUB.COM", repository: "pingdotgg/t3code" });
+    useRightPanelStore.getState().openIssue(refA, otherHost);
+    useRightPanelStore.getState().openIssue(refA, otherEnvironment);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toEqual([
+      issueSurface(first),
+      issueSurface(otherHost),
+      issueSurface(otherEnvironment),
+    ]);
+    expect(issueSurfaceId({ ...first, host: "GITHUB.COM", repository: "pingdotgg/t3code" })).toBe(
+      issueSurfaceId(first),
+    );
+  });
+
+  it("scopes an omitted issue environment to the thread ref", () => {
+    const target = {
+      projectId: "project-a",
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 4909,
+    };
+    useRightPanelStore.getState().openIssue(refA, target);
+    useRightPanelStore.getState().openIssue(refA, { ...target, environmentId: "env-2" });
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      issueSurface({ ...target, environmentId: "env-1" }),
+      issueSurface({ ...target, environmentId: "env-2" }),
+    ]);
+  });
+
+  it("keeps issue identity but drops detail payloads and the page sentinel on migration", () => {
+    const target = {
+      environmentId: "env-1",
+      projectId: "project-a",
+      host: "GITHUB.COM",
+      repository: "pingdotgg/t3code",
+      number: 4909,
+    };
+    const id = issueSurfaceId(target);
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          [scopedThreadKey(ISSUES_PANEL_REF)]: {
+            isOpen: true,
+            activeSurfaceId: id,
+            surfaces: [issueSurface(target)],
+          },
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: id,
+            surfaces: [{ ...issueSurface(target), body: "must not persist" }],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: id,
+          surfaces: [issueSurface(target)],
+        },
+      },
+    });
+  });
+
+  it("closes the final issue surface and hides the panel", () => {
+    const target = {
+      environmentId: "env-1",
+      projectId: "project-a",
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 4909,
+    };
+    useRightPanelStore.getState().openIssue(refA, target);
+    useRightPanelStore.getState().closeSurface(refA, issueSurfaceId(target));
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
   });
 
   it("keeps the page's panel tabs reachable when the set of connected servers changes", () => {

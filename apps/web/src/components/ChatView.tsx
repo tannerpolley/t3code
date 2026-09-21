@@ -46,6 +46,7 @@ import {
   DEFAULT_MODEL,
   type ChatAttachment as ContractChatAttachment,
   type EnvironmentId,
+  type IssueRef,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -246,6 +247,7 @@ import { pullRequestPanelContext } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
+import { IssueDetailPanel } from "./issues/IssueDetailPanel";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -2217,6 +2219,23 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelControlsAtRoot = rightPanelPresent && !shouldUsePlanSidebarSheet;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
+  const issueEnvironmentId =
+    renderedRightPanelSurface?.kind === "issue"
+      ? ((renderedRightPanelSurface.environmentId as EnvironmentId | undefined) ??
+        activeThread?.environmentId ??
+        null)
+      : null;
+  const issueEnvironment =
+    issueEnvironmentId === null ? null : (environmentById.get(issueEnvironmentId) ?? null);
+  const issueServerConfig = issueEnvironment?.serverConfig ?? null;
+  const issueEnvironmentUnavailable =
+    issueEnvironmentId === null ||
+    issueEnvironment === null ||
+    (issueServerConfig === null &&
+      (issueEnvironment.connection.phase === "available" ||
+        issueEnvironment.connection.phase === "offline" ||
+        issueEnvironment.connection.phase === "error" ||
+        issueEnvironment.connection.phase === "unsupported"));
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
     activePreviewMiniPlayer?.source ?? null,
     renderedRightPanelSurface,
@@ -10105,6 +10124,32 @@ export default function ChatView(props: ChatViewProps) {
             ? addPullRequestsSurface
             : undefined
         }
+      />
+    ) : renderedRightPanelSurface?.kind === "issue" && issueEnvironmentUnavailable ? (
+      <PullRequestsUnavailableState
+        title="Issues unavailable"
+        error="Reconnect this environment to browse issues."
+      />
+    ) : renderedRightPanelSurface?.kind === "issue" && issueServerConfig === null ? (
+      <PullRequestDetailGhost />
+    ) : renderedRightPanelSurface?.kind === "issue" &&
+      issueServerConfig?.environment.capabilities.githubIssues !== true ? (
+      <PullRequestsUnavailableState
+        title="Issues unavailable"
+        error="Update this environment's T3 Code server to browse issues."
+      />
+    ) : renderedRightPanelSurface?.kind === "issue" && issueEnvironmentId !== null ? (
+      <IssueDetailPanel
+        environmentId={issueEnvironmentId}
+        reference={
+          {
+            projectId: renderedRightPanelSurface.projectId as ProjectId,
+            host: renderedRightPanelSurface.host,
+            repository: renderedRightPanelSurface.repository,
+            number: renderedRightPanelSurface.number,
+          } satisfies IssueRef
+        }
+        threadRef={activeThreadRef}
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />

@@ -135,6 +135,18 @@ server, but the host's own site will not show them, and the count reads **viewed
 The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
 does not show its diff, so marks are made and read on web and desktop.
 
+## Browse GitHub issues
+
+When a connected environment has GitHub Issues support, open **Issues** from the sidebar. The
+workspace loads open issues from every registered GitHub project and groups them by project,
+repository, and milestone. Search the workspace or narrow it by project, GitHub host, milestone,
+or assignment; use the sort control to change the order within each milestone.
+
+Select an issue to open its read-only details in a resizable panel; use **Open on GitHub** for
+comments or other actions. Each project loads more results independently. A project or environment
+named in an Issues link is kept explicit, so an unavailable scope is shown instead of silently
+opening a different repository.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
