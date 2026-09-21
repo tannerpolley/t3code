@@ -36,6 +36,7 @@ import {
   groupOnboardingProjects,
   partitionOnboardingProjects,
   onboardingProjectKey,
+  planCodexProjectSettingsImport,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
   type OnboardingProjectGroup,
@@ -961,9 +962,13 @@ function ImportStep({
   const { environments } = useEnvironments();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
   const projects = useProjects();
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string> | null>(null);
   const [importError, setImportError] = useState("");
+  const [applyCodexSettings, setApplyCodexSettings] = useState(false);
   const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
   // Keep project creation attempts separate from completed history imports so both can retry.
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
@@ -1016,6 +1021,24 @@ function ImportStep({
     [selectedPaths, recent],
   );
   const selected = candidates.filter((candidate) => selectedKeys.has(candidate.key));
+  const codexSettingsPreview = selected.flatMap((candidate) => {
+    if (candidate.codexSettings === undefined) return [];
+    const settings = environments.find(
+      (environment) => environment.environmentId === candidate.environmentId,
+    )?.serverConfig?.settings;
+    const projectId = resolveOnboardingProjectId(projects, candidate.environmentId, candidate);
+    const current =
+      settings === undefined || projectId === null
+        ? undefined
+        : settings.projectSettingsOverrides[projectId];
+    return [
+      {
+        candidate,
+        preview: candidate.codexSettings,
+        plan: planCodexProjectSettingsImport(current, candidate.codexSettings),
+      },
+    ];
+  });
 
   const finishAfterImport = () => {
     const projectRef = resolveOnboardingLandingProject(
@@ -1054,6 +1077,7 @@ function ImportStep({
         : 0;
     let importedThreadCount = 0;
     let skippedThreadCount = 0;
+    let settingsFailureCount = 0;
     const refreshEnvironments = new Set<EnvironmentId>();
     for (const candidate of selection) {
       const { environmentId } = candidate;
@@ -1063,8 +1087,10 @@ function ImportStep({
       ) {
         return;
       }
-      if (importedProjects.has(candidate.key)) continue;
-      let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
+      const completedProject = importedProjects.get(candidate.key);
+      let projectId =
+        completedProject?.projectId ??
+        resolveOnboardingProjectId(readProjects(), environmentId, candidate);
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.key);
         if (attempt === undefined) {
@@ -1102,6 +1128,35 @@ function ImportStep({
         }
       }
 
+      if (applyCodexSettings && candidate.codexSettings !== undefined) {
+        const settings = environments.find(
+          (environment) => environment.environmentId === environmentId,
+        )?.serverConfig?.settings;
+        if (settings === undefined) {
+          settingsFailureCount += 1;
+        } else {
+          const plan = planCodexProjectSettingsImport(
+            settings.projectSettingsOverrides[projectId],
+            candidate.codexSettings,
+          );
+          if (plan.action === "write") {
+            const settingsResult = await updateSettings({
+              environmentId,
+              input: {
+                patch: {
+                  projectSettingsOverrides: { [projectId]: plan.overrides },
+                },
+              },
+            });
+            if (settingsResult._tag !== "Success" && !isAtomCommandInterrupted(settingsResult)) {
+              settingsFailureCount += 1;
+            }
+          }
+        }
+      }
+
+      if (completedProject !== undefined) continue;
+
       const threadImportResult = await importThreads({
         environmentId,
         input: { projectId, expectedWorkspaceRoot: candidate.path },
@@ -1134,7 +1189,13 @@ function ImportStep({
       if (refreshEnvironments.has(scan.environmentId)) scan.refresh();
     }
     setIsImporting(false);
-    if (importedProjectsCount < selection.length) {
+    if (importedProjectsCount < selection.length || settingsFailureCount > 0) {
+      if (settingsFailureCount > 0 && importedProjectsCount === selection.length) {
+        setImportError(
+          `${settingsFailureCount} Codex project ${settingsFailureCount === 1 ? "setting was" : "settings were"} not saved. Existing T3 settings were left unchanged.`,
+        );
+        return;
+      }
       if (importedThreadCount > 0 && skippedThreadCount > 0) {
         setImportError(
           `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`,
@@ -1260,6 +1321,37 @@ function ImportStep({
           })}
         </div>
       </ScrollArea>
+      {codexSettingsPreview.length > 0 ? (
+        <div className="mt-3 space-y-2 rounded-md border border-border/70 bg-muted/20 p-3 text-xs">
+          <div>
+            <p className="font-medium text-foreground">Codex settings preview — no changes yet</p>
+            <p className="mt-1 text-muted-foreground">
+              Codex <code>trusted</code> maps to T3 <strong>Auto-accept edits</strong>;{" "}
+              <code>untrusted</code> maps to <strong>Approval required</strong>.
+            </p>
+          </div>
+          <ul className="space-y-1 text-muted-foreground">
+            {codexSettingsPreview.map(({ candidate, preview, plan }) => (
+              <li key={candidate.key} className="break-words">
+                <span className="font-mono">{candidate.path}</span>:{" "}
+                {preview.trustLevel ?? "no supported trust value"}
+                {plan.action === "conflict" ? "; existing T3 runtime mode will be kept" : ""}
+                {preview.unsupportedKeys.length > 0
+                  ? `; unsupported: ${preview.unsupportedKeys.join(", ")}`
+                  : ""}
+              </li>
+            ))}
+          </ul>
+          <label className="flex cursor-pointer items-center gap-2 text-foreground">
+            <Checkbox
+              checked={applyCodexSettings}
+              onCheckedChange={(checked) => setApplyCodexSettings(checked === true)}
+              disabled={isImporting}
+            />
+            Apply supported Codex settings when importing
+          </label>
+        </div>
+      ) : null}
       {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
         <Button
