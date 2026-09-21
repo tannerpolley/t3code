@@ -5,6 +5,7 @@ import {
   groupOnboardingProjects,
   partitionOnboardingProjects,
   onboardingProjectKey,
+  planCodexProjectSettingsImport,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
 } from "./projectImport.logic";
@@ -30,6 +31,27 @@ function candidate(
 const github = (repository: string) => ({
   remoteKey: `github.com/${repository.toLowerCase()}`,
   repository,
+});
+
+describe("planCodexProjectSettingsImport", () => {
+  const trusted = {
+    trustLevel: "trusted",
+    defaultRuntimeMode: "auto-accept-edits",
+    unsupportedKeys: [],
+  } as const;
+
+  it("writes once, keeps other overrides, and never replaces a conflicting T3 choice", () => {
+    expect(planCodexProjectSettingsImport({ defaultAutoPull: true }, trusted)).toEqual({
+      action: "write",
+      overrides: { defaultAutoPull: true, defaultRuntimeMode: "auto-accept-edits" },
+    });
+    expect(
+      planCodexProjectSettingsImport({ defaultRuntimeMode: "auto-accept-edits" }, trusted),
+    ).toEqual({ action: "unchanged" });
+    expect(planCodexProjectSettingsImport({ defaultRuntimeMode: "full-access" }, trusted)).toEqual({
+      action: "conflict",
+    });
+  });
 });
 
 describe("partitionOnboardingProjects", () => {
