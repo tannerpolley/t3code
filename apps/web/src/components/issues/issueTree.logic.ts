@@ -6,7 +6,6 @@ export interface IssueGroup {
   milestone: IssueMilestone | null;
   issues: IssueSummary[];
 }
-
 /** Official milestones stay visible even when empty; unassigned issues are always last. */
 export function groupIssuesByMilestone(
   milestones: readonly IssueMilestone[],
@@ -54,4 +53,3 @@ export function groupIssuesByMilestone(
   if (unassigned.issues.length > 0) result.push(unassigned);
   return result;
 }
-

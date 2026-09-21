@@ -151,4 +151,3 @@ describe("issue list paging", () => {
     expect(repeated).toBe(second);
   });
 });
-

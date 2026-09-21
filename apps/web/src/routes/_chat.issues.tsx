@@ -70,7 +70,6 @@ export interface IssuesSearch {
   readonly selectedNumber?: number;
   readonly originThreadId?: ThreadId;
 }
-
 type IssuesSearchPatch = {
   readonly [Key in keyof IssuesSearch]?: IssuesSearch[Key] | undefined;
 };
@@ -1019,4 +1018,3 @@ function IssuesRouteView() {
     </SidebarInset>
   );
 }
-

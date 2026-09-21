@@ -218,7 +218,6 @@ it.effect("filters mixed and PR-only pages without re-requesting a completed str
     assert.deepEqual(otherAccount.calls, []);
   }),
 );
-
 it.effect("continues milestones after issues finish and does not request issues again", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
@@ -334,4 +333,3 @@ it.effect("rejects pull request detail responses", () =>
     assert.equal(harness.calls.length, 1);
   }),
 );
-

@@ -33,7 +33,6 @@ export interface IssueDetailPanelProps {
   readonly refreshToken?: number;
   readonly onOpenBesideThread?: () => void;
 }
-
 type IssuePanelError = {
   readonly title: string;
   readonly description: string;
@@ -295,4 +294,3 @@ export function IssueDetailPanel({
     </div>
   );
 }
-

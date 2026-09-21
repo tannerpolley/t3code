@@ -137,7 +137,6 @@ describe("GitHub issue contract boundaries", () => {
     ).toMatchObject({ _tag: "EnvironmentAuthorizationError" });
   });
 });
-
 describe("githubIssues capability compatibility", () => {
   const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
   const descriptor = {
@@ -158,4 +157,3 @@ describe("githubIssues capability compatibility", () => {
     ).toBe(true);
   });
 });
-

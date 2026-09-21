@@ -15,7 +15,6 @@ export interface IssueTreeProps {
   readonly selectedIssueNumber?: number;
   readonly onSelect: (issue: IssueSummary) => void;
 }
-
 function issueStateIcon(issue: IssueSummary) {
   return issue.state === "closed" ? (
     <CheckCircle2Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
@@ -147,4 +146,3 @@ export function IssueTree({
     </div>
   );
 }
-
