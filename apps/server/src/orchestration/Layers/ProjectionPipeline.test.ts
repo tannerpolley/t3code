@@ -139,6 +139,11 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-import-shell-")
             threadId,
             projectId: ProjectId.make("project-import-shell"),
             title: "Imported thread",
+            origin: {
+              kind: "delegated",
+              parentThreadId: ThreadId.make("parent-thread"),
+              relationship: "worker",
+            },
             modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
             runtimeMode: "full-access",
             interactionMode: "default",
@@ -178,6 +183,17 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-import-shell-")
         WHERE thread_id = ${threadId}
       `;
         assert.deepEqual(yield* readLatestUserMessageAt, [{ latestUserMessageAt: null }]);
+        const persistedOrigin = yield* sql<{
+          readonly kind: string | null;
+          readonly parentThreadId: string | null;
+        }>`
+          SELECT
+            json_extract(origin_json, '$.kind') AS "kind",
+            json_extract(origin_json, '$.parentThreadId') AS "parentThreadId"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(persistedOrigin, [{ kind: "delegated", parentThreadId: "parent-thread" }]);
 
         const sessionEvent = yield* eventStore.append({
           type: "thread.session-set",

@@ -54,6 +54,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { isCodexWorkerSessionMeta } from "../usage/usageTranscripts.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -131,6 +132,8 @@ const TranscriptRecord = Schema.Struct({
       message: Schema.optional(Schema.String),
       model: Schema.optional(Schema.String),
       cwd: Schema.optional(Schema.String),
+      forked_from_id: Schema.optional(Schema.String),
+      source: Schema.optional(Schema.Unknown),
       content: Schema.optional(Schema.Array(TranscriptContentBlock)),
       internal_chat_message_metadata_passthrough: Schema.optional(Schema.Unknown),
     }),
@@ -167,6 +170,7 @@ export interface AgentSessionThread {
   readonly model: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly isDelegated: boolean;
   readonly messages: ReadonlyArray<AgentSessionThreadMessage>;
 }
 
@@ -345,6 +349,7 @@ function parseAgentSessionRecords(
   let providerSessionId = input.source === "codex" ? "" : input.fallbackSessionId;
   let title: string | null = null;
   let model: string | null = null;
+  let isDelegated = false;
   let hasCodexSessionId = false;
   const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
   let firstUserMessage:
@@ -465,6 +470,9 @@ function parseAgentSessionRecords(
     }
 
     if (record.type === "session_meta") {
+      if (record.payload !== undefined && isRecord(record.payload)) {
+        isDelegated = isDelegated || isCodexWorkerSessionMeta(record.payload);
+      }
       const sessionId = record.payload?.id?.trim() || record.payload?.session_id?.trim();
       if (!hasCodexSessionId && sessionId) {
         providerSessionId = sessionId;
@@ -542,6 +550,7 @@ function parseAgentSessionRecords(
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
+    isDelegated,
     messages: retainedMessages,
   };
 }
@@ -1526,6 +1535,9 @@ export const make = Effect.gen(function* () {
             snapshot.records,
           );
           if (parsedThread === null) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
+          if (parsedThread.isDelegated) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
 

@@ -790,10 +790,26 @@ export const ThreadPullRequestLink = Schema.Struct({
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
+/** Server-owned lineage for records that are backed by a delegated worker. */
+export const OrchestrationThreadOrigin = Schema.Struct({
+  kind: Schema.Literals(["top-level", "delegated"]),
+  parentThreadId: Schema.optional(ThreadId),
+  relationship: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationThreadOrigin = typeof OrchestrationThreadOrigin.Type;
+
+/** Missing lineage is historical top-level data, never a worker classification. */
+export function isTopLevelThreadOrigin(
+  origin: OrchestrationThreadOrigin | null | undefined,
+): boolean {
+  return origin?.kind !== "delegated";
+}
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  origin: Schema.optional(OrchestrationThreadOrigin),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -881,6 +897,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  origin: Schema.optional(OrchestrationThreadOrigin),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -1117,6 +1134,7 @@ const ThreadCreateCommand = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  origin: Schema.optional(OrchestrationThreadOrigin),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode.pipe(
@@ -1749,6 +1767,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
+  origin: Schema.optional(OrchestrationThreadOrigin),
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(

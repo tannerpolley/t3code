@@ -452,6 +452,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
+          origin: { kind: "top-level" },
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -578,6 +579,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
+          origin: { kind: "top-level" },
           modelSelection: {
             instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
@@ -2353,11 +2355,18 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         )
       `;
 
+      yield* sql`
+        UPDATE projection_threads
+        SET origin_json = '{"kind":"delegated"}'
+        WHERE thread_id = 'thread-percent-decoy'
+      `;
+
       const literalPercent = yield* snapshotQuery.searchThreads({ query: "100%" });
       assert.deepStrictEqual(
         literalPercent.matches.map((match) => [match.threadId, match.source]),
         [[ThreadId.make("thread-active"), "user"]],
       );
+      assert.deepStrictEqual((yield* snapshotQuery.searchThreads({ query: "100x" })).matches, []);
 
       const user = yield* snapshotQuery.searchThreads({ query: "user needle" });
       assert.equal(user.matches[0]?.source, "user");

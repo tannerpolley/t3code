@@ -74,6 +74,7 @@ const makeThread = (source: "codex" | "claudeAgent"): AgentSessionScanner.AgentS
   model: null,
   createdAt: "2026-08-24T10:00:00.000Z",
   updatedAt: "2026-08-24T10:01:00.000Z",
+  isDelegated: false,
   messages: [
     { role: "user", text: "Fix the bug", createdAt: "2026-08-24T10:00:00.000Z" },
     { role: "assistant", text: "Fixed", createdAt: "2026-08-24T10:01:00.000Z" },

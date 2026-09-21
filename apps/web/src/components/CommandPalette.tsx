@@ -27,6 +27,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  isTopLevelThreadOrigin,
   type DesktopWslState,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -765,7 +766,11 @@ function OpenCommandPaletteDialog(props: {
     }
   }, [activeThreadReferenceCopyTarget]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
+  const allThreads = useThreadShells();
+  const threads = useMemo(
+    () => allThreads.filter((thread) => isTopLevelThreadOrigin(thread.origin)),
+    [allThreads],
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const {
     theme,

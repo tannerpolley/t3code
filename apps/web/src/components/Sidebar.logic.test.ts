@@ -45,6 +45,7 @@ import {
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
+  selectSidebarThreadSurfaces,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
   type SidebarListItem,
   type SidebarListMarker,
@@ -2513,6 +2514,41 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("selectSidebarThreadSurfaces", () => {
+  it("keeps missing-origin history visible and excludes delegated workers", () => {
+    const threads = [
+      { id: "top-level", environmentId: "env", projectId: "project-a", archivedAt: null },
+      {
+        id: "delegated",
+        environmentId: "env",
+        projectId: "project-a",
+        archivedAt: null,
+        origin: {
+          kind: "delegated" as const,
+          parentThreadId: ThreadId.make("top-level"),
+          relationship: "worker",
+        },
+      },
+      {
+        id: "archived",
+        environmentId: "env",
+        projectId: "project-a",
+        archivedAt: "2026-03-09T10:00:00.000Z",
+      },
+    ];
+
+    const result = selectSidebarThreadSurfaces({
+      threads,
+      logicalProjectKeyByScopedProjectRef: new Map([["env:project-a", "section/project-a"]]),
+    });
+
+    expect(result.topLevelThreads.map((thread) => thread.id)).toEqual(["top-level", "archived"]);
+    expect(result.threadsByProjectKey.get("section/project-a")?.map((thread) => thread.id)).toEqual(
+      ["top-level"],
+    );
   });
 });
 

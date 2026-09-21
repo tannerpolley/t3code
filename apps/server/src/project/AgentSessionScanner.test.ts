@@ -1457,6 +1457,50 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         }),
     );
 
+    it.effect("skips proven Codex worker transcripts before import", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-worker-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-worker-codex-");
+        const workspace = yield* makeTempDir("t3code-worker-project-");
+        yield* writeTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "24",
+            "rollout-worker.jsonl",
+          ),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: {
+                id: "worker-session",
+                cwd: workspace,
+                source: { subagent: { thread_spawn: { parent_thread_id: "parent-session" } } },
+              },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Worker prompt" },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(outcomes).toEqual([{ _tag: "Skipped" }]);
+      }),
+    );
+
     it.effect("imports recent Claude and Codex sessions for the selected project only", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -3013,6 +3057,31 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.providerSessionId).toBe("fork-session");
+    expect(thread?.isDelegated).toBe(true);
+  });
+
+  it("recognizes Codex native subagent lineage without a fork id", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "session_meta",
+          payload: {
+            id: "worker-session",
+            source: { subagent: { thread_spawn: { parent_thread_id: "parent-session" } } },
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: "Worker prompt" },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.isDelegated).toBe(true);
   });
 
   it("skips Codex transcripts without a resumable session ID", () => {

@@ -34,6 +34,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import {
+  isTopLevelThreadOrigin,
   resolveEnvironmentMachineKind,
   type EnvironmentMachineKind,
   type ProjectIconOverride,
@@ -187,6 +188,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  selectSidebarThreadSurfaces,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
   useThreadJumpHintVisibility,
@@ -2325,7 +2327,12 @@ export default function Sidebar() {
     ],
   );
   const projectGroups = useMemo(
-    () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
+    () =>
+      sortLogicalProjectsForSidebar(
+        unsortedProjectGroups,
+        threads.filter((thread) => isTopLevelThreadOrigin(thread.origin)),
+        sidebarProjectSortOrder,
+      ),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
   const projectGroupsRef = useRef(projectGroups);
@@ -2376,6 +2383,8 @@ export default function Sidebar() {
   // app restarts keep it.
   const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  const sidebarMode = useUiStateStore((store) => store.sidebarMode);
+  const setSidebarMode = useUiStateStore((store) => store.setSidebarMode);
   const sidebarProjectSections = useUiStateStore((store) => store.sidebarProjectSections);
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -2545,6 +2554,35 @@ export default function Sidebar() {
         override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
+  const logicalProjectKeyByScopedProjectRef = useMemo(
+    () =>
+      new Map(
+        projectGroups.flatMap((group) =>
+          group.memberProjects.map(
+            (project) => [`${project.environmentId}:${project.id}`, group.projectKey] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
+  );
+  const { topLevelThreads, threadsByProjectKey } = useMemo(
+    () =>
+      selectSidebarThreadSurfaces({
+        threads,
+        logicalProjectKeyByScopedProjectRef,
+      }),
+    [logicalProjectKeyByScopedProjectRef, threads],
+  );
+  const sidebarProjectThreadsByKey = useMemo(
+    () =>
+      new Map(
+        [...threadsByProjectKey].map(
+          ([projectKey, projectThreads]) =>
+            [projectKey, sortThreadsForSidebar(projectThreads)] as const,
+        ),
+      ),
+    [threadsByProjectKey],
+  );
   const {
     pinnedThreads,
     draggableThreadKeys,
@@ -2560,7 +2598,7 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
+    const visible = topLevelThreads.filter(
       (thread) =>
         thread.archivedAt === null &&
         (scopedProjectKeys === null ||
@@ -2650,7 +2688,14 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [
+    nowMinute,
+    optimisticDrop,
+    scopedProjectKeys,
+    serverConfigs,
+    snoozeWakeTick,
+    topLevelThreads,
+  ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -2660,32 +2705,6 @@ export default function Sidebar() {
     () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
     [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
   );
-  const logicalProjectKeyByScopedProjectRef = useMemo(
-    () =>
-      new Map(
-        projectGroups.flatMap((group) =>
-          group.memberProjects.map(
-            (project) => [`${project.environmentId}:${project.id}`, group.projectKey] as const,
-          ),
-        ),
-      ),
-    [projectGroups],
-  );
-  const sidebarProjectThreadsByKey = useMemo(() => {
-    const grouped = new Map<string, EnvironmentThreadShell[]>();
-    for (const thread of sortThreadsForSidebar(
-      threads.filter((entry) => entry.archivedAt === null),
-    )) {
-      const projectKey = logicalProjectKeyByScopedProjectRef.get(
-        `${thread.environmentId}:${thread.projectId}`,
-      );
-      if (!projectKey) continue;
-      const projectThreads = grouped.get(projectKey) ?? [];
-      projectThreads.push(thread);
-      grouped.set(projectKey, projectThreads);
-    }
-    return grouped;
-  }, [logicalProjectKeyByScopedProjectRef, threads]);
   const searchEnvironmentIds = useMemo(
     () =>
       environments
@@ -2855,12 +2874,12 @@ export default function Sidebar() {
   const allThreadByKey = useMemo(
     () =>
       new Map(
-        threads.map(
+        topLevelThreads.map(
           (thread) =>
             [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
         ),
       ),
-    [threads],
+    [topLevelThreads],
   );
   const allThreadByKeyRef = useRef(allThreadByKey);
   allThreadByKeyRef.current = allThreadByKey;
@@ -4494,6 +4513,8 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              sidebarMode={sidebarMode}
+              onSidebarModeChange={setSidebarMode}
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -4649,7 +4670,7 @@ export default function Sidebar() {
           </SidebarGroup>
         }
       >
-        {!isSearchingThreads ? (
+        {!isSearchingThreads && sidebarMode === "projects" ? (
           <SidebarProjectSections
             activeThreadKey={routeThreadKey}
             isProjectExpanded={isProjectExpanded}
@@ -4732,7 +4753,7 @@ export default function Sidebar() {
               </p>
             )
           ) : null}
-          {!isSearchingThreads ? (
+          {!isSearchingThreads && sidebarMode === "activity" ? (
             <TooltipProvider
               key="sidebar-thread-tooltips-150"
               delay={150}
@@ -5024,6 +5045,7 @@ export default function Sidebar() {
             </TooltipProvider>
           ) : null}
           {!isSearchingThreads &&
+          sidebarMode === "activity" &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
             activeThreads.length +

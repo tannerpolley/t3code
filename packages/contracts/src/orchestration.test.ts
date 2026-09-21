@@ -34,6 +34,7 @@ import {
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
   SnapShotAccessibility,
+  isTopLevelThreadOrigin,
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
@@ -719,6 +720,21 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
     });
     assert.deepStrictEqual(oldServerShell.pullRequests, []);
     assert.deepStrictEqual(oldServerShell.linkedPullRequest, legacyLink);
+    assert.strictEqual(isTopLevelThreadOrigin(oldServerShell.origin), true);
+
+    const delegatedShell = yield* decodeOrchestrationThreadShell({
+      ...common,
+      origin: {
+        kind: "delegated",
+        parentThreadId: "parent-thread",
+        relationship: "worker",
+      },
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    });
+    assert.strictEqual(isTopLevelThreadOrigin(delegatedShell.origin), false);
 
     // A decoder from before the array must still read its single-link field
     // after a new server encodes the expanded snapshot.

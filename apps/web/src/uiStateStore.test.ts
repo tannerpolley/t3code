@@ -20,6 +20,7 @@ import {
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setSidebarOtherProjectsExpanded,
+  setSidebarMode,
   setSidebarProjectSectionExpanded,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
@@ -32,6 +33,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     sidebarProjectSections: [],
     sidebarOtherProjectsExpanded: true,
+    sidebarMode: "activity",
     sidebarProjectScopeKey: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
@@ -167,6 +169,21 @@ describe("uiStateStore pure functions", () => {
     expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
   });
 
+  it("keeps the mode separate from project expansion and migrates old sections to Projects", () => {
+    const projects = setSidebarMode(makeUiState(), "projects");
+
+    expect(projects.sidebarMode).toBe("projects");
+    expect(setSidebarMode(projects, "projects")).toBe(projects);
+    expect(
+      parsePersistedState({
+        sidebarProjectSections: [
+          { id: "work", name: "Work", projectKeys: ["project-a"], collapsed: false },
+        ],
+      }).sidebarMode,
+    ).toBe("projects");
+    expect(parsePersistedState({}).sidebarMode).toBe("activity");
+  });
+
   it("organizes projects into persistent sidebar sections", () => {
     const work = addSidebarProjectSection(makeUiState(), { id: "work", name: " Work " });
     const personal = addSidebarProjectSection(work, { id: "personal", name: "Personal" });
@@ -236,6 +253,7 @@ describe("parsePersistedState", () => {
       projectOrder: ["physical-b", "physical-a"],
       sidebarProjectSections: [],
       sidebarOtherProjectsExpanded: true,
+      sidebarMode: "activity",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -360,6 +378,7 @@ describe("uiStateStore persistence", () => {
       projectOrder: ["physical-b", "physical-a"],
       sidebarProjectSections: [],
       sidebarOtherProjectsExpanded: true,
+      sidebarMode: "activity",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },

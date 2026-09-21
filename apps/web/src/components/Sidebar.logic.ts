@@ -6,7 +6,13 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  isTopLevelThreadOrigin,
+  type ContextMenuItem,
+  type EnvironmentId,
+  type ThreadId,
+  type OrchestrationThreadOrigin,
+} from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -115,6 +121,36 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 // supported because snoozing requires a wake time.
 
 export type SidebarSection = "pinned" | "active" | "snoozed" | "settled";
+
+type SidebarSurfaceThread = {
+  readonly id: string;
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly archivedAt: string | null;
+  readonly origin?: OrchestrationThreadOrigin | undefined;
+};
+
+export function selectSidebarThreadSurfaces<T extends SidebarSurfaceThread>(input: {
+  readonly threads: readonly T[];
+  readonly logicalProjectKeyByScopedProjectRef: ReadonlyMap<string, string>;
+}): {
+  readonly topLevelThreads: readonly T[];
+  readonly threadsByProjectKey: ReadonlyMap<string, readonly T[]>;
+} {
+  const topLevelThreads = input.threads.filter((thread) => isTopLevelThreadOrigin(thread.origin));
+  const threadsByProjectKey = new Map<string, T[]>();
+  for (const thread of topLevelThreads) {
+    if (thread.archivedAt !== null) continue;
+    const projectKey = input.logicalProjectKeyByScopedProjectRef.get(
+      `${thread.environmentId}:${thread.projectId}`,
+    );
+    if (projectKey === undefined) continue;
+    const projectThreads = threadsByProjectKey.get(projectKey) ?? [];
+    projectThreads.push(thread);
+    threadsByProjectKey.set(projectKey, projectThreads);
+  }
+  return { topLevelThreads, threadsByProjectKey };
+}
 
 /** Sortable ids: thread rows use their scoped key; structural items use a
     colon-free prefix: scoped thread keys always contain a colon. */
