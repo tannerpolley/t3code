@@ -117,6 +117,7 @@ export function applyThreadDetailEvent(
           id: event.payload.threadId,
           projectId: event.payload.projectId,
           title: event.payload.title,
+          origin: event.payload.origin,
           modelSelection: event.payload.modelSelection,
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,

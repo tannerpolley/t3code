@@ -86,6 +86,11 @@ describe("applyThreadDetailEvent", () => {
           threadId: ThreadId.make("thread-2"),
           projectId: ProjectId.make("project-1"),
           title: "New Thread",
+          origin: {
+            kind: "delegated",
+            parentThreadId: baseThread.id,
+            relationship: "worker",
+          },
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
@@ -100,6 +105,11 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.id).toBe("thread-2");
         expect(result.thread.title).toBe("New Thread");
+        expect(result.thread.origin).toEqual({
+          kind: "delegated",
+          parentThreadId: baseThread.id,
+          relationship: "worker",
+        });
         expect(result.thread.branch).toBe("main");
         expect(result.thread.messages).toEqual([]);
         expect(result.thread.session).toBeNull();

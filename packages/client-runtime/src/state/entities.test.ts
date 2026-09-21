@@ -243,6 +243,32 @@ describe("environment entity projections", () => {
     expect(merged?.messages).toBe(messages);
   });
 
+  it("uses the shell origin when cached detail lineage is stale", () => {
+    const detail = {
+      ...THREAD_SHELL,
+      environmentId: ENVIRONMENT_ID,
+      origin: { kind: "top-level" as const },
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      deletedAt: null,
+    } satisfies OrchestrationThread & { readonly environmentId: EnvironmentId };
+    const shell = {
+      ...THREAD_SHELL,
+      environmentId: ENVIRONMENT_ID,
+      origin: {
+        kind: "delegated" as const,
+        parentThreadId: OTHER_THREAD_ID,
+        relationship: "worker",
+      },
+    };
+
+    const merged = mergeEnvironmentThread(detail, shell);
+
+    expect(merged?.origin).toEqual(shell.origin);
+  });
+
   it("preserves untouched project and thread identities across unrelated shell updates", () => {
     const harness = makeHarness();
     const projectRefsAtom = harness.projects.environmentProjectRefsAtom(ENVIRONMENT_ID);
