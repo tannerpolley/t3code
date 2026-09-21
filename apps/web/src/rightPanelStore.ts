@@ -27,7 +27,6 @@ const RIGHT_PANEL_KINDS = [
   "device",
   "terminal",
   "pull-request",
-  "issue",
   "pull-requests",
   "agents",
 ] as const;
@@ -39,17 +38,6 @@ export interface DeviceTabTarget {
   platform: "ios" | "android";
   name: string;
 }
-
-export type IssueSurface = {
-  id: `issue:${string}`;
-  kind: "issue";
-  environmentId?: string;
-  projectId: string;
-  host: string;
-  repository: string;
-  number: number;
-  url?: string;
-};
 
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
@@ -95,7 +83,6 @@ export type RightPanelSurface =
       number: number;
       url?: string;
     }
-  | IssueSurface
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
   | { id: "agents"; kind: "agents" };
@@ -105,17 +92,12 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds the device surface.
-// v14 adds issue surfaces and the session-only issues panel.
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+const RIGHT_PANEL_STORAGE_VERSION = 13;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
   ThreadId.make("pull-requests-panel"),
-);
-export const ISSUES_PANEL_REF = scopeThreadRef(
-  EnvironmentId.make("issues-panel"),
-  ThreadId.make("issues-panel"),
 );
 
 /**
@@ -123,7 +105,6 @@ export const ISSUES_PANEL_REF = scopeThreadRef(
  * state: reopening the app should show the list, not last session's tabs and detail fetches.
  */
 const isPullRequestsPanelKey = (threadKey: string) => threadKey.endsWith(":pull-requests-panel");
-const isIssuesPanelKey = (threadKey: string) => threadKey.endsWith(":issues-panel");
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
@@ -148,7 +129,7 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
@@ -166,7 +147,6 @@ interface RightPanelStoreState {
       url?: string;
     },
   ) => void;
-  openIssue: (ref: ScopedThreadRef, target: Omit<IssueSurface, "id" | "kind">) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -188,7 +168,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -200,7 +180,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "issue">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -281,27 +261,6 @@ export function pullRequestSurface(target: {
     ...(target.environmentId === undefined ? {} : { environmentId: target.environmentId }),
     projectId: target.projectId,
     ...(typeof target.host === "string" ? { host: target.host.toLowerCase() } : {}),
-    repository: target.repository,
-    number: target.number,
-    ...(typeof target.url === "string" ? { url: target.url } : {}),
-  };
-}
-
-export function issueSurfaceId(
-  target: Omit<IssueSurface, "id" | "kind" | "url">,
-): IssueSurface["id"] {
-  const scope =
-    target.environmentId === undefined ? "" : `${encodeURIComponent(target.environmentId)}:`;
-  return `issue:${scope}${encodeURIComponent(target.projectId)}:${encodeURIComponent(target.host.trim().toLowerCase())}:${encodeURIComponent(target.repository.trim().toLowerCase())}:${target.number}`;
-}
-
-export function issueSurface(target: Omit<IssueSurface, "id" | "kind">): IssueSurface {
-  return {
-    id: issueSurfaceId(target),
-    kind: "issue",
-    ...(target.environmentId === undefined ? {} : { environmentId: target.environmentId }),
-    projectId: target.projectId,
-    host: target.host.trim().toLowerCase(),
     repository: target.repository,
     number: target.number,
     ...(typeof target.url === "string" ? { url: target.url } : {}),
@@ -399,9 +358,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
     typeof persistedState.byThreadKey === "object"
       ? Object.fromEntries(
           Object.entries(persistedState.byThreadKey as Record<string, ThreadRightPanelState>)
-            .filter(
-              ([threadKey]) => !isPullRequestsPanelKey(threadKey) && !isIssuesPanelKey(threadKey),
-            )
+            .filter(([threadKey]) => !isPullRequestsPanelKey(threadKey))
             .map(([threadKey, threadState]) => {
               const validThreadState =
                 threadState && typeof threadState === "object" ? threadState : null;
@@ -440,33 +397,6 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         pullRequestSurface({
                           ...rest,
                           ...(typeof environmentId === "string" ? { environmentId } : {}),
-                        }),
-                      ];
-                    }
-                    if (surface.kind === "issue") {
-                      if (
-                        typeof surface.projectId !== "string" ||
-                        surface.projectId.trim().length === 0 ||
-                        typeof surface.host !== "string" ||
-                        surface.host.trim().length === 0 ||
-                        typeof surface.repository !== "string" ||
-                        surface.repository.trim().length === 0 ||
-                        typeof surface.number !== "number" ||
-                        !Number.isSafeInteger(surface.number) ||
-                        surface.number < 1
-                      ) {
-                        return [];
-                      }
-                      return [
-                        issueSurface({
-                          ...(typeof surface.environmentId === "string"
-                            ? { environmentId: surface.environmentId }
-                            : {}),
-                          projectId: surface.projectId,
-                          host: surface.host,
-                          repository: surface.repository,
-                          number: surface.number,
-                          ...(typeof surface.url === "string" ? { url: surface.url } : {}),
                         }),
                       ];
                     }
@@ -636,25 +566,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const surface = pullRequestSurface(target);
             const next = upsertSurface(current, surface);
             return target.url
-              ? {
-                  ...next,
-                  surfaces: next.surfaces.map((entry) =>
-                    entry.id === surface.id ? surface : entry,
-                  ),
-                }
-              : next;
-          }),
-        ),
-      openIssue: (ref, target) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const resolvedTarget =
-              target.environmentId === undefined
-                ? { ...target, environmentId: ref.environmentId }
-                : target;
-            const surface = issueSurface(resolvedTarget);
-            const next = upsertSurface(current, surface);
-            return resolvedTarget.url
               ? {
                   ...next,
                   surfaces: next.surfaces.map((entry) =>
@@ -960,7 +871,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       partialize: (state) => ({
         byThreadKey: Object.fromEntries(
           Object.entries(state.byThreadKey).filter(
-            ([threadKey]) => !isPullRequestsPanelKey(threadKey) && !isIssuesPanelKey(threadKey),
+            ([threadKey]) => !isPullRequestsPanelKey(threadKey),
           ),
         ),
       }),

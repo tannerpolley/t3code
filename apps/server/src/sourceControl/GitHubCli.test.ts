@@ -207,25 +207,6 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("passes nonzero API exits through for HTTP error inspection", () =>
-    Effect.gen(function* () {
-      mockRun.mockImplementation((input) => {
-        assert.isTrue(input.allowNonZeroExit);
-        return Effect.succeed({
-          ...processOutput("HTTP/2 403 Forbidden\r\nRetry-After: 10\r\n\r\n{}"),
-          exitCode: ChildProcessSpawner.ExitCode(1),
-        });
-      });
-      const gh = yield* GitHubCli.GitHubCli;
-      const result = yield* gh.execute({
-        cwd: "/repo",
-        args: ["api", "--include", "--hostname", "github.example.test", "repos/acme/web/issues"],
-        allowNonZeroExit: true,
-      });
-      assert.strictEqual(result.exitCode, 1);
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("pins repository-targeted writes on enterprise hosts", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValue(Effect.succeed(processOutput("")));
