@@ -122,7 +122,11 @@ import {
   projectGroupsSpanEnvironments,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import {
+  legacyProjectCwdPreferenceKey,
+  resolveProjectExpanded,
+  useUiStateStore,
+} from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
@@ -255,6 +259,7 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import { SidebarProjectSections } from "./sidebar/SidebarProjectSections";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -2426,6 +2431,17 @@ export default function Sidebar() {
   // app restarts keep it.
   const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  const sidebarProjectSections = useUiStateStore((store) => store.sidebarProjectSections);
+  const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
+  const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
+  const isProjectExpanded = useCallback(
+    (projectKey: string) => resolveProjectExpanded(projectExpandedById, [projectKey]),
+    [projectExpandedById],
+  );
+  const toggleProjectExpanded = useCallback(
+    (projectKey: string, expanded: boolean) => setProjectExpanded(projectKey, expanded),
+    [setProjectExpanded],
+  );
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
   const projectScopeItems = useMemo(
@@ -2701,6 +2717,32 @@ export default function Sidebar() {
     () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
     [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
   );
+  const logicalProjectKeyByScopedProjectRef = useMemo(
+    () =>
+      new Map(
+        projectGroups.flatMap((group) =>
+          group.memberProjects.map(
+            (project) => [`${project.environmentId}:${project.id}`, group.projectKey] as const,
+          ),
+        ),
+      ),
+    [projectGroups],
+  );
+  const sidebarProjectThreadsByKey = useMemo(() => {
+    const grouped = new Map<string, EnvironmentThreadShell[]>();
+    for (const thread of sortThreadsForSidebar(
+      threads.filter((entry) => entry.archivedAt === null),
+    )) {
+      const projectKey = logicalProjectKeyByScopedProjectRef.get(
+        `${thread.environmentId}:${thread.projectId}`,
+      );
+      if (!projectKey) continue;
+      const projectThreads = grouped.get(projectKey) ?? [];
+      projectThreads.push(thread);
+      grouped.set(projectKey, projectThreads);
+    }
+    return grouped;
+  }, [logicalProjectKeyByScopedProjectRef, threads]);
   const searchEnvironmentIds = useConnectedEnvironmentIds();
   // useThreadSearch owns the debounce and the two-character floor.
   const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
@@ -2861,6 +2903,18 @@ export default function Sidebar() {
   // event and defeat row memoization during streaming.
   const threadByKeyRef = useRef(threadByKey);
   threadByKeyRef.current = threadByKey;
+  const allThreadByKey = useMemo(
+    () =>
+      new Map(
+        threads.map(
+          (thread) =>
+            [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
+        ),
+      ),
+    [threads],
+  );
+  const allThreadByKeyRef = useRef(allThreadByKey);
+  allThreadByKeyRef.current = allThreadByKey;
   // handleNewThread is inherently unstable (depends on the projects list);
   // a ref keeps it out of attemptSettle's dependency array.
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
@@ -3071,6 +3125,12 @@ export default function Sidebar() {
       navigateToThread(threadRef);
     },
     [navigateToThread, rangeSelectTo, toggleThreadSelection],
+  );
+  const handleProjectThreadClick = useCallback(
+    (event: ReactMouseEvent, thread: SidebarThreadSummary) => {
+      handleThreadClick(event, scopeThreadRef(thread.environmentId, thread.id));
+    },
+    [handleThreadClick],
   );
 
   // A settle per thread at a time: double clicks and repeated menu picks
@@ -3895,7 +3955,8 @@ export default function Sidebar() {
       // it — a mixed selection with blocked-on-you work would half-apply.
       const selectionNow = new Date();
       const selectedThreads = threadKeys.flatMap((threadKey) => {
-        const thread = threadByKeyRef.current.get(threadKey);
+        const thread =
+          threadByKeyRef.current.get(threadKey) ?? allThreadByKeyRef.current.get(threadKey);
         return thread ? [thread] : [];
       });
       const canSnoozeSelection = selectedThreads.every(
@@ -4137,7 +4198,8 @@ export default function Sidebar() {
           await handleMultiSelectContextMenu(position);
           return;
         }
-        const thread = threadByKeyRef.current.get(threadKey);
+        const thread =
+          threadByKeyRef.current.get(threadKey) ?? allThreadByKeyRef.current.get(threadKey);
         if (!thread) return;
         const threadWorkspacePath =
           thread.worktreePath ??
@@ -4389,6 +4451,13 @@ export default function Sidebar() {
       updateThreadMetadata,
       timestampFormat,
     ],
+  );
+
+  const handleProjectThreadContextMenu = useCallback(
+    (thread: SidebarThreadSummary, position: { x: number; y: number }) => {
+      handleThreadContextMenu(scopeThreadRef(thread.environmentId, thread.id), position);
+    },
+    [handleThreadContextMenu],
   );
 
   // Thread jump (cmd+1..9) and prev/next traversal reuse the same commands as
@@ -4676,6 +4745,21 @@ export default function Sidebar() {
           </SidebarGroup>
         }
       >
+        {!isSearchingThreads ? (
+          <SidebarProjectSections
+            activeThreadKey={routeThreadKey}
+            isProjectExpanded={isProjectExpanded}
+            onOpenProjectSettings={openProjectSettings}
+            onSelectProject={setProjectScopeKey}
+            onThreadClick={handleProjectThreadClick}
+            onThreadContextMenu={handleProjectThreadContextMenu}
+            onToggleProject={toggleProjectExpanded}
+            projects={projectGroups}
+            sections={sidebarProjectSections}
+            selectedProjectKey={projectScopeKey}
+            threadsByProjectKey={sidebarProjectThreadsByKey}
+          />
+        ) : null}
         <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0 flex-1">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
