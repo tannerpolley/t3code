@@ -2,6 +2,8 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  addSidebarProjectSection,
+  deleteSidebarProjectSection,
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
@@ -9,10 +11,17 @@ import {
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
+  moveProjectToSidebarProjectSection,
+  reorderSidebarProjectSectionProjects,
+  reorderSidebarProjectSections,
+  renameSidebarProjectSection,
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setSidebarOtherProjectsExpanded,
+  setSidebarMode,
+  setSidebarProjectSectionExpanded,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
   type UiState,
@@ -22,6 +31,9 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    sidebarProjectSections: [],
+    sidebarOtherProjectsExpanded: true,
+    sidebarMode: "activity",
     sidebarProjectScopeKey: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
@@ -156,6 +168,48 @@ describe("uiStateStore pure functions", () => {
     expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
     expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
   });
+
+  it("keeps the mode separate from project expansion and migrates old sections to Projects", () => {
+    const projects = setSidebarMode(makeUiState(), "projects");
+
+    expect(projects.sidebarMode).toBe("projects");
+    expect(setSidebarMode(projects, "projects")).toBe(projects);
+    expect(
+      parsePersistedState({
+        sidebarProjectSections: [
+          { id: "work", name: "Work", projectKeys: ["project-a"], collapsed: false },
+        ],
+      }).sidebarMode,
+    ).toBe("projects");
+    expect(parsePersistedState({}).sidebarMode).toBe("activity");
+  });
+
+  it("organizes projects into persistent sidebar sections", () => {
+    const work = addSidebarProjectSection(makeUiState(), { id: "work", name: " Work " });
+    const personal = addSidebarProjectSection(work, { id: "personal", name: "Personal" });
+    const populated = moveProjectToSidebarProjectSection(
+      moveProjectToSidebarProjectSection(personal, "project-a", "work"),
+      "project-b",
+      "work",
+    );
+    const reordered = reorderSidebarProjectSectionProjects(populated, "work", [
+      "project-b",
+      "project-a",
+    ]);
+    const moved = moveProjectToSidebarProjectSection(reordered, "project-a", "personal");
+    const collapsed = setSidebarProjectSectionExpanded(moved, "work", false);
+    const renamed = renameSidebarProjectSection(collapsed, "work", "Now");
+    const ordered = reorderSidebarProjectSections(renamed, ["personal", "work"]);
+
+    expect(ordered.sidebarProjectSections).toEqual([
+      { id: "personal", name: "Personal", projectKeys: ["project-a"], collapsed: false },
+      { id: "work", name: "Now", projectKeys: ["project-b"], collapsed: true },
+    ]);
+    expect(setSidebarOtherProjectsExpanded(ordered, false).sidebarOtherProjectsExpanded).toBe(
+      false,
+    );
+    expect(deleteSidebarProjectSection(ordered, "work").sidebarProjectSections).toHaveLength(1);
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -197,6 +251,9 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      sidebarProjectSections: [],
+      sidebarOtherProjectsExpanded: true,
+      sidebarMode: "activity",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -319,6 +376,9 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      sidebarProjectSections: [],
+      sidebarOtherProjectsExpanded: true,
+      sidebarMode: "activity",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -361,5 +421,6 @@ describe("uiStateStore persistence", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(resolveProjectExpanded(persisted.projectExpandedById ?? {}, ["unknown"])).toBe(true);
+    expect(persisted).not.toHaveProperty("threadPanelOpen");
   });
 });

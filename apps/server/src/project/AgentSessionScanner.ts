@@ -26,6 +26,7 @@ import {
   type AgentSessionProjectCandidate,
   type AgentSessionProjectGit,
   type AgentSessionScanResult,
+  type CodexProjectSettingsPreview,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -38,6 +39,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { parse as parseToml } from "smol-toml";
 
 import {
   normalizeGitRemoteUrl,
@@ -197,6 +199,44 @@ export class AgentSessionScanner extends Context.Service<
 >()("t3/project/AgentSessionScanner") {}
 
 type AgentSessionSource = AgentSessionProjectCandidate["sources"][number];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Codex trust is the only project setting with a direct T3 runtime equivalent. */
+export function parseCodexProjectSettings(
+  raw: string,
+): ReadonlyMap<string, CodexProjectSettingsPreview> {
+  let config: unknown;
+  try {
+    config = parseToml(raw);
+  } catch {
+    return new Map();
+  }
+  if (!isRecord(config) || !isRecord(config.projects)) return new Map();
+
+  const previews = new Map<string, CodexProjectSettingsPreview>();
+  for (const [projectPath, value] of Object.entries(config.projects)) {
+    if (!isRecord(value)) continue;
+    const trustLevel = typeof value.trust_level === "string" ? value.trust_level.trim() : null;
+    const unsupportedKeys = Object.keys(value)
+      .filter((key) => key !== "trust_level")
+      .sort();
+    const defaultRuntimeMode =
+      trustLevel === "trusted"
+        ? ("auto-accept-edits" as const)
+        : trustLevel === "untrusted"
+          ? ("approval-required" as const)
+          : null;
+    if (value.trust_level !== undefined && defaultRuntimeMode === null) {
+      unsupportedKeys.unshift("trust_level");
+    }
+    if (trustLevel === null && unsupportedKeys.length === 0) continue;
+    previews.set(projectPath, { trustLevel, defaultRuntimeMode, unsupportedKeys });
+  }
+  return previews;
+}
 
 /** A single directory's worth of evidence from one source. */
 interface RawCandidate {
@@ -1088,6 +1128,7 @@ export const make = Effect.gen(function* () {
     );
 
     const raw: Array<RawCandidate> = [];
+    const codexProjectSettings = new Map<string, CodexProjectSettingsPreview>();
     let truncated = false;
 
     for (const source of ["claudeAgent", "codex"] as const) {
@@ -1172,6 +1213,32 @@ export const make = Effect.gen(function* () {
           : discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget);
         truncated ||= discovered.truncated;
         transcriptCandidates.push(...discovered.transcripts);
+
+        if (source === "codex") {
+          const contents = yield* fileSystem
+            .readFileString(path.join(home.homePath, "config.toml"))
+            .pipe(Effect.option);
+          if (Option.isSome(contents)) {
+            for (const [projectPath, preview] of parseCodexProjectSettings(contents.value)) {
+              const key = normalizeProjectPathForComparison(
+                path.resolve(expandHomePath(projectPath)),
+              );
+              const existing = codexProjectSettings.get(key);
+              if (existing === undefined ||
+                (existing.trustLevel === preview.trustLevel &&
+                  existing.defaultRuntimeMode === preview.defaultRuntimeMode &&
+                  existing.unsupportedKeys.join("\n") === preview.unsupportedKeys.join("\n"))) {
+                codexProjectSettings.set(key, preview);
+              } else {
+                codexProjectSettings.set(key, {
+                  trustLevel: null,
+                  defaultRuntimeMode: null,
+                  unsupportedKeys: ["trust_level (conflicting Codex homes)"],
+                });
+              }
+            }
+          }
+        }
       }
 
       transcriptCandidates.sort(
@@ -1193,13 +1260,13 @@ export const make = Effect.gen(function* () {
       truncated ||= metadataBudget.truncated;
     }
 
-    return { candidates: raw, truncated };
+    return { candidates: raw, codexProjectSettings, truncated };
   });
 
   let cachedCandidates: ReadonlyArray<RawCandidate> | null = null;
 
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
-    const { candidates: raw, truncated } = yield* collectCandidates();
+    const { candidates: raw, codexProjectSettings, truncated } = yield* collectCandidates();
     cachedCandidates = raw;
 
     // Filesystem identity merges symlinks and case aliases without collapsing
@@ -1295,6 +1362,9 @@ export const make = Effect.gen(function* () {
         importedProjectsByRoot.get(normalizeProjectPathForComparison(entry.path)) ??
         importedProjectsByRoot.get(key);
       const candidatePath = importedProject?.workspaceRoot ?? entry.path;
+      const codexSettings = codexProjectSettings.get(
+        normalizeProjectPathForComparison(path.resolve(expandHomePath(candidatePath))),
+      );
       candidates.push({
         path: candidatePath,
         title: path.basename(candidatePath) || candidatePath,
@@ -1307,6 +1377,7 @@ export const make = Effect.gen(function* () {
             : DateTime.formatIso(DateTime.makeUnsafe(entry.lastActiveAtMs)),
         alreadyImported: importedProject !== undefined,
         git: entry.git,
+        ...(codexSettings === undefined ? {} : { codexSettings }),
       });
     }
 

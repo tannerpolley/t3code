@@ -47,6 +47,8 @@ const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<
         threads: [],
         updatedAt: "2026-01-01T00:00:00.000Z",
       }),
+    getShellSnapshotWithoutEnrichment: () => Effect.die("unused"),
+    getProjectShellsWithoutEnrichment: () => Effect.die("unused"),
     getDeletedWorktreeThreads: () => Effect.die("unused"),
     getArchivedShellSnapshot: () => Effect.die("unused"),
     getSnapshotSequence: () => Effect.die("unused"),
@@ -181,6 +183,41 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   describe("scan", () => {
+    it.effect("previews supported and unsupported Codex project settings without writing", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        yield* writeTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "04",
+            "01",
+            "rollout-2026-04-01T09-00-00-aaa.jsonl",
+          ),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-04-01T09:00:00.000Z"),
+        });
+        yield* fileSystem.writeFileString(
+          path.join(codexHomePath, "config.toml"),
+          `[projects."${workspace}"]\ntrust_level = "trusted"\ncustom_setting = true\n`,
+        );
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates[0]?.codexSettings).toEqual({
+          trustLevel: "trusted",
+          defaultRuntimeMode: "auto-accept-edits",
+          unsupportedKeys: ["custom_setting"],
+        });
+      }),
+    );
+
     it.effect("reads Claude project cwds from transcripts, newest first", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

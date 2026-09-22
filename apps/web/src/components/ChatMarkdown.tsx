@@ -82,8 +82,10 @@ import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
+import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
+import remarkMath from "remark-math";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
@@ -273,6 +275,159 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+
+export function normalizeProviderMathDelimiters(
+  source: string,
+  skillNames: readonly string[] = [],
+): string {
+  const knownSkills = new Set(skillNames.map((name) => name.toLowerCase()));
+  let fence: { marker: "`" | "~"; length: number } | null = null;
+  let inlineTicks = 0;
+  let nextPairId = 0;
+  type ProviderPair = { open: string; close?: string; display: boolean };
+  const pairs: ProviderPair[] = [];
+  let inlinePair: ProviderPair | null = null;
+  let displayPair: ProviderPair | null = null;
+  let normalized = source
+    .split(/(\n)/)
+    .map((part) => {
+      if (part === "\n") return part;
+      const fenceRun = part.match(/^ {0,3}(`{3,}|~{3,})/u)?.[1];
+      if (fence) {
+        if (
+          fenceRun?.[0] === fence.marker &&
+          fenceRun.length >= fence.length &&
+          new RegExp(`^ {0,3}${fence.marker}{${fence.length},}[ \\t]*$`, "u").test(part)
+        ) {
+          fence = null;
+        }
+        return part;
+      }
+      if (fenceRun) {
+        fence = { marker: fenceRun[0] as "`" | "~", length: fenceRun.length };
+        return part;
+      }
+
+      let normalized = "";
+      for (let index = 0; index < part.length;) {
+        if (part[index] === "`") {
+          let end = index + 1;
+          while (part[end] === "`") end++;
+          const runLength = end - index;
+          inlineTicks = inlineTicks === 0 ? runLength : inlineTicks === runLength ? 0 : inlineTicks;
+          normalized += part.slice(index, end);
+          index = end;
+          continue;
+        }
+        if (inlineTicks === 0) {
+          const delimiter = part.slice(index, index + 2);
+          if (delimiter === "\\(" && inlinePair === null) {
+            inlinePair = { open: `\u{e000}${nextPairId++}\u{e001}`, display: false };
+            pairs.push(inlinePair);
+            normalized += inlinePair.open;
+            index += 2;
+            continue;
+          }
+          if (delimiter === "\\)" && inlinePair !== null) {
+            inlinePair.close = `\u{e000}${nextPairId++}\u{e001}`;
+            normalized += inlinePair.close;
+            inlinePair = null;
+            index += 2;
+            continue;
+          }
+          if (delimiter === "\\[" && displayPair === null) {
+            displayPair = { open: `\u{e000}${nextPairId++}\u{e001}`, display: true };
+            pairs.push(displayPair);
+            normalized += displayPair.open;
+            index += 2;
+            continue;
+          }
+          if (delimiter === "\\]" && displayPair !== null) {
+            displayPair.close = `\u{e000}${nextPairId++}\u{e001}`;
+            normalized += displayPair.close;
+            displayPair = null;
+            index += 2;
+            continue;
+          }
+        }
+        if (
+          inlineTicks === 0 &&
+          (/^\$(?=\d[\p{L}\p{N}_-]*\p{L}(?=$|[\s.,!?;:]))/u.test(part.slice(index)) ||
+            knownSkills.has(
+              /^\$([\p{L}\p{N}_-]+)/u.exec(part.slice(index))?.[1]?.toLowerCase() ?? "",
+            ))
+        ) {
+          normalized += "\\$";
+          index++;
+          continue;
+        }
+        normalized += part[index];
+        index++;
+      }
+      return normalized;
+    })
+    .join("");
+  for (const pair of pairs) {
+    if (!pair.close) {
+      normalized = normalized.replace(pair.open, pair.display ? "\\[" : "\\(");
+      continue;
+    }
+    const start = normalized.indexOf(pair.open);
+    const end = normalized.indexOf(pair.close, start + pair.open.length);
+    if (start < 0 || end < 0) continue;
+    const formula = normalized.slice(start + pair.open.length, end);
+    // Hex keeps the formula out of markdown's reach (backslash escapes such as \, and
+    // emphasis markers); remarkProviderMath decodes it into the math node.
+    const encoded = Array.from(new TextEncoder().encode(formula), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    normalized = `${normalized.slice(0, start)}\u{e000}${pair.display ? "D" : "I"}${encoded}\u{e001}${normalized.slice(end + pair.close.length)}`;
+  }
+  return normalized;
+}
+
+function remarkProviderMath() {
+  return (tree: MarkdownAstNode) => {
+    const visit = (node: MarkdownAstNode) => {
+      if (!node.children) return;
+      node.children = node.children.flatMap((child) => {
+        if (child.type !== "text" || typeof child.value !== "string") {
+          visit(child);
+          return child;
+        }
+        const parts: MarkdownAstNode[] = [];
+        let cursor = 0;
+        for (const match of child.value.matchAll(/\u{e000}([ID])([0-9a-f]*)\u{e001}/gu)) {
+          const start = match.index ?? 0;
+          if (start > cursor) parts.push({ type: "text", value: child.value.slice(cursor, start) });
+          const display = match[1] === "D";
+          const value = new TextDecoder().decode(
+            Uint8Array.from(match[2]?.match(/../gu) ?? [], (byte) => Number.parseInt(byte, 16)),
+          );
+          parts.push({
+            type: "inlineMath",
+            value,
+            data: {
+              hName: "code",
+              hProperties: {
+                className: ["language-math", display ? "math-display" : "math-inline"],
+              },
+              // remark-math sets this too; without it the formula never reaches KaTeX.
+              hChildren: [{ type: "text", value }],
+            },
+          });
+          cursor = start + match[0].length;
+        }
+        if (cursor === 0) return child;
+        if (cursor < child.value.length) {
+          parts.push({ type: "text", value: child.value.slice(cursor) });
+        }
+        return parts;
+      });
+    };
+    visit(tree);
+  };
+}
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -466,9 +621,22 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    code: [
+      ...(defaultSchema.attributes?.code ?? []).filter(
+        (attribute) => !(Array.isArray(attribute) && attribute[0] === "className"),
+      ),
+      // Math classes must survive to rehype-katex, which reads them for display mode.
+      ["className", /^language-./, "math-inline", "math-display"],
+      "dataCodeMeta",
+      "dataInlineCode",
+    ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
-    div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
+    div: [
+      ...(defaultSchema.attributes?.div ?? []),
+      ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
+      ["className", "math", "math-display"],
+    ],
+    span: [...(defaultSchema.attributes?.span ?? []), ["className", "math", "math-inline"]],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
     img: [
       ...(defaultSchema.attributes?.img ?? []),
@@ -484,8 +652,82 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
+const CHAT_MARKDOWN_KATEX_SANITIZE_SCHEMA = {
+  ...CHAT_MARKDOWN_SANITIZE_SCHEMA,
+  tagNames: [
+    ...(CHAT_MARKDOWN_SANITIZE_SCHEMA.tagNames ?? []),
+    "annotation",
+    "math",
+    "menclose",
+    "mglyph",
+    "mi",
+    "mn",
+    "mo",
+    "mover",
+    "mpadded",
+    "mphantom",
+    "mroot",
+    "mrow",
+    "mspace",
+    "msqrt",
+    "mstyle",
+    "msub",
+    "msubsup",
+    "msup",
+    "mtable",
+    "mtd",
+    "mtext",
+    "mtr",
+    "munder",
+    "munderover",
+    "path",
+    "semantics",
+    "svg",
+  ],
+  attributes: {
+    ...CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes,
+    span: [
+      ...(CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes?.span ?? []),
+      "ariaHidden",
+      "className",
+      "style",
+    ],
+    math: ["display", "xmlns"],
+    annotation: ["encoding"],
+    mi: ["mathvariant"],
+    mo: [
+      "accent",
+      "fence",
+      "largeop",
+      "lspace",
+      "maxsize",
+      "minsize",
+      "rspace",
+      "separator",
+      "stretchy",
+    ],
+    mspace: ["height", "linebreak", "width"],
+    mstyle: [
+      "displaystyle",
+      "mathbackground",
+      "mathcolor",
+      "mathsize",
+      "mathvariant",
+      "scriptlevel",
+    ],
+    mtable: ["columnalign", "columnlines", "columnspacing", "rowlines", "rowspacing"],
+    mtd: ["columnspan", "rowspan"],
+    menclose: ["notation"],
+    mpadded: ["depth", "height", "lspace", "voffset", "width"],
+    svg: ["ariaHidden", "height", "preserveAspectRatio", "style", "viewBox", "width"],
+    path: ["d"],
+  },
+} satisfies Parameters<typeof rehypeSanitize>[0];
+
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  remarkMath,
+  remarkProviderMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -495,6 +737,8 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  remarkMath,
+  remarkProviderMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -503,10 +747,18 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
-const CHAT_MARKDOWN_REHYPE_PLUGINS = [
+// Without rehype-raw, HTML in the source stays inert text; sanitizing here would drop those
+// nodes and blank the message. KaTeX output is generated, not taken from the source.
+const CHAT_MARKDOWN_REHYPE_PLUGINS = [rehypeKatex] satisfies NonNullable<
+  ReactMarkdownOptions["rehypePlugins"]
+>;
+
+const CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW = [
   rehypeRaw,
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+  rehypeKatex,
+  [rehypeSanitize, CHAT_MARKDOWN_KATEX_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
@@ -587,8 +839,11 @@ type MarkdownAstNode = {
   type?: string;
   meta?: unknown;
   url?: string;
+  value?: string;
   data?: {
+    hName?: string;
     hProperties?: Record<string, unknown>;
+    hChildren?: ReadonlyArray<{ type: "text"; value: string }>;
   };
   children?: MarkdownAstNode[];
 };
@@ -3296,6 +3551,14 @@ function ChatMarkdown({
     localMediaPreview,
     setLocalMediaPreview,
   } = useChatMarkdownState({ text, ...props });
+  const renderedText = useMemo(
+    () =>
+      normalizeProviderMathDelimiters(
+        text,
+        props.skills?.map((skill) => skill.name),
+      ),
+    [props.skills, text],
+  );
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
@@ -3326,12 +3589,14 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+          rehypePlugins={
+            parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW : CHAT_MARKDOWN_REHYPE_PLUGINS
+          }
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
-          {text}
+          {renderedText}
         </ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (

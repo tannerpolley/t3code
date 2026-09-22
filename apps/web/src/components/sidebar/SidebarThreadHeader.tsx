@@ -23,6 +23,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SidebarMenuButton } from "../ui/sidebar";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface SidebarThreadHeaderProps {
@@ -30,6 +31,8 @@ export interface SidebarThreadHeaderProps {
   searchFieldRef?: RefObject<HTMLDivElement | null>;
   /** Without projects there is nothing to scope, so those controls stay out. */
   hasProjects: boolean;
+  sidebarMode: "projects" | "activity";
+  onSidebarModeChange: (mode: "projects" | "activity") => void;
   /** The project scope combobox, rendered as the first icon of the group. */
   projectScope: ReactNode;
   onNewProject: () => void;
@@ -68,6 +71,8 @@ export function SidebarThreadHeader({
   searchResultCount,
   activeSearchResultIndex,
   onClearSearch,
+  sidebarMode,
+  onSidebarModeChange,
 }: SidebarThreadHeaderProps) {
   const resultsVisible = isSearching && searchResultCount > 0;
   // Results shrink as the query narrows, so the active index can outrun the
@@ -79,81 +84,100 @@ export function SidebarThreadHeader({
     : "New thread";
 
   return (
-    <div className="flex items-center gap-1">
-      <div
-        ref={searchFieldRef}
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-      >
-        <SearchIcon className="size-4 shrink-0 text-[var(--sidebar-icon-color)]" />
-        <Input
-          ref={searchInputRef}
-          nativeInput
-          unstyled
-          type="search"
-          value={searchQuery}
-          onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
-          onKeyDown={onSearchKeyDown}
-          placeholder="Search"
-          aria-label="Search threads"
-          role="combobox"
-          aria-autocomplete="list"
-          aria-expanded={resultsVisible}
-          aria-controls={resultsVisible ? "sidebar-thread-search-results" : undefined}
-          aria-activedescendant={
-            activeResultExists
-              ? `sidebar-thread-search-result-${activeSearchResultIndex}`
-              : undefined
-          }
-          className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:placeholder:text-[var(--sidebar-icon-color)]"
-        />
-        {isSearching ? (
-          <Button
-            type="button"
-            size="icon-micro"
-            variant="ghost"
-            className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
-            aria-label="Clear thread search"
-            onClick={() => {
-              onClearSearch();
-              searchInputRef.current?.focus();
-            }}
-          >
-            <XIcon className="size-3" />
-          </Button>
-        ) : null}
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2 px-1">
+        <span className="text-[11px] font-medium text-sidebar-muted-foreground/70">
+          Sidebar view
+        </span>
+        <ToggleGroup
+          aria-label="Sidebar view"
+          size="sm"
+          value={[sidebarMode]}
+          onValueChange={(next) => {
+            const mode = next[0];
+            if (mode === "projects" || mode === "activity") onSidebarModeChange(mode);
+          }}
+        >
+          <Toggle value="projects">Projects</Toggle>
+          <Toggle value="activity">Activity</Toggle>
+        </ToggleGroup>
       </div>
-      {/* Unfilled like the search field beside it: the buttons carry their own
+      <div className="flex items-center gap-1">
+        <div
+          ref={searchFieldRef}
+          className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+        >
+          <SearchIcon className="size-4 shrink-0 text-[var(--sidebar-icon-color)]" />
+          <Input
+            ref={searchInputRef}
+            nativeInput
+            unstyled
+            type="search"
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
+            onKeyDown={onSearchKeyDown}
+            placeholder="Search"
+            aria-label="Search threads"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={resultsVisible}
+            aria-controls={resultsVisible ? "sidebar-thread-search-results" : undefined}
+            aria-activedescendant={
+              activeResultExists
+                ? `sidebar-thread-search-result-${activeSearchResultIndex}`
+                : undefined
+            }
+            className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:placeholder:text-[var(--sidebar-icon-color)]"
+          />
+          {isSearching ? (
+            <Button
+              type="button"
+              size="icon-micro"
+              variant="ghost"
+              className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
+              aria-label="Clear thread search"
+              onClick={() => {
+                onClearSearch();
+                searchInputRef.current?.focus();
+              }}
+            >
+              <XIcon className="size-3" />
+            </Button>
+          ) : null}
+        </div>
+        {/* Unfilled like the search field beside it: the buttons carry their own
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
-      <div className="flex shrink-0 items-center">
-        {hasProjects ? (
-          <>
-            {projectScope}
-            <SidebarHeaderIconButton label="New project" onClick={onNewProject}>
-              <FolderPlusIcon />
-            </SidebarHeaderIconButton>
-          </>
-        ) : null}
-        <SidebarHeaderIconButton
-          label="New thread"
-          tooltip={
-            showNewThreadInProjectHint ? (
-              <span className="flex flex-col gap-0.5">
-                <span>{newThreadLabel}</span>
-                <span className="text-muted-foreground">
-                  New thread in current project: Shift+click
-                  {newThreadInProjectShortcutLabel ? ` (${newThreadInProjectShortcutLabel})` : ""}
+        <div className="flex shrink-0 items-center">
+          {hasProjects ? (
+            <>
+              {projectScope}
+              <SidebarHeaderIconButton label="New project" onClick={onNewProject}>
+                <FolderPlusIcon />
+              </SidebarHeaderIconButton>
+            </>
+          ) : null}
+          <SidebarHeaderIconButton
+            label="New thread"
+            tooltip={
+              showNewThreadInProjectHint ? (
+                <span className="flex flex-col gap-0.5">
+                  <span>{newThreadLabel}</span>
+                  <span className="text-muted-foreground">
+                    New thread in current project: Shift+click
+                    {newThreadInProjectShortcutLabel ? ` (${newThreadInProjectShortcutLabel})` : ""}
+                  </span>
                 </span>
-              </span>
-            ) : (
-              newThreadLabel
-            )
-          }
-          disabled={newThreadDisabled}
-          onClick={onNewThread}
-        >
-          <SquarePenIcon />
-        </SidebarHeaderIconButton>
+              ) : (
+                newThreadLabel
+              )
+            }
+            disabled={newThreadDisabled}
+            onClick={onNewThread}
+          >
+            <SquarePenIcon />
+          </SidebarHeaderIconButton>
+        </div>
       </div>
     </div>
   );
