@@ -2431,6 +2431,8 @@ export default function Sidebar() {
   // app restarts keep it.
   const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  const sidebarMode = useUiStateStore((store) => store.sidebarMode);
+  const setSidebarMode = useUiStateStore((store) => store.setSidebarMode);
   const sidebarProjectSections = useUiStateStore((store) => store.sidebarProjectSections);
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
@@ -2731,7 +2733,10 @@ export default function Sidebar() {
   const sidebarProjectThreadsByKey = useMemo(() => {
     const grouped = new Map<string, EnvironmentThreadShell[]>();
     for (const thread of sortThreadsForSidebar(
-      threads.filter((entry) => entry.archivedAt === null),
+      threads.filter(
+        (entry) =>
+          entry.archivedAt === null && entry.lineage.relationshipToParent !== "subagent",
+      ),
     )) {
       const projectKey = logicalProjectKeyByScopedProjectRef.get(
         `${thread.environmentId}:${thread.projectId}`,
@@ -4590,6 +4595,8 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              sidebarMode={sidebarMode}
+              onSidebarModeChange={setSidebarMode}
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -4745,7 +4752,7 @@ export default function Sidebar() {
           </SidebarGroup>
         }
       >
-        {!isSearchingThreads ? (
+        {!isSearchingThreads && sidebarMode === "projects" ? (
           <SidebarProjectSections
             activeThreadKey={routeThreadKey}
             isProjectExpanded={isProjectExpanded}
@@ -4828,7 +4835,7 @@ export default function Sidebar() {
               </p>
             )
           ) : null}
-          {!isSearchingThreads ? (
+          {!isSearchingThreads && sidebarMode === "activity" ? (
             <TooltipProvider
               key="sidebar-thread-tooltips-150"
               delay={150}
@@ -5126,6 +5133,7 @@ export default function Sidebar() {
             </TooltipProvider>
           ) : null}
           {!isSearchingThreads &&
+          sidebarMode === "activity" &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
             activeThreads.length +

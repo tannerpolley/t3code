@@ -28,11 +28,14 @@ export interface SidebarProjectSection {
   collapsed: boolean;
 }
 
+export type SidebarMode = "projects" | "activity";
+
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   sidebarProjectSections?: SidebarProjectSection[];
   sidebarOtherProjectsExpanded?: boolean;
+  sidebarMode?: SidebarMode;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -49,6 +52,7 @@ export interface UiProjectState {
   projectOrder: string[];
   sidebarProjectSections: SidebarProjectSection[];
   sidebarOtherProjectsExpanded: boolean;
+  sidebarMode: SidebarMode;
   // Logical project key the sidebar list is scoped to, or null for "all
   // projects". Lives here so routes that unmount the sidebar (Settings)
   // cannot reset the filter.
@@ -76,6 +80,7 @@ const initialState: UiState = {
   projectOrder: [],
   sidebarProjectSections: [],
   sidebarOtherProjectsExpanded: true,
+  sidebarMode: "activity",
   sidebarProjectScopeKey: null,
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
@@ -162,6 +167,10 @@ function isPullRequestMergeMethod(value: unknown): value is PullRequestMergeMeth
   return value === "merge" || value === "squash" || value === "rebase";
 }
 
+function isSidebarMode(value: unknown): value is SidebarMode {
+  return value === "projects" || value === "activity";
+}
+
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -185,15 +194,21 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     parsed.projectOrder === undefined
       ? sanitizeStringArray(parsed.projectOrderCwds).map(legacyProjectCwdPreferenceKey)
       : sanitizeStringArray(parsed.projectOrder);
+  const sidebarProjectSections = sanitizeSidebarProjectSections(parsed.sidebarProjectSections);
 
   return {
     projectExpandedById,
     projectOrder,
-    sidebarProjectSections: sanitizeSidebarProjectSections(parsed.sidebarProjectSections),
+    sidebarProjectSections,
     sidebarOtherProjectsExpanded:
       typeof parsed.sidebarOtherProjectsExpanded === "boolean"
         ? parsed.sidebarOtherProjectsExpanded
         : initialState.sidebarOtherProjectsExpanded,
+    sidebarMode: isSidebarMode(parsed.sidebarMode)
+      ? parsed.sidebarMode
+      : sidebarProjectSections.length > 0
+        ? "projects"
+        : initialState.sidebarMode,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -274,6 +289,7 @@ export function persistState(state: UiState): void {
         projectOrder: state.projectOrder,
         sidebarProjectSections: state.sidebarProjectSections,
         sidebarOtherProjectsExpanded: state.sidebarOtherProjectsExpanded,
+        sidebarMode: state.sidebarMode,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
@@ -392,6 +408,10 @@ export function setSidebarOtherProjectsExpanded(state: UiState, expanded: boolea
   return state.sidebarOtherProjectsExpanded === expanded
     ? state
     : { ...state, sidebarOtherProjectsExpanded: expanded };
+}
+
+export function setSidebarMode(state: UiState, mode: SidebarMode): UiState {
+  return state.sidebarMode === mode ? state : { ...state, sidebarMode: mode };
 }
 
 export function addSidebarProjectSection(
@@ -605,6 +625,7 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
+  setSidebarMode: (mode: SidebarMode) => void;
   setSidebarOtherProjectsExpanded: (expanded: boolean) => void;
   addSidebarProjectSection: (name: string) => void;
   renameSidebarProjectSection: (sectionId: string, name: string) => void;
@@ -634,6 +655,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setSidebarProjectScopeKey: (projectKey) =>
     set((state) => setSidebarProjectScopeKey(state, projectKey)),
+  setSidebarMode: (mode) => set((state) => setSidebarMode(state, mode)),
   setSidebarOtherProjectsExpanded: (expanded) =>
     set((state) => setSidebarOtherProjectsExpanded(state, expanded)),
   addSidebarProjectSection: (name) =>
