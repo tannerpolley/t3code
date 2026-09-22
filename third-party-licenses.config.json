@@ -473,6 +473,18 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2025 opencode"]
       }
+    },
+    {
+      "name": "rehype-katex",
+      "generatedNotice": {
+        "licenseId": "MIT"
+      }
+    },
+    {
+      "name": "remark-math",
+      "generatedNotice": {
+        "licenseId": "MIT"
+      }
     }
   ]
 }
