@@ -925,6 +925,7 @@ describe("rightPanelStore", () => {
           surfaces: [issueSurface(target)],
         },
       },
+      threadPanelVisibilityByThreadKey: {},
     });
   });
 
