@@ -99,6 +99,21 @@ describe("ChatMarkdown math", () => {
     );
   });
 
+  it("keeps dollar amounts as text while dollar math still renders", () => {
+    for (const text of [
+      "It costs $5 and $10 total.",
+      "Price: $5.00, then $6.",
+      "Budget $1,200 or $5k.",
+    ]) {
+      expect(renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={text} />)).not.toContain(
+        'class="katex"',
+      );
+    }
+    expect(
+      renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Area $2\\pi r$ and $x$."} />),
+    ).toContain('<annotation encoding="application/x-tex">2\\pi r</annotation>');
+  });
+
   it("renders provider math once a streaming delimiter closes", () => {
     const incomplete = renderToStaticMarkup(
       <ChatMarkdown cwd={undefined} text={"\\(x^2"} isStreaming />,
