@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { RuntimeMode } from "./orchestration.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Coding agent home directories the scanner knows how to read. */

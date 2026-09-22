@@ -205,7 +205,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
         yield* fileSystem.writeFileString(
           path.join(codexHomePath, "config.toml"),
-          `[projects.${JSON.stringify(workspace)}]\ntrust_level = "trusted"\ncustom_setting = true\n`,
+          `[projects."${workspace}"]\ntrust_level = "trusted"\ncustom_setting = true\n`,
         );
 
         const result = yield* runScan({ claudeHomePath, codexHomePath });

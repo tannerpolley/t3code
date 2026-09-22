@@ -1224,7 +1224,10 @@ export const make = Effect.gen(function* () {
                 path.resolve(expandHomePath(projectPath)),
               );
               const existing = codexProjectSettings.get(key);
-              if (existing === undefined || JSON.stringify(existing) === JSON.stringify(preview)) {
+              if (existing === undefined ||
+                (existing.trustLevel === preview.trustLevel &&
+                  existing.defaultRuntimeMode === preview.defaultRuntimeMode &&
+                  existing.unsupportedKeys.join("\n") === preview.unsupportedKeys.join("\n"))) {
                 codexProjectSettings.set(key, preview);
               } else {
                 codexProjectSettings.set(key, {
