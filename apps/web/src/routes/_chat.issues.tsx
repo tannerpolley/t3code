@@ -3,17 +3,15 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentAuthorizationError as EnvironmentAuthorizationErrorClass,
   IssueReadError as IssueReadErrorClass,
-  pullRequestHostOf,
   type EnvironmentId,
+  type IssueListState,
   type IssueRef,
   type IssueSummary,
-  type ProjectId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, CircleDotIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -27,6 +25,10 @@ import {
 import { groupIssuesByMilestone } from "../components/issues/issueTree.logic";
 import {
   filterAndSortIssues,
+  mergeIssueRepositoryTargets,
+  repositoryKey,
+  visibleIssueRepositoryTargets,
+  type IssueRepositoryTarget,
   type IssueAssigneeFilter,
   type IssueMilestoneFilter,
   type IssueSort,
@@ -48,18 +50,13 @@ import {
   type IssueSurface,
   type RightPanelSurface,
 } from "../rightPanelStore";
-import {
-  useAllEnvironmentShellsBootstrapped,
-  useProjects,
-  useThreadShell,
-} from "../state/entities";
+import { useAllEnvironmentShellsBootstrapped, useThreadShell } from "../state/entities";
 import { useEnvironments } from "../state/environments";
-import { useIssueLists, type IssueListTarget } from "../state/issues";
+import { useIssueLists, useIssueRepositories, type IssueListTarget } from "../state/issues";
 import { cn } from "~/lib/utils";
 
 export interface IssuesSearch {
   readonly environmentId?: EnvironmentId;
-  readonly projectId?: ProjectId;
   readonly host?: string;
   readonly repository?: string;
   readonly number?: number;
@@ -67,8 +64,8 @@ export interface IssuesSearch {
   readonly issueSort?: IssueSort;
   readonly issueMilestone?: IssueMilestoneFilter;
   readonly issueAssignee?: IssueAssigneeFilter;
+  readonly issueState?: IssueListState;
   readonly selectedEnvironmentId?: EnvironmentId;
-  readonly selectedProjectId?: ProjectId;
   readonly selectedHost?: string;
   readonly selectedRepository?: string;
   readonly selectedNumber?: number;
@@ -77,12 +74,6 @@ export interface IssuesSearch {
 
 type IssuesSearchPatch = {
   readonly [Key in keyof IssuesSearch]?: IssuesSearch[Key] | undefined;
-};
-
-type IssueProjectTarget = {
-  readonly project: EnvironmentProject;
-  readonly host: string;
-  readonly repository: string;
 };
 
 type IssueError = {
@@ -111,18 +102,11 @@ function optionalNumber(value: unknown): number | undefined {
   return Number.isSafeInteger(number) && number > 0 ? number : undefined;
 }
 
-function issueProjectTarget(project: EnvironmentProject): IssueProjectTarget | null {
-  const identity = project.repositoryIdentity;
-  if (identity?.provider !== "github") return null;
-  const repository =
-    identity.displayName ??
-    (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : undefined);
-  if (!repository) return null;
-  return {
-    project,
-    host: pullRequestHostOf(identity, "github"),
-    repository,
-  };
+function sameRepository(
+  left: { readonly host: string; readonly repository: string },
+  right: { readonly host: string; readonly repository: string },
+): boolean {
+  return repositoryKey(left.host, left.repository) === repositoryKey(right.host, right.repository);
 }
 
 function issueError(cause: Cause.Cause<unknown>, fallback: string | null): IssueError {
@@ -141,7 +125,7 @@ function issueError(cause: Cause.Cause<unknown>, fallback: string | null): Issue
         };
       case "scope-unavailable":
         return {
-          title: "Project scope unavailable",
+          title: "Repository unavailable",
           description: error.message,
           scopeUnavailable: true,
         };
@@ -186,9 +170,8 @@ function retryDeadline(retryAt: number): string {
 function issueListScopeKey(target: IssueListTarget): string {
   return JSON.stringify([
     target.environmentId,
-    target.input.projectId,
-    target.input.host?.trim().toLowerCase() ?? null,
-    target.input.repository?.trim().toLowerCase() ?? null,
+    repositoryKey(target.input.host, target.input.repository),
+    target.input.state ?? "open",
   ]);
 }
 
@@ -211,6 +194,10 @@ function issueMilestoneFilter(value: IssueMilestoneFilter | undefined): IssueMil
   return value === "with" || value === "without" ? value : DEFAULT_ISSUE_MILESTONE_FILTER;
 }
 
+function issueListState(value: IssueListState | undefined): IssueListState {
+  return value === "all" ? value : "open";
+}
+
 function issueAssigneeFilter(value: IssueAssigneeFilter | undefined): IssueAssigneeFilter {
   return value === "assigned" || value === "unassigned" ? value : DEFAULT_ISSUE_ASSIGNEE_FILTER;
 }
@@ -218,7 +205,6 @@ function issueAssigneeFilter(value: IssueAssigneeFilter | undefined): IssueAssig
 export const Route = createFileRoute("/_chat/issues")({
   validateSearch: (raw: Record<string, unknown>): IssuesSearch => {
     const environmentId = optionalString(raw.environmentId, 200);
-    const projectId = optionalString(raw.projectId, 200);
     const host = optionalString(raw.host);
     const repository = optionalString(raw.repository, 200);
     const number = optionalNumber(raw.number);
@@ -228,15 +214,14 @@ export const Route = createFileRoute("/_chat/issues")({
       | IssueMilestoneFilter
       | undefined;
     const issueAssigneeValue = optionalString(raw.issueAssignee) as IssueAssigneeFilter | undefined;
+    const issueStateValue = optionalString(raw.issueState) as IssueListState | undefined;
     const selectedEnvironmentId = optionalString(raw.selectedEnvironmentId, 200);
-    const selectedProjectId = optionalString(raw.selectedProjectId, 200);
     const selectedHost = optionalString(raw.selectedHost);
     const selectedRepository = optionalString(raw.selectedRepository, 200);
     const selectedNumber = optionalNumber(raw.selectedNumber);
     const originThreadId = optionalString(raw.originThreadId, 200);
     const result: IssuesSearch = {
       ...(environmentId === undefined ? {} : { environmentId: environmentId as EnvironmentId }),
-      ...(projectId === undefined ? {} : { projectId: projectId as ProjectId }),
       ...(host === undefined ? {} : { host }),
       ...(repository === undefined ? {} : { repository }),
       ...(number === undefined ? {} : { number }),
@@ -244,12 +229,10 @@ export const Route = createFileRoute("/_chat/issues")({
       ...(issueSortValue === undefined ? {} : { issueSort: issueSortValue }),
       ...(issueMilestoneValue === undefined ? {} : { issueMilestone: issueMilestoneValue }),
       ...(issueAssigneeValue === undefined ? {} : { issueAssignee: issueAssigneeValue }),
+      ...(issueStateValue === undefined ? {} : { issueState: issueStateValue }),
       ...(selectedEnvironmentId === undefined
         ? {}
         : { selectedEnvironmentId: selectedEnvironmentId as EnvironmentId }),
-      ...(selectedProjectId === undefined
-        ? {}
-        : { selectedProjectId: selectedProjectId as ProjectId }),
       ...(selectedHost === undefined ? {} : { selectedHost }),
       ...(selectedRepository === undefined ? {} : { selectedRepository }),
       ...(selectedNumber === undefined ? {} : { selectedNumber }),
@@ -264,7 +247,6 @@ function IssuesRouteView() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const isNarrow = useMediaQuery("max-md");
-  const projects = useProjects();
   const { environments } = useEnvironments();
   const environmentsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const environmentLabels = useMemo(
@@ -286,35 +268,34 @@ function IssuesRouteView() {
       ),
     [environments],
   );
-  const eligibleProjects = useMemo(
+  const capableEnvironmentList = useMemo(
     () =>
-      projects
-        .filter((project) => capableEnvironmentIds.has(project.environmentId))
-        .flatMap((project) => {
-          const target = issueProjectTarget(project);
-          return target === null ? [] : [target];
-        })
-        .toSorted(
-          (left, right) =>
-            (environmentLabels.get(left.project.environmentId) ?? "").localeCompare(
-              environmentLabels.get(right.project.environmentId) ?? "",
-            ) ||
-            left.project.title.localeCompare(right.project.title) ||
-            left.project.id.localeCompare(right.project.id),
-        ),
-    [capableEnvironmentIds, environmentLabels, projects],
+      [...capableEnvironmentIds].toSorted((left, right) =>
+        (environmentLabels.get(left) ?? left).localeCompare(environmentLabels.get(right) ?? right),
+      ),
+    [capableEnvironmentIds, environmentLabels],
   );
-  const explicitScope = search.environmentId !== undefined || search.projectId !== undefined;
-  const urlProject = useMemo(
+  const issueRepositories = useIssueRepositories(capableEnvironmentList);
+  const listState = issueListState(search.issueState);
+  // ponytail: when two environments share a GitHub account, the first (by label) reads each
+  // repository. Per-environment sections if that ever matters.
+  const repositoryTargets = useMemo(
     () =>
-      search.environmentId !== undefined && search.projectId !== undefined
-        ? (eligibleProjects.find(
-            (target) =>
-              target.project.environmentId === search.environmentId &&
-              target.project.id === search.projectId,
-          ) ?? null)
-        : null,
-    [eligibleProjects, search.environmentId, search.projectId],
+      mergeIssueRepositoryTargets(
+        capableEnvironmentList.flatMap((environmentId) => {
+          const answer = issueRepositories.answers.find(
+            (entry) => entry.environmentId === environmentId,
+          );
+          return answer === undefined
+            ? []
+            : [{ environmentId, repositories: answer.result.repositories }];
+        }),
+      ),
+    [capableEnvironmentList, issueRepositories.answers],
+  );
+  const repositoryErrors = useMemo(
+    () => issueRepositories.failures.map((failure) => issueError(failure.cause, null)),
+    [issueRepositories.failures],
   );
   const originThreadRef = useMemo<ScopedThreadRef | null>(
     () =>
@@ -324,31 +305,43 @@ function IssuesRouteView() {
     [search.environmentId, search.originThreadId],
   );
   const originThread = useThreadShell(originThreadRef);
-  const explicitScopeMissing = explicitScope && urlProject === null;
-  const visibleProjects = useMemo(
+  const explicitScope = search.repository !== undefined;
+  const urlRepository = useMemo(
+    () =>
+      search.repository === undefined
+        ? null
+        : (repositoryTargets.find((target) =>
+            sameRepository(target, {
+              host: search.host ?? target.host,
+              repository: search.repository!,
+            }),
+          ) ?? null),
+    [repositoryTargets, search.host, search.repository],
+  );
+  const explicitScopeMissing =
+    explicitScope && urlRepository === null && !issueRepositories.isPending;
+  const visibleRepositories = useMemo(
     () =>
       explicitScope
-        ? urlProject === null
+        ? urlRepository === null
           ? []
-          : [urlProject]
-        : search.host === undefined
-          ? eligibleProjects
-          : eligibleProjects.filter(
-              (target) => target.host.trim().toLowerCase() === search.host?.trim().toLowerCase(),
-            ),
-    [eligibleProjects, explicitScope, search.host, urlProject],
+          : [urlRepository]
+        : visibleIssueRepositoryTargets(repositoryTargets, {
+            host: search.host,
+            state: listState,
+          }),
+    [explicitScope, listState, repositoryTargets, search.host, urlRepository],
   );
+  const hiddenEmptyRepositoryCount = explicitScope
+    ? 0
+    : repositoryTargets.length - visibleRepositories.length;
   const baseListTargets = useMemo<ReadonlyArray<IssueListTarget>>(
     () =>
-      visibleProjects.map((target) => ({
-        environmentId: target.project.environmentId,
-        input: {
-          projectId: target.project.id,
-          host: explicitScope && search.host ? search.host : target.host,
-          repository: explicitScope && search.repository ? search.repository : target.repository,
-        },
+      visibleRepositories.map((target) => ({
+        environmentId: target.environmentId,
+        input: { host: target.host, repository: target.repository, state: listState },
       })),
-    [explicitScope, search.host, search.repository, visibleProjects],
+    [listState, visibleRepositories],
   );
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
@@ -431,7 +424,6 @@ function IssuesRouteView() {
           const next = { ...previous, ...patch };
           return {
             ...(next.environmentId ? { environmentId: next.environmentId } : {}),
-            ...(next.projectId ? { projectId: next.projectId } : {}),
             ...(next.host ? { host: next.host } : {}),
             ...(next.repository ? { repository: next.repository } : {}),
             ...(next.number ? { number: next.number } : {}),
@@ -439,10 +431,10 @@ function IssuesRouteView() {
             ...(next.issueSort ? { issueSort: next.issueSort } : {}),
             ...(next.issueMilestone ? { issueMilestone: next.issueMilestone } : {}),
             ...(next.issueAssignee ? { issueAssignee: next.issueAssignee } : {}),
+            ...(next.issueState === "all" ? { issueState: next.issueState } : {}),
             ...(next.selectedEnvironmentId
               ? { selectedEnvironmentId: next.selectedEnvironmentId }
               : {}),
-            ...(next.selectedProjectId ? { selectedProjectId: next.selectedProjectId } : {}),
             ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
             ...(next.selectedRepository ? { selectedRepository: next.selectedRepository } : {}),
             ...(next.selectedNumber ? { selectedNumber: next.selectedNumber } : {}),
@@ -453,16 +445,13 @@ function IssuesRouteView() {
     [navigate],
   );
 
-  const selectProject = useCallback(
-    (target: IssueProjectTarget) => {
+  const selectRepository = useCallback(
+    (target: IssueRepositoryTarget | null) => {
       updateSearch({
-        environmentId: target.project.environmentId,
-        projectId: target.project.id,
-        host: undefined,
-        repository: undefined,
+        host: target?.host,
+        repository: target?.repository,
         number: undefined,
         selectedEnvironmentId: undefined,
-        selectedProjectId: undefined,
         selectedHost: undefined,
         selectedRepository: undefined,
         selectedNumber: undefined,
@@ -488,8 +477,9 @@ function IssuesRouteView() {
       return next;
     });
     setDetailRefreshToken((token) => token + 1);
+    issueRepositories.refresh();
     issueLists.refresh(baseListTargets);
-  }, [baseListTargets, issueLists]);
+  }, [baseListTargets, issueLists, issueRepositories]);
   const loadMore = useCallback((key: string) => {
     setPagingByKey((current) => {
       const state = current[key];
@@ -531,12 +521,11 @@ function IssuesRouteView() {
   const resolveSurfaceEnvironmentId = useCallback(
     (surface: IssueSurface): EnvironmentId | null => {
       if (surface.environmentId !== undefined) return surface.environmentId as EnvironmentId;
-      const matchingProjects = eligibleProjects.filter(
-        (target) => target.project.id === surface.projectId,
+      return (
+        repositoryTargets.find((target) => sameRepository(target, surface))?.environmentId ?? null
       );
-      return matchingProjects.length === 1 ? matchingProjects[0]!.project.environmentId : null;
     },
-    [eligibleProjects],
+    [repositoryTargets],
   );
   const panelEnvironmentId = renderedIssueSurface
     ? resolveSurfaceEnvironmentId(renderedIssueSurface)
@@ -547,14 +536,12 @@ function IssuesRouteView() {
         surface === null
           ? {
               selectedEnvironmentId: undefined,
-              selectedProjectId: undefined,
               selectedHost: undefined,
               selectedRepository: undefined,
               selectedNumber: undefined,
             }
           : {
               selectedEnvironmentId: surface.environmentId as EnvironmentId | undefined,
-              selectedProjectId: surface.projectId as ProjectId,
               selectedHost: surface.host,
               selectedRepository: surface.repository,
               selectedNumber: surface.number,
@@ -598,99 +585,61 @@ function IssuesRouteView() {
     useRightPanelStore.getState().closeAllSurfaces(ISSUES_PANEL_REF);
     syncSelectedSurface(null);
   }, [syncSelectedSurface]);
-  const issueTargetFor = useCallback(
-    (
-      issue: IssueSummary,
-      target: IssueProjectTarget,
-      snapshot: IssueListSnapshot | null,
-    ): IssueRef => {
-      const repository = snapshot?.repository.repository ?? target.repository;
-      const host = snapshot?.repository.host ?? target.host;
-      return {
-        projectId: target.project.id,
-        host,
-        repository,
+  const selectIssue = useCallback(
+    (issue: IssueSummary, target: IssueRepositoryTarget, snapshot: IssueListSnapshot | null) => {
+      const reference: IssueRef = {
+        host: snapshot?.repository.host ?? target.host,
+        repository: snapshot?.repository.repository ?? target.repository,
         number: issue.number,
       };
-    },
-    [],
-  );
-  const selectIssue = useCallback(
-    (
-      issue: IssueSummary,
-      projectTarget: IssueProjectTarget,
-      snapshot: IssueListSnapshot | null,
-    ) => {
-      const target = issueTargetFor(issue, projectTarget, snapshot);
       const surfaceTarget = {
-        ...target,
-        environmentId: projectTarget.project.environmentId,
+        ...reference,
+        environmentId: target.environmentId,
         ...(safeExternalUrl(issue.url) ? { url: issue.url } : {}),
       };
       useRightPanelStore.getState().openIssue(ISSUES_PANEL_REF, surfaceTarget);
       syncSelectedSurface(issueSurface(surfaceTarget));
     },
-    [issueTargetFor, syncSelectedSurface],
+    [syncSelectedSurface],
   );
 
   const selectedUrlTarget = useMemo(() => {
-    if (
-      search.selectedNumber === undefined ||
-      search.selectedRepository === undefined ||
-      search.selectedProjectId === undefined
-    ) {
-      return null;
-    }
-    const matchingProjects = eligibleProjects.filter(
-      (target) =>
-        target.project.id === search.selectedProjectId &&
-        (search.selectedEnvironmentId === undefined ||
-          target.project.environmentId === search.selectedEnvironmentId),
-    );
-    const project = matchingProjects.length === 1 ? (matchingProjects[0] ?? null) : null;
-    const environmentId = search.selectedEnvironmentId ?? project?.project.environmentId;
+    if (search.selectedNumber === undefined || search.selectedRepository === undefined) return null;
+    const host = search.selectedHost ?? "github.com";
+    const environmentId =
+      search.selectedEnvironmentId ??
+      repositoryTargets.find((target) =>
+        sameRepository(target, { host, repository: search.selectedRepository! }),
+      )?.environmentId;
     if (environmentId === undefined) return null;
     return {
       environmentId,
-      projectId: search.selectedProjectId,
-      host: search.selectedHost ?? project?.host ?? "github.com",
+      host,
       repository: search.selectedRepository,
       number: search.selectedNumber,
     };
   }, [
+    repositoryTargets,
     search.selectedEnvironmentId,
     search.selectedHost,
     search.selectedNumber,
-    search.selectedProjectId,
     search.selectedRepository,
-    eligibleProjects,
   ]);
-  const listUrlTarget = useMemo(() => {
-    if (search.number === undefined || search.repository === undefined) return null;
-    const candidates = eligibleProjects.filter(
-      (target) =>
-        target.repository.trim().toLowerCase() === search.repository?.trim().toLowerCase() &&
-        (search.host === undefined ||
-          target.host.trim().toLowerCase() === search.host.trim().toLowerCase()),
-    );
-    const project =
-      explicitScope && urlProject !== null
-        ? urlProject
-        : candidates.length === 1
-          ? (candidates[0] ?? null)
-          : null;
-    if (project === null) return null;
-    return {
-      environmentId: project.project.environmentId,
-      projectId: project.project.id,
-      host: search.host ?? project.host,
-      repository: search.repository,
-      number: search.number,
-    };
-  }, [eligibleProjects, explicitScope, search.host, search.number, search.repository, urlProject]);
+  const listUrlTarget = useMemo(
+    () =>
+      search.number === undefined || urlRepository === null
+        ? null
+        : {
+            environmentId: urlRepository.environmentId,
+            host: urlRepository.host,
+            repository: urlRepository.repository,
+            number: search.number,
+          },
+    [search.number, urlRepository],
+  );
   const urlTarget = selectedUrlTarget ?? listUrlTarget;
   const openedUrlTargetKey = urlTarget
-    ? `${urlTarget.environmentId}:${urlTarget.projectId}:${urlTarget.host}:${urlTarget.repository}:${urlTarget.number}`
+    ? `${urlTarget.environmentId}:${urlTarget.host}:${urlTarget.repository}:${urlTarget.number}`
     : null;
   const openedUrlTargetRef = useRef<string | null>(null);
   useEffect(() => {
@@ -709,15 +658,13 @@ function IssuesRouteView() {
     originThreadRef !== null &&
     originThread !== null &&
     originThread.environmentId ===
-      (activeIssueSurface.environmentId ?? originThreadRef.environmentId) &&
-    originThread.projectId === activeIssueSurface.projectId
+      (activeIssueSurface.environmentId ?? originThreadRef.environmentId)
       ? originThreadRef
       : null;
   const openBesideThread = useCallback(() => {
     if (activeIssueSurface === null || originThreadForSurface === null) return;
     useRightPanelStore.getState().openIssue(originThreadForSurface, {
       environmentId: activeIssueSurface.environmentId ?? originThreadForSurface.environmentId,
-      projectId: activeIssueSurface.projectId,
       host: activeIssueSurface.host,
       repository: activeIssueSurface.repository,
       number: activeIssueSurface.number,
@@ -753,11 +700,9 @@ function IssuesRouteView() {
     environmentsBootstrapped;
   const refreshing = Object.values(pagingByKey).some((state) => state.refreshing);
   const scopeUnavailable = [...issueErrors.values()].some((error) => error.scopeUnavailable);
-  const selectedProjectKey =
-    explicitScope && urlProject !== null && !scopeUnavailable
-      ? `${urlProject.project.environmentId}:${urlProject.project.id}`
-      : "";
-  const hosts = [...new Set(eligibleProjects.map((target) => target.host))].toSorted(
+  const selectedRepositoryKey =
+    urlRepository === null ? "" : repositoryKey(urlRepository.host, urlRepository.repository);
+  const hosts = [...new Set(repositoryTargets.map((target) => target.host))].toSorted(
     (left, right) => left.localeCompare(right),
   );
   const filters = {
@@ -767,51 +712,39 @@ function IssuesRouteView() {
     assignee: issueAssigneeFilter(search.issueAssignee),
   };
 
-  const projectChooser =
-    eligibleProjects.length > 0 ? (
+  const repositoryChooser =
+    repositoryTargets.length > 0 ? (
       <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-        <span className="sr-only">GitHub project</span>
+        <span className="sr-only">GitHub repository</span>
         <select
-          aria-label="GitHub project"
+          aria-label="GitHub repository"
           className="min-w-0 max-w-full rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          value={selectedProjectKey}
-          onChange={(event) => {
-            if (event.target.value === "") {
-              updateSearch({
-                environmentId: undefined,
-                projectId: undefined,
-                host: undefined,
-                repository: undefined,
-                number: undefined,
-              });
-              return;
-            }
-            const target = eligibleProjects.find(
-              (entry) =>
-                `${entry.project.environmentId}:${entry.project.id}` === event.target.value,
-            );
-            if (target) selectProject(target);
-          }}
+          value={selectedRepositoryKey}
+          onChange={(event) =>
+            selectRepository(
+              repositoryTargets.find(
+                (target) => repositoryKey(target.host, target.repository) === event.target.value,
+              ) ?? null,
+            )
+          }
         >
-          <option value="">All projects</option>
-          {eligibleProjects.map((target) => (
+          <option value="">All repositories</option>
+          {repositoryTargets.map((target) => (
             <option
-              key={`${target.project.environmentId}:${target.project.id}`}
-              value={`${target.project.environmentId}:${target.project.id}`}
+              key={repositoryKey(target.host, target.repository)}
+              value={repositoryKey(target.host, target.repository)}
             >
-              {target.project.title} ·{" "}
-              {environmentLabels.get(target.project.environmentId) ?? target.project.environmentId}
+              {target.repository}
             </option>
           ))}
         </select>
       </label>
     ) : null;
 
-  const projectSections = visibleProjects.map((target) => {
+  const repositorySections = visibleRepositories.map((target) => {
     const baseTarget = baseListTargets.find(
       (candidate) =>
-        candidate.environmentId === target.project.environmentId &&
-        candidate.input.projectId === target.project.id,
+        candidate.environmentId === target.environmentId && sameRepository(candidate.input, target),
     );
     if (baseTarget === undefined) return null;
     const key = issueListScopeKey(baseTarget);
@@ -830,24 +763,24 @@ function IssuesRouteView() {
           issues: filterAndSortIssues(group.issues, filters),
         }))
       : [];
-    const host = snapshot?.repository.host ?? target.host;
-    const repository = snapshot?.repository.repository ?? target.repository;
     const selectedIssueNumber =
       activeIssueSurface !== null &&
-      activeIssueSurface.environmentId === target.project.environmentId &&
-      activeIssueSurface.projectId === target.project.id &&
-      activeIssueSurface.host.trim().toLowerCase() === host.trim().toLowerCase() &&
-      activeIssueSurface.repository.trim().toLowerCase() === repository.trim().toLowerCase()
+      activeIssueSurface.environmentId === target.environmentId &&
+      sameRepository(activeIssueSurface, target)
         ? activeIssueSurface.number
         : undefined;
 
     return (
       <section key={key} className="border-b border-border/60 pb-3 last:border-b-0">
         <div className="px-4 pb-2 pt-3">
-          <h2 className="text-sm font-semibold">{target.project.title}</h2>
+          <h2 className="text-sm font-semibold">{target.repository}</h2>
           <p className="text-xs text-muted-foreground">
-            {host}/{repository} ·{" "}
-            {environmentLabels.get(target.project.environmentId) ?? target.project.environmentId}
+            {target.host}
+            {target.isPrivate ? " · private" : ""}
+            {target.ownerIsOrganization ? " · organization" : ""}
+            {capableEnvironmentList.length > 1
+              ? ` · ${environmentLabels.get(target.environmentId) ?? target.environmentId}`
+              : ""}
           </p>
         </div>
         {snapshot === null && error === null ? (
@@ -872,7 +805,11 @@ function IssuesRouteView() {
           </div>
         ) : snapshot !== null ? (
           <>
-            {filteredIssues.length === 0 && snapshot.issues.length > 0 ? (
+            {snapshot.issues.length === 0 && snapshot.issuesComplete ? (
+              <p className="px-4 py-4 text-sm text-muted-foreground">
+                {listState === "open" ? "No open issues." : "No issues."}
+              </p>
+            ) : filteredIssues.length === 0 && snapshot.issues.length > 0 ? (
               <p className="px-4 py-4 text-sm text-muted-foreground">
                 No issues match these filters.
               </p>
@@ -923,34 +860,56 @@ function IssuesRouteView() {
         <EmptyDescription>Update a T3 Code server with GitHub Issues support.</EmptyDescription>
       </EmptyHeader>
     </Empty>
+  ) : repositoryTargets.length === 0 && issueRepositories.isPending ? (
+    <div className="flex min-h-56 items-center justify-center gap-2 text-xs text-muted-foreground">
+      <Spinner className="size-4" />
+      Loading repositories
+    </div>
+  ) : repositoryTargets.length === 0 && repositoryErrors.length > 0 ? (
+    <Empty className="min-h-56 flex-none py-12">
+      <EmptyHeader>
+        <EmptyTitle>{repositoryErrors[0]!.title}</EmptyTitle>
+        <EmptyDescription>{repositoryErrors[0]!.description}</EmptyDescription>
+      </EmptyHeader>
+      <Button onClick={refreshIssues} size="xs" variant="outline">
+        Retry
+      </Button>
+    </Empty>
   ) : explicitScopeMissing ? (
     <Empty className="min-h-56 flex-none py-12">
       <EmptyHeader>
-        <EmptyTitle>Project unavailable</EmptyTitle>
+        <EmptyTitle>Repository unavailable</EmptyTitle>
         <EmptyDescription>
-          The URL's environment and project are no longer available.
+          This repository is not one you own or administer on GitHub.
         </EmptyDescription>
       </EmptyHeader>
-      {projectChooser}
+      {repositoryChooser}
     </Empty>
-  ) : eligibleProjects.length === 0 ? (
+  ) : repositoryTargets.length === 0 ? (
     <Empty className="min-h-56 flex-none py-12">
       <EmptyHeader>
-        <EmptyTitle>No GitHub projects</EmptyTitle>
+        <EmptyTitle>No GitHub repositories</EmptyTitle>
         <EmptyDescription>
-          Register a project with a GitHub remote to view its issues.
+          No repositories you own or administer have issues enabled.
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
-  ) : visibleProjects.length === 0 ? (
+  ) : visibleRepositories.length === 0 ? (
     <Empty className="min-h-56 flex-none py-12">
       <EmptyHeader>
-        <EmptyTitle>No projects match this host</EmptyTitle>
-        <EmptyDescription>Choose All hosts to restore the workspace list.</EmptyDescription>
+        <EmptyTitle>No open issues</EmptyTitle>
+        <EmptyDescription>Choose Open and closed to include closed issues.</EmptyDescription>
       </EmptyHeader>
     </Empty>
   ) : (
-    projectSections
+    <>
+      {repositorySections}
+      {hiddenEmptyRepositoryCount > 0 ? (
+        <p className="px-4 py-3 text-xs text-muted-foreground">
+          {hiddenEmptyRepositoryCount} repositories with no open issues are hidden.
+        </p>
+      ) : null}
+    </>
   );
 
   const listColumn = (
@@ -984,7 +943,16 @@ function IssuesRouteView() {
             type="search"
             value={search.issueQuery ?? ""}
           />
-          {projectChooser}
+          {repositoryChooser}
+          <select
+            aria-label="Filter issues by state"
+            className="rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground"
+            onChange={(event) => updateSearch({ issueState: event.target.value as IssueListState })}
+            value={listState}
+          >
+            <option value="open">Open</option>
+            <option value="all">Open and closed</option>
+          </select>
           <select
             aria-label="Filter issues by GitHub host"
             className="rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground"
@@ -1092,7 +1060,6 @@ function IssuesRouteView() {
           {...(originThreadForSurface === null ? {} : { onOpenBesideThread: openBesideThread })}
           refreshToken={detailRefreshToken}
           reference={{
-            projectId: renderedIssueSurface.projectId as ProjectId,
             host: renderedIssueSurface.host,
             repository: renderedIssueSurface.repository,
             number: renderedIssueSurface.number,
@@ -1120,7 +1087,6 @@ function IssuesRouteView() {
           {...(originThreadForSurface === null ? {} : { onOpenBesideThread: openBesideThread })}
           refreshToken={detailRefreshToken}
           reference={{
-            projectId: renderedIssueSurface.projectId as ProjectId,
             host: renderedIssueSurface.host,
             repository: renderedIssueSurface.repository,
             number: renderedIssueSurface.number,

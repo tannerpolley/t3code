@@ -12,8 +12,6 @@ export interface IssueListSnapshot {
   readonly generation: number;
   readonly pageCount: number;
   readonly repository: IssueListResult["repository"];
-  readonly projectTitle: string;
-  readonly workspaceRoot: string;
   readonly viewer: IssueListResult["viewer"];
   readonly fetchedAt: string;
   readonly issues: readonly IssueSummary[];
@@ -68,8 +66,6 @@ export function acceptIssueListPage(
     generation: page.generation,
     pageCount: replace ? 1 : current.pageCount + 1,
     repository: page.result.repository,
-    projectTitle: page.result.projectTitle,
-    workspaceRoot: page.result.workspaceRoot,
     viewer: page.result.viewer,
     fetchedAt: page.result.fetchedAt,
     issues: [...issuesByNumber.values()],

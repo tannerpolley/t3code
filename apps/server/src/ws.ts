@@ -2518,6 +2518,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {
             "rpc.aggregate": "pull-requests",
           }),
+        [WS_METHODS.issuesRepositories]: () =>
+          observeRpcEffect(WS_METHODS.issuesRepositories, issues.repositories(), {
+            "rpc.aggregate": "issues",
+          }),
         [WS_METHODS.issuesList]: (input) =>
           observeRpcEffect(WS_METHODS.issuesList, issues.list(input), {
             "rpc.aggregate": "issues",

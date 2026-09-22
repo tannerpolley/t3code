@@ -137,15 +137,17 @@ does not show its diff, so marks are made and read on web and desktop.
 
 ## Browse GitHub issues
 
-When a connected environment has GitHub Issues support, open **Issues** from the sidebar. The
-workspace loads open issues from every registered GitHub project and groups them by project,
-repository, and milestone. Search the workspace or narrow it by project, GitHub host, milestone,
-or assignment; use the sort control to change the order within each milestone.
+When a connected environment has GitHub Issues support, open **Issues** from the sidebar. It lists
+issues from every repository your GitHub account owns and every organization repository you
+administer, whether or not the repository is a T3 Code project. Repositories you only collaborate
+on, including the upstream of a fork, are left out. Issues are grouped by repository and milestone.
+
+Open issues are shown by default; choose **Open and closed** to include closed ones. Repositories
+with no open issues are hidden in the open view. Search, or narrow by repository, host, milestone, or
+assignment, and use the sort control to order issues within each milestone.
 
 Select an issue to open its read-only details in a resizable panel; use **Open on GitHub** for
-comments or other actions. Each project loads more results independently. A project or environment
-named in an Issues link is kept explicit, so an unavailable scope is shown instead of silently
-opening a different repository.
+comments or other actions.
 
 ## Troubleshooting
 

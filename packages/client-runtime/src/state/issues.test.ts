@@ -1,7 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
-  ProjectId,
   WS_METHODS,
   type IssueDetailInput,
   type IssueDetailResult,
@@ -32,15 +31,12 @@ it.effect("keeps a late issue response on its own issue and environment", () =>
       const firstStarted = yield* Deferred.make<void>();
       const firstResult = yield* Deferred.make<IssueDetailResult>();
       const reference = {
-        projectId: ProjectId.make("project"),
         host: "github.com",
         repository: "owner/repo",
         number: 1,
       };
       const response = (number: number, title: string): IssueDetailResult => ({
-        repository: reference,
-        projectTitle: "Project",
-        workspaceRoot: "/workspace",
+        repository: { host: reference.host, repository: reference.repository },
         viewer: { accountId: "42", login: "reader" },
         fetchedAt: "2026-09-21T00:00:00Z",
         body: title,

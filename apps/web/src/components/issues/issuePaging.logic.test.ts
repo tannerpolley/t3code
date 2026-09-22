@@ -1,9 +1,4 @@
-import {
-  ProjectId,
-  type IssueListResult,
-  type IssueMilestone,
-  type IssueSummary,
-} from "@t3tools/contracts";
+import { type IssueListResult, type IssueMilestone, type IssueSummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { acceptIssueListPage } from "./issuePaging.logic";
@@ -41,13 +36,7 @@ function result(
   fetchedAt: string,
 ): IssueListResult {
   return {
-    repository: {
-      projectId: ProjectId.make("project"),
-      host: "github.com",
-      repository: "acme/app",
-    },
-    projectTitle: "App",
-    workspaceRoot: "/workspace/app",
+    repository: { host: "github.com", repository: "acme/app" },
     viewer: null,
     fetchedAt,
     issues,

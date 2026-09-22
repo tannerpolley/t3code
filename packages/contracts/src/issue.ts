@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const IssueNumber = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
@@ -13,10 +13,8 @@ const Cursor = TrimmedNonEmptyString.check(Schema.isMaxLength(4096));
 const IssueUrl = TrimmedNonEmptyString.check(Schema.isMaxLength(2048)).check(
   Schema.isPattern(/^https?:\/\/[^\s]+$/i),
 );
-const WorkspaceRoot = TrimmedNonEmptyString.check(Schema.isMaxLength(4096));
-
+/** Issues are scoped by repository, independent of which T3 projects are open. */
 export const IssueRepositoryRef = Schema.Struct({
-  projectId: ProjectId,
   host: Host,
   repository: Repository,
 });
@@ -70,18 +68,18 @@ export const IssueViewer = Schema.Struct({
 });
 export type IssueViewer = typeof IssueViewer.Type;
 
+export const IssueListState = Schema.Literals(["open", "all"]);
+export type IssueListState = typeof IssueListState.Type;
+
 export const IssueListInput = Schema.Struct({
-  projectId: ProjectId,
-  host: Schema.optional(Host),
-  repository: Schema.optional(Repository),
+  ...IssueRepositoryRef.fields,
+  state: Schema.optional(IssueListState),
   cursor: Schema.optional(Cursor),
 });
 export type IssueListInput = typeof IssueListInput.Type;
 
 const IssueContext = {
   repository: IssueRepositoryRef,
-  projectTitle: Schema.String,
-  workspaceRoot: WorkspaceRoot,
   viewer: Schema.NullOr(IssueViewer),
   fetchedAt: IsoDateTime,
 };
@@ -95,6 +93,25 @@ export const IssueListResult = Schema.Struct({
   milestonesComplete: Schema.Boolean,
 });
 export type IssueListResult = typeof IssueListResult.Type;
+
+export const IssueRepositorySummary = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  owner: TrimmedNonEmptyString,
+  ownerIsOrganization: Schema.Boolean,
+  isPrivate: Schema.Boolean,
+  /** GitHub's open_issues_count, which also counts open pull requests. */
+  openIssuesAndPullRequests: NonNegativeInt,
+  pushedAt: Schema.NullOr(IsoDateTime),
+});
+export type IssueRepositorySummary = typeof IssueRepositorySummary.Type;
+
+export const IssueRepositoriesResult = Schema.Struct({
+  viewer: IssueViewer,
+  repositories: Schema.Array(IssueRepositorySummary),
+  complete: Schema.Boolean,
+  fetchedAt: IsoDateTime,
+});
+export type IssueRepositoriesResult = typeof IssueRepositoriesResult.Type;
 
 export const IssueDetailInput = Schema.Struct({
   ...IssueRef.fields,
@@ -122,7 +139,7 @@ export class IssueReadError extends Schema.TaggedError<IssueReadError>()("IssueR
     "invalid-response",
     "upstream",
   ]),
-  operation: Schema.Literals(["list", "detail"]),
+  operation: Schema.Literals(["repositories", "list", "detail"]),
   message: Schema.String,
   retryAt: Schema.optional(Schema.Finite),
 }) {}

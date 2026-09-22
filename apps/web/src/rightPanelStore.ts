@@ -44,7 +44,6 @@ export type IssueSurface = {
   id: `issue:${string}`;
   kind: "issue";
   environmentId?: string;
-  projectId: string;
   host: string;
   repository: string;
   number: number;
@@ -106,7 +105,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v12 adds the device surface.
 // v14 removes the agents surface; lineage lives in the thread title bar.
 // v15 adds issue surfaces and the session-only issues panel.
-const RIGHT_PANEL_STORAGE_VERSION = 15;
+// v16 keys issue surfaces by repository instead of project.
+const RIGHT_PANEL_STORAGE_VERSION = 16;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -307,7 +307,7 @@ export function issueSurfaceId(
 ): IssueSurface["id"] {
   const scope =
     target.environmentId === undefined ? "" : `${encodeURIComponent(target.environmentId)}:`;
-  return `issue:${scope}${encodeURIComponent(target.projectId)}:${encodeURIComponent(target.host.trim().toLowerCase())}:${encodeURIComponent(target.repository.trim().toLowerCase())}:${target.number}`;
+  return `issue:${scope}${encodeURIComponent(target.host.trim().toLowerCase())}:${encodeURIComponent(target.repository.trim().toLowerCase())}:${target.number}`;
 }
 
 export function issueSurface(target: Omit<IssueSurface, "id" | "kind">): IssueSurface {
@@ -315,7 +315,6 @@ export function issueSurface(target: Omit<IssueSurface, "id" | "kind">): IssueSu
     id: issueSurfaceId(target),
     kind: "issue",
     ...(target.environmentId === undefined ? {} : { environmentId: target.environmentId }),
-    projectId: target.projectId,
     host: target.host.trim().toLowerCase(),
     repository: target.repository,
     number: target.number,
@@ -517,8 +516,6 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     }
                     if (surface.kind === "issue") {
                       if (
-                        typeof surface.projectId !== "string" ||
-                        surface.projectId.trim().length === 0 ||
                         typeof surface.host !== "string" ||
                         surface.host.trim().length === 0 ||
                         typeof surface.repository !== "string" ||
@@ -534,7 +531,6 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           ...(typeof surface.environmentId === "string"
                             ? { environmentId: surface.environmentId }
                             : {}),
-                          projectId: surface.projectId,
                           host: surface.host,
                           repository: surface.repository,
                           number: surface.number,

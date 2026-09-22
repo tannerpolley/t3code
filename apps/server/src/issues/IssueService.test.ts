@@ -3,39 +3,17 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { IssueReadError, ProjectId, type OrchestrationProjectShell } from "@t3tools/contracts";
+import { IssueReadError } from "@t3tools/contracts";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import * as GitHubPullRequestCli from "../pullRequest/GitHubPullRequestCli.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as IssueService from "./IssueService.ts";
 
-const PROJECT_ID = ProjectId.make("issues-project");
 const HOST = "github.enterprise.test";
 const REPOSITORY = "acme/web";
 const ACCOUNT_ID = "account-1";
 type MockResponse = string | { readonly stdout: string; readonly exitCode: number };
-
-const project: OrchestrationProjectShell = {
-  id: PROJECT_ID,
-  title: "Registered project",
-  workspaceRoot: "/registered/workspace",
-  repositoryIdentity: {
-    canonicalKey: `${HOST}/${REPOSITORY}`,
-    locator: {
-      source: "git-remote",
-      remoteName: "origin",
-      remoteUrl: `https://${HOST}/${REPOSITORY}.git`,
-    },
-    provider: "github",
-    displayName: REPOSITORY,
-  },
-  defaultModelSelection: null,
-  scripts: [],
-  createdAt: "2026-01-01T00:00:00Z",
-  updatedAt: "2026-01-01T00:00:00Z",
-};
 
 function rawIssue(number: number, overrides: Readonly<Record<string, unknown>> = {}) {
   return {
@@ -145,10 +123,7 @@ function makeHarness(input: {
       }),
     recordSuccess: () => Effect.void,
   });
-  const projections = Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-    getProjectShellById: () => Effect.succeedSome(project),
-  });
-  const layer = Layer.mergeAll(projections, github, verifier, rateLimits);
+  const layer = Layer.mergeAll(github, verifier, rateLimits);
   return { layer, calls, rateLimitRecords };
 }
 
@@ -157,7 +132,6 @@ function service(harness: ReturnType<typeof makeHarness>) {
 }
 
 const listInput = {
-  projectId: PROJECT_ID,
   host: HOST,
   repository: REPOSITORY,
 };
@@ -249,17 +223,111 @@ it.effect("continues milestones after issues finish and does not request issues 
   }),
 );
 
-it.effect("rejects a repository outside the registered project scope", () =>
+it.effect("rejects a repository that cannot be addressed before calling GitHub", () =>
   Effect.gen(function* () {
     const harness = makeHarness({ responses: [] });
     const issues = yield* service(harness);
     const error = yield* issues
-      .list({ projectId: PROJECT_ID, host: HOST, repository: "other/repository" })
+      .list({ host: HOST, repository: "not-a-repository" })
       .pipe(Effect.flip);
 
     assert.isTrue(Schema.is(IssueReadError)(error));
     assert.equal(error.code, "scope-unavailable");
     assert.deepEqual(harness.calls, []);
+  }),
+);
+
+it.effect("reads closed issues only when asked and keeps cursors bound to their state", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(7), rawIssue(8, { state: "closed" })], {
+          link: `<https://${HOST}/repositories/123/issues?page=2>; rel="next"`,
+        }),
+        httpResponse([]),
+      ],
+    });
+    const issues = yield* service(harness);
+    const all = yield* issues.list({ ...listInput, state: "all" });
+
+    assert.deepEqual(
+      all.issues.map((issue) => [issue.number, issue.state]),
+      [
+        [7, "open"],
+        [8, "closed"],
+      ],
+    );
+    assert.include(harness.calls[0]!.join(" "), "/issues?state=all");
+    assert.include(harness.calls[1]!.join(" "), "/milestones?state=all");
+
+    const error = yield* issues
+      .list({ ...listInput, state: "open", cursor: all.nextCursor! })
+      .pipe(Effect.flip);
+    assert.equal(error.code, "invalid-cursor");
+    assert.equal(harness.calls.length, 2);
+  }),
+);
+
+function rawRepository(
+  fullName: string,
+  overrides: Readonly<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    full_name: fullName,
+    owner: { login: fullName.split("/")[0], type: "User" },
+    private: false,
+    archived: false,
+    has_issues: true,
+    open_issues_count: 3,
+    pushed_at: "2026-01-03T00:00:00Z",
+    permissions: { admin: false },
+    ...overrides,
+  };
+}
+
+it.effect("lists only repositories the viewer owns or administers, across pages", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse(
+          [
+            rawRepository("octocat/app"),
+            rawRepository("OctoCat/Fork", { has_issues: false }),
+            rawRepository("octocat/old", { archived: true }),
+            rawRepository("acme/admin", {
+              owner: { login: "acme", type: "Organization" },
+              permissions: { admin: true },
+            }),
+          ],
+          { link: `<https://api.github.com/user/repos?page=2>; rel="next"` },
+        ),
+        httpResponse([
+          rawRepository("acme/member", {
+            owner: { login: "acme", type: "Organization" },
+            permissions: { admin: false },
+          }),
+          rawRepository("someone/collab", { permissions: { admin: true } }),
+          rawRepository("octocat/app"),
+        ]),
+      ],
+    });
+    const issues = yield* service(harness);
+    const result = yield* issues.repositories();
+
+    assert.deepEqual(
+      result.repositories.map((repository) => [
+        repository.repository,
+        repository.ownerIsOrganization,
+      ]),
+      [
+        ["octocat/app", false],
+        ["acme/admin", true],
+      ],
+    );
+    assert.isTrue(result.complete);
+    assert.equal(result.viewer.login, "octocat");
+    assert.include(harness.calls[0]!.join(" "), "user/repos?affiliation=owner,organization_member");
+    assert.include(harness.calls[1]!.join(" "), "page=2");
   }),
 );
 
@@ -269,7 +337,7 @@ it.effect("maps credential failures without exposing credential details", () =>
       responses: [],
       verificationError: new GitHubCli.GitHubCliAuthenticationError({
         command: "gh",
-        cwd: project.workspaceRoot,
+        cwd: "/home/test",
         cause: new Error("token=do-not-return-this"),
       }),
     });

@@ -4,11 +4,16 @@ import type { Atom } from "effect/unstable/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
-/** Issue reads stay on the environment that owns the selected project. */
+/** Issue reads run on the environment whose GitHub credential the user selected. */
 export function createIssueEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    repositories: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:issues:repositories",
+      tag: WS_METHODS.issuesRepositories,
+      staleTimeMs: 5 * 60_000,
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:list",
       tag: WS_METHODS.issuesList,

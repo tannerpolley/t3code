@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createIssueEnvironmentAtoms } from "@t3tools/client-runtime/state/issues";
-import type { EnvironmentId, IssueListInput, IssueListResult } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueListInput,
+  IssueListResult,
+  IssueRepositoriesResult,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -69,5 +74,58 @@ export function useIssueLists(targets: ReadonlyArray<IssueListTarget>) {
     },
     [key],
   );
+  return { ...view, refresh };
+}
+
+export interface IssueRepositoriesAnswer {
+  readonly environmentId: EnvironmentId;
+  readonly result: IssueRepositoriesResult;
+}
+
+export interface IssueRepositoriesFailure {
+  readonly environmentId: EnvironmentId;
+  readonly cause: Cause.Cause<unknown>;
+}
+
+interface IssueRepositoriesView {
+  readonly answers: ReadonlyArray<IssueRepositoriesAnswer>;
+  readonly failures: ReadonlyArray<IssueRepositoriesFailure>;
+  readonly isPending: boolean;
+}
+
+const issueRepositories = Atom.family((key: string) =>
+  Atom.make((get): IssueRepositoriesView => {
+    const environmentIds = JSON.parse(key) as ReadonlyArray<EnvironmentId>;
+    const answers: IssueRepositoriesAnswer[] = [];
+    const failures: IssueRepositoriesFailure[] = [];
+    let isPending = false;
+    for (const environmentId of environmentIds) {
+      const result = get(issueEnvironment.repositories({ environmentId, input: {} }));
+      isPending ||= result.waiting;
+      const value = Option.getOrNull(AsyncResult.value(result));
+      if (value !== null) answers.push({ environmentId, result: value });
+      if (result._tag === "Failure") failures.push({ environmentId, cause: result.cause });
+    }
+    return { answers, failures, isPending };
+  }).pipe(Atom.withLabel(`web-issues:repositories:${key}`)),
+);
+
+const EMPTY_ISSUE_REPOSITORIES = Atom.make<IssueRepositoriesView>({
+  answers: [],
+  failures: [],
+  isPending: false,
+}).pipe(Atom.withLabel("web-issues:repositories:empty"));
+
+/** The repositories each environment's GitHub account owns or administers. */
+export function useIssueRepositories(environmentIds: ReadonlyArray<EnvironmentId>) {
+  const key = JSON.stringify(environmentIds);
+  const view = useAtomValue(
+    environmentIds.length === 0 ? EMPTY_ISSUE_REPOSITORIES : issueRepositories(key),
+  );
+  const refresh = useCallback(() => {
+    for (const environmentId of JSON.parse(key) as ReadonlyArray<EnvironmentId>) {
+      appAtomRegistry.refresh(issueEnvironment.repositories({ environmentId, input: {} }));
+    }
+  }, [key]);
   return { ...view, refresh };
 }

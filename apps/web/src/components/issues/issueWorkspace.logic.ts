@@ -1,4 +1,9 @@
-import type { IssueSummary } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueListState,
+  IssueRepositorySummary,
+  IssueSummary,
+} from "@t3tools/contracts";
 
 export type IssueSort = "updated" | "oldest" | "number" | "title";
 export type IssueMilestoneFilter = "all" | "with" | "without";
@@ -54,4 +59,52 @@ export function filterAndSortIssues(
           return right.updatedAt.localeCompare(left.updatedAt) || right.number - left.number;
       }
     });
+}
+
+export type IssueRepositoryTarget = IssueRepositorySummary & {
+  readonly environmentId: EnvironmentId;
+};
+
+export function repositoryKey(host: string, repository: string): string {
+  return `${host.trim().toLowerCase()}/${repository.trim().toLowerCase()}`;
+}
+
+/**
+ * Merges each environment's repositories in environment order; a repository reachable from two
+ * environments is read through the first. Most recently pushed repositories come first.
+ */
+export function mergeIssueRepositoryTargets(
+  answers: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly repositories: ReadonlyArray<IssueRepositorySummary>;
+  }>,
+): IssueRepositoryTarget[] {
+  const seen = new Set<string>();
+  const targets: IssueRepositoryTarget[] = [];
+  for (const answer of answers) {
+    for (const repository of answer.repositories) {
+      const key = repositoryKey(repository.host, repository.repository);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      targets.push({ ...repository, environmentId: answer.environmentId });
+    }
+  }
+  return targets.toSorted(
+    (left, right) =>
+      (right.pushedAt ?? "").localeCompare(left.pushedAt ?? "") ||
+      left.repository.localeCompare(right.repository),
+  );
+}
+
+/** The open view skips repositories whose open issue and pull request count is zero. */
+export function visibleIssueRepositoryTargets(
+  targets: ReadonlyArray<IssueRepositoryTarget>,
+  filter: { readonly host: string | undefined; readonly state: IssueListState },
+): IssueRepositoryTarget[] {
+  const host = filter.host?.trim().toLowerCase();
+  return targets.filter(
+    (target) =>
+      (host === undefined || target.host === host) &&
+      (filter.state === "all" || target.openIssuesAndPullRequests > 0),
+  );
 }

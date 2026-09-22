@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -11,30 +13,30 @@ import {
   IssueMilestone,
   IssueReadError,
   NonNegativeInt,
-  ProjectId,
   TrimmedNonEmptyString,
   type IssueDetailInput as IssueDetailInputType,
   type IssueDetailResult as IssueDetailResultType,
   type IssueListInput as IssueListInputType,
   type IssueListResult as IssueListResultType,
+  type IssueListState,
+  type IssueRepositoriesResult as IssueRepositoriesResultType,
+  type IssueRepositorySummary,
   type IssueSummary as IssueSummaryType,
-  pullRequestHostOf,
 } from "@t3tools/contracts";
-import {
-  canonicalRepositoryKey,
-  sourceControlRepositorySelector,
-} from "@t3tools/shared/sourceControl";
+import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import * as GitHubPullRequestCli from "../pullRequest/GitHubPullRequestCli.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 const API_TIMEOUT_MS = 30_000;
 const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DETAIL_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MAX_PAGE = 1_000_000;
 const CURSOR_MAX_LENGTH = 4_096;
+const GITHUB_HOST = "github.com";
+// ponytail: 10 pages (1,000 repos) caps the repository scan; raise it if an account outgrows it.
+const REPOSITORY_MAX_PAGES = 10;
 
 const IssueNumber = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
@@ -72,9 +74,21 @@ const RawIssueSchema = Schema.Struct({
   pull_request: Schema.optional(Schema.Unknown),
 });
 
+const RawRepositorySchema = Schema.Struct({
+  full_name: TrimmedNonEmptyString,
+  owner: Schema.Struct({ login: TrimmedNonEmptyString, type: Schema.String }),
+  private: Schema.Boolean,
+  archived: Schema.Boolean,
+  has_issues: Schema.Boolean,
+  open_issues_count: NonNegativeInt,
+  pushed_at: Schema.optional(Schema.NullOr(IsoDateTime)),
+  permissions: Schema.optional(Schema.Struct({ admin: Schema.Boolean })),
+});
+type RawRepository = Schema.Schema.Type<typeof RawRepositorySchema>;
+
 const IssueCursorSchema = Schema.Struct({
-  v: Schema.Literal(1),
-  projectId: ProjectId,
+  v: Schema.Literal(2),
+  state: Schema.Literals(["open", "all"]),
   host: TrimmedNonEmptyString,
   repository: TrimmedNonEmptyString,
   accountId: TrimmedNonEmptyString,
@@ -84,13 +98,13 @@ const IssueCursorSchema = Schema.Struct({
 type IssueCursor = Schema.Schema.Type<typeof IssueCursorSchema>;
 type RawIssue = Schema.Schema.Type<typeof RawIssueSchema>;
 
-interface IssueProjectScope {
+interface IssueRepositoryScope {
   readonly cwd: string;
-  readonly projectId: ProjectId;
-  readonly projectTitle: string;
   readonly host: string;
   readonly repository: string;
 }
+
+type IssueOperation = IssueReadError["operation"];
 
 interface ApiResponse {
   readonly body: string;
@@ -105,7 +119,7 @@ interface PageResult<A> {
 }
 
 function readError(
-  operation: "list" | "detail",
+  operation: IssueOperation,
   code: IssueReadError["code"],
   message: string,
   retryAt?: number,
@@ -285,7 +299,7 @@ function isRateLimitedResponse(response: ApiResponse): boolean {
 }
 
 function mapGitHubError(
-  operation: "list" | "detail",
+  operation: IssueOperation,
   error: GitHubPullRequestCli.GitHubPullRequestCliError,
 ): IssueReadError {
   switch (error._tag) {
@@ -326,6 +340,40 @@ function mapGitHubError(
   }
 }
 
+/**
+ * Repositories the viewer controls: ones they own, plus organization repositories they
+ * administer. Archived repositories and ones with issues disabled are left out.
+ */
+export function selectIssueRepositories(
+  host: string,
+  viewerLogin: string,
+  repositories: ReadonlyArray<RawRepository>,
+): IssueRepositorySummary[] {
+  const viewer = viewerLogin.toLowerCase();
+  const seen = new Set<string>();
+  const selected: IssueRepositorySummary[] = [];
+  for (const repository of repositories) {
+    const ownedByViewer = repository.owner.login.toLowerCase() === viewer;
+    const administeredOrganization =
+      repository.owner.type === "Organization" && repository.permissions?.admin === true;
+    if (repository.archived || !repository.has_issues) continue;
+    if (!ownedByViewer && !administeredOrganization) continue;
+    const name = safeRepository(host, repository.full_name);
+    if (name === null || seen.has(name)) continue;
+    seen.add(name);
+    selected.push({
+      host,
+      repository: name,
+      owner: repository.owner.login,
+      ownerIsOrganization: repository.owner.type === "Organization",
+      isPrivate: repository.private,
+      openIssuesAndPullRequests: repository.open_issues_count,
+      pushedAt: repository.pushed_at ?? null,
+    });
+  }
+  return selected;
+}
+
 function decodeCursor(raw: string): IssueCursor | null {
   if (raw.length === 0 || raw.length > CURSOR_MAX_LENGTH) return null;
   try {
@@ -343,6 +391,7 @@ function encodeCursor(cursor: IssueCursor): string {
 export class IssueService extends Context.Service<
   IssueService,
   {
+    readonly repositories: () => Effect.Effect<IssueRepositoriesResultType, IssueReadError>;
     readonly list: (
       input: IssueListInputType,
     ) => Effect.Effect<IssueListResultType, IssueReadError>;
@@ -355,95 +404,34 @@ export class IssueService extends Context.Service<
 export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Return<
   IssueService["Service"],
   never,
-  | ProjectionSnapshotQuery.ProjectionSnapshotQuery
   | GitHubCli.GitHubCli
   | GitHubPullRequestCli.GitHubPullRequestCli
   | SourceControlRateLimit.SourceControlRateLimit
 > {
-  const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const github = yield* GitHubCli.GitHubCli;
   const githubPullRequests = yield* GitHubPullRequestCli.GitHubPullRequestCli;
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
 
   const resolveScope = Effect.fn("IssueService.resolveScope")(function* (
-    operation: "list" | "detail",
-    input: {
-      readonly projectId: ProjectId;
-      readonly host?: string | undefined;
-      readonly repository?: string | undefined;
-    },
-  ): Effect.fn.Return<IssueProjectScope, IssueReadError> {
-    const project = yield* projections
-      .getProjectShellById(input.projectId)
-      .pipe(
-        Effect.mapError(() =>
-          readError(operation, "scope-unavailable", "The registered project is unavailable."),
-        ),
+    operation: IssueOperation,
+    input: { readonly host: string; readonly repository: string },
+  ): Effect.fn.Return<IssueRepositoryScope, IssueReadError> {
+    const host = safeHost(input.host);
+    const repository = host === null ? null : safeRepository(host, input.repository);
+    if (host === null || repository === null) {
+      return yield* readError(
+        operation,
+        "scope-unavailable",
+        "The repository cannot be addressed.",
       );
-    return yield* Option.match(project, {
-      onNone: () =>
-        Effect.fail(
-          readError(operation, "scope-unavailable", "The registered project is unavailable."),
-        ),
-      onSome: (value) => {
-        const identity = value.repositoryIdentity;
-        if (
-          identity === undefined ||
-          identity === null ||
-          identity.provider?.toLowerCase() !== "github"
-        ) {
-          return Effect.fail(
-            readError(operation, "unsupported", "The project is not a GitHub repository."),
-          );
-        }
-        const host = safeHost(pullRequestHostOf(identity, "github"));
-        const repository = sourceControlRepositorySelector(identity);
-        const canonicalRepository =
-          host === null || repository === null ? null : safeRepository(host, repository);
-        if (host === null || host === "github" || canonicalRepository === null) {
-          return Effect.fail(
-            readError(operation, "scope-unavailable", "The registered repository is unavailable."),
-          );
-        }
-        if (
-          input.host !== undefined &&
-          (safeHost(input.host) !== host || safeHost(input.host) === null)
-        ) {
-          return Effect.fail(
-            readError(
-              operation,
-              "scope-unavailable",
-              "The requested host is outside the project scope.",
-            ),
-          );
-        }
-        if (
-          input.repository !== undefined &&
-          (safeRepository(host, input.repository) !== canonicalRepository ||
-            safeRepository(host, input.repository) === null)
-        ) {
-          return Effect.fail(
-            readError(
-              operation,
-              "scope-unavailable",
-              "The requested repository is outside the project scope.",
-            ),
-          );
-        }
-        return Effect.succeed({
-          cwd: value.workspaceRoot,
-          projectId: value.id,
-          projectTitle: value.title,
-          host,
-          repository: canonicalRepository,
-        });
-      },
-    });
+    }
+    // Issue reads address the repository explicitly, so gh needs no project checkout.
+    return { cwd: NodeOS.homedir(), host, repository };
   });
 
   const executeApi = Effect.fn("IssueService.executeApi")(function* (input: {
-    readonly operation: "list" | "detail";
-    readonly scope: IssueProjectScope;
+    readonly operation: IssueOperation;
+    readonly scope: IssueRepositoryScope;
     readonly endpoint: string;
     readonly maxOutputBytes: number;
   }): Effect.fn.Return<ApiResponse, IssueReadError> {
@@ -537,13 +525,14 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
   });
 
   const listIssuePage = Effect.fn("IssueService.listIssuePage")(function* (
-    scope: IssueProjectScope,
+    scope: IssueRepositoryScope,
+    state: IssueListState,
     page: number,
   ): Effect.fn.Return<PageResult<IssueSummaryType>, IssueReadError> {
     const response = yield* executeApi({
       operation: "list",
       scope,
-      endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues?state=open&sort=updated&direction=desc&per_page=100&page=${page}`,
+      endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}`,
       maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     });
     const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawIssueSchema)))(
@@ -570,13 +559,14 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
   });
 
   const listMilestonePage = Effect.fn("IssueService.listMilestonePage")(function* (
-    scope: IssueProjectScope,
+    scope: IssueRepositoryScope,
+    state: IssueListState,
     page: number,
   ): Effect.fn.Return<PageResult<IssueMilestone>, IssueReadError> {
     const response = yield* executeApi({
       operation: "list",
       scope,
-      endpoint: `repos/${encodeRepositoryPath(scope.repository)}/milestones?state=open&per_page=100&page=${page}`,
+      endpoint: `repos/${encodeRepositoryPath(scope.repository)}/milestones?state=${state}&per_page=100&page=${page}`,
       maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     });
     const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawMilestoneSchema)))(
@@ -602,18 +592,19 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
 
   const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
     const scope = yield* resolveScope("list", input);
+    const state = input.state ?? "open";
     const cursor = input.cursor === undefined ? null : decodeCursor(input.cursor);
     if (
       input.cursor !== undefined &&
       (cursor === null ||
-        cursor.projectId !== scope.projectId ||
+        cursor.state !== state ||
         cursor.host !== scope.host ||
         cursor.repository !== scope.repository)
     ) {
       return yield* readError(
         "list",
         "invalid-cursor",
-        "The issue cursor is invalid for this project.",
+        "The issue cursor is invalid for this repository.",
       );
     }
     return yield* githubPullRequests
@@ -638,17 +629,17 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
             const issueResult =
               issuePage === null
                 ? { items: [], nextPage: null }
-                : yield* listIssuePage(scope, issuePage);
+                : yield* listIssuePage(scope, state, issuePage);
             const milestoneResult =
               milestonePage === null
                 ? { items: [], nextPage: null }
-                : yield* listMilestonePage(scope, milestonePage);
+                : yield* listMilestonePage(scope, state, milestonePage);
             const nextCursor =
               issueResult.nextPage === null && milestoneResult.nextPage === null
                 ? null
                 : encodeCursor({
-                    v: 1,
-                    projectId: scope.projectId,
+                    v: 2,
+                    state,
                     host: scope.host,
                     repository: scope.repository,
                     accountId: identity.accountId,
@@ -656,13 +647,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                     milestonePage: milestoneResult.nextPage,
                   });
             return {
-              repository: {
-                projectId: scope.projectId,
-                host: scope.host,
-                repository: scope.repository,
-              },
-              projectTitle: scope.projectTitle,
-              workspaceRoot: scope.cwd,
+              repository: { host: scope.host, repository: scope.repository },
               viewer: { accountId: identity.accountId, login: identity.viewer },
               fetchedAt: DateTime.formatIso(yield* DateTime.now),
               issues: issueResult.items,
@@ -703,16 +688,6 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                   "The issue is not accessible to this account.",
                 );
               }
-              if (
-                input.host.toLowerCase() !== scope.host ||
-                safeRepository(scope.host, input.repository) !== scope.repository
-              ) {
-                return yield* readError(
-                  "detail",
-                  "scope-unavailable",
-                  "The requested issue is outside the project scope.",
-                );
-              }
               const response = yield* executeApi({
                 operation: "detail",
                 scope,
@@ -735,13 +710,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               }
               const issue = normalizeIssue(scope.host, scope.repository, raw);
               return {
-                repository: {
-                  projectId: scope.projectId,
-                  host: scope.host,
-                  repository: scope.repository,
-                },
-                projectTitle: scope.projectTitle,
-                workspaceRoot: scope.cwd,
+                repository: { host: scope.host, repository: scope.repository },
                 viewer: { accountId: identity.accountId, login: identity.viewer },
                 fetchedAt: DateTime.formatIso(yield* DateTime.now),
                 issue,
@@ -757,13 +726,86 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     },
   );
 
-  return IssueService.of({ list, detail });
+  const listRepositoryPage = Effect.fn("IssueService.listRepositoryPage")(function* (
+    scope: IssueRepositoryScope,
+    page: number,
+  ): Effect.fn.Return<PageResult<RawRepository>, IssueReadError> {
+    const response = yield* executeApi({
+      operation: "repositories",
+      scope,
+      endpoint: `user/repos?affiliation=owner,organization_member&sort=pushed&per_page=100&page=${page}`,
+      maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+    });
+    const items = yield* Schema.decodeEffect(
+      Schema.fromJsonString(Schema.Array(RawRepositorySchema)),
+    )(response.body).pipe(
+      Effect.mapError(() =>
+        readError(
+          "repositories",
+          "invalid-response",
+          "GitHub returned an invalid repository list.",
+        ),
+      ),
+    );
+    const nextPage = nextPageFromHeaders(response.headers, page);
+    if (nextPage === undefined) {
+      return yield* readError(
+        "repositories",
+        "invalid-response",
+        "GitHub returned invalid pagination metadata.",
+      );
+    }
+    return { items, nextPage };
+  });
+
+  const repositories: IssueService["Service"]["repositories"] = Effect.fn(
+    "IssueService.repositories",
+  )(function* () {
+    const scope: IssueRepositoryScope = {
+      cwd: NodeOS.homedir(),
+      host: GITHUB_HOST,
+      repository: "",
+    };
+    return yield* githubPullRequests
+      .withVerifiedCredential(
+        { cwd: scope.cwd, host: scope.host },
+        (
+          identity,
+        ): Effect.Effect<
+          IssueRepositoriesResultType,
+          IssueReadError | GitHubPullRequestCli.GitHubPullRequestCliError
+        > =>
+          Effect.gen(function* () {
+            const raw: RawRepository[] = [];
+            let page: number | null = 1;
+            let pagesRead = 0;
+            while (page !== null && pagesRead < REPOSITORY_MAX_PAGES) {
+              const result: PageResult<RawRepository> = yield* listRepositoryPage(scope, page);
+              raw.push(...result.items);
+              page = result.nextPage;
+              pagesRead += 1;
+            }
+            return {
+              viewer: { accountId: identity.accountId, login: identity.viewer },
+              repositories: selectIssueRepositories(scope.host, identity.viewer, raw),
+              complete: page === null,
+              fetchedAt: DateTime.formatIso(yield* DateTime.now),
+            } satisfies IssueRepositoriesResultType;
+          }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          Schema.is(IssueReadError)(error) ? error : mapGitHubError("repositories", error),
+        ),
+      );
+  });
+
+  return IssueService.of({ repositories, list, detail });
 });
 
 export const layer: Layer.Layer<
   IssueService,
   never,
-  | ProjectionSnapshotQuery.ProjectionSnapshotQuery
   | GitHubCli.GitHubCli
   | GitHubPullRequestCli.GitHubPullRequestCli
   | SourceControlRateLimit.SourceControlRateLimit

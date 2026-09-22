@@ -11,7 +11,6 @@ const decodeListResult = Schema.decodeUnknownSync(IssueListResult);
 const decodeDetailResult = Schema.decodeUnknownSync(IssueDetailResult);
 
 const repository = {
-  projectId: "project-1",
   host: "github.com",
   repository: "owner/repo",
 };
@@ -38,8 +37,6 @@ const issue = {
 
 const listResult = {
   repository,
-  projectTitle: "Project",
-  workspaceRoot: "/workspace/project",
   viewer: null,
   fetchedAt: "2026-09-21T00:00:00Z",
   issues: [issue],
@@ -70,14 +67,12 @@ describe("GitHub issue contract boundaries", () => {
     expect(() => decodeRef({ ...ref, host: " " })).toThrow();
     expect(() => decodeRef({ ...ref, repository: "owner" })).toThrow();
     expect(() => decodeRef({ ...ref, repository: "owner/repo/extra" })).toThrow();
-    expect(
-      decodeListInput({ projectId: ref.projectId, cursor: "c".repeat(4096) }).cursor,
-    ).toHaveLength(4096);
-    expect(() => decodeListInput({ projectId: ref.projectId, cursor: "c".repeat(4097) })).toThrow();
+    expect(decodeListInput({ ...repository, cursor: "c".repeat(4096) }).cursor).toHaveLength(4096);
+    expect(() => decodeListInput({ ...repository, cursor: "c".repeat(4097) })).toThrow();
+    expect(() => decodeListInput({ ...repository, state: "closed" })).toThrow();
   });
 
-  it("bounds issue URLs and workspace paths", () => {
-    expect(() => decodeDetailResult({ ...detailResult, workspaceRoot: " " })).toThrow();
+  it("bounds issue URLs", () => {
     expect(() =>
       decodeDetailResult({
         ...detailResult,
@@ -114,9 +109,8 @@ describe("GitHub issue contract boundaries", () => {
     expect(detailRpc).toBeDefined();
     if (listRpc === undefined || detailRpc === undefined) return;
 
-    expect(Schema.decodeUnknownSync(listRpc.payloadSchema)({ projectId: ref.projectId })).toEqual({
-      projectId: ref.projectId,
-    });
+    expect(Schema.decodeUnknownSync(listRpc.payloadSchema)(repository)).toEqual(repository);
+    expect(() => Schema.decodeUnknownSync(listRpc.payloadSchema)({ host: "github.com" })).toThrow();
     expect(Schema.decodeUnknownSync(detailRpc.payloadSchema)(ref)).toMatchObject(ref);
     expect(Schema.decodeUnknownSync(listRpc.successSchema)(listResult)).toMatchObject(listResult);
 

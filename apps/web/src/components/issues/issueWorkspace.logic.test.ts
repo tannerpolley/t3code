@@ -1,7 +1,11 @@
-import type { IssueSummary } from "@t3tools/contracts";
+import { EnvironmentId, type IssueRepositorySummary, type IssueSummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { filterAndSortIssues } from "./issueWorkspace.logic";
+import {
+  filterAndSortIssues,
+  mergeIssueRepositoryTargets,
+  visibleIssueRepositoryTargets,
+} from "./issueWorkspace.logic";
 
 const issue = (
   number: number,
@@ -73,5 +77,70 @@ describe("issue workspace filtering", () => {
     expect(
       filterAndSortIssues(rows, { ...filters, sort: "title" }).map((row) => row.title),
     ).toEqual(["Documentation", "Release blocker"]);
+  });
+});
+
+const repository = (
+  name: string,
+  overrides: Partial<IssueRepositorySummary> = {},
+): IssueRepositorySummary => ({
+  host: "github.com",
+  repository: name,
+  owner: name.split("/")[0]!,
+  ownerIsOrganization: false,
+  isPrivate: false,
+  openIssuesAndPullRequests: 1,
+  pushedAt: "2026-09-01T00:00:00Z",
+  ...overrides,
+});
+
+describe("issue repository targets", () => {
+  const local = EnvironmentId.make("local");
+  const remote = EnvironmentId.make("remote");
+
+  it("reads a repository shared by two environments through the first, newest push first", () => {
+    const targets = mergeIssueRepositoryTargets([
+      {
+        environmentId: local,
+        repositories: [
+          repository("me/old", { pushedAt: "2026-01-01T00:00:00Z" }),
+          repository("me/app"),
+        ],
+      },
+      {
+        environmentId: remote,
+        repositories: [repository("Me/App"), repository("org/tool", { pushedAt: null })],
+      },
+    ]);
+
+    expect(targets.map((target) => [target.repository, target.environmentId])).toEqual([
+      ["me/app", local],
+      ["me/old", local],
+      ["org/tool", remote],
+    ]);
+  });
+
+  it("skips repositories without open work only in the open view", () => {
+    const targets = mergeIssueRepositoryTargets([
+      {
+        environmentId: local,
+        repositories: [
+          repository("me/busy"),
+          repository("me/quiet", { openIssuesAndPullRequests: 0 }),
+          repository("me/enterprise", { host: "ghe.example.com" }),
+        ],
+      },
+    ]);
+
+    expect(
+      visibleIssueRepositoryTargets(targets, { host: undefined, state: "open" }).map(
+        (target) => target.repository,
+      ),
+    ).toEqual(["me/busy", "me/enterprise"]);
+    expect(
+      visibleIssueRepositoryTargets(targets, { host: "GitHub.com", state: "all" }).map(
+        (target) => target.repository,
+      ),
+    ).toEqual(["me/busy", "me/quiet"]);
   });
 });

@@ -137,6 +137,7 @@ import {
   IssueListInput,
   IssueListResult,
   IssueReadError,
+  IssueRepositoriesResult,
 } from "./issue.ts";
 import {
   PullRequestActionInput,
@@ -465,6 +466,7 @@ export const WS_METHODS = {
   cloudInstallRelayClient: "cloud.installRelayClient",
 
   // GitHub issue methods
+  issuesRepositories: "issues.repositories",
   issuesList: "issues.list",
   issuesDetail: "issues.detail",
 
@@ -844,6 +846,12 @@ const PullRequestRpcError = Schema.Union([
 ]);
 
 const IssueRpcError = Schema.Union([IssueReadError, EnvironmentAuthorizationError]);
+
+const WsIssuesRepositoriesRpc = Rpc.make(WS_METHODS.issuesRepositories, {
+  payload: Schema.Struct({}),
+  success: IssueRepositoriesResult,
+  error: IssueRpcError,
+});
 
 const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
   payload: IssueListInput,
@@ -1693,6 +1701,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
+  WsIssuesRepositoriesRpc,
   WsIssuesListRpc,
   WsIssuesDetailRpc,
   WsPullRequestsListRpc,

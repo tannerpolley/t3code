@@ -10143,7 +10143,6 @@ export default function ChatView(props: ChatViewProps) {
         environmentId={issueEnvironmentId}
         reference={
           {
-            projectId: renderedRightPanelSurface.projectId as ProjectId,
             host: renderedRightPanelSurface.host,
             repository: renderedRightPanelSurface.repository,
             number: renderedRightPanelSurface.number,
