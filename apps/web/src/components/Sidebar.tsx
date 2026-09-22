@@ -136,6 +136,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { useRemoveProjectMembers } from "../hooks/useRemoveProjectMembers";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -2565,6 +2566,24 @@ export default function Sidebar() {
     },
     [isMobile, router, setOpenMobile],
   );
+  const removeProjectMembers = useRemoveProjectMembers();
+  const removeSidebarProject = useCallback(
+    (projectGroup: SidebarProjectSnapshot) =>
+      void removeProjectMembers({
+        group: projectGroup,
+        hasOtherMembers: false,
+        members: projectGroup.memberProjects,
+      }),
+    [removeProjectMembers],
+  );
+  const handleNewThreadInProject = newThreadContext.handleNewThread;
+  const newThreadInSidebarProject = useCallback(
+    (projectGroup: SidebarProjectSnapshot) => {
+      if (isMobile) setOpenMobile(false);
+      void handleNewThreadInProject(scopeProjectRef(projectGroup.environmentId, projectGroup.id));
+    },
+    [handleNewThreadInProject, isMobile, setOpenMobile],
+  );
   // Anchor for the scope popup: the header search field, not its icon trigger.
   const headerSearchRef = useRef<HTMLDivElement | null>(null);
   // Safari can send a click after Ctrl+click opens settings. Ignore that one
@@ -2734,8 +2753,7 @@ export default function Sidebar() {
     const grouped = new Map<string, EnvironmentThreadShell[]>();
     for (const thread of sortThreadsForSidebar(
       threads.filter(
-        (entry) =>
-          entry.archivedAt === null && entry.lineage.relationshipToParent !== "subagent",
+        (entry) => entry.archivedAt === null && entry.lineage.relationshipToParent !== "subagent",
       ),
     )) {
       const projectKey = logicalProjectKeyByScopedProjectRef.get(
@@ -4756,7 +4774,9 @@ export default function Sidebar() {
           <SidebarProjectSections
             activeThreadKey={routeThreadKey}
             isProjectExpanded={isProjectExpanded}
+            onNewThreadInProject={newThreadInSidebarProject}
             onOpenProjectSettings={openProjectSettings}
+            onRemoveProject={removeSidebarProject}
             onSelectProject={setProjectScopeKey}
             onThreadClick={handleProjectThreadClick}
             onThreadContextMenu={handleProjectThreadContextMenu}

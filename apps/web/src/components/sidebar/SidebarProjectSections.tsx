@@ -31,6 +31,7 @@ import {
   FolderPlusIcon,
   GripVerticalIcon,
   SettingsIcon,
+  SquarePenIcon,
   Trash2Icon,
 } from "lucide-react";
 import {
@@ -129,6 +130,8 @@ interface SidebarProjectSectionsProps {
   readonly selectedProjectKey: string | null;
   readonly onSelectProject: (projectKey: string | null) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
+  readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
+  readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   readonly isProjectExpanded: (projectKey: string) => boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
@@ -144,7 +147,9 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const {
     activeThreadKey,
     isProjectExpanded,
+    onNewThreadInProject,
     onOpenProjectSettings,
+    onRemoveProject,
     onSelectProject,
     onThreadClick,
     onThreadContextMenu,
@@ -374,7 +379,9 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                   key={section.id}
                   onDelete={deleteSection}
                   onMoveProject={moveProject}
+                  onNewThreadInProject={onNewThreadInProject}
                   onOpenProjectSettings={onOpenProjectSettings}
+                  onRemoveProject={onRemoveProject}
                   onOpenRename={openRenameDialog}
                   onSelectProject={onSelectProject}
                   onSetExpanded={setSectionExpanded}
@@ -447,6 +454,8 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly selectedProjectKey: string | null;
   readonly onSelectProject: (projectKey: string | null) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
+  readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
+  readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
   readonly onOpenRename: (section: SidebarProjectSectionRender) => void;
   readonly onDelete: (sectionId: string) => void;
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
@@ -488,7 +497,9 @@ const ProjectSection = memo(function ProjectSection(props: {
                 <SortableProjectRow
                   key={projectKey}
                   onMoveProject={props.onMoveProject}
+                  onNewThreadInProject={props.onNewThreadInProject}
                   onOpenProjectSettings={props.onOpenProjectSettings}
+                  onRemoveProject={props.onRemoveProject}
                   onSelectProject={props.onSelectProject}
                   activeThreadKey={props.activeThreadKey}
                   isProjectExpanded={props.isProjectExpanded(project.projectKey)}
@@ -620,6 +631,8 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly selected: boolean;
   readonly onSelectProject: (projectKey: string | null) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
+  readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
+  readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
   readonly onMoveProject: (projectKey: string, sectionId: string | null) => void;
   readonly isProjectExpanded: boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
@@ -714,6 +727,10 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               <EllipsisIcon aria-hidden className="size-3.5" />
             </MenuTrigger>
             <MenuPopup align="end" className="min-w-52">
+              <MenuItem onClick={() => props.onNewThreadInProject(project)}>
+                <SquarePenIcon />
+                New thread
+              </MenuItem>
               <MenuItem
                 onClick={() => props.onSelectProject(props.selected ? null : project.projectKey)}
               >
@@ -724,30 +741,37 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                 <SettingsIcon />
                 Project settings
               </MenuItem>
-              <MenuSub>
-                <MenuSubTrigger>
-                  <FolderIcon />
-                  Move project to section
-                </MenuSubTrigger>
-                <MenuSubPopup>
-                  {otherSections.map((section) => (
-                    <MenuItem
-                      key={section.id}
-                      onClick={() => props.onMoveProject(project.projectKey, section.id)}
-                    >
-                      {section.name}
-                    </MenuItem>
-                  ))}
-                  {props.sectionId !== null ? (
-                    <>
-                      <MenuSeparator />
-                      <MenuItem onClick={() => props.onMoveProject(project.projectKey, null)}>
-                        Other projects
+              {otherSections.length > 0 || props.sectionId !== null ? (
+                <MenuSub>
+                  <MenuSubTrigger>
+                    <FolderIcon />
+                    Move project to section
+                  </MenuSubTrigger>
+                  <MenuSubPopup>
+                    {otherSections.map((section) => (
+                      <MenuItem
+                        key={section.id}
+                        onClick={() => props.onMoveProject(project.projectKey, section.id)}
+                      >
+                        {section.name}
                       </MenuItem>
-                    </>
-                  ) : null}
-                </MenuSubPopup>
-              </MenuSub>
+                    ))}
+                    {props.sectionId !== null ? (
+                      <>
+                        <MenuSeparator />
+                        <MenuItem onClick={() => props.onMoveProject(project.projectKey, null)}>
+                          Other projects
+                        </MenuItem>
+                      </>
+                    ) : null}
+                  </MenuSubPopup>
+                </MenuSub>
+              ) : null}
+              <MenuSeparator />
+              <MenuItem onClick={() => props.onRemoveProject(project)} variant="destructive">
+                <Trash2Icon />
+                Remove project
+              </MenuItem>
             </MenuPopup>
           </Menu>
         </div>
