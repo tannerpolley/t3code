@@ -376,7 +376,12 @@ export function normalizeProviderMathDelimiters(
     const end = normalized.indexOf(pair.close, start + pair.open.length);
     if (start < 0 || end < 0) continue;
     const formula = normalized.slice(start + pair.open.length, end);
-    normalized = `${normalized.slice(0, start)}\u{e000}${pair.display ? "D" : "I"}${formula}\u{e001}${normalized.slice(end + pair.close.length)}`;
+    // Hex keeps the formula out of markdown's reach (backslash escapes such as \, and
+    // emphasis markers); remarkProviderMath decodes it into the math node.
+    const encoded = Array.from(new TextEncoder().encode(formula), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    normalized = `${normalized.slice(0, start)}\u{e000}${pair.display ? "D" : "I"}${encoded}\u{e001}${normalized.slice(end + pair.close.length)}`;
   }
   return normalized;
 }
@@ -392,11 +397,13 @@ function remarkProviderMath() {
         }
         const parts: MarkdownAstNode[] = [];
         let cursor = 0;
-        for (const match of child.value.matchAll(/\u{e000}([ID])([\s\S]*?)\u{e001}/gu)) {
+        for (const match of child.value.matchAll(/\u{e000}([ID])([0-9a-f]*)\u{e001}/gu)) {
           const start = match.index ?? 0;
           if (start > cursor) parts.push({ type: "text", value: child.value.slice(cursor, start) });
           const display = match[1] === "D";
-          const value = match[2] ?? "";
+          const value = new TextDecoder().decode(
+            Uint8Array.from(match[2]?.match(/../gu) ?? [], (byte) => Number.parseInt(byte, 16)),
+          );
           parts.push({
             type: "inlineMath",
             value,
@@ -614,7 +621,15 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    code: [
+      ...(defaultSchema.attributes?.code ?? []).filter(
+        (attribute) => !(Array.isArray(attribute) && attribute[0] === "className"),
+      ),
+      // Math classes must survive to rehype-katex, which reads them for display mode.
+      ["className", /^language-./, "math-inline", "math-display"],
+      "dataCodeMeta",
+      "dataInlineCode",
+    ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [
       ...(defaultSchema.attributes?.div ?? []),

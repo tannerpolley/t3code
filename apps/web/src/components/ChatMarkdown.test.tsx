@@ -79,9 +79,11 @@ describe("ChatMarkdown math", () => {
     const markdown = [
       "Inline $x^2 + y^2$.",
       "",
-      "$$\\frac{a}{b}$$",
+      "$$",
+      "\\frac{a}{b}",
+      "$$",
       "",
-      "Provider \\(z + 1\\).",
+      "Provider \\(z + 1\\) and \\(a\\,b_1 * c_2\\).",
       "",
       "\\[w^2\\]",
     ].join("\n");
@@ -90,7 +92,8 @@ describe("ChatMarkdown math", () => {
     const formulas = [...html.matchAll(/<annotation encoding="application\/x-tex">([^<]*)</gu)].map(
       (match) => match[1],
     );
-    expect(formulas).toEqual(["x^2 + y^2", "\\frac{a}{b}", "z + 1", "w^2"]);
+    expect(formulas).toEqual(["x^2 + y^2", "\\frac{a}{b}", "z + 1", "a\\,b_1 * c_2", "w^2"]);
+    expect(html.match(/class="katex-display"/gu)).toHaveLength(2);
     expect(normalizeProviderMathDelimiters("`\\(literal\\)`\n\n```tex\n\\[literal\\]\n```")).toBe(
       "`\\(literal\\)`\n\n```tex\n\\[literal\\]\n```",
     );
