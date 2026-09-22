@@ -730,10 +730,11 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
-const CHAT_MARKDOWN_REHYPE_PLUGINS = [
-  rehypeKatex,
-  [rehypeSanitize, CHAT_MARKDOWN_KATEX_SANITIZE_SCHEMA],
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+// Without rehype-raw, HTML in the source stays inert text; sanitizing here would drop those
+// nodes and blank the message. KaTeX output is generated, not taken from the source.
+const CHAT_MARKDOWN_REHYPE_PLUGINS = [rehypeKatex] satisfies NonNullable<
+  ReactMarkdownOptions["rehypePlugins"]
+>;
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW = [
   rehypeRaw,
