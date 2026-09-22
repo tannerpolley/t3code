@@ -352,7 +352,11 @@ export function normalizeProviderMathDelimiters(
         }
         if (
           inlineTicks === 0 &&
-          (/^\$(?=\d[\p{L}\p{N}_-]*\p{L}(?=$|[\s.,!?;:]))/u.test(part.slice(index)) ||
+          // Amounts such as $5, $1,200, $5.00 or $5k are currency, not the start of math.
+          // ponytail: `$1 + 1$` also reads as currency; math starting with a digit and a space is rare.
+          (/^\$(?=\d(?:[\p{L}\p{N}_-]*\p{L}|[\d,]*(?:\.\d+)?)(?=$|[\s.,!?;:)\]]))/u.test(
+            part.slice(index),
+          ) ||
             knownSkills.has(
               /^\$([\p{L}\p{N}_-]+)/u.exec(part.slice(index))?.[1]?.toLowerCase() ?? "",
             ))
