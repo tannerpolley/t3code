@@ -405,6 +405,8 @@ function remarkProviderMath() {
               hProperties: {
                 className: ["language-math", display ? "math-display" : "math-inline"],
               },
+              // remark-math sets this too; without it the formula never reaches KaTeX.
+              hChildren: [{ type: "text", value }],
             },
           });
           cursor = start + match[0].length;
@@ -826,6 +828,7 @@ type MarkdownAstNode = {
   data?: {
     hName?: string;
     hProperties?: Record<string, unknown>;
+    hChildren?: ReadonlyArray<{ type: "text"; value: string }>;
   };
   children?: MarkdownAstNode[];
 };

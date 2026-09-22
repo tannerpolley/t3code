@@ -87,8 +87,10 @@ describe("ChatMarkdown math", () => {
     ].join("\n");
     const html = renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={markdown} />);
 
-    expect(html.match(/class="katex"/gu)).toHaveLength(4);
-    expect(html.match(/<math/gu)).toHaveLength(4);
+    const formulas = [...html.matchAll(/<annotation encoding="application\/x-tex">([^<]*)</gu)].map(
+      (match) => match[1],
+    );
+    expect(formulas).toEqual(["x^2 + y^2", "\\frac{a}{b}", "z + 1", "w^2"]);
     expect(normalizeProviderMathDelimiters("`\\(literal\\)`\n\n```tex\n\\[literal\\]\n```")).toBe(
       "`\\(literal\\)`\n\n```tex\n\\[literal\\]\n```",
     );
@@ -96,14 +98,14 @@ describe("ChatMarkdown math", () => {
 
   it("renders provider math once a streaming delimiter closes", () => {
     const incomplete = renderToStaticMarkup(
-      <ChatMarkdown cwd={undefined} text="\\(x^2" isStreaming />,
+      <ChatMarkdown cwd={undefined} text={"\\(x^2"} isStreaming />,
     );
     const complete = renderToStaticMarkup(
-      <ChatMarkdown cwd={undefined} text="\\(x^2\\)" isStreaming />,
+      <ChatMarkdown cwd={undefined} text={"\\(x^2\\)"} isStreaming />,
     );
 
     expect(incomplete).not.toContain('class="katex"');
-    expect(complete).toContain('class="katex"');
+    expect(complete).toContain('<annotation encoding="application/x-tex">x^2</annotation>');
   });
 });
 
