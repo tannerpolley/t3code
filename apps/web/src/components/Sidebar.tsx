@@ -4774,6 +4774,7 @@ export default function Sidebar() {
           <SidebarProjectSections
             activeThreadKey={routeThreadKey}
             isProjectExpanded={isProjectExpanded}
+            onAddProject={openAddProjectCommandPalette}
             onNewThreadInProject={newThreadInSidebarProject}
             onOpenProjectSettings={openProjectSettings}
             onRemoveProject={removeSidebarProject}

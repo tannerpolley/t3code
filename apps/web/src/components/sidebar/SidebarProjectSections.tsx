@@ -30,6 +30,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GripVerticalIcon,
+  PlusIcon,
   SettingsIcon,
   SquarePenIcon,
   Trash2Icon,
@@ -129,6 +130,7 @@ interface SidebarProjectSectionsProps {
   readonly sections: readonly SidebarProjectSection[];
   readonly selectedProjectKey: string | null;
   readonly onSelectProject: (projectKey: string | null) => void;
+  readonly onAddProject: () => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
   readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
@@ -147,6 +149,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const {
     activeThreadKey,
     isProjectExpanded,
+    onAddProject,
     onNewThreadInProject,
     onOpenProjectSettings,
     onRemoveProject,
@@ -337,18 +340,29 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   return (
     <>
       <SidebarGroup className="group-data-[collapsible=icon]:hidden px-1 py-1">
-        <div className="mb-1 flex items-center justify-between px-2">
+        <div className="mb-1 px-2">
           <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
-          <Button
-            aria-label="Create project section"
-            className="size-6 text-icon-muted"
-            data-testid="sidebar-create-project-section"
-            onClick={openCreateDialog}
-            size="icon-xs"
-            variant="ghost-muted"
-          >
-            <FolderPlusIcon className="size-3.5" />
-          </Button>
+          <div className="mt-1 grid grid-cols-2 gap-1">
+            <Button
+              className="justify-start"
+              onClick={onAddProject}
+              size="xs"
+              variant="ghost-muted"
+            >
+              <PlusIcon />
+              Add project
+            </Button>
+            <Button
+              className="justify-start"
+              data-testid="sidebar-create-project-section"
+              onClick={openCreateDialog}
+              size="xs"
+              variant="ghost-muted"
+            >
+              <FolderPlusIcon />
+              New section
+            </Button>
+          </div>
         </div>
         <DndContext
           collisionDetection={collisionDetection}
