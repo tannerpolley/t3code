@@ -18,6 +18,7 @@ import {
   setSidebarProjectSectionColor,
   reorderProjects,
   resolveProjectExpanded,
+  setBranchPickerGroupCollapsed,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setSidebarOtherProjectsExpanded,
@@ -40,11 +41,24 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
+    branchPickerCollapsedGroups: [],
     ...overrides,
   };
 }
 
 describe("uiStateStore pure functions", () => {
+  it("collapses and expands branch picker groups independently", () => {
+    const initial = makeUiState();
+    const remoteCollapsed = setBranchPickerGroupCollapsed(initial, "remote", true);
+    const bothCollapsed = setBranchPickerGroupCollapsed(remoteCollapsed, "current", true);
+
+    expect(bothCollapsed.branchPickerCollapsedGroups).toEqual(["current", "remote"]);
+    expect(setBranchPickerGroupCollapsed(bothCollapsed, "current", true)).toBe(bothCollapsed);
+    expect(
+      setBranchPickerGroupCollapsed(bothCollapsed, "remote", false).branchPickerCollapsedGroups,
+    ).toEqual(["current"]);
+  });
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -238,6 +252,17 @@ describe("uiStateStore pure functions", () => {
 });
 
 describe("parsePersistedState", () => {
+  it("keeps only known branch picker groups when hydrating collapsed groups", () => {
+    expect(
+      parsePersistedState({ branchPickerCollapsedGroups: ["remote", "stale", "current", "remote"] })
+        .branchPickerCollapsedGroups,
+    ).toEqual(["current", "remote"]);
+    expect(
+      parsePersistedState({ branchPickerCollapsedGroups: "remote" as unknown as string[] })
+        .branchPickerCollapsedGroups,
+    ).toEqual([]);
+  });
+
   it("hydrates the last selected pull request merge method", () => {
     const parsed = parsePersistedState({
       pullRequestMergeMethod: "squash",
@@ -285,6 +310,7 @@ describe("parsePersistedState", () => {
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
       pullRequestMergeMethod: "merge",
+      branchPickerCollapsedGroups: [],
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -417,6 +443,7 @@ describe("uiStateStore persistence", () => {
         },
       },
       pullRequestMergeMethod: "merge",
+      branchPickerCollapsedGroups: [],
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,

@@ -35,6 +35,9 @@ const isProjectIconColor = Schema.is(ProjectIconColor);
 
 export type SidebarMode = "projects" | "activity";
 
+export type BranchPickerGroup = "current" | "local" | "remote";
+const BRANCH_PICKER_GROUPS: readonly BranchPickerGroup[] = ["current", "local", "remote"];
+
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
@@ -50,6 +53,7 @@ export interface PersistedUiState {
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
+  branchPickerCollapsedGroups?: string[];
 }
 
 export interface UiProjectState {
@@ -77,8 +81,12 @@ export interface UiPullRequestState {
   pullRequestMergeMethod: PullRequestMergeMethod;
 }
 
+export interface UiBranchPickerState {
+  branchPickerCollapsedGroups: BranchPickerGroup[];
+}
+
 export interface UiState
-  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState {}
+  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState, UiBranchPickerState {}
 
 const initialState: UiState = {
   projectExpandedById: {},
@@ -91,6 +99,7 @@ const initialState: UiState = {
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
+  branchPickerCollapsedGroups: [],
 };
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
@@ -180,6 +189,12 @@ function isPullRequestMergeMethod(value: unknown): value is PullRequestMergeMeth
   return value === "merge" || value === "squash" || value === "rebase";
 }
 
+function sanitizeBranchPickerCollapsedGroups(value: unknown): BranchPickerGroup[] {
+  return Array.isArray(value)
+    ? BRANCH_PICKER_GROUPS.filter((group) => value.includes(group))
+    : initialState.branchPickerCollapsedGroups;
+}
+
 function isSidebarMode(value: unknown): value is SidebarMode {
   return value === "projects" || value === "activity";
 }
@@ -232,6 +247,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
+    branchPickerCollapsedGroups: sanitizeBranchPickerCollapsedGroups(
+      parsed.branchPickerCollapsedGroups,
+    ),
   };
 }
 
@@ -309,6 +327,7 @@ export function persistState(state: UiState): void {
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
+        branchPickerCollapsedGroups: state.branchPickerCollapsedGroups,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -421,6 +440,20 @@ export function setSidebarOtherProjectsExpanded(state: UiState, expanded: boolea
   return state.sidebarOtherProjectsExpanded === expanded
     ? state
     : { ...state, sidebarOtherProjectsExpanded: expanded };
+}
+
+export function setBranchPickerGroupCollapsed(
+  state: UiState,
+  group: BranchPickerGroup,
+  collapsed: boolean,
+): UiState {
+  if (state.branchPickerCollapsedGroups.includes(group) === collapsed) return state;
+  return {
+    ...state,
+    branchPickerCollapsedGroups: BRANCH_PICKER_GROUPS.filter((candidate) =>
+      candidate === group ? collapsed : state.branchPickerCollapsedGroups.includes(candidate),
+    ),
+  };
 }
 
 export function setSidebarMode(state: UiState, mode: SidebarMode): UiState {
@@ -666,6 +699,7 @@ interface UiStateStore extends UiState {
   reorderSidebarProjectSectionProjects: (sectionId: string, projectKeys: readonly string[]) => void;
   reorderSidebarProjectSections: (sectionIds: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
+  setBranchPickerGroupCollapsed: (group: BranchPickerGroup, collapsed: boolean) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -706,6 +740,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   reorderSidebarProjectSections: (sectionIds) =>
     set((state) => reorderSidebarProjectSections(state, sectionIds)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
+  setBranchPickerGroupCollapsed: (group, collapsed) =>
+    set((state) => setBranchPickerGroupCollapsed(state, group, collapsed)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

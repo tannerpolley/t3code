@@ -8,7 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
-import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, GitBranchIcon } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -23,6 +23,7 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { useUiStateStore } from "../uiStateStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
@@ -44,6 +45,7 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
+  buildBranchPickerRefItems,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
@@ -263,12 +265,24 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     currentGitBranch,
   });
-  const branchNames = useMemo(() => refs.map((refName) => refName.name), [refs]);
   const branchByName = useMemo(
     () => new Map(refs.map((refName) => [refName.name, refName] as const)),
     [refs],
   );
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
+  const branchPickerCollapsedGroups = useUiStateStore((state) => state.branchPickerCollapsedGroups);
+  const setBranchPickerGroupCollapsed = useUiStateStore(
+    (state) => state.setBranchPickerGroupCollapsed,
+  );
+  const { items: branchRefItems, headerByItem: branchGroupHeaderByItem } = useMemo(
+    () =>
+      buildBranchPickerRefItems({
+        refs,
+        collapsedGroups: branchPickerCollapsedGroups,
+        searching: normalizedDeferredBranchQuery.length > 0,
+      }),
+    [refs, branchPickerCollapsedGroups, normalizedDeferredBranchQuery],
+  );
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
@@ -284,7 +298,7 @@ export function BranchToolbarBranchSelector({
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
   const branchPickerItems = useMemo(() => {
-    const items = [...branchNames];
+    const items = [...branchRefItems];
     if (createBranchItemValue && !hasExactBranchMatch) {
       items.push(createBranchItemValue);
     }
@@ -292,7 +306,7 @@ export function BranchToolbarBranchSelector({
       items.unshift(checkoutPullRequestItemValue);
     }
     return items;
-  }, [branchNames, checkoutPullRequestItemValue, createBranchItemValue, hasExactBranchMatch]);
+  }, [branchRefItems, checkoutPullRequestItemValue, createBranchItemValue, hasExactBranchMatch]);
   const filteredBranchPickerItems = useMemo(
     () =>
       normalizedDeferredBranchQuery.length === 0
@@ -590,7 +604,14 @@ export function BranchToolbarBranchSelector({
       : `#${prNumber}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
 
   function selectPickerItem(itemValue: string) {
-    if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
+    const groupHeader = branchGroupHeaderByItem.get(itemValue);
+    if (groupHeader) {
+      setBranchPickerGroupCollapsed(groupHeader.group, !groupHeader.collapsed);
+    } else if (
+      itemValue === checkoutPullRequestItemValue &&
+      prReference &&
+      onCheckoutPullRequestRequest
+    ) {
       handleOpenChange(false);
       onComposerFocusRequest?.();
       onCheckoutPullRequestRequest(prReference);
@@ -603,6 +624,35 @@ export function BranchToolbarBranchSelector({
   }
 
   function renderPickerItem(itemValue: string, index: number) {
+    const groupHeader = branchGroupHeaderByItem.get(itemValue);
+    if (groupHeader) {
+      return (
+        <ComboboxItem
+          hideIndicator
+          key={itemValue}
+          index={index}
+          value={itemValue}
+          aria-expanded={!groupHeader.collapsed}
+          className="gap-1 pe-1.5 text-muted-foreground text-xs sm:text-xs"
+          onClick={(event) => {
+            // Toggling a group must neither select the header nor close the popup.
+            event.preventBaseUIHandler();
+            selectPickerItem(itemValue);
+          }}
+          onMouseUp={(event) => event.preventBaseUIHandler()}
+        >
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 transition-transform motion-reduce:transition-none",
+              !groupHeader.collapsed && "rotate-90",
+            )}
+          />
+          <span className="min-w-0 flex-1 truncate font-medium">{groupHeader.label}</span>
+          <span className="shrink-0 text-[10px] tabular-nums">{groupHeader.count}</span>
+        </ComboboxItem>
+      );
+    }
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
         <ComboboxItem
@@ -671,11 +721,13 @@ export function BranchToolbarBranchSelector({
       statusText={branchStatusText}
       renderItem={renderPickerItem}
       getItemType={(item) =>
-        item === checkoutPullRequestItemValue
-          ? "checkout-pull-request"
-          : item === createBranchItemValue
-            ? "create-branch"
-            : "branch"
+        branchGroupHeaderByItem.has(item)
+          ? "branch-group-header"
+          : item === checkoutPullRequestItemValue
+            ? "checkout-pull-request"
+            : item === createBranchItemValue
+              ? "create-branch"
+              : "branch"
       }
       originControl={
         isSelectingWorktreeBase

@@ -1,6 +1,7 @@
 import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  buildBranchPickerRefItems,
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   resolveEnvironmentOptionLabel,
@@ -870,5 +871,81 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("buildBranchPickerRefItems", () => {
+  const ref = (name: string, overrides: Partial<VcsRef> = {}): VcsRef => ({
+    name,
+    current: false,
+    isDefault: false,
+    worktreePath: null,
+    ...overrides,
+  });
+  const refs: VcsRef[] = [
+    ref("origin/main", { isRemote: true, remoteName: "origin" }),
+    ref("main", { isDefault: true }),
+    ref("feature/wt", { worktreePath: "/repo/.worktrees/wt" }),
+    ref("feature/current", { current: true }),
+    ref("origin/feature/x", { isRemote: true, remoteName: "origin" }),
+  ];
+
+  it("orders refs into Current, Local, then Remote groups with counts", () => {
+    const { items, headerByItem } = buildBranchPickerRefItems({
+      refs,
+      collapsedGroups: [],
+      searching: false,
+    });
+
+    expect(items.map((item) => headerByItem.get(item)?.label ?? item)).toEqual([
+      "Current",
+      "feature/current",
+      "Local",
+      "main",
+      "feature/wt",
+      "Remote",
+      "origin/main",
+      "origin/feature/x",
+    ]);
+    expect([...headerByItem.values()].map(({ group, count }) => [group, count])).toEqual([
+      ["current", 1],
+      ["local", 2],
+      ["remote", 2],
+    ]);
+  });
+
+  it("keeps a collapsed group's header and count but hides its refs", () => {
+    const { items, headerByItem } = buildBranchPickerRefItems({
+      refs,
+      collapsedGroups: ["local"],
+      searching: false,
+    });
+
+    expect(items).not.toContain("main");
+    expect(items).not.toContain("feature/wt");
+    expect(items).toContain("origin/main");
+    const local = [...headerByItem.values()].find((header) => header.group === "local");
+    expect(local).toMatchObject({ collapsed: true, count: 2 });
+  });
+
+  it("omits empty groups", () => {
+    const { headerByItem } = buildBranchPickerRefItems({
+      refs: [ref("main"), ref("dev")],
+      collapsedGroups: [],
+      searching: false,
+    });
+
+    expect([...headerByItem.values()].map((header) => header.group)).toEqual(["local"]);
+  });
+
+  it("shows every ref without headers while searching, even in collapsed groups", () => {
+    const { items, headerByItem } = buildBranchPickerRefItems({
+      refs,
+      collapsedGroups: ["current", "local", "remote"],
+      searching: true,
+    });
+
+    expect(items).toEqual(refs.map((candidate) => candidate.name));
+    expect(headerByItem.size).toBe(0);
   });
 });
