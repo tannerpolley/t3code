@@ -63,9 +63,8 @@ function makeProjection() {
         status: "active",
       },
     ],
-    providerSessions: [
-      { id: sessionId, driver, providerInstanceId: instanceId, status: "running" },
-    ],
+    // Adapters keep the session "ready" while a turn runs; this is the shape a crash leaves behind.
+    providerSessions: [{ id: sessionId, driver, providerInstanceId: instanceId, status: "ready" }],
     providerTurns: [
       {
         id: ProviderTurnId.make("turn:restart"),
@@ -107,6 +106,10 @@ it("requires matching saved native state for an unfinished root run", () => {
       ],
     },
     { ...projection, providerTurns: [] },
+    ...(["stopped", "error"] as const).map((status) => ({
+      ...projection,
+      providerSessions: [{ ...projection.providerSessions[0]!, status }],
+    })),
     ...[
       "queued",
       "preparing",

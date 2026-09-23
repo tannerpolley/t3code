@@ -51,7 +51,8 @@ export function restartContinuationRun(
     !session ||
     session.providerInstanceId !== run.providerInstanceId ||
     session.driver !== providerThread.driver ||
-    (!preparedContinuation && session.status !== "running")
+    // Sessions stay "ready" while a turn runs; the running provider turn below is the activity signal.
+    (!preparedContinuation && (session.status === "stopped" || session.status === "error"))
   )
     return;
   if (
