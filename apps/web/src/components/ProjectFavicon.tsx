@@ -38,6 +38,8 @@ export function ProjectFavicon(input: {
   fallbackIcon?: ComponentType<{ className?: string }>;
   /** Tints the automatic folder, e.g. with the color of the project's sidebar section. */
   folderColor?: ProjectIconColor | undefined;
+  /** Show the folder even over a custom icon or detected favicon, as a section can ask. */
+  forceFolder?: boolean | undefined;
 }) {
   const { project } = input;
   const src = useAtomValue(
@@ -53,6 +55,14 @@ export function ProjectFavicon(input: {
   const fallbackName = initialsFallback ? project.title : undefined;
   const fallbackColorClassName =
     input.folderColor === undefined ? undefined : projectIconColorClassName(input.folderColor);
+  if (input.forceFolder) {
+    return (
+      <ProjectFaviconFallback
+        className={cn(input.className, fallbackColorClassName)}
+        icon={input.fallbackIcon ?? FolderIcon}
+      />
+    );
+  }
   if (project.projectIcon?.kind === "monogram") {
     return (
       <ProjectMonogram

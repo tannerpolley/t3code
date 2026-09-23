@@ -148,6 +148,21 @@ describe("ProjectFavicon", () => {
     expect(element.props.className).toContain("text-blue-600");
   });
 
+  it("shows the section's folder over a custom icon when the section asks", () => {
+    const element = ProjectFavicon({
+      project: makeProject({
+        workspaceRoot: "/workspace/skills",
+        title: "skills",
+        projectIcon: { kind: "lucide", name: "folder-code", color: "yellow" },
+      }),
+      folderColor: "red",
+      forceFolder: true,
+    }) as FallbackElement;
+
+    expect(element.props.icon).toBe(FolderIcon);
+    expect(element.props.className).toContain("text-red-600");
+  });
+
   it("shows the project monogram when initials are chosen", () => {
     testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
     testState.iconFallback = "initials";

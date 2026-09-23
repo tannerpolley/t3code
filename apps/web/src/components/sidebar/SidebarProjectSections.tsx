@@ -37,6 +37,7 @@ import {
   FilePlusIcon,
   FolderPlusIcon,
   FolderTreeIcon,
+  RotateCcwIcon,
   GripVerticalIcon,
   MessageCircleQuestionIcon,
   PaletteIcon,
@@ -95,6 +96,9 @@ import {
 import { SidebarGroup, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Spinner } from "../ui/spinner";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { projectEnvironment } from "../../state/projects";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { toastManager } from "../ui/toast";
 import { NewSectionProjectDialog, type NewSectionProjectTarget } from "./NewSectionProjectDialog";
 import {
   resolveProjectDrop,
@@ -114,6 +118,10 @@ type SidebarProjectSectionRender = {
   readonly color: ProjectIconColor | undefined;
   /** The color chosen on this section itself, as its Folder color menu shows it. */
   readonly ownColor: ProjectIconColor | undefined;
+  /** Projects show the folder over custom icons: set here or on the parent section. */
+  readonly folderIcons: boolean;
+  /** Set on this section itself, as its menu shows it. */
+  readonly ownFolderIcons: boolean;
   readonly parentId: string | undefined;
 };
 
@@ -308,6 +316,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         custom: true,
         color: section.color ?? parent?.color,
         ownColor: section.color,
+        folderIcons: section.folderIcons === true || parent?.folderIcons === true,
+        ownFolderIcons: section.folderIcons === true,
         parentId: section.parentId,
       });
     }
@@ -323,11 +333,59 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         custom: false,
         color: undefined,
         ownColor: undefined,
+        folderIcons: false,
+        ownFolderIcons: false,
         parentId: undefined,
       });
     }
     return next;
   }, [otherProjectsExpanded, projectByKey, projects, sections]);
+
+  // Clears custom icons the same way the icon picker's Automatic choice does, on every checkout
+  // of every project in the section and its subsections.
+  const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
+  const resetSectionIcons = useCallback(
+    async (section: SidebarProjectSectionRender) => {
+      const sectionIds = new Set([
+        section.id,
+        ...renderedSections.filter((s) => s.parentId === section.id).map((s) => s.id),
+      ]);
+      const members = renderedSections
+        .filter((candidate) => sectionIds.has(candidate.id))
+        .flatMap((candidate) => candidate.projectKeys)
+        .flatMap((key) => projectByKey.get(key)?.memberProjects ?? [])
+        .filter((member) => member.projectIcon != null || member.faviconPath != null);
+      if (members.length === 0) {
+        toastManager.add({ type: "info", title: "These projects already use automatic icons" });
+        return;
+      }
+      if (
+        !window.confirm(
+          `Reset the icons of ${members.length} project checkout${members.length === 1 ? "" : "s"} in ${section.name} to automatic? Their custom icons will be cleared.`,
+        )
+      ) {
+        return;
+      }
+      let failed = 0;
+      for (const member of members) {
+        const result = await updateProject({
+          environmentId: member.environmentId,
+          input: { projectId: member.id, faviconPath: null, projectIcon: null },
+        });
+        if (result._tag === "Failure") failed += 1;
+      }
+      toastManager.add(
+        failed === 0
+          ? { type: "success", title: `Reset ${members.length} project icons in ${section.name}` }
+          : {
+              type: "error",
+              title: `Couldn't reset ${failed} of ${members.length} project icons`,
+              description: "Connect the project's environment and try again.",
+            },
+      );
+    },
+    [projectByKey, renderedSections, updateProject],
+  );
 
   const setSectionExpanded = useCallback(
     (sectionId: string, expanded: boolean) => {
@@ -518,6 +576,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                   )}
                   onNewSubsection={onNewSubsection}
                   onNewProjectInSection={openNewProjectDialog}
+                  onResetIcons={resetSectionIcons}
                   onDelete={deleteSection}
                   onMoveProject={moveProject}
                   onNewThreadInProject={onNewThreadInProject}
@@ -570,6 +629,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly subsections: readonly SidebarProjectSectionRender[];
   readonly onNewSubsection: (parent: { readonly id: string; readonly name: string }) => void;
   readonly onNewProjectInSection: (section: SidebarProjectSectionRender) => void;
+  readonly onResetIcons: (section: SidebarProjectSectionRender) => void;
   readonly sections: readonly SidebarProjectSectionRender[];
   readonly projectByKey: ReadonlyMap<string, SidebarProjectSnapshot>;
   readonly selectedProjectKey: string | null;
@@ -620,6 +680,7 @@ const ProjectSection = memo(function ProjectSection(props: {
         folderColors={props.folderColors}
         onNewSubsection={isSubsection ? undefined : props.onNewSubsection}
         onNewProjectInSection={props.onNewProjectInSection}
+        onResetIcons={props.onResetIcons}
         onDelete={props.onDelete}
         onOpenRename={props.onOpenRename}
         onSetExpanded={props.onSetExpanded}
@@ -652,6 +713,7 @@ const ProjectSection = memo(function ProjectSection(props: {
                     onToggleProject={props.onToggleProject}
                     project={project}
                     folderColor={props.folderColors ? props.section.color : undefined}
+                    forceFolder={props.section.folderIcons}
                     sectionId={props.section.custom ? props.section.id : null}
                     sections={props.sections}
                     selected={props.selectedProjectKey === projectKey}
@@ -682,12 +744,16 @@ function SortableSectionHeader(props: {
     | ((parent: { readonly id: string; readonly name: string }) => void)
     | undefined;
   readonly onNewProjectInSection: (section: SidebarProjectSectionRender) => void;
+  readonly onResetIcons: (section: SidebarProjectSectionRender) => void;
   readonly onOpenRename: (section: SidebarProjectSectionRender) => void;
   readonly onDelete: (sectionId: string) => void;
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
 }) {
   const { section } = props;
   const setSectionColor = useUiStateStore((store) => store.setSidebarProjectSectionColor);
+  const setSectionFolderIcons = useUiStateStore(
+    (store) => store.setSidebarProjectSectionFolderIcons,
+  );
   const sortable = useSortable({
     data: {
       type: "section",
@@ -840,6 +906,15 @@ function SortableSectionHeader(props: {
                   </MenuSubPopup>
                 </MenuSub>
               ) : null}
+              <MenuItem onClick={() => setSectionFolderIcons(section.id, !section.ownFolderIcons)}>
+                <FolderIcon />
+                Use folder icons
+                {section.ownFolderIcons ? <CheckIcon className="ms-auto" /> : null}
+              </MenuItem>
+              <MenuItem onClick={() => props.onResetIcons(section)}>
+                <RotateCcwIcon />
+                Reset project icons…
+              </MenuItem>
               <MenuSeparator />
               <MenuItem onClick={() => props.onDelete(section.id)} variant="destructive">
                 <Trash2Icon />
@@ -857,6 +932,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly project: SidebarProjectSnapshot;
   readonly codexStyle: boolean;
   readonly folderColor: ProjectIconColor | undefined;
+  readonly forceFolder: boolean;
   readonly sectionId: string | null;
   readonly sections: readonly SidebarProjectSectionRender[];
   readonly selected: boolean;
@@ -919,6 +995,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           <ProjectFavicon
             className="size-4"
             folderColor={props.folderColor}
+            forceFolder={props.forceFolder}
             project={project}
             {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
           />

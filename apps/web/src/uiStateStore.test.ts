@@ -16,6 +16,7 @@ import {
   reorderSidebarProjectSections,
   renameSidebarProjectSection,
   setSidebarProjectSectionColor,
+  setSidebarProjectSectionFolderIcons,
   reorderProjects,
   resolveProjectExpanded,
   setBranchPickerGroupCollapsed,
@@ -256,6 +257,19 @@ describe("uiStateStore pure functions", () => {
     ]);
     // Deleting a section takes its subsections along; their projects become ungrouped.
     expect(deleteSidebarProjectSection(placed, "work").sidebarProjectSections).toEqual([]);
+  });
+
+  it("turns a section's folder icons on and off, and keeps them across reloads", () => {
+    const work = addSidebarProjectSection(makeUiState(), { id: "work", name: "Work" });
+    const on = setSidebarProjectSectionFolderIcons(work, "work", true);
+    expect(on.sidebarProjectSections[0]?.folderIcons).toBe(true);
+    expect(setSidebarProjectSectionFolderIcons(on, "work", true)).toBe(on);
+    expect(
+      setSidebarProjectSectionFolderIcons(on, "work", false).sidebarProjectSections[0],
+    ).toEqual({ id: "work", name: "Work", projectKeys: [], collapsed: false });
+    const saved: unknown = { sidebarProjectSections: on.sidebarProjectSections };
+    const parsed = parsePersistedState(saved as Parameters<typeof parsePersistedState>[0]);
+    expect(parsed.sidebarProjectSections?.[0]?.folderIcons).toBe(true);
   });
 
   it("keeps saved subsections only under an existing top-level section", () => {

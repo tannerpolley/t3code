@@ -32,6 +32,8 @@ export interface SidebarProjectSection {
   color?: ProjectIconColor;
   /** The top-level section this subsection sits under; sections nest one level deep. */
   parentId?: string;
+  /** Show every project in the section as the section-colored folder, over custom icons. */
+  folderIcons?: boolean;
 }
 
 const isProjectIconColor = Schema.is(ProjectIconColor);
@@ -164,6 +166,7 @@ function sanitizeSidebarProjectSections(value: unknown): SidebarProjectSection[]
         ...(typeof candidate.parentId === "string" && candidate.parentId.length > 0
           ? { parentId: candidate.parentId }
           : {}),
+        ...(candidate.folderIcons === true ? { folderIcons: true } : {}),
       },
     ];
   });
@@ -557,6 +560,23 @@ export function setSidebarProjectSectionColor(
  * Removes a section. A subsection's projects move up to its parent; a top-level section takes its
  * subsections with it, and their projects return to Other projects.
  */
+export function setSidebarProjectSectionFolderIcons(
+  state: UiState,
+  sectionId: string,
+  folderIcons: boolean,
+): UiState {
+  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
+  if (!section || (section.folderIcons === true) === folderIcons) return state;
+  return {
+    ...state,
+    sidebarProjectSections: state.sidebarProjectSections.map((candidate) => {
+      if (candidate.id !== sectionId) return candidate;
+      const { folderIcons: _previous, ...rest } = candidate;
+      return folderIcons ? { ...rest, folderIcons: true } : rest;
+    }),
+  };
+}
+
 export function deleteSidebarProjectSection(state: UiState, sectionId: string): UiState {
   const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
   if (!section) return state;
@@ -748,6 +768,7 @@ interface UiStateStore extends UiState {
   ) => void;
   renameSidebarProjectSection: (sectionId: string, name: string) => void;
   setSidebarProjectSectionColor: (sectionId: string, color: ProjectIconColor | null) => void;
+  setSidebarProjectSectionFolderIcons: (sectionId: string, folderIcons: boolean) => void;
   deleteSidebarProjectSection: (sectionId: string) => void;
   setSidebarProjectSectionExpanded: (sectionId: string, expanded: boolean) => void;
   moveProjectToSidebarProjectSection: (projectKey: string, sectionId: string | null) => void;
@@ -802,6 +823,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => renameSidebarProjectSection(state, sectionId, name)),
   setSidebarProjectSectionColor: (sectionId, color) =>
     set((state) => setSidebarProjectSectionColor(state, sectionId, color)),
+  setSidebarProjectSectionFolderIcons: (sectionId, folderIcons) =>
+    set((state) => setSidebarProjectSectionFolderIcons(state, sectionId, folderIcons)),
   deleteSidebarProjectSection: (sectionId) =>
     set((state) => deleteSidebarProjectSection(state, sectionId)),
   setSidebarProjectSectionExpanded: (sectionId, expanded) =>
