@@ -71,6 +71,12 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "When an agent uses the in-app browser, show it in the right side panel instead of the small floating player.",
   },
   {
+    key: "composerCodeFormatting",
+    searchId: "composer-code-formatting",
+    description:
+      "With rich text on, typing ``` or ```python and pressing Enter starts a code block in the composer, sent as a normal Markdown fence. Enter adds lines; press Enter on two blank last lines, or ArrowDown at the end, to leave it. Off keeps fences as plain text.",
+  },
+  {
     key: "lineageDetailsExpanded",
     searchId: "lineage-details-expanded",
     description:

@@ -45,16 +45,20 @@ import {
 import {
   buildDocJson,
   buildTiptapContent,
+  codeBlockOwnsKey,
   collapsedToFlat,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
   flatToCollapsed,
   flatToMarkdown,
   flatToPm,
+  openFencedCodeBlock,
   pmToFlat,
   serializeEditorDoc,
+  type BuildContentOptions,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
+import { useClientSettings } from "~/hooks/useSettings";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
@@ -550,16 +554,27 @@ const ComposerMarkersExtension = Extension.create({
 
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
+const selectComposerCodeFormatting = (settings: { composerCodeFormatting: boolean }) =>
+  settings.composerCodeFormatting;
+
 export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
-  // Extensions are creation-time: flipping the setting remounts the editor.
-  // Both halves initialize from the controlled Markdown value, so the draft
-  // survives the flip.
+  const codeFormatting = useClientSettings(selectComposerCodeFormatting);
+  const codeBlocks = (props.richTextEnabled ?? false) && codeFormatting;
+  // Extensions are creation-time: flipping a setting remounts the editor.
+  // Every variant initializes from the controlled Markdown value, so the
+  // draft survives the flip.
   return (
-    <ComposerPromptEditorTiptapInner key={props.richTextEnabled ? "rich" : "plain"} {...props} />
+    <ComposerPromptEditorTiptapInner
+      key={props.richTextEnabled ? (codeBlocks ? "rich-code" : "rich") : "plain"}
+      {...props}
+      codeBlocks={codeBlocks}
+    />
   );
 }
 
-function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
+function ComposerPromptEditorTiptapInner(
+  props: ComposerPromptEditorProps & { codeBlocks: boolean },
+) {
   const {
     value,
     cursor,
@@ -582,10 +597,12 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     onCitationSubmitAndSend,
     onPaste,
     editorRef,
+    codeBlocks,
   } = props;
   // The setting toggles styling, not the engine: both modes are Tiptap.
   // Plain mode disables the mark extensions, so markers stay literal text.
   const richText = richTextEnabled ?? false;
+  const contentOptions: BuildContentOptions = { styling: richText, codeBlocks };
 
   const onChangeRef = useRef(onChange);
   const onVisibleSelectionChangeRef = useRef(onVisibleSelectionChange);
@@ -710,7 +727,12 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       expandedCursor: nextExpandedCursor,
       contextIds: map.contextIds,
     };
+    // Code is literal: a caret in code opens no @, $ or / menu.
+    const cursorInCode =
+      updated.schema.nodes.codeBlock !== undefined &&
+      (updated.state.selection.$from.parent.type.spec.code === true || updated.isActive("code"));
     const cursorAdjacentToMention =
+      cursorInCode ||
       isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
       isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right");
     onChangeRef.current(
@@ -741,7 +763,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         StarterKit.configure({
           blockquote: false,
           bulletList: false,
-          codeBlock: false,
+          // Tiptap's defaults: Enter adds a line, Enter on two blank last
+          // lines or ArrowDown at the end leaves the block.
+          ...(codeBlocks ? {} : { codeBlock: false }),
           heading: false,
           horizontalRule: false,
           listItem: false,
@@ -795,7 +819,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             description: shortDescription || found.description?.trim() || null,
           };
         },
-        { styling: richText },
+        contentOptions,
       ),
       editable: !disabled,
       editorProps: {
@@ -873,6 +897,23 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             event.preventDefault();
             return true;
           }
+          if (codeBlockOwnsKey(view.state, event)) {
+            // Plain Enter and arrows go to the code block keymap. Shift+Enter
+            // would otherwise exit the block through the hard break command.
+            if (event.key !== "Enter" || !(event.shiftKey || event.altKey)) return false;
+            event.preventDefault();
+            view.dispatch(view.state.tr.insertText("\n").scrollIntoView());
+            return true;
+          }
+          if (
+            event.key === "Enter" &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            openFencedCodeBlock(view.state, view.dispatch)
+          ) {
+            event.preventDefault();
+            return true;
+          }
           const handler = onCommandKeyDownRef.current;
           if (event.key === "Enter") {
             const instance = editorHolder.current;
@@ -884,6 +925,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               return true;
             }
             event.preventDefault();
+            if (view.state.selection.$from.parent.type.spec.code === true) {
+              view.dispatch(view.state.tr.insertText("\n").scrollIntoView());
+              return true;
+            }
             if (
               isTaskItem &&
               instance &&
@@ -941,6 +986,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           const pastedText = clipboardData.getData("text/plain");
           if (!pastedText) return false;
           event.preventDefault();
+          // Code takes the clipboard text as is: no chips, marks, or fences.
+          if (view.state.selection.$from.parent.type.spec.code === true) {
+            view.dispatch(view.state.tr.insertText(pastedText).scrollIntoView());
+            return true;
+          }
           const importFragment = importFragmentRef.current;
           let text = importFragment
             ? importPastedComposerText(clipboardData, importFragment)
@@ -964,7 +1014,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           }
           const editorInstance = editorHolder.current;
           if (editorInstance) {
-            insertMarkdownParagraphs(text, skillLabelFor, { styling: richText }, (content) => {
+            insertMarkdownParagraphs(text, skillLabelFor, contentOptions, (content) => {
               editorInstance.commands.insertContent(content);
             });
             scrollTiptapCaretIntoView(editorInstance);
@@ -1056,9 +1106,12 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     const pendingCitation =
       citationRequestRef.current?.value === value ? citationRequestRef.current : null;
     if (previousSnapshot.value !== value) {
-      editor.commands.setContent(buildDocJson(value, skillLabelFor, { styling: richText }), {
-        emitUpdate: false,
-      });
+      editor.commands.setContent(
+        buildDocJson(value, skillLabelFor, { styling: richText, codeBlocks }),
+        {
+          emitUpdate: false,
+        },
+      );
     }
     const map = serializeEditorDoc(editor.state.doc);
     const flat = collapsedToFlat(map, normalizedCursor);
@@ -1087,7 +1140,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
-  }, [cursor, editor, richText, skillLabelFor, value]);
+  }, [cursor, editor, richText, codeBlocks, skillLabelFor, value]);
 
   const focusAt = useCallback(
     (nextCursor: number) => {
@@ -1312,7 +1365,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 function insertMarkdownParagraphs(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options: { styling: boolean },
+  options: BuildContentOptions,
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {
   const blocks = buildTiptapContent(value, skillLabelFor, options);

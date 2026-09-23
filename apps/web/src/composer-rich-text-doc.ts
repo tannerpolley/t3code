@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { type EditorState, TextSelection, type Transaction } from "@tiptap/pm/state";
 import { Code } from "@tiptap/extension-code";
 import { TaskItem } from "@tiptap/extension-task-item";
 
@@ -171,12 +172,58 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
   return json;
 }
 
+/** A line that opens a fenced code block: ``` plus an optional language. */
+const CODE_FENCE_OPEN = /^```([^`\s]*)$/;
+const CODE_FENCE_CLOSE = "```";
+
+export interface BuildContentOptions {
+  styling?: boolean;
+  /** Fenced code blocks become code block nodes (styling only). */
+  codeBlocks?: boolean;
+}
+
 export function buildTiptapContent(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options?: { styling?: boolean },
+  options?: BuildContentOptions,
 ): Record<string, unknown>[] {
   const styling = options?.styling ?? true;
+  if (!styling || !options?.codeBlocks) return buildLineBlocks(value, skillLabelFor, styling);
+  // A fence becomes a code block only when a bare ``` line closes it with at
+  // least one line between. Anything else stays literal text, so the prompt
+  // round-trips byte-identically.
+  const blocks: Record<string, unknown>[] = [];
+  const lines = value.split("\n");
+  let pending: string[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const open = CODE_FENCE_OPEN.exec(lines[index]!);
+    const close = open ? lines.indexOf(CODE_FENCE_CLOSE, index + 2) : -1;
+    if (!open || close === -1) {
+      pending.push(lines[index]!);
+      index += 1;
+      continue;
+    }
+    if (pending.length > 0)
+      blocks.push(...buildLineBlocks(pending.join("\n"), skillLabelFor, true));
+    pending = [];
+    const code = lines.slice(index + 1, close).join("\n");
+    blocks.push({
+      type: "codeBlock",
+      attrs: { language: open[1] || null },
+      content: code ? [{ type: "text", text: code }] : [],
+    });
+    index = close + 1;
+  }
+  if (pending.length > 0) blocks.push(...buildLineBlocks(pending.join("\n"), skillLabelFor, true));
+  return blocks;
+}
+
+function buildLineBlocks(
+  value: string,
+  skillLabelFor: (name: string) => SkillMeta,
+  styling: boolean,
+): Record<string, unknown>[] {
   // Hide token source from the markdown parser, then restore the atoms with
   // the marks of their surrounding text. Choose a sentinel absent from input.
   let sentinel = "\uFFFC";
@@ -267,7 +314,7 @@ export function buildTiptapContent(
 export function buildDocJson(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options?: { styling?: boolean },
+  options?: BuildContentOptions,
 ) {
   return { type: "doc", content: buildTiptapContent(value, skillLabelFor, options) };
 }
@@ -489,6 +536,57 @@ function appendInlineRuns(
   }
 }
 
+/** Fence text: shown in the prompt, owns no document characters, like a task prefix. */
+function pushFenceRun(acc: RichAccumulator, text: string, pmPos: number): void {
+  acc.runs.push({
+    kind: "prefix",
+    flatStart: acc.flat,
+    docLen: 0,
+    collapsedLen: text.length,
+    mdLen: text.length,
+    openLen: 0,
+    closeLen: 0,
+    pmPos,
+    mdStart: acc.md,
+    collapsedStart: acc.collapsed,
+  });
+  acc.value += text;
+  acc.collapsed += text.length;
+  acc.md += text.length;
+}
+
+function appendCodeBlockRuns(
+  block: ProseMirrorNode,
+  contentStart: number,
+  acc: RichAccumulator,
+): void {
+  const language = (block.attrs as Record<string, unknown>).language;
+  pushFenceRun(
+    acc,
+    `${CODE_FENCE_CLOSE}${typeof language === "string" ? language : ""}\n`,
+    contentStart,
+  );
+  // Code text is literal: newlines are document characters in every space.
+  const text = block.textContent;
+  acc.runs.push({
+    kind: "text",
+    flatStart: acc.flat,
+    docLen: text.length,
+    collapsedLen: text.length,
+    mdLen: text.length,
+    openLen: 0,
+    closeLen: 0,
+    pmPos: contentStart,
+    mdStart: acc.md,
+    collapsedStart: acc.collapsed,
+  });
+  acc.value += text;
+  acc.flat += text.length;
+  acc.collapsed += text.length;
+  acc.md += text.length;
+  pushFenceRun(acc, `\n${CODE_FENCE_CLOSE}`, contentStart + text.length);
+}
+
 function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumulator): void {
   let itemPos = listStart + 1;
   let firstItem = true;
@@ -556,6 +654,8 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
       walkTaskList(block, pmBlockStart, acc);
     } else if (block.type.name === "paragraph") {
       appendInlineRuns(block, pmBlockStart + 1, acc);
+    } else if (block.type.name === "codeBlock") {
+      appendCodeBlockRuns(block, pmBlockStart + 1, acc);
     }
     pmBlockStart += block.nodeSize;
   });
@@ -649,4 +749,56 @@ export function pmToFlat(map: RichDocMap, pmPos: number): number {
     if (run.pmPos <= pmPos) best = run.flatStart + run.docLen;
   }
   return Math.max(0, Math.min(best, map.docLength));
+}
+
+/**
+ * Enter at the end of a top-level paragraph holding only an opening fence
+ * (```, ```python) turns it into an empty code block. Needs a schema with
+ * code blocks, so it is a no-op when code formatting is off.
+ */
+export function openFencedCodeBlock(
+  state: EditorState,
+  dispatch?: (tr: Transaction) => void,
+): boolean {
+  const codeBlock = state.schema.nodes.codeBlock;
+  const { $from, empty } = state.selection;
+  const paragraph = $from.parent;
+  if (
+    !codeBlock ||
+    !empty ||
+    $from.depth !== 1 ||
+    paragraph.type.name !== "paragraph" ||
+    $from.parentOffset !== paragraph.content.size ||
+    paragraph.textContent.length !== paragraph.content.size
+  ) {
+    return false;
+  }
+  const match = CODE_FENCE_OPEN.exec(paragraph.textContent);
+  if (!match) return false;
+  if (dispatch) {
+    const start = $from.before();
+    const tr = state.tr.replaceWith(
+      start,
+      $from.after(),
+      codeBlock.create({ language: match[1] || null }),
+    );
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, start + 1)).scrollIntoView());
+  }
+  return true;
+}
+
+/**
+ * Keys a code block keeps from the composer's commands (send, menus, prompt
+ * history). Enter adds a line there; Mod+Enter still reaches send.
+ */
+export function codeBlockOwnsKey(
+  state: EditorState,
+  event: { key: string; ctrlKey: boolean; metaKey: boolean },
+): boolean {
+  return (
+    state.selection.$from.parent.type.spec.code === true &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    (event.key === "Enter" || event.key === "ArrowUp" || event.key === "ArrowDown")
+  );
 }

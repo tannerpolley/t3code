@@ -390,6 +390,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork browser preview agent side panel floating mini player"],
   },
   {
+    id: "composer-code-formatting",
+    title: "Code blocks in the composer",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork composer code block fenced backticks inline code monospace"],
+  },
+  {
     id: "lineage-details-expanded",
     title: "Expand agent details by default",
     to: "/settings/customizations",

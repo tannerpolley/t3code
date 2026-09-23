@@ -2,16 +2,19 @@ import { getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildDocJson,
+  codeBlockOwnsKey,
   collapsedToFlat,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
   flatToCollapsed,
   flatToMarkdown,
   flatToPm,
+  openFencedCodeBlock,
   pmToFlat,
   serializeEditorDoc,
 } from "./composer-rich-text-doc";
@@ -63,6 +66,55 @@ const schema = getSchemaByResolvedExtensions(
     ComposerTaskItemExtension,
   ]),
 );
+
+// Rich mode with the code formatting switch on: fenced blocks are nodes.
+const codeSchema = getSchemaByResolvedExtensions(
+  resolveExtensions([
+    StarterKit.configure({
+      blockquote: false,
+      bulletList: false,
+      heading: false,
+      horizontalRule: false,
+      listItem: false,
+      orderedList: false,
+      dropcursor: false,
+      gapcursor: false,
+      trailingNode: false,
+      code: false,
+    }),
+    ComposerCodeExtension,
+    stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
+    stubAtom("composer-skill", {
+      skillName: { default: "" },
+      skillLabel: { default: "" },
+      skillDescription: { default: null },
+    }),
+    TaskList,
+    ComposerTaskItemExtension,
+  ]),
+);
+
+function codeDoc(value: string) {
+  const doc = ProseMirrorNode.fromJSON(
+    codeSchema,
+    buildDocJson(value, (name) => ({ label: name, description: null }), {
+      styling: true,
+      codeBlocks: true,
+    }),
+  );
+  doc.check();
+  return doc;
+}
+
+function codeBlocksIn(doc: ProseMirrorNode) {
+  const blocks: { language: unknown; text: string }[] = [];
+  doc.forEach((node) => {
+    if (node.type.name === "codeBlock") {
+      blocks.push({ language: node.attrs.language, text: node.textContent });
+    }
+  });
+  return blocks;
+}
 
 function roundTrip(value: string) {
   const json = buildDocJson(value, (name) => ({ label: name, description: null }));
@@ -359,5 +411,97 @@ describe("composer rich text document model", () => {
     expect(flatToMarkdown(map, 6)).toBe(10);
     expect(collapsedToFlat(map, 3)).toBe(2);
     expect(collapsedToFlat(map, 9)).toBe(6);
+  });
+
+  it.each([
+    ["```\nx\n```", [{ language: null, text: "x" }]],
+    [
+      "```python\ndef f():\n    return 1\n```",
+      [{ language: "python", text: "def f():\n    return 1" }],
+    ],
+    ["```\n\n```", [{ language: null, text: "" }]],
+    [
+      "see **bold** and `code`\n```ts\nconst a = `b`;\n@README.md **not bold**\n```\nafter",
+      [{ language: "ts", text: "const a = `b`;\n@README.md **not bold**" }],
+    ],
+    [
+      "```\na\n```\n```c++\nb\n```\n",
+      [
+        { language: null, text: "a" },
+        { language: "c++", text: "b" },
+      ],
+    ],
+    // Not fences: no closing line, nothing between, or not alone on a line.
+    ["```js\nunclosed", []],
+    ["```\n```", []],
+    ["say ```not a fence``` here", []],
+    ["```js title\nx\n```", []],
+  ])("round-trips fenced code %j with code blocks on", (value, expected) => {
+    const doc = codeDoc(value);
+    expect(codeBlocksIn(doc)).toEqual(expected);
+    expect(serializeEditorDoc(doc).value).toBe(value);
+  });
+
+  it("keeps fences as literal text when code blocks are off", () => {
+    const value = "```py\nx = `y`\n```";
+    expect(roundTrip(value).value).toBe(value);
+    expect(roundTripPlain(value).value).toBe(value);
+    const json = buildDocJson(value, (name) => ({ label: name, description: null }));
+    expect(json.content.every((block) => block.type === "paragraph")).toBe(true);
+  });
+
+  it.each(["```py\nx\n```", "a\n```\n\n```\nb", "```\nx\ny\n```\n"])(
+    "maps editable positions around the code block in %j",
+    (value) => {
+      const doc = codeDoc(value);
+      const map = serializeEditorDoc(doc);
+      for (let flat = 0; flat <= map.docLength; flat += 1) {
+        const position = flatToPm(map, flat);
+        expect(doc.resolve(position).parent.isTextblock).toBe(true);
+        expect(pmToFlat(map, position)).toBe(flat);
+        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      }
+    },
+  );
+
+  function stateAtEnd(value: string, schemaFor = codeSchema) {
+    const doc = ProseMirrorNode.fromJSON(
+      schemaFor,
+      buildDocJson(value, (name) => ({ label: name, description: null }), {
+        styling: true,
+        codeBlocks: schemaFor === codeSchema,
+      }),
+    );
+    return EditorState.create({ doc, selection: TextSelection.atEnd(doc) });
+  }
+
+  it.each([
+    ["```", "```\n\n```"],
+    ["```python", "```python\n\n```"],
+    ["intro\n```sh", "intro\n```sh\n\n```"],
+  ])("Enter on the opening fence %j starts a code block", (value, expected) => {
+    let state = stateAtEnd(value);
+    expect(openFencedCodeBlock(state, (tr) => (state = state.apply(tr)))).toBe(true);
+    expect(serializeEditorDoc(state.doc).value).toBe(expected);
+    expect(state.selection.$from.parent.type.name).toBe("codeBlock");
+  });
+
+  it.each([
+    ["```js title", codeSchema],
+    ["text ```", codeSchema],
+    ["- [ ] ```", codeSchema],
+    ["```", schema],
+  ])("Enter on %j does not start a code block", (value, schemaFor) => {
+    expect(openFencedCodeBlock(stateAtEnd(value, schemaFor))).toBe(false);
+  });
+
+  it("keeps Enter inside a code block away from send, but not Mod+Enter", () => {
+    const inCode = stateAtEnd("```\nx\n```");
+    const inParagraph = stateAtEnd("x");
+    const enter = { key: "Enter", ctrlKey: false, metaKey: false };
+    expect(codeBlockOwnsKey(inCode, enter)).toBe(true);
+    expect(codeBlockOwnsKey(inCode, { ...enter, ctrlKey: true })).toBe(false);
+    expect(codeBlockOwnsKey(inCode, { ...enter, metaKey: true })).toBe(false);
+    expect(codeBlockOwnsKey(inParagraph, enter)).toBe(false);
   });
 });
