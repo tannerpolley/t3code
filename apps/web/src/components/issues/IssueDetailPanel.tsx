@@ -16,17 +16,26 @@ import {
   CheckCircle2Icon,
   CircleDotIcon,
   ExternalLinkIcon,
+  GitBranchPlusIcon,
   MessageSquareIcon,
   PanelRightIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import ChatMarkdown from "../ChatMarkdown";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { Input } from "../ui/input";
+import { toastManager } from "../ui/toast";
+import { sanitizeNewRefName } from "../BranchToolbar.logic";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { useProjects, useThreadShell } from "~/state/entities";
+import { findIssueProject, issueWorktreeBranchName } from "./issueWorktree.logic";
 import { Spinner } from "../ui/spinner";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
@@ -219,6 +228,92 @@ function IssueComments({
   );
 }
 
+/**
+ * Opens a draft thread for the issue's project in a new worktree on its own branch, cut from the
+ * default branch when the reader sends. The task is left in the composer, unsent.
+ */
+function StartInWorktree({
+  environmentId,
+  host,
+  repository,
+  issue,
+  threadRef,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly host: string;
+  readonly repository: string;
+  readonly issue: { readonly number: number; readonly title: string; readonly url: string };
+  readonly threadRef: ScopedThreadRef | null;
+}) {
+  const projects = useProjects();
+  const threadShell = useThreadShell(threadRef);
+  const handleNewThread = useNewThreadHandler();
+  const [branch, setBranch] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const project = findIssueProject(
+    projects,
+    { environmentId, host, repository },
+    threadShell?.projectId ?? null,
+  );
+  if (project === null) return null;
+  if (branch === null) {
+    return (
+      <Button
+        onClick={() => setBranch(issueWorktreeBranchName(issue.number, issue.title))}
+        size="xs"
+        variant="outline"
+      >
+        <GitBranchPlusIcon aria-hidden />
+        Start in worktree
+      </Button>
+    );
+  }
+  const refName = sanitizeNewRefName(branch);
+  const start = async () => {
+    setStarting(true);
+    const opened = await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
+      envMode: "worktree",
+      branch: null,
+      worktreePath: null,
+      worktreeBranch: refName,
+    }).catch(() => null);
+    setStarting(false);
+    if (opened === null) {
+      toastManager.add({ type: "error", title: "Could not open a thread" });
+      return;
+    }
+    const title = issue.title || "Untitled issue";
+    useComposerDraftStore
+      .getState()
+      .setPrompt(opened.draftId, `Work on #${issue.number}: ${title}\n\n${issue.url}`);
+    setBranch(null);
+  };
+  return (
+    <form
+      className="flex min-w-64 items-center gap-1.5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (refName.length > 0 && !starting) void start();
+      }}
+    >
+      <Input
+        aria-label="New branch name"
+        autoFocus
+        className="flex-1 font-mono"
+        onChange={(event) => setBranch(event.target.value)}
+        size="compact"
+        value={branch}
+      />
+      <Button disabled={refName.length === 0 || starting} size="xs" type="submit">
+        Create
+      </Button>
+      <Button onClick={() => setBranch(null)} size="xs" type="button" variant="ghost">
+        Cancel
+      </Button>
+    </form>
+  );
+}
+
 export function IssueDetailPanel({
   environmentId,
   reference,
@@ -332,12 +427,21 @@ export function IssueDetailPanel({
             <MessageSquareIcon aria-hidden className="size-3" />
             {issue.commentCount} {issue.commentCount === 1 ? "comment" : "comments"}
           </span>
-          {canOpenBesideThread ? (
-            <Button className="ml-auto" onClick={onOpenBesideThread} size="xs" variant="outline">
-              <PanelRightIcon aria-hidden />
-              Open beside thread
-            </Button>
-          ) : null}
+          <span className="ml-auto flex flex-wrap items-center gap-1.5">
+            {canOpenBesideThread ? (
+              <Button onClick={onOpenBesideThread} size="xs" variant="outline">
+                <PanelRightIcon aria-hidden />
+                Open beside thread
+              </Button>
+            ) : null}
+            <StartInWorktree
+              environmentId={environmentId}
+              host={repository.host}
+              repository={repository.repository}
+              issue={issue}
+              threadRef={threadRef}
+            />
+          </span>
         </div>
       </header>
 

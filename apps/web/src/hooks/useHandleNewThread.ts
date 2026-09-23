@@ -41,18 +41,24 @@ interface NewThreadWorkspaceOptions {
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  /** Names the branch of the worktree created on first send. */
+  worktreeBranch?: string | null;
 }
 
 // The workspace options the caller passed explicitly, shaped for the draft
 // store: absent keys stay absent so they never overwrite existing draft
-// state. Every reuse path applies exactly this set.
+// state. Every reuse path applies exactly this set. Any explicit workspace
+// replaces an earlier worktree branch name rather than inheriting it.
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
-  return {
+  const picked = {
     ...(options?.branch !== undefined ? { branch: options.branch } : {}),
     ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath } : {}),
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
     ...(options?.startFromOrigin !== undefined ? { startFromOrigin: options.startFromOrigin } : {}),
   };
+  return Object.keys(picked).length > 0
+    ? { ...picked, worktreeBranch: options?.worktreeBranch ?? null }
+    : picked;
 }
 
 export function useNewThreadHandler() {
@@ -72,6 +78,7 @@ export function useNewThreadHandler() {
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
+        worktreeBranch?: string | null;
         replace?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
@@ -257,6 +264,7 @@ export function useNewThreadHandler() {
             workspaceContext = {
               branch: null,
               worktreePath: null,
+              worktreeBranch: null,
               envMode: defaultEnvMode,
               startFromOrigin: resolveNewDraftStartFromOrigin({
                 envMode: defaultEnvMode,
@@ -410,6 +418,7 @@ export function useNewThreadHandler() {
           createdAt,
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
+          worktreeBranch: options?.worktreeBranch ?? null,
           envMode: initialEnvMode,
           startFromOrigin:
             options?.startFromOrigin ??

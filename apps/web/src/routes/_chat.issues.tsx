@@ -24,7 +24,7 @@ import {
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { IssueDetailPanel } from "../components/issues/IssueDetailPanel";
-import { IssueFilterMenu } from "../components/issues/IssueFilterMenu";
+import { IssueFilterMenu, useIssueFilterPreferences } from "../components/issues/IssueFilterMenu";
 import { IssueTree, IssueTreeRow, IssueTreeTag } from "../components/issues/IssueTree";
 import {
   acceptIssueListPage,
@@ -32,8 +32,6 @@ import {
 } from "../components/issues/issuePaging.logic";
 import { groupIssuesByMilestone } from "../components/issues/issueTree.logic";
 import {
-  DEFAULT_ISSUE_FILTER_PREFERENCES,
-  IssueFilterPreferences,
   filterAndSortIssues,
   groupRepositoriesByOwner,
   issueListStateFor,
@@ -51,7 +49,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/ui/input-group";
 import { SidebarInset } from "../components/ui/sidebar";
 import { Spinner } from "../components/ui/spinner";
-import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import {
@@ -185,8 +182,6 @@ function issueListScopeKey(target: IssueListTarget): string {
   ]);
 }
 
-const ISSUE_FILTERS_STORAGE_KEY = "t3code:issues-filters";
-
 type IssuePagingState = {
   readonly cursor: string | null;
   readonly generation: number;
@@ -258,11 +253,7 @@ function IssuesRouteView() {
     [capableEnvironmentIds, environmentLabels],
   );
   const issueRepositories = useIssueRepositories(capableEnvironmentList);
-  const [preferences, setPreferences] = useLocalStorage(
-    ISSUE_FILTERS_STORAGE_KEY,
-    DEFAULT_ISSUE_FILTER_PREFERENCES,
-    IssueFilterPreferences,
-  );
+  const [preferences, setPreferences] = useIssueFilterPreferences();
   const stateFilter = issueStateFilter(preferences);
   const listState = issueListStateFor(stateFilter ?? "open");
   // ponytail: when two environments share a GitHub account, the first (by label) reads each

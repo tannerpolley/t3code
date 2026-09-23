@@ -216,6 +216,11 @@ export const RepositoryIdentity = Schema.Struct({
   provider: Schema.optionalKey(TrimmedNonEmptyString),
   owner: Schema.optionalKey(TrimmedNonEmptyString),
   name: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * `owner/name` of the `origin` remote when the identity came from another remote on the same
+   * host, i.e. origin is the user's fork of `upstream`. Issue lists read the fork.
+   */
+  originRepository: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RepositoryIdentity = typeof RepositoryIdentity.Type;
 

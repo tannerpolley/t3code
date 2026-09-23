@@ -13,7 +13,21 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
-import { changedIssueFilterCount, type IssueFilterPreferences } from "./issueWorkspace.logic";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import {
+  changedIssueFilterCount,
+  DEFAULT_ISSUE_FILTER_PREFERENCES,
+  IssueFilterPreferences,
+} from "./issueWorkspace.logic";
+
+/** The Filter menu's saved choices, shared by the Issues page and the thread's issue list. */
+export function useIssueFilterPreferences() {
+  return useLocalStorage(
+    "t3code:issues-filters",
+    DEFAULT_ISSUE_FILTER_PREFERENCES,
+    IssueFilterPreferences,
+  );
+}
 
 type ShowKey = {
   [Key in keyof IssueFilterPreferences]: IssueFilterPreferences[Key] extends boolean ? Key : never;
@@ -62,7 +76,8 @@ function RadioSection<Value extends string>({
 /**
  * Every list narrowing behind one control: positive "show" checkboxes for issue states and
  * repository kinds, then milestone, assignment, host and sort. The trigger counts choices that
- * differ from the defaults.
+ * differ from the defaults. A single repository's list drops the repository choices and uses an
+ * icon trigger.
  */
 export function IssueFilterMenu({
   preferences,
@@ -70,6 +85,7 @@ export function IssueFilterMenu({
   hosts,
   host,
   onHostChange,
+  singleRepository = false,
 }: {
   preferences: IssueFilterPreferences;
   onChange: (preferences: IssueFilterPreferences) => void;
@@ -77,8 +93,13 @@ export function IssueFilterMenu({
   hosts: ReadonlyArray<string>;
   host: string;
   onHostChange: (host: string) => void;
+  singleRepository?: boolean;
 }) {
-  const changed = changedIssueFilterCount(preferences) + (host === "" ? 0 : 1);
+  const changed = singleRepository
+    ? (["open", "closed", "milestone", "assignee"] as const).filter(
+        (key) => preferences[key] !== DEFAULT_ISSUE_FILTER_PREFERENCES[key],
+      ).length
+    : changedIssueFilterCount(preferences) + (host === "" ? 0 : 1);
   const checkbox = ([key, label]: readonly [ShowKey, string]) => (
     <MenuCheckboxItem
       key={key}
@@ -90,25 +111,39 @@ export function IssueFilterMenu({
   );
   return (
     <Menu>
-      <MenuTrigger render={<Button size="sm" variant="outline" />}>
-        <ListFilterIcon aria-hidden className="size-3.5" />
-        <span>Filter</span>
-        {changed > 0 ? (
-          <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
-            {changed}
-          </span>
-        ) : null}
-      </MenuTrigger>
+      {singleRepository ? (
+        <MenuTrigger
+          aria-label="Filter issues"
+          render={<Button size="icon-xs" variant="ghost" />}
+          className={changed > 0 ? "text-foreground" : "text-muted-foreground/70"}
+        >
+          <ListFilterIcon aria-hidden className="size-3.5" />
+        </MenuTrigger>
+      ) : (
+        <MenuTrigger render={<Button size="sm" variant="outline" />}>
+          <ListFilterIcon aria-hidden className="size-3.5" />
+          <span>Filter</span>
+          {changed > 0 ? (
+            <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
+              {changed}
+            </span>
+          ) : null}
+        </MenuTrigger>
+      )}
       <MenuPopup align="end" side="bottom" className="max-h-[70vh] w-52 overflow-y-auto">
         <MenuGroup>
           <MenuGroupLabel>Show issues</MenuGroupLabel>
           {ISSUE_OPTIONS.map(checkbox)}
         </MenuGroup>
-        <MenuSeparator />
-        <MenuGroup>
-          <MenuGroupLabel>Show repositories</MenuGroupLabel>
-          {REPOSITORY_OPTIONS.map(checkbox)}
-        </MenuGroup>
+        {singleRepository ? null : (
+          <>
+            <MenuSeparator />
+            <MenuGroup>
+              <MenuGroupLabel>Show repositories</MenuGroupLabel>
+              {REPOSITORY_OPTIONS.map(checkbox)}
+            </MenuGroup>
+          </>
+        )}
         <MenuSeparator />
         <RadioSection
           label="Milestone"

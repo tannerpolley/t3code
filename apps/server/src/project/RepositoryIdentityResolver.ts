@@ -132,8 +132,20 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     return null;
   }
 
-  const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.value.stdout));
-  return remote ? buildRepositoryIdentity({ ...remote, rootPath: cacheKey }) : null;
+  const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
+  const remote = pickPrimaryRemote(remotes);
+  if (!remote) return null;
+  const identity = buildRepositoryIdentity({ ...remote, rootPath: cacheKey });
+  const originUrl = remote.remoteName === "origin" ? undefined : remotes.get("origin");
+  if (!originUrl) return identity;
+  // The identity stays on upstream for pull requests and project grouping; issues read the fork.
+  const [originHost, ...originPath] = normalizeGitRemoteUrl(originUrl).split("/");
+  const originRepository = originPath.join("/");
+  return originHost === identity.canonicalKey.split("/")[0] &&
+    originRepository.length > 0 &&
+    originRepository !== identity.displayName
+    ? { ...identity, originRepository }
+    : identity;
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (

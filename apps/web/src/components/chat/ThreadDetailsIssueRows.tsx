@@ -1,40 +1,96 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, RepositoryIdentity, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueListResult,
+  RepositoryIdentity,
+  ThreadId,
+} from "@t3tools/contracts";
 import { pullRequestHostOf } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { useNavigate } from "@tanstack/react-router";
-import { CircleDotIcon, ListIcon, MinusIcon, PlusIcon } from "lucide-react";
+import {
+  CheckCircle2Icon,
+  ChevronRightIcon,
+  CircleDotIcon,
+  ListIcon,
+  MinusIcon,
+  PlusIcon,
+} from "lucide-react";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useState } from "react";
 
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironment } from "~/state/environments";
 import { issueEnvironment } from "~/state/issues";
 
+import { IssueFilterMenu, useIssueFilterPreferences } from "../issues/IssueFilterMenu";
+import { groupIssuesByMilestone, type IssueGroup } from "../issues/issueTree.logic";
+import {
+  filterAndSortIssues,
+  issueListStateFor,
+  issueStateFilter,
+  repositoryKey,
+  type IssueFilterPreferences,
+} from "../issues/issueWorkspace.logic";
 import { Button } from "../ui/button";
 import { THREAD_DETAILS_PANEL_ROW_CLASS } from "./threadDetailsPanelStyles";
 
 /** Issue rows shown before "Show N more", matching the pull request rows. */
 const VISIBLE_ISSUE_COUNT = 5;
 
+const ExpandedIssueBlocks = Schema.Record(Schema.String, Schema.Boolean);
+
 /** The GitHub repository a thread's project pushes to, when the issue browser can read it. */
 export function threadIssueRepository(
   identity: RepositoryIdentity | null | undefined,
 ): { readonly host: string; readonly repository: string } | null {
   if (identity?.provider !== "github") return null;
-  const repository = sourceControlRepositorySelector(identity);
+  // A fork's checkout identifies as upstream for pull requests; its issues are the fork's own.
+  const repository = identity.originRepository ?? sourceControlRepositorySelector(identity);
   const host = pullRequestHostOf(identity, "github");
   // The issue browser reads github.com only.
   return repository === null || host !== "github.com" ? null : { host, repository };
 }
 
 /**
- * The open issues of the thread's repository, most recently updated first. A row opens the issue
- * beside the thread; the list stays live while agents work on it.
+ * The block's issues under the Filter menu's choices, grouped by milestone with "No Milestone" last,
+ * then cut to `limit` rows across the groups in order. `hidden` counts the rows cut.
+ */
+export function threadIssueGroups(
+  issues: IssueListResult["issues"],
+  preferences: IssueFilterPreferences,
+  limit: number,
+): { readonly groups: IssueGroup[]; readonly total: number; readonly hidden: number } {
+  const state = issueStateFilter(preferences);
+  if (state === null) return { groups: [], total: 0, hidden: 0 };
+  const filters = {
+    query: "",
+    state,
+    milestone: preferences.milestone,
+    assignee: preferences.assignee,
+    sort: preferences.sort,
+  };
+  const shown = filterAndSortIssues(issues, filters);
+  let remaining = limit;
+  const groups = groupIssuesByMilestone([], shown).flatMap((group) => {
+    if (remaining <= 0) return [];
+    const kept = filterAndSortIssues(group.issues, filters).slice(0, remaining);
+    remaining -= kept.length;
+    return [{ ...group, issues: kept }];
+  });
+  return { groups, total: shown.length, hidden: Math.max(0, shown.length - limit) };
+}
+
+/**
+ * The thread repository's issues, collapsed by default and remembered per repository. The Filter
+ * menu shares the Issues page's saved choices. A row opens the issue beside the thread; the list
+ * stays live while agents work on it.
  */
 export function ThreadDetailsIssueRows({
   environmentId,
@@ -64,75 +120,168 @@ function IssueRows({
   host: string;
   repository: string;
 }) {
-  const navigate = useNavigate();
-  const [expanded, setExpanded] = useState(false);
+  const key = repositoryKey(host, repository);
+  const [expandedBlocks, setExpandedBlocks] = useLocalStorage(
+    "t3code:thread-issues-expanded",
+    {},
+    ExpandedIssueBlocks,
+  );
+  const open = expandedBlocks[key] === true;
+  const [preferences, setPreferences] = useIssueFilterPreferences();
+  const listState = issueListStateFor(issueStateFilter(preferences) ?? "open");
   const result = useAtomValue(
-    issueEnvironment.liveList({ environmentId, input: { host, repository, state: "open" } }),
+    issueEnvironment.liveList({ environmentId, input: { host, repository, state: listState } }),
   );
   const list = Option.getOrNull(AsyncResult.value(result));
-  if (list === null) {
-    return result._tag === "Failure" ? (
+  const [showAll, setShowAll] = useState(false);
+  const view =
+    list === null
+      ? null
+      : threadIssueGroups(
+          list.issues,
+          preferences,
+          showAll ? Number.POSITIVE_INFINITY : VISIBLE_ISSUE_COUNT,
+        );
+  const more = list?.nextCursor == null ? "" : "+";
+
+  return (
+    <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">
+      <div className="flex items-center gap-1 pe-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-expanded={open}
+          onClick={() => setExpandedBlocks((current) => ({ ...current, [key]: !open }))}
+          className={cn(
+            THREAD_DETAILS_PANEL_ROW_CLASS,
+            "min-w-0 flex-1 text-muted-foreground/80 active:scale-100",
+          )}
+        >
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("-mx-0.5 size-4 shrink-0 transition-transform", open && "rotate-90")}
+          />
+          <span className="flex-1 text-left">Issues</span>
+          {view === null ? null : (
+            <span className="text-xs tabular-nums text-muted-foreground/70">
+              {view.total}
+              {more}
+            </span>
+          )}
+        </Button>
+        <IssueFilterMenu
+          host=""
+          hosts={[]}
+          onChange={setPreferences}
+          onHostChange={() => {}}
+          preferences={preferences}
+          singleRepository
+        />
+      </div>
+      {open ? (
+        <IssueRowsBody
+          environmentId={environmentId}
+          threadId={threadId}
+          host={host}
+          repository={repository}
+          view={view}
+          failed={result._tag === "Failure"}
+          more={more}
+          showAll={showAll}
+          onShowAllChange={setShowAll}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function IssueRowsBody({
+  environmentId,
+  threadId,
+  host,
+  repository,
+  view,
+  failed,
+  more,
+  showAll,
+  onShowAllChange,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  host: string;
+  repository: string;
+  view: ReturnType<typeof threadIssueGroups> | null;
+  failed: boolean;
+  more: string;
+  showAll: boolean;
+  onShowAllChange: (showAll: boolean) => void;
+}) {
+  const navigate = useNavigate();
+  if (view === null) {
+    return failed ? (
       <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">Issues unavailable</p>
     ) : null;
   }
-  const issues = list.issues.toSorted((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  );
-  const shown = expanded ? issues : issues.slice(0, VISIBLE_ISSUE_COUNT);
-  const hidden = issues.length - VISIBLE_ISSUE_COUNT;
-  const more = list.nextCursor === null ? "" : "+";
+  const { groups, total, hidden } = view;
 
   return (
-    <div className="flex flex-col" aria-label={`Open issues in ${repository}`} role="group">
-      <div className="flex items-center justify-between px-2.5 pt-2 pb-1 text-[11px] font-medium text-muted-foreground/70">
-        <span>Issues</span>
-        <span className="tabular-nums">
-          {issues.length}
-          {more} open
-        </span>
-      </div>
-      {shown.map((issue) => (
-        <Button
-          key={issue.number}
-          variant="ghost"
-          size="sm"
-          className={cn(THREAD_DETAILS_PANEL_ROW_CLASS, "active:scale-100")}
-          onClick={() =>
-            useRightPanelStore.getState().openIssue(scopeThreadRef(environmentId, threadId), {
-              environmentId,
-              host,
-              repository,
-              number: issue.number,
-              url: issue.url,
-            })
-          }
-        >
-          <CircleDotIcon aria-hidden className="-mx-0.5 size-4 shrink-0 text-emerald-500" />
-          <span className="min-w-0 flex-1 truncate text-left">
-            <span className="me-1 text-muted-foreground">#{issue.number}</span>
-            {issue.title || "Untitled issue"}
-          </span>
-        </Button>
+    <>
+      {groups.map((group) => (
+        <div key={group.id} className="flex flex-col">
+          <p className="truncate px-2.5 pt-1.5 pb-0.5 text-[11px] font-medium text-muted-foreground/60">
+            {group.title}
+          </p>
+          {group.issues.map((issue) => (
+            <Button
+              key={issue.number}
+              variant="ghost"
+              size="sm"
+              className={cn(THREAD_DETAILS_PANEL_ROW_CLASS, "active:scale-100")}
+              onClick={() =>
+                useRightPanelStore.getState().openIssue(scopeThreadRef(environmentId, threadId), {
+                  environmentId,
+                  host,
+                  repository,
+                  number: issue.number,
+                  url: issue.url,
+                })
+              }
+            >
+              {issue.state === "closed" ? (
+                <CheckCircle2Icon
+                  aria-hidden
+                  className="-mx-0.5 size-4 shrink-0 text-muted-foreground"
+                />
+              ) : (
+                <CircleDotIcon aria-hidden className="-mx-0.5 size-4 shrink-0 text-emerald-500" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-left">
+                <span className="me-1 text-muted-foreground">#{issue.number}</span>
+                {issue.title || "Untitled issue"}
+              </span>
+            </Button>
+          ))}
+        </div>
       ))}
-      {issues.length === 0 ? (
-        <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">No open issues</p>
+      {total === 0 ? (
+        <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">No matching issues</p>
       ) : null}
-      {hidden > 0 ? (
+      {total > VISIBLE_ISSUE_COUNT ? (
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => onShowAllChange(!showAll)}
           className={cn(
             THREAD_DETAILS_PANEL_ROW_CLASS,
             "w-full text-muted-foreground/70 hover:text-foreground/80 active:scale-100",
           )}
         >
-          {expanded ? (
+          {showAll ? (
             <MinusIcon aria-hidden className="-mx-0.5 size-4 shrink-0" />
           ) : (
             <PlusIcon aria-hidden className="-mx-0.5 size-4 shrink-0" />
           )}
-          {expanded ? "Show less" : `Show ${hidden}${more} more`}
+          {showAll ? "Show less" : `Show ${hidden}${more} more`}
         </Button>
       ) : null}
       <Button
@@ -152,6 +301,6 @@ function IssueRows({
         <ListIcon aria-hidden className="-mx-0.5 size-4 shrink-0" />
         Browse all issues
       </Button>
-    </div>
+    </>
   );
 }
