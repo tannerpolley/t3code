@@ -1,6 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PreviewAutomationTimeoutError,
+  PreviewTabId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -11,7 +17,95 @@ import {
   parseThreadSegmentFromAttachmentId,
 } from "../../../attachmentStore.ts";
 import * as ServerConfig from "../../../config.ts";
-import { claimPreviewRecording, normalizePreviewOpenInput } from "./handlers.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import { claimPreviewRecording, invoke, normalizePreviewOpenInput } from "./handlers.ts";
+
+describe("stuck tab recovery", () => {
+  const scope = {
+    environmentId: EnvironmentId.make("environment-1"),
+    threadId: ThreadId.make("thread-1"),
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    capabilities: new Set(["preview"] as const),
+    issuedAt: 1,
+  };
+  const stuckTab = PreviewTabId.make("tab_stuck");
+  const timeout = (operation: "open" | "navigate") =>
+    new PreviewAutomationTimeoutError({
+      ...scope,
+      operation,
+      clientId: "client-1",
+      connectionId: "connection-1",
+      requestId: "preview-1",
+      timeoutMs: 15_000,
+    });
+
+  /** A broker whose current tab is `tab_stuck` and whose open/navigate calls follow `outcomes`. */
+  const run = (
+    operation: "open" | "navigate",
+    input: object,
+    outcomes: ReadonlyArray<"timeout" | "ok">,
+  ) => {
+    const calls: Array<{ operation: string; input: unknown; tabId?: string }> = [];
+    const broker = {
+      invoke: (request: PreviewAutomationBroker.PreviewAutomationInvokeInput) => {
+        request.onTargetTab?.(request.tabId ?? stuckTab);
+        const outcome = outcomes[calls.length] ?? "ok";
+        calls.push({
+          operation: request.operation,
+          input: request.input,
+          ...(request.tabId === undefined ? {} : { tabId: request.tabId }),
+        });
+        return outcome === "timeout"
+          ? Effect.fail(timeout(operation))
+          : Effect.succeed({ tabId: stuckTab });
+      },
+    } as unknown as PreviewAutomationBroker.PreviewAutomationBroker["Service"];
+    return invoke(operation, input).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+      Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
+      Effect.result,
+      Effect.map((result) => ({ result, calls })),
+    );
+  };
+
+  it.effect("hard-reloads the same tab once, then retries the timed-out open", () =>
+    Effect.gen(function* () {
+      const { result, calls } = yield* run("open", { url: "http://localhost:8791/" }, ["timeout"]);
+      expect(result._tag).toBe("Success");
+      expect(calls).toEqual([
+        { operation: "open", input: { url: "http://localhost:8791/" } },
+        {
+          operation: "navigate",
+          input: { reload: "bypassCache", readiness: "none" },
+          tabId: stuckTab,
+        },
+        { operation: "open", input: { url: "http://localhost:8791/" }, tabId: stuckTab },
+      ]);
+    }),
+  );
+
+  it.effect("returns the timeout after one failed retry instead of looping", () =>
+    Effect.gen(function* () {
+      const { result, calls } = yield* run("navigate", { url: "http://localhost:8791/" }, [
+        "timeout",
+        "ok",
+        "timeout",
+      ]);
+      expect(result._tag).toBe("Failure");
+      expect(calls.map((call) => call.operation)).toEqual(["navigate", "navigate", "navigate"]);
+    }),
+  );
+
+  it.effect("does not retry an open that was creating a new tab", () =>
+    Effect.gen(function* () {
+      const { result, calls } = yield* run("open", { reuseExistingTab: false }, ["timeout"]);
+      expect(result._tag).toBe("Failure");
+      expect(calls).toHaveLength(1);
+    }),
+  );
+});
 
 describe("normalizePreviewOpenInput", () => {
   it("leaves an unstated visibility for the client preference to decide", () => {

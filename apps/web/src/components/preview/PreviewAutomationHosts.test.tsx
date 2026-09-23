@@ -158,7 +158,7 @@ describe("PreviewAutomationHosts open", () => {
 
     expect(mocks.open).toHaveBeenCalledExactlyOnceWith({
       environmentId,
-      input: { threadId, viewport, profileId: "work" },
+      input: { threadId, viewport, profileId: "work", openedByAgent: true },
     });
     expect(mocks.getClientSettings).toHaveBeenCalledOnce();
     await expect(response.promise).resolves.toMatchObject({ requestId: "open-request", ok: true });

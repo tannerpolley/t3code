@@ -36,6 +36,31 @@ const collectEvents = Effect.gen(function* () {
 }).pipe(Effect.withSpan("preview.test.collectEvents"));
 
 it.layer(PreviewManager.layer)("PreviewManager", (it) => {
+  it.effect("closes the oldest agent tab past the cap and never a user tab", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const userTab = yield* manager.open({ threadId });
+      const agentTabs = [];
+      for (let index = 0; index < PreviewManager.MAX_AGENT_TABS_PER_THREAD; index += 1) {
+        agentTabs.push(yield* manager.open({ threadId, openedByAgent: true }));
+      }
+      const collector = yield* collectEvents;
+
+      const newest = yield* manager.open({ threadId, openedByAgent: true });
+
+      const events = yield* collector.drain;
+      expect(events.map((event) => [event.type, event.tabId])).toEqual([
+        ["closed", agentTabs[0]?.tabId],
+        ["opened", newest.tabId],
+      ]);
+      const { sessions } = yield* manager.list({ threadId });
+      expect(sessions.map((session) => session.tabId).toSorted()).toEqual(
+        [userTab.tabId, ...agentTabs.slice(1).map((tab) => tab.tabId), newest.tabId].toSorted(),
+      );
+    }),
+  );
+
   it.effect("opens a session and emits opened with normalized URL", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

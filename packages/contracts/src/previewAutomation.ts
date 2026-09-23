@@ -158,6 +158,15 @@ export const PreviewAutomationNavigateInput = Schema.Struct({
     description:
       "Environment-relative target. Prefer {kind:'environment-port',port:5173} for a dev server in the current environment.",
   }),
+  reload: Schema.optional(
+    Schema.Literals(["normal", "bypassCache"]).annotate({
+      description:
+        "Reload the tab's current page instead of navigating. 'bypassCache' is a hard reload that refetches every resource; use it to see edited code.",
+    }),
+  ).annotate({
+    description:
+      "Reload the tab's current page instead of navigating. Use 'bypassCache' after editing files instead of opening a new tab.",
+  }),
   readiness: Schema.optional(
     Schema.Literals(["load", "domContentLoaded", "none"]).annotate({
       description:
@@ -172,13 +181,15 @@ export const PreviewAutomationNavigateInput = Schema.Struct({
   .check(
     Schema.makeFilter(
       (input) =>
-        Number(input.url !== undefined) + Number(input.target !== undefined) === 1 ||
-        "Provide exactly one of url or target.",
+        Number(input.url !== undefined) +
+          Number(input.target !== undefined) +
+          Number(input.reload !== undefined) ===
+          1 || "Provide exactly one of url, target, or reload.",
     ),
   )
   .annotate({
     description:
-      "Navigates the active browser tab. Provide exactly one of url or target; for most public pages use url.",
+      "Navigates or reloads the active browser tab. Provide exactly one of url, target, or reload; for most public pages use url.",
   });
 export type PreviewAutomationNavigateInput = typeof PreviewAutomationNavigateInput.Type;
 

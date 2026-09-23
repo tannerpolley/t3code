@@ -50,7 +50,7 @@ export function normalizePreviewOpenInput(
   };
 }
 
-const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
+export const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   operation: PreviewAutomationOperation,
   input: unknown,
   timeoutMs?: number,
@@ -63,16 +63,45 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   const scope = yield* McpInvocationContext.requireMcpCapability("preview");
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   let targetTabId = tabId;
-  const result = yield* broker.invoke<A>({
-    onTargetTab: (resolvedTabId) => {
-      targetTabId = resolvedTabId;
-    },
+  const request = {
     scope,
     operation,
     input,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    ...(tabId === undefined ? {} : { tabId }),
-  });
+  };
+  const result = yield* broker
+    .invoke<A>({
+      ...request,
+      onTargetTab: (resolvedTabId) => {
+        targetTabId = resolvedTabId;
+      },
+      ...(tabId === undefined ? {} : { tabId }),
+    })
+    .pipe(
+      Effect.catchTag("PreviewAutomationTimeoutError", (error) => {
+        const stuckTabId = targetTabId;
+        const reusesTab =
+          operation === "navigate" ||
+          (operation === "open" &&
+            (input as PreviewAutomationOpenInput).reuseExistingTab !== false);
+        if (!reusesTab || stuckTabId === undefined) {
+          return Effect.fail(error);
+        }
+        // A page that never finishes loading usually recovers from a hard
+        // reload. Heal the same tab once, then retry; never loop.
+        return broker
+          .invoke({
+            scope,
+            operation: "navigate",
+            input: { reload: "bypassCache", readiness: "none" },
+            tabId: stuckTabId,
+          })
+          .pipe(
+            Effect.mapError(() => error),
+            Effect.andThen(broker.invoke<A>({ ...request, tabId: stuckTabId })),
+          );
+      }),
+    );
   if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
   const statusTabId =
     (operation !== "evaluate" && typeof result === "object" && result !== null

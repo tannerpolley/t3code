@@ -130,6 +130,26 @@ const waitForDesktopOverlay = async (
   });
 };
 
+/**
+ * The desktop navigate call settles only when the page finishes loading, so a
+ * hung page would outlive the broker's deadline. Stop waiting at the host
+ * deadline and let readiness polling report the timeout instead; the broker
+ * treats an unanswered request as a dead host and drops the connection.
+ */
+const navigateWithinDeadline = async (navigation: Promise<void>, deadlineMs: number) => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      navigation,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, Math.max(0, deadlineMs - Date.now()));
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 interface ExecutablePreviewWebview extends Element {
   readonly executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
 }
@@ -445,6 +465,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   // configured default, same as a hand-opened tab.
                   viewport: browserDefaultOpenViewport(defaults),
                   profileId: browserDefaultOpenProfileId(defaults),
+                  openedByAgent: true,
                 },
               });
               if (result._tag === "Failure") {
@@ -539,7 +560,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             }
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);
-              await previewBridge.navigate(activeRuntimeTabId, resolvedInputUrl);
+              await navigateWithinDeadline(
+                previewBridge.navigate(activeRuntimeTabId, resolvedInputUrl),
+                hostDeadlineMs,
+              );
               await waitForNavigationReadiness(
                 threadRef,
                 request.requestId,
@@ -547,7 +571,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 activeRuntimeTabId,
                 request.operation,
                 "load",
-                request.timeoutMs,
+                hostDeadlineMs - Date.now(),
               );
             }
             return await currentStatus(threadRef, activeTabId);
@@ -555,14 +579,19 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "navigate": {
             const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationNavigateInput;
-            const resolution = resolveBrowserNavigationTarget(
-              environmentId,
-              input.target ?? {
-                kind: "url",
-                url: input.url!,
-              },
-            );
-            await ready.bridge.navigate(ready.runtimeTabId, resolution.resolvedUrl);
+            const navigation =
+              input.reload === "bypassCache"
+                ? ready.bridge.hardReload(ready.runtimeTabId)
+                : input.reload === "normal"
+                  ? ready.bridge.refresh(ready.runtimeTabId)
+                  : ready.bridge.navigate(
+                      ready.runtimeTabId,
+                      resolveBrowserNavigationTarget(
+                        environmentId,
+                        input.target ?? { kind: "url", url: input.url! },
+                      ).resolvedUrl,
+                    );
+            await navigateWithinDeadline(navigation, hostDeadlineMs);
             await waitForNavigationReadiness(
               threadRef,
               request.requestId,
@@ -570,7 +599,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               ready.runtimeTabId,
               request.operation,
               input.readiness ?? "load",
-              input.timeoutMs ?? request.timeoutMs,
+              hostDeadlineMs - Date.now(),
             );
             return await currentStatus(threadRef, ready.tabId);
           }

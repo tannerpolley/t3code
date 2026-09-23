@@ -193,6 +193,8 @@ export const PreviewOpenInput = Schema.Struct({
   viewport: Schema.optional(PreviewViewportSetting),
   /** Omit to open under the client's configured default profile. */
   profileId: Schema.optional(BrowserProfileId),
+  /** Set by agent automation; the server caps how many of these a thread keeps. */
+  openedByAgent: Schema.optional(Schema.Boolean),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
