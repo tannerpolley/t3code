@@ -423,7 +423,11 @@ results use the latest assistant content from the final work turn.
   `plan`. It may not escalate from `plan` to `default`.
 - General thread management is limited to the calling thread's project. Send
   additionally enforces the same runtime and interaction privilege ceiling as
-  child creation.
+  child creation. The one exception is reading: with the environment setting
+  `topLevelThreadsReadAllProjects` on, a top-level caller (not a subagent or
+  delegated task) may read, wait on, and search threads in any project; the
+  shared predicate is `readsOtherProjects` in `OrchestratorMcpService.ts`.
+  Listing stays project-scoped and writes never follow the allowance.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the

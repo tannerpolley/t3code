@@ -354,6 +354,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["idle agent session disconnect stop timeout memory mcp processes"],
   },
   {
+    id: "top-level-threads-read-all-projects",
+    title: "Top-level threads can read other projects",
+    to: "/settings/customizations",
+    searchTerms: ["cross project read threads agents mcp access subagents delegated"],
+  },
+  {
     id: "codex-style-sidebar",
     title: "Codex-style project sidebar",
     to: "/settings/customizations",

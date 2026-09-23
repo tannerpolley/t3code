@@ -22,6 +22,8 @@ import * as ProjectionSnapshotQuery from "../../../orchestration/Services/Projec
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
+import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
+import { ServerSettingsService } from "../../../serverSettings.ts";
 
 function queueEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -111,6 +113,8 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
       const { caller } = yield* readCaller();
       const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const result = yield* query.searchThreads(input).pipe(Effect.mapError(unavailable));
+      const settings = yield* Effect.serviceOption(ServerSettingsService);
+      if (yield* OrchestrationMcp.readsOtherProjects(settings, caller)) return result;
       return { matches: result.matches.filter((match) => match.projectId === caller.projectId) };
     }),
   t3_thread_fork: (input) =>

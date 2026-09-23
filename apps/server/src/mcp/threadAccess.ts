@@ -2,6 +2,7 @@ import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.
 import {
   CommandId,
   OrchestratorMcpFailure,
+  type ProjectId,
   type ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -9,6 +10,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
 import { type McpInvocationScope, McpInvocationContext } from "./McpInvocationContext.ts";
 
@@ -61,34 +63,58 @@ export const readMutationCaller = Effect.fn("mcp.readMutationCaller")(function* 
   return context;
 });
 
-/** Resolve the credential's project before looking up a caller-supplied thread. */
+const notInCallingProject = (hint: string) =>
+  new OrchestratorMcpFailure({
+    code: "thread_not_found",
+    message: `The thread was not found in the calling project.${hint}`,
+  });
+
+/**
+ * Resolve the credential's project before looking up a caller-supplied thread. Reads reach
+ * other projects only when `OrchestrationMcp.readsOtherProjects` allows it for the caller.
+ */
 export const readThread = Effect.fn("mcp.readThread")(function* <
   K extends ProjectionRecordField = never,
 >(threadId?: ThreadId, fields: ReadonlyArray<K> = []) {
   const { scope, threads, caller } = yield* readCaller();
-  const projection = yield* threads
-    .getProjectThreadRecords(
-      { projectId: caller.projectId, threadId: threadId ?? caller.id },
-      fields,
-      { turnItemTypes: ["user_input_request"] },
-    )
-    .pipe(
-      Effect.mapError((error) =>
-        error._tag === "ThreadManagementThreadNotFoundError"
-          ? new OrchestratorMcpFailure({
-              code: "thread_not_found",
-              message: "The thread was not found in the calling project.",
-            })
-          : unavailable(),
-      ),
-    );
+  const target = threadId ?? caller.id;
+  const options = { turnItemTypes: ["user_input_request" as const] };
+  const load = (projectId: ProjectId) =>
+    threads
+      .getProjectThreadRecords({ projectId, threadId: target }, fields, options)
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === "ThreadManagementThreadNotFoundError"
+            ? notInCallingProject("")
+            : unavailable(),
+        ),
+      );
+  const projection = yield* load(caller.projectId).pipe(
+    Effect.catchIf(
+      (error) => error.code === "thread_not_found",
+      () =>
+        Effect.gen(function* () {
+          const settings = yield* Effect.serviceOption(ServerSettingsService);
+          if (!(yield* OrchestrationMcp.readsOtherProjects(settings, caller))) {
+            return yield* notInCallingProject(` ${OrchestrationMcp.OTHER_PROJECT_READ_HINT}`);
+          }
+          const shell = yield* threads.getThreadShell(target).pipe(Effect.mapError(unavailable));
+          if (shell === null) return yield* notInCallingProject("");
+          return yield* load(shell.projectId);
+        }),
+    ),
+  );
   return { scope, threads, caller, projection };
 });
 
+/** Writes never follow the cross-project read allowance. */
 export const readWritableThread = Effect.fn("mcp.readWritableThread")(function* <
   K extends ProjectionRecordField = never,
 >(threadId?: ThreadId, fields: ReadonlyArray<K> = []) {
   const context = yield* readThread(threadId, fields);
+  if (context.projection.thread.projectId !== context.caller.projectId) {
+    return yield* notInCallingProject("");
+  }
   yield* assertLiveCaller(context);
   yield* OrchestrationMcp.resolveRuntimeMode(
     context.caller.runtimeMode,

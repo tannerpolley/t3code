@@ -156,7 +156,7 @@ export const CreateThreadsTool = Tool.make("create_threads", {
 
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
-    "List T3 threads in the calling thread's project, newest first. Filter by durable run status or title and paginate with the returned cursor. Threads from other projects are never exposed.",
+    "List T3 threads in the calling thread's project, newest first. Filter by durable run status or title and paginate with the returned cursor. Other projects are never listed; when the user allows top-level threads to read other projects, find their threads with t3_thread_search.",
   parameters: OrchestratorMcpThreadListInput,
   success: OrchestratorMcpThreadListResult,
   failure: OrchestratorMcpFailure,
@@ -170,7 +170,7 @@ const ThreadListTool = Tool.make("t3_thread_list", {
 
 const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
-    "Read durable state and a paginated timeline from a T3 thread in the calling project, or from a thread the user attached to this conversation as context. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
+    "Read durable state and a paginated timeline from a T3 thread in the calling project, from a thread the user attached to this conversation as context, or, when the user allows top-level threads to read other projects (Settings → Customizations) and this is a top-level thread, from a thread in any project. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
   parameters: OrchestratorMcpThreadReadInput,
   success: OrchestratorMcpThreadReadResult,
   failure: OrchestratorMcpFailure,

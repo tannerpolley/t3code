@@ -76,6 +76,7 @@ import {
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -745,12 +746,33 @@ function timelineItem(input: {
   };
 }
 
+/**
+ * Whether `caller` may read (never change) threads outside its own project: only when the
+ * user turned on `topLevelThreadsReadAllProjects` and the caller is a top-level thread.
+ * Subagents and delegated tasks stay inside their parent's project. Settings are read per
+ * call so toggling needs no restart; a missing or unreadable settings service means off.
+ */
+export const readsOtherProjects = (
+  settings: Option.Option<ServerSettingsService["Service"]>,
+  caller: Pick<OrchestrationV2ThreadShell, "lineage">,
+): Effect.Effect<boolean> =>
+  Option.isNone(settings) || caller.lineage.relationshipToParent === "subagent"
+    ? Effect.succeed(false)
+    : settings.value.getSettings.pipe(
+        Effect.map((current) => current.topLevelThreadsReadAllProjects),
+        Effect.orElseSucceed(() => false),
+      );
+
+export const OTHER_PROJECT_READ_HINT =
+  "Threads in other projects are readable only from top-level threads, when the user allows it in Settings → Customizations.";
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService;
+  const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -855,9 +877,17 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.mapError(threadManagementFailure),
           Effect.catchIf(
+            (error) => error.code === "thread_not_found",
             (error) =>
-              error.code === "thread_not_found" && userAttachedThreadIds(parent).has(threadId),
-            loadTarget,
+              Effect.gen(function* () {
+                const readable =
+                  userAttachedThreadIds(parent).has(threadId) ||
+                  (yield* readsOtherProjects(serverSettings, parent.thread));
+                if (!readable) {
+                  return yield* failure(error.code, `${error.message} ${OTHER_PROJECT_READ_HINT}`);
+                }
+                return yield* loadTarget();
+              }),
           ),
         );
       if (target.thread.deletedAt !== null) {
@@ -1869,10 +1899,10 @@ const make = Effect.gen(function* () {
       }),
     waitForThread: (scope, input) =>
       Effect.gen(function* () {
-        const { parent } = yield* loadScopedThread(scope, input.threadId);
+        const { target } = yield* loadReadableThread(scope, input.threadId);
         const result = yield* threadManagement
           .waitForThread({
-            projectId: parent.thread.projectId,
+            projectId: target.thread.projectId,
             threadId: input.threadId,
             ...(input.runId === undefined ? {} : { runId: input.runId }),
             timeoutMs: Math.min(

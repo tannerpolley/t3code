@@ -143,6 +143,7 @@ export function CustomizationsSettings() {
   const updateScopedSettings = useUpdateScopedSettings();
   const folderRootMixed = useScopedSettingsMixed(["projectFolderRoot"]);
   const idleMinutesMixed = useScopedSettingsMixed(["idleAgentSessionMinutes"]);
+  const readAllProjectsMixed = useScopedSettingsMixed(["topLevelThreadsReadAllProjects"]);
   const baseDirectory = scopedSettings.addProjectBaseDirectory;
   const folderRoot =
     scopedSettings.projectFolderRoot || (baseDirectory.startsWith("/") ? baseDirectory : "");
@@ -290,6 +291,22 @@ export function CustomizationsSettings() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["topLevelThreadsReadAllProjects"]}
+          {...searchableSetting("top-level-threads-read-all-projects")}
+          description="Let agents in top-level threads read, but not change, threads in other projects on this environment. Subagents and delegated tasks stay limited to their own project."
+          control={
+            <Switch
+              aria-label={searchableSetting("top-level-threads-read-all-projects").title}
+              mixed={readAllProjectsMixed}
+              checked={readAllProjectsMixed ? false : scopedSettings.topLevelThreadsReadAllProjects}
+              onCheckedChange={(checked) =>
+                updateScopedSettings({ topLevelThreadsReadAllProjects: checked })
+              }
+            />
           }
         />
         <SettingsRow

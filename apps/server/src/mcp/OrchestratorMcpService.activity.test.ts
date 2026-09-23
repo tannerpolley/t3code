@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   NodeId,
   type OrchestrationV2ThreadProjection,
@@ -17,6 +18,7 @@ import { expect, it } from "vite-plus/test";
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import {
   ThreadManagementService,
   ThreadManagementThreadNotFoundError,
@@ -461,4 +463,94 @@ it("readThread reaches a thread the user attached as context, but not one an age
       .pipe(Effect.flip);
     expect(write.code).toBe("thread_not_found");
   }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("readThread reaches other projects only from a top-level thread with the setting on", async () => {
+  const otherThreadId = ThreadId.make("thread-mcp-orchestrator-other-project");
+  const projection = (thread: object) =>
+    ({
+      thread,
+      runs: [],
+      runtimeRequests: [],
+      messages: [],
+      contextTransfers: [],
+      subagents: [],
+      updatedAt: now,
+    }) as unknown as OrchestrationV2ThreadProjection;
+  const parent = baseThread({
+    threadId: parentThreadId,
+    title: "Parent",
+    instanceId: parentInstanceId,
+    model: "gpt-5.4",
+  });
+  const other = projection({
+    ...baseThread({
+      threadId: otherThreadId,
+      title: "Other project",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    projectId: ProjectId.make("project-mcp-orchestrator-other"),
+  });
+  const run = (input: {
+    readonly readAllProjects: boolean;
+    readonly relationshipToParent: "subagent" | null;
+  }) => {
+    const caller = projection({
+      ...parent,
+      lineage: { ...parent.lineage, relationshipToParent: input.relationshipToParent },
+    });
+    const layer = orchestratorMcpServiceLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadManagementService)({
+            getThreadRecords: (threadId) =>
+              threadId === parentThreadId ? Effect.succeed(caller) : Effect.succeed(other),
+            getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+            getProjectThreadRecords: (input) =>
+              Effect.fail(
+                new ThreadManagementThreadNotFoundError({
+                  projectId: input.projectId,
+                  threadId: input.threadId,
+                }),
+              ),
+          } satisfies Partial<ThreadManagementService["Service"]>),
+          Layer.mock(ServerSettingsService)({
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              topLevelThreadsReadAllProjects: input.readAllProjects,
+            }),
+          }),
+          Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ScheduledTaskService)({}),
+          Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
+          NodeCrypto.layer,
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService;
+      const read = yield* service
+        .readThread(makeScope(), { threadId: otherThreadId })
+        .pipe(Effect.result);
+      const send = yield* service
+        .sendToThread(makeScope(), { threadId: otherThreadId, message: "hi" })
+        .pipe(Effect.flip);
+      return { read, send };
+    }).pipe(Effect.provide(layer), Effect.runPromise);
+  };
+
+  const off = await run({ readAllProjects: false, relationshipToParent: null });
+  expect(off.read._tag).toBe("Failure");
+  if (off.read._tag === "Failure") {
+    expect(off.read.failure.code).toBe("thread_not_found");
+    expect(off.read.failure.message).toContain("Settings → Customizations");
+  }
+
+  const on = await run({ readAllProjects: true, relationshipToParent: null });
+  expect(on.read._tag === "Success" && on.read.success.thread.threadId).toBe(otherThreadId);
+  expect(on.send.code).toBe("thread_not_found");
+
+  const subagent = await run({ readAllProjects: true, relationshipToParent: "subagent" });
+  expect(subagent.read._tag).toBe("Failure");
 });

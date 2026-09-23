@@ -206,7 +206,8 @@ const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
 }).annotate(Tool.Destructive, true);
 const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
   ...commandTool,
-  description: "Read context transfer status for a thread in the calling project.",
+  description:
+    "Read context transfer status for a thread in the calling project, or in any project from a top-level thread when the user allows reading other projects.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   success: Schema.Struct({
     transfers: Schema.Array(
@@ -225,7 +226,7 @@ const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
-    "Search active thread titles and content with the app's existing bounded search. Returns matches in the calling project from the global top matches; other-project matches are omitted, so this may return fewer than limit. No pagination or exhaustive-result guarantee.",
+    "Search active thread titles and content with the app's existing bounded search. Returns matches in the calling project from the global top matches; other-project matches are omitted, so this may return fewer than limit, unless the user allows top-level threads to read other projects (Settings → Customizations), in which case a top-level caller gets matches from every project. No pagination or exhaustive-result guarantee.",
   parameters: OrchestrationSearchThreadsInput,
   success: OrchestrationSearchThreadsResult,
   dependencies: [...commandTool.dependencies, ProjectionSnapshotQuery],

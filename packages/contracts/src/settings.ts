@@ -1289,6 +1289,13 @@ export const ServerSettings = Schema.Struct({
   projectFolderRoot: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Disconnect a thread's agent session after this many idle minutes; 0 keeps sessions open. */
   idleAgentSessionMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /**
+   * Let top-level agent threads read (never change) threads in other projects. Subagents and
+   * delegated tasks stay limited to their own project.
+   */
+  topLevelThreadsReadAllProjects: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1593,6 +1600,7 @@ export const ServerSettingsPatch = Schema.Struct({
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   projectFolderRoot: Schema.optionalKey(TrimmedString),
   idleAgentSessionMinutes: Schema.optionalKey(NonNegativeInt),
+  topLevelThreadsReadAllProjects: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
