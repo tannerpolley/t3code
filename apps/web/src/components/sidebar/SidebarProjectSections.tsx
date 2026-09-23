@@ -34,6 +34,7 @@ import {
   FilterIcon,
   FolderIcon,
   FolderOpenIcon,
+  FilePlusIcon,
   FolderPlusIcon,
   FolderTreeIcon,
   GripVerticalIcon,
@@ -94,6 +95,7 @@ import {
 import { SidebarGroup, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Spinner } from "../ui/spinner";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { NewSectionProjectDialog, type NewSectionProjectTarget } from "./NewSectionProjectDialog";
 import {
   resolveProjectDrop,
   type ProjectDrop,
@@ -223,6 +225,30 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const reorderSections = useUiStateStore((store) => store.reorderSidebarProjectSections);
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
   const [projectDrop, setProjectDrop] = useState<ProjectDrop | null>(null);
+  // `id` remounts the dialog per opening so its form starts empty.
+  const [newProjectDialog, setNewProjectDialog] = useState<{
+    readonly target: NewSectionProjectTarget;
+    readonly open: boolean;
+    readonly id: number;
+  } | null>(null);
+  const openNewProjectDialog = useCallback(
+    (section: {
+      readonly id: string;
+      readonly name: string;
+      readonly parentId: string | undefined;
+    }) => {
+      const parentName =
+        section.parentId === undefined
+          ? undefined
+          : sections.find((candidate) => candidate.id === section.parentId)?.name;
+      setNewProjectDialog((current) => ({
+        target: { sectionId: section.id, sectionName: section.name, parentName },
+        open: true,
+        id: (current?.id ?? 0) + 1,
+      }));
+    },
+    [sections],
+  );
   const placements = useProjectSectionPlacements((store) => store.placements);
   const resolvePlacement = useProjectSectionPlacements((store) => store.resolve);
 
@@ -473,6 +499,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                     (candidate) => candidate.parentId === section.id,
                   )}
                   onNewSubsection={onNewSubsection}
+                  onNewProjectInSection={openNewProjectDialog}
                   onDelete={deleteSection}
                   onMoveProject={moveProject}
                   onNewThreadInProject={onNewThreadInProject}
@@ -501,6 +528,16 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
           ) : null}
         </DragOverlay>
       </DndContext>
+      {newProjectDialog ? (
+        <NewSectionProjectDialog
+          key={newProjectDialog.id}
+          target={newProjectDialog.target}
+          open={newProjectDialog.open}
+          onOpenChange={(open) =>
+            setNewProjectDialog((current) => (current ? { ...current, open } : current))
+          }
+        />
+      ) : null}
     </SidebarGroup>
   );
 }
@@ -514,6 +551,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   /** Rendered inside this section, before its projects; empty for subsections themselves. */
   readonly subsections: readonly SidebarProjectSectionRender[];
   readonly onNewSubsection: (parent: { readonly id: string; readonly name: string }) => void;
+  readonly onNewProjectInSection: (section: SidebarProjectSectionRender) => void;
   readonly sections: readonly SidebarProjectSectionRender[];
   readonly projectByKey: ReadonlyMap<string, SidebarProjectSnapshot>;
   readonly selectedProjectKey: string | null;
@@ -563,6 +601,7 @@ const ProjectSection = memo(function ProjectSection(props: {
         codexStyle={props.codexStyle}
         folderColors={props.folderColors}
         onNewSubsection={isSubsection ? undefined : props.onNewSubsection}
+        onNewProjectInSection={props.onNewProjectInSection}
         onDelete={props.onDelete}
         onOpenRename={props.onOpenRename}
         onSetExpanded={props.onSetExpanded}
@@ -624,6 +663,7 @@ function SortableSectionHeader(props: {
   readonly onNewSubsection:
     | ((parent: { readonly id: string; readonly name: string }) => void)
     | undefined;
+  readonly onNewProjectInSection: (section: SidebarProjectSectionRender) => void;
   readonly onOpenRename: (section: SidebarProjectSectionRender) => void;
   readonly onDelete: (sectionId: string) => void;
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
@@ -737,6 +777,10 @@ function SortableSectionHeader(props: {
               >
                 <FolderPlusIcon />
                 Add project
+              </MenuItem>
+              <MenuItem onClick={() => props.onNewProjectInSection(section)}>
+                <FilePlusIcon />
+                New project…
               </MenuItem>
               {props.onNewSubsection ? (
                 <MenuItem onClick={() => props.onNewSubsection?.(section)}>
