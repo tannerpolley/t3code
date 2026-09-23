@@ -491,6 +491,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("left" as const)),
   ),
   topBackButton: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  lineageDetailsExpanded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1715,6 +1716,7 @@ export const ClientSettingsPatch = Schema.Struct({
   branchPickerGroups: Schema.optionalKey(Schema.Boolean),
   sidebarTogglePosition: Schema.optionalKey(SidebarTogglePosition),
   topBackButton: Schema.optionalKey(Schema.Boolean),
+  lineageDetailsExpanded: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

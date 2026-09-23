@@ -372,6 +372,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork branch picker current local remote collapse"],
   },
   {
+    id: "lineage-details-expanded",
+    title: "Expand agent details by default",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork lineage subagent model effort details expand"],
+  },
+  {
     id: "top-back-button",
     title: "Back button at the top",
     to: "/settings/customizations",

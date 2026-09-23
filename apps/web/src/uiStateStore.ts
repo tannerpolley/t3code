@@ -57,6 +57,7 @@ export interface PersistedUiState {
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
   branchPickerCollapsedGroups?: string[];
+  lineageDetailsExpandedById?: Record<string, boolean>;
 }
 
 export interface UiProjectState {
@@ -86,6 +87,12 @@ export interface UiPullRequestState {
 
 export interface UiBranchPickerState {
   branchPickerCollapsedGroups: BranchPickerGroup[];
+  /**
+   * Lineage rows opened or closed by hand, keyed by the related thread's scoped key. Rows without
+   * an entry follow the "Expand agent details by default" setting.
+   * ponytail: never pruned; entries are tiny. Drop ones for deleted threads if this ever grows.
+   */
+  lineageDetailsExpandedById: Record<string, boolean>;
 }
 
 export interface UiState
@@ -103,6 +110,7 @@ const initialState: UiState = {
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
   branchPickerCollapsedGroups: [],
+  lineageDetailsExpandedById: {},
 };
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
@@ -260,6 +268,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
+    lineageDetailsExpandedById: sanitizeBooleanRecord(parsed.lineageDetailsExpandedById),
     branchPickerCollapsedGroups: sanitizeBranchPickerCollapsedGroups(
       parsed.branchPickerCollapsedGroups,
     ),
@@ -341,6 +350,7 @@ export function persistState(state: UiState): void {
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
         branchPickerCollapsedGroups: state.branchPickerCollapsedGroups,
+        lineageDetailsExpandedById: state.lineageDetailsExpandedById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -467,6 +477,19 @@ export function setBranchPickerGroupCollapsed(
       candidate === group ? collapsed : state.branchPickerCollapsedGroups.includes(candidate),
     ),
   };
+}
+
+/** Opens or closes lineage rows by hand: one row, or every row of a thread at once. */
+export function setLineageDetailsExpanded(
+  state: UiState,
+  keys: readonly string[],
+  expanded: boolean,
+): UiState {
+  const changed = keys.filter((key) => state.lineageDetailsExpandedById[key] !== expanded);
+  if (changed.length === 0) return state;
+  const lineageDetailsExpandedById = { ...state.lineageDetailsExpandedById };
+  for (const key of changed) lineageDetailsExpandedById[key] = expanded;
+  return { ...state, lineageDetailsExpandedById };
 }
 
 export function setSidebarMode(state: UiState, mode: SidebarMode): UiState {
@@ -731,6 +754,7 @@ interface UiStateStore extends UiState {
   reorderSidebarProjectSections: (sectionIds: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setBranchPickerGroupCollapsed: (group: BranchPickerGroup, collapsed: boolean) => void;
+  setLineageDetailsExpanded: (keys: readonly string[], expanded: boolean) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -789,6 +813,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setBranchPickerGroupCollapsed: (group, collapsed) =>
     set((state) => setBranchPickerGroupCollapsed(state, group, collapsed)),
+  setLineageDetailsExpanded: (keys, expanded) =>
+    set((state) => setLineageDetailsExpanded(state, keys, expanded)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

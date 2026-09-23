@@ -58,6 +58,12 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Group the branch picker into collapsible Current, Local and Remote sections. Off shows one flat list.",
   },
   {
+    key: "lineageDetailsExpanded",
+    searchId: "lineage-details-expanded",
+    description:
+      "Open every Lineage row's details (model, effort, status, branch, latest progress) by default. Rows you close by hand stay closed.",
+  },
+  {
     key: "topBackButton",
     searchId: "top-back-button",
     description:

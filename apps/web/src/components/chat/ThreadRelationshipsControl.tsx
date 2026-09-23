@@ -1,7 +1,7 @@
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
-import { SubagentTooltipContent } from "./SubagentTooltipContent";
+import { SubagentDetails, SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -25,6 +25,9 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   BotIcon,
+  ChevronDownIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   LoaderCircleIcon,
@@ -34,7 +37,10 @@ import {
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { cn } from "../../lib/utils";
+import { useUiStateStore } from "../../uiStateStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
@@ -208,6 +214,10 @@ export function ThreadRelationshipsPanel(props: {
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
+  // Rows opened or closed by hand are remembered; the rest follow the Customizations default.
+  const lineageDetailsExpandedById = useUiStateStore((store) => store.lineageDetailsExpandedById);
+  const setLineageDetailsExpanded = useUiStateStore((store) => store.setLineageDetailsExpanded);
+  const expandDetailsByDefault = useClientSettings((settings) => settings.lineageDetailsExpanded);
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = useMemo(
@@ -281,6 +291,17 @@ export function ThreadRelationshipsPanel(props: {
     setBusyAction(null);
   };
 
+  const detailsKey = (threadId: ThreadId) =>
+    scopedThreadKey(scopeThreadRef(props.environmentId, threadId));
+  const detailsExpanded = (threadId: ThreadId) =>
+    lineageDetailsExpandedById[detailsKey(threadId)] ?? expandDetailsByDefault;
+  const anyDetailsCollapsed = relationshipRows.some(({ threadId }) => !detailsExpanded(threadId));
+  const toggleAllDetails = () =>
+    setLineageDetailsExpanded(
+      relationshipRows.map(({ threadId }) => detailsKey(threadId)),
+      anyDetailsCollapsed,
+    );
+
   const parentTitle =
     mergeTargetThreadId === null
       ? null
@@ -292,29 +313,53 @@ export function ThreadRelationshipsPanel(props: {
       title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
       data-thread-relationships-panel
       actions={
-        canDetach ? (
-          <Menu>
-            <MenuTrigger
+        <>
+          <Tooltip>
+            <TooltipTrigger
               render={
                 <Button
                   size="icon-xs"
                   variant="ghost"
                   className={THREAD_DETAILS_PANEL_ICON_ACTION_CLASS}
-                  aria-label="More thread actions"
-                  disabled={busyAction !== null}
-                />
+                  aria-label={anyDetailsCollapsed ? "Expand all details" : "Collapse all details"}
+                  onClick={toggleAllDetails}
+                >
+                  {anyDetailsCollapsed ? (
+                    <ChevronsUpDownIcon className="size-3.5" />
+                  ) : (
+                    <ChevronsDownUpIcon className="size-3.5" />
+                  )}
+                </Button>
               }
-            >
-              <MoreHorizontalIcon className="size-3.5" />
-            </MenuTrigger>
-            <MenuPopup align="end" className={THREAD_DETAILS_PANEL_MENU_POPUP_CLASS}>
-              <MenuItem onClick={() => void detach()}>
-                <UnplugIcon className="size-3.5" />
-                Disconnect agent session
-              </MenuItem>
-            </MenuPopup>
-          </Menu>
-        ) : null
+            />
+            <TooltipPopup side="left">
+              {anyDetailsCollapsed ? "Expand all details" : "Collapse all details"}
+            </TooltipPopup>
+          </Tooltip>
+          {canDetach ? (
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className={THREAD_DETAILS_PANEL_ICON_ACTION_CLASS}
+                    aria-label="More thread actions"
+                    disabled={busyAction !== null}
+                  />
+                }
+              >
+                <MoreHorizontalIcon className="size-3.5" />
+              </MenuTrigger>
+              <MenuPopup align="end" className={THREAD_DETAILS_PANEL_MENU_POPUP_CLASS}>
+                <MenuItem onClick={() => void detach()}>
+                  <UnplugIcon className="size-3.5" />
+                  Disconnect agent session
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
+          ) : null}
+        </>
       }
     >
       {groups.map((group) => (
@@ -390,10 +435,80 @@ export function ThreadRelationshipsPanel(props: {
                   )}
                 </>
               );
+              const rowExpanded = !node?.missing && detailsExpanded(threadId);
+              const detailsToggle = node?.missing ? null : (
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-expanded={rowExpanded}
+                  aria-label={`${rowExpanded ? "Hide" : "Show"} details for ${threadTitle}`}
+                  className="shrink-0 text-muted-foreground"
+                  onClick={() => setLineageDetailsExpanded([detailsKey(threadId)], !rowExpanded)}
+                >
+                  <ChevronDownIcon
+                    className={cn("size-3.5 transition-transform", !rowExpanded && "-rotate-90")}
+                  />
+                </Button>
+              );
               return (
-                <li key={threadId} className="group flex h-9 items-center rounded-lg">
-                  {isMergeTarget ? (
-                    <div className={THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS}>
+                <li key={threadId} className="group rounded-lg">
+                  <div className="flex h-9 items-center">
+                    {isMergeTarget ? (
+                      <div className={THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS}>
+                        <Tooltip>
+                          <TooltipTrigger
+                            delay={200}
+                            render={
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className={THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS}
+                                disabled={node?.missing === true}
+                                onClick={() => openThread(threadId)}
+                              />
+                            }
+                          >
+                            {relationshipContent}
+                          </TooltipTrigger>
+                          <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
+                        </Tooltip>
+                        <span
+                          aria-hidden="true"
+                          className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS}
+                        />
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className={THREAD_DETAILS_PANEL_LINK_SPLIT_SECONDARY_CLASS}
+                                aria-label={
+                                  parentTitle
+                                    ? `Merge back to ${parentTitle}`
+                                    : "Merge back to source conversation"
+                                }
+                                disabled={!canMerge || busyAction !== null}
+                                onClick={() => void merge()}
+                              >
+                                {busyAction === "merge" ? (
+                                  <LoaderCircleIcon className="size-3 animate-spin" />
+                                ) : (
+                                  <PullRequestGlyph.merged className="size-3" />
+                                )}
+                              </Button>
+                            }
+                          />
+                          <TooltipPopup side="left">
+                            {latestMergeBackRun === null
+                              ? "Complete a run in this fork before merging it back"
+                              : parentTitle
+                                ? `Merge this conversation back into ${parentTitle}`
+                                : "Merge this conversation back into its source"}
+                          </TooltipPopup>
+                        </Tooltip>
+                      </div>
+                    ) : (
                       <Tooltip>
                         <TooltipTrigger
                           delay={200}
@@ -401,9 +516,9 @@ export function ThreadRelationshipsPanel(props: {
                             <Button
                               size="sm"
                               variant="ghost"
-                              className={THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS}
                               disabled={node?.missing === true}
                               onClick={() => openThread(threadId)}
+                              className={THREAD_DETAILS_PANEL_LINK_ROW_CLASS}
                             />
                           }
                         >
@@ -411,61 +526,31 @@ export function ThreadRelationshipsPanel(props: {
                         </TooltipTrigger>
                         <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
                       </Tooltip>
-                      <span
-                        aria-hidden="true"
-                        className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS}
+                    )}
+                    {detailsToggle}
+                  </div>
+                  {rowExpanded ? (
+                    // The hover card's lines, kept open; agents add their run status.
+                    <div className="grid gap-1.5 pb-2 ps-9 pe-2 text-xs text-muted-foreground">
+                      <SubagentDetails
+                        model={agent?.model ?? null}
+                        provider={provider}
+                        driver={providerDriver}
+                        {...(agent
+                          ? {
+                              elapsed: <AgentElapsed agent={agent} />,
+                              status: agent.status,
+                              result: agent.result,
+                              progress: agent.progress,
+                            }
+                          : {})}
+                        parentThread={currentThread ?? undefined}
+                        childThread={node?.thread ?? undefined}
+                        parentProject={currentProject}
+                        childProject={project}
                       />
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className={THREAD_DETAILS_PANEL_LINK_SPLIT_SECONDARY_CLASS}
-                              aria-label={
-                                parentTitle
-                                  ? `Merge back to ${parentTitle}`
-                                  : "Merge back to source conversation"
-                              }
-                              disabled={!canMerge || busyAction !== null}
-                              onClick={() => void merge()}
-                            >
-                              {busyAction === "merge" ? (
-                                <LoaderCircleIcon className="size-3 animate-spin" />
-                              ) : (
-                                <PullRequestGlyph.merged className="size-3" />
-                              )}
-                            </Button>
-                          }
-                        />
-                        <TooltipPopup side="left">
-                          {latestMergeBackRun === null
-                            ? "Complete a run in this fork before merging it back"
-                            : parentTitle
-                              ? `Merge this conversation back into ${parentTitle}`
-                              : "Merge this conversation back into its source"}
-                        </TooltipPopup>
-                      </Tooltip>
                     </div>
-                  ) : (
-                    <Tooltip>
-                      <TooltipTrigger
-                        delay={200}
-                        render={
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={node?.missing === true}
-                            onClick={() => openThread(threadId)}
-                            className={THREAD_DETAILS_PANEL_LINK_ROW_CLASS}
-                          />
-                        }
-                      >
-                        {relationshipContent}
-                      </TooltipTrigger>
-                      <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
-                    </Tooltip>
-                  )}
+                  ) : null}
                 </li>
               );
             })

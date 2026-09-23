@@ -19,6 +19,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setBranchPickerGroupCollapsed,
+  setLineageDetailsExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setSidebarOtherProjectsExpanded,
@@ -31,6 +32,7 @@ import {
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
+    lineageDetailsExpandedById: {},
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectSections: [],
@@ -226,6 +228,14 @@ describe("uiStateStore pure functions", () => {
     expect(deleteSidebarProjectSection(ordered, "work").sidebarProjectSections).toHaveLength(1);
   });
 
+  it("remembers lineage rows opened or closed by hand, one or all at once", () => {
+    const opened = setLineageDetailsExpanded(makeUiState(), ["env:a", "env:b"], true);
+    expect(opened.lineageDetailsExpandedById).toEqual({ "env:a": true, "env:b": true });
+    const closedOne = setLineageDetailsExpanded(opened, ["env:b"], false);
+    expect(closedOne.lineageDetailsExpandedById).toEqual({ "env:a": true, "env:b": false });
+    expect(setLineageDetailsExpanded(closedOne, ["env:a"], true)).toBe(closedOne);
+  });
+
   it("nests subsections one level and hands their projects up when deleted", () => {
     const work = addSidebarProjectSection(makeUiState(), { id: "work", name: "Work" });
     const idaes = addSidebarProjectSection(work, { id: "idaes", name: "IDAES", parentId: "work" });
@@ -351,6 +361,7 @@ describe("parsePersistedState", () => {
       sidebarProjectScopeKey: null,
       pullRequestMergeMethod: "merge",
       branchPickerCollapsedGroups: [],
+      lineageDetailsExpandedById: {},
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -484,6 +495,7 @@ describe("uiStateStore persistence", () => {
       },
       pullRequestMergeMethod: "merge",
       branchPickerCollapsedGroups: [],
+      lineageDetailsExpandedById: {},
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
