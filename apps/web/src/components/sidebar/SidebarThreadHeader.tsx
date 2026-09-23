@@ -5,6 +5,8 @@
  * that sits with new-project and new-thread as a segmented group at the end.
  * With the Codex-style sidebar, the Projects view drops scope and new-thread,
  * which its project rows already offer, and adds new-section instead.
+ * With the Projects view switched on, one Activity button leads the group and
+ * flips between the Projects view and the Activity list.
  * The scope icon swaps to the project favicon while a project is selected,
  * so the header still names the scope after the row that showed it is gone.
  *
@@ -12,7 +14,14 @@
  * of the sidebar's scope logic. `searchFieldRef` lands on the search field so
  * the picker's popup can anchor to that width rather than to its 28px trigger.
  */
-import { FolderPlusIcon, ListPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import {
+  ActivityIcon,
+  FolderPlusIcon,
+  ListPlusIcon,
+  SearchIcon,
+  SquarePenIcon,
+  XIcon,
+} from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -26,7 +35,6 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SidebarMenuButton } from "../ui/sidebar";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export interface SidebarThreadHeaderProps {
@@ -87,29 +95,14 @@ export function SidebarThreadHeader({
   // Only the Codex-style Projects view trims the header; the original keeps the Activity header.
   const projectsView =
     useClientSettings((settings) => settings.codexStyleSidebar) && sidebarMode === "projects";
+  const projectsViewEnabled = useClientSettings((settings) => settings.projectsView);
+  const showingActivity = sidebarMode === "activity";
   const newThreadLabel = newThreadShortcutLabel
     ? `New thread (${newThreadShortcutLabel})`
     : "New thread";
 
   return (
     <div className="space-y-1">
-      {/* The app's standard segmented control, spanning the sidebar like the search row below. */}
-      <ToggleGroup
-        aria-label="Sidebar view"
-        className="w-full"
-        value={[sidebarMode]}
-        onValueChange={(next) => {
-          const mode = next[0];
-          if (mode === "projects" || mode === "activity") onSidebarModeChange(mode);
-        }}
-      >
-        <Toggle className="flex-1" value="projects">
-          Projects
-        </Toggle>
-        <Toggle className="flex-1" value="activity">
-          Activity
-        </Toggle>
-      </ToggleGroup>
       <div className="flex items-center gap-1">
         <div
           ref={searchFieldRef}
@@ -157,6 +150,17 @@ export function SidebarThreadHeader({
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
         <div className="flex shrink-0 items-center">
+          {/* One button, like Codex: Activity on or off over the Projects view. */}
+          {projectsViewEnabled ? (
+            <SidebarHeaderIconButton
+              aria-pressed={showingActivity}
+              className={cn(showingActivity && "bg-sidebar-row-active text-sidebar-foreground")}
+              label={showingActivity ? "Show projects" : "Show activity"}
+              onClick={() => onSidebarModeChange(showingActivity ? "projects" : "activity")}
+            >
+              <ActivityIcon />
+            </SidebarHeaderIconButton>
+          ) : null}
           {hasProjects ? (
             <>
               {projectsView ? null : projectScope}

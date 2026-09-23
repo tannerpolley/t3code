@@ -2436,7 +2436,10 @@ export default function Sidebar() {
   // app restarts keep it.
   const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
-  const sidebarMode = useUiStateStore((store) => store.sidebarMode);
+  // Without the Projects view switched on, the sidebar is the vanilla Activity list.
+  const storedSidebarMode = useUiStateStore((store) => store.sidebarMode);
+  const projectsViewEnabled = useClientSettings((settings) => settings.projectsView);
+  const sidebarMode = projectsViewEnabled ? storedSidebarMode : "activity";
   const setSidebarMode = useUiStateStore((store) => store.setSidebarMode);
   const sidebarProjectSections = useUiStateStore((store) => store.sidebarProjectSections);
   // `id` remounts the dialog per opening so its name field starts fresh; `open` stays separate so

@@ -336,6 +336,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["project icon folder initials monogram letters favicon sidebar"],
   },
   {
+    id: "projects-view",
+    title: "Projects view",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork projects view sections activity sidebar mode"],
+  },
+  {
     id: "codex-style-sidebar",
     title: "Codex-style project sidebar",
     to: "/settings/customizations",

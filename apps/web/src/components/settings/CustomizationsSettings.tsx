@@ -17,6 +17,12 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
   readonly description: string;
 }> = [
   {
+    key: "projectsView",
+    searchId: "projects-view",
+    description:
+      "Offer a Projects view of sections and projects, switched with the Activity button beside search. Off shows only the standard Activity list.",
+  },
+  {
     key: "codexStyleSidebar",
     searchId: "codex-style-sidebar",
     description:

@@ -482,6 +482,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("folder" as const)),
   ),
   // Customizations: this fork's UI changes, each switchable back to the original behavior.
+  projectsView: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   codexStyleSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sectionFolderColors: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   versionControlIssues: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1701,6 +1702,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   projectIconFallback: Schema.optionalKey(ProjectIconFallback),
+  projectsView: Schema.optionalKey(Schema.Boolean),
   codexStyleSidebar: Schema.optionalKey(Schema.Boolean),
   sectionFolderColors: Schema.optionalKey(Schema.Boolean),
   versionControlIssues: Schema.optionalKey(Schema.Boolean),
