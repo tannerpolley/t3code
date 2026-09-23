@@ -116,8 +116,20 @@ export const ServerProviderSkill = Schema.Struct({
    * only the agent can start it. Composers must not offer it under `/`.
    */
   userInvocable: Schema.optional(Schema.Boolean),
+  /** Owning plugin when `scope` is `"plugin"`; `name` is then `<plugin>:<skill>`. */
+  pluginName: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
+
+/** An enabled provider plugin, listed read-only in settings. */
+export const ServerProviderPlugin = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  marketplace: Schema.optional(TrimmedNonEmptyString),
+  skillCount: Schema.Number,
+  /** The plugin only works inside the provider's own desktop app. */
+  requiresDesktopApp: Schema.optional(Schema.Boolean),
+});
+export type ServerProviderPlugin = typeof ServerProviderPlugin.Type;
 
 export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -247,6 +259,8 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // Absent when the driver has no plugin notion or predates plugin listing.
+  plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
   // Absent when the driver has no notion of subscription usage.
   usageLimits: Schema.optional(ServerProviderUsageLimits),

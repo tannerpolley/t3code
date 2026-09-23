@@ -4,8 +4,15 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
-import { discoverClaudeSkills, skillOverrideSettingsPaths } from "./ClaudeSkills.ts";
+import {
+  discoverClaudeSkills,
+  discoverClaudeSkillsAndPlugins,
+  skillOverrideSettingsPaths,
+} from "./ClaudeSkills.ts";
+
+const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -684,6 +691,168 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       );
 
       assert.deepEqual(skills, []);
+    }),
+  );
+
+  it.effect("adds skills of enabled plugins under their namespaced names", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+      const cache = path.join(configDir, "plugins", "cache");
+      const install = (name: string, version: string) => path.join(cache, "mk", name, version);
+
+      yield* writeSkill(
+        path.join(install("alpha", "1"), "skills"),
+        "build",
+        ["---", "description: Build it.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(install("alpha", "1"), "skills"),
+        "internal",
+        ["---", "user-invocable: false", "---"].join("\n"),
+      );
+      yield* writeSkill(path.join(install("alpha", "project"), "skills"), "local-only", "");
+      yield* writeSkill(path.join(install("beta", "1"), "skills"), "hidden", "");
+      yield* writeSkill(path.join(install("gamma", "1"), "skills"), "hidden", "");
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        toJson({
+          version: 2,
+          plugins: {
+            "alpha@mk": [
+              { scope: "user", installPath: install("alpha", "1") },
+              {
+                scope: "project",
+                projectPath: workspace,
+                installPath: install("alpha", "project"),
+              },
+            ],
+            "beta@mk": [{ scope: "user", installPath: install("beta", "1") }],
+            "gamma@mk": [{ scope: "user", installPath: install("gamma", "1") }],
+            "delta@mk": [
+              { scope: "project", projectPath: "/elsewhere", installPath: install("delta", "1") },
+            ],
+          },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        toJson({
+          enabledPlugins: {
+            "alpha@mk": true,
+            "beta@mk": false,
+            "gamma@mk": true,
+            "delta@mk": true,
+          },
+        }),
+      );
+      // Project settings layer over the user file, as for skillOverrides.
+      yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.json"),
+        toJson({ enabledPlugins: { "gamma@mk": false } }),
+      );
+
+      const discovered = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir }, workspace);
+
+      // The project install of alpha is the one used inside that project;
+      // delta is installed only for another project.
+      assert.deepEqual(
+        discovered.skills.map((skill) => [skill.name, skill.scope, skill.pluginName]),
+        [["alpha:local-only", "plugin", "alpha"]],
+      );
+      assert.deepEqual(discovered.plugins, [{ name: "alpha", marketplace: "mk", skillCount: 1 }]);
+
+      const outsideProject = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
+      assert.deepEqual(outsideProject.skills, [
+        {
+          name: "alpha:build",
+          path: path.join(install("alpha", "1"), "skills", "build", "SKILL.md"),
+          enabled: true,
+          scope: "plugin",
+          pluginName: "alpha",
+          description: "Build it.",
+        },
+        {
+          name: "alpha:internal",
+          path: path.join(install("alpha", "1"), "skills", "internal", "SKILL.md"),
+          enabled: true,
+          scope: "plugin",
+          pluginName: "alpha",
+          userInvocable: false,
+        },
+        {
+          name: "gamma:hidden",
+          path: path.join(install("gamma", "1"), "skills", "hidden", "SKILL.md"),
+          enabled: true,
+          scope: "plugin",
+          pluginName: "gamma",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("follows a symlinked plugins directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      // T3's provider home links `plugins` to the user's real Claude home.
+      const realPlugins = path.join(tempDir, "real-home", "plugins");
+      const configDir = path.join(tempDir, "provider-home");
+      const installPath = path.join(configDir, "plugins", "cache", "mk", "cse", "1");
+      yield* writeSkill(path.join(realPlugins, "cache", "mk", "cse", "1", "skills"), "build", "");
+      yield* fs.writeFileString(
+        path.join(realPlugins, "installed_plugins.json"),
+        toJson({ plugins: { "cse@mk": [{ scope: "user", installPath }] } }),
+      );
+      yield* fs.makeDirectory(configDir, { recursive: true });
+      yield* fs.symlink(realPlugins, path.join(configDir, "plugins"));
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        toJson({ enabledPlugins: { "cse@mk": true } }),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir });
+
+      assert.deepEqual(
+        skills.map((skill) => skill.name),
+        ["cse:build"],
+      );
+    }),
+  );
+
+  it.effect("keeps other skills when installed_plugins.json is missing or malformed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      yield* writeSkill(path.join(configDir, "skills"), "mine", "");
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        toJson({ enabledPlugins: { "cse@mk": true } }),
+      );
+
+      const missing = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
+      assert.deepEqual(
+        [missing.skills.map((skill) => skill.name), missing.plugins],
+        [["mine"], []],
+      );
+
+      yield* fs.makeDirectory(path.join(configDir, "plugins"));
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        '{ "plugins": { "cse@mk": "not-a-list" } }',
+      );
+      const malformed = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
+      assert.deepEqual(
+        [malformed.skills.map((skill) => skill.name), malformed.plugins],
+        [["mine"], []],
+      );
     }),
   );
 });

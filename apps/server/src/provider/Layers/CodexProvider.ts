@@ -21,6 +21,7 @@ import type {
   ModelCapabilities,
   ProviderOptionDescriptor,
   ServerProviderModel,
+  ServerProviderPlugin,
   ServerProviderSkill,
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
@@ -76,6 +77,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly plugins?: ReadonlyArray<ServerProviderPlugin>;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -316,6 +318,103 @@ function parseCodexSkillsListResponse(
   });
 }
 
+/**
+ * Bundled plugins that drive surfaces only the ChatGPT desktop app provides
+ * (its in-app browser, Chrome bridge, computer use, and app tools, wired
+ * through the desktop's own `node_repl` MCP server). Under a plain
+ * `codex app-server` they load but have nothing to control.
+ */
+const CODEX_DESKTOP_APP_PLUGIN_IDS: ReadonlySet<string> = new Set([
+  "browser@openai-bundled",
+  "chrome@openai-bundled",
+  "unified-computer-use@openai-bundled",
+  "codex-app-tools@openai-bundled",
+]);
+
+/**
+ * Tag plugin skills and list enabled plugins. `skills/list` already returns
+ * plugin skills, named `<plugin>:<skill>` (the form `$` mentions and
+ * `skills.config` use) under a `user` scope; `plugin/installed` says which
+ * plugins own them. Skills of a disabled plugin are dropped. Two installed
+ * plugins can share a name across marketplaces, so the install path
+ * (`.../<marketplace>/<plugin>/...`) breaks the tie, then the enabled one.
+ */
+export function applyCodexInstalledPlugins(
+  skills: ReadonlyArray<ServerProviderSkill>,
+  installed: CodexSchema.V2PluginInstalledResponse,
+): { skills: ServerProviderSkill[]; plugins: ServerProviderPlugin[] } {
+  const installedPlugins = installed.marketplaces.flatMap((marketplace) =>
+    marketplace.plugins
+      .filter((plugin) => plugin.installed)
+      .map((plugin) => ({
+        name: plugin.name,
+        marketplace: marketplace.name,
+        enabled: plugin.enabled && plugin.availability !== "DISABLED_BY_ADMIN",
+      })),
+  );
+  const ownerOf = (skill: ServerProviderSkill) => {
+    const candidates = installedPlugins.filter((plugin) =>
+      skill.name.startsWith(`${plugin.name}:`),
+    );
+    return (
+      candidates.find((plugin) =>
+        skill.path.replaceAll("\\", "/").includes(`/${plugin.marketplace}/${plugin.name}/`),
+      ) ??
+      candidates.find((plugin) => plugin.enabled) ??
+      candidates[0]
+    );
+  };
+
+  const counts = new Map<(typeof installedPlugins)[number], number>();
+  const taggedSkills = skills.flatMap((skill) => {
+    const owner = ownerOf(skill);
+    if (!owner) return [skill];
+    if (!owner.enabled) return [];
+    counts.set(owner, (counts.get(owner) ?? 0) + 1);
+    return [{ ...skill, scope: "plugin", pluginName: owner.name }];
+  });
+
+  const plugins = installedPlugins
+    .filter((plugin) => plugin.enabled)
+    .map((plugin) => ({
+      name: plugin.name,
+      marketplace: plugin.marketplace,
+      skillCount: counts.get(plugin) ?? 0,
+      ...(CODEX_DESKTOP_APP_PLUGIN_IDS.has(`${plugin.name}@${plugin.marketplace}`)
+        ? { requiresDesktopApp: true }
+        : {}),
+    }));
+  return { skills: taggedSkills, plugins };
+}
+
+/**
+ * `skills/list` plus plugin ownership. `plugin/installed` is an enrichment:
+ * an app-server without it (or failing it) leaves the skills untagged.
+ */
+const requestCodexSkillsAndPlugins = Effect.fn("requestCodexSkillsAndPlugins")(function* (
+  client: CodexClient.CodexAppServerClient["Service"],
+  cwd: string,
+) {
+  const [skillsResponse, installed] = yield* Effect.all(
+    [
+      client.request("skills/list", { cwds: [cwd] }),
+      client.request("plugin/installed", { cwds: [cwd] }).pipe(
+        Effect.map(Option.some),
+        Effect.catch((error) =>
+          Effect.logDebug("Codex plugin/installed failed.", { cause: error }).pipe(
+            Effect.as(Option.none<CodexSchema.V2PluginInstalledResponse>()),
+          ),
+        ),
+      ),
+    ],
+    { concurrency: "unbounded" },
+  );
+  const skills = parseCodexSkillsListResponse(skillsResponse, cwd);
+  return Option.isSome(installed)
+    ? applyCodexInstalledPlugins(skills, installed.value)
+    : { skills, plugins: undefined };
+});
+
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   client: CodexClient.CodexAppServerClient["Service"],
 ) {
@@ -427,11 +526,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models, rateLimits] = yield* Effect.all(
+  const [skillsAndPlugins, models, rateLimits] = yield* Effect.all(
     [
-      client.request("skills/list", {
-        cwds: [input.cwd],
-      }),
+      requestCodexSkillsAndPlugins(client, input.cwd),
       requestAllCodexModels(client),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
@@ -464,7 +561,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
-    skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    skills: skillsAndPlugins.skills,
+    ...(skillsAndPlugins.plugins ? { plugins: skillsAndPlugins.plugins } : {}),
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -476,8 +574,8 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   const { client } = yield* withCodexAppServerClient(input);
-  const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
-  return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+  const { skills } = yield* requestCodexSkillsAndPlugins(client, input.cwd);
+  return skills;
 });
 
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
@@ -671,6 +769,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     checkedAt,
     models: snapshot.models,
     skills: snapshot.skills,
+    ...(snapshot.plugins ? { plugins: snapshot.plugins } : {}),
     slashCommands: [
       COMPACT_SLASH_COMMAND,
       {

@@ -4,7 +4,13 @@ import type {
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 
-export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
+export type ProviderSkillSourceKind =
+  | "plugin"
+  | "repo"
+  | "project"
+  | "personal"
+  | "system"
+  | "other";
 
 function titleCaseWords(value: string): string {
   const words: string[] = [];
@@ -76,12 +82,18 @@ export function getProviderSlashCommandsForSlashMenu(
 export function resolveProviderSkillSourceKind(
   skill: Pick<ServerProviderSkill, "path" | "scope">,
 ): ProviderSkillSourceKind {
+  const normalizedScope = skill.scope?.trim().toLowerCase();
+  // Servers that predate the `plugin` scope report Codex plugin skills as
+  // `user`; their install path still gives them away.
   const normalizedPath = normalizePathSeparators(skill.path);
-  if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {
-    return "app";
+  if (
+    normalizedScope === "plugin" ||
+    normalizedPath.includes("/.codex/plugins/") ||
+    normalizedPath.includes("/.agents/plugins/")
+  ) {
+    return "plugin";
   }
 
-  const normalizedScope = skill.scope?.trim().toLowerCase();
   switch (normalizedScope) {
     case "repo":
     case "repository":

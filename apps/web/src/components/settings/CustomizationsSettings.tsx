@@ -10,6 +10,7 @@ import { toastManager } from "../ui/toast";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 import {
   useScopedSettings,
@@ -70,6 +71,44 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "On Settings, Pull Requests, Issues and Usage, show Back at the top-left of the sidebar. Off puts it back at the bottom.",
   },
 ];
+
+/** Read-only: each provider's enabled plugins, as its latest snapshot reports them. */
+function ProviderPluginsSection() {
+  const { environment } = useSettingsScope();
+  const rows = (environment?.serverConfig?.providers ?? []).flatMap((provider) =>
+    provider.enabled
+      ? (provider.plugins ?? []).map((plugin) => ({
+          provider: provider.displayName ?? provider.driver,
+          plugin,
+        }))
+      : [],
+  );
+  return (
+    <SettingsSection title="Plugins">
+      {rows.length === 0 ? (
+        <SettingsRow
+          title="No enabled plugins"
+          description="Plugins you enable in Claude Code or Codex are listed here, with their skills offered under $."
+        />
+      ) : (
+        rows.map(({ provider, plugin }) => (
+          <SettingsRow
+            key={`${provider}:${plugin.name}@${plugin.marketplace ?? ""}`}
+            title={plugin.name}
+            description={[
+              provider,
+              plugin.marketplace,
+              `${plugin.skillCount} ${plugin.skillCount === 1 ? "skill" : "skills"}`,
+              plugin.requiresDesktopApp ? "Needs the ChatGPT desktop app" : undefined,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          />
+        ))
+      )}
+    </SettingsSection>
+  );
+}
 
 const PROJECT_ICON_FALLBACK_LABELS = { folder: "Folder", initials: "Initials" } as const;
 const SIDEBAR_TOGGLE_POSITION_LABELS = { left: "Left", right: "Right" } as const;
@@ -228,6 +267,7 @@ export function CustomizationsSettings() {
           }
         />
       </SettingsSection>
+      <ProviderPluginsSection />
     </SettingsPageContainer>
   );
 }

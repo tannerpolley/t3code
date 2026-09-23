@@ -30,7 +30,7 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain("Switch response model for this thread");
   });
 
-  it("shows the app source for an app skill", () => {
+  it("shows the plugin source for a plugin skill", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
         items={[
@@ -59,7 +59,7 @@ describe("ComposerCommandMenu", () => {
 
     expect(markup).toContain("Browser");
     expect(markup).toContain('data-slot="badge"');
-    expect(markup).toContain(">App Skill</span>");
+    expect(markup).toContain(">Plugin Skill</span>");
     expect(markup).toContain("Open and control the in-app browser");
     expect(markup).toContain("<svg");
   });

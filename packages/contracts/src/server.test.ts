@@ -49,6 +49,7 @@ describe("ServerProvider", () => {
 
     expect(parsed.slashCommands).toEqual([]);
     expect(parsed.skills).toEqual([]);
+    expect(parsed.plugins).toBeUndefined();
     expect(parsed.supportedRuntimeModes).toEqual(["approval-required", "full-access"]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
