@@ -23,14 +23,14 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   EllipsisIcon,
   FilterIcon,
   FolderIcon,
-  FolderPlusIcon,
   GripVerticalIcon,
-  PlusIcon,
+  PaletteIcon,
   SettingsIcon,
   SquarePenIcon,
   Trash2Icon,
@@ -45,6 +45,8 @@ import {
   type ReactNode,
 } from "react";
 
+import type { ProjectIconColor } from "@t3tools/contracts";
+import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { SidebarThreadSummary } from "../../types";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -83,6 +85,7 @@ type SidebarProjectSectionRender = {
   readonly projectKeys: readonly string[];
   readonly collapsed: boolean;
   readonly custom: boolean;
+  readonly color: ProjectIconColor | undefined;
 };
 
 type ProjectDragData = {
@@ -130,7 +133,8 @@ interface SidebarProjectSectionsProps {
   readonly sections: readonly SidebarProjectSection[];
   readonly selectedProjectKey: string | null;
   readonly onSelectProject: (projectKey: string | null) => void;
-  readonly onAddProject: () => void;
+  /** Opens the section name dialog, which the sidebar owns so its header can create sections. */
+  readonly onRenameSection: (section: { readonly id: string; readonly name: string }) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
   readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
@@ -149,7 +153,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const {
     activeThreadKey,
     isProjectExpanded,
-    onAddProject,
+    onRenameSection,
     onNewThreadInProject,
     onOpenProjectSettings,
     onRemoveProject,
@@ -162,8 +166,6 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     selectedProjectKey,
     threadsByProjectKey,
   } = props;
-  const addSection = useUiStateStore((store) => store.addSidebarProjectSection);
-  const renameSection = useUiStateStore((store) => store.renameSidebarProjectSection);
   const deleteSection = useUiStateStore((store) => store.deleteSidebarProjectSection);
   const setCustomSectionExpanded = useUiStateStore(
     (store) => store.setSidebarProjectSectionExpanded,
@@ -177,10 +179,6 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     (store) => store.reorderSidebarProjectSectionProjects,
   );
   const reorderSections = useUiStateStore((store) => store.reorderSidebarProjectSections);
-  const [dialog, setDialog] = useState<
-    { readonly kind: "create" } | { readonly kind: "rename"; readonly sectionId: string } | null
-  >(null);
-  const [dialogName, setDialogName] = useState("");
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
 
   const projectByKey = useMemo(
@@ -202,6 +200,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         projectKeys,
         collapsed: section.collapsed,
         custom: true,
+        color: section.color,
       });
     }
     const ungroupedProjectKeys = projects
@@ -214,6 +213,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         projectKeys: ungroupedProjectKeys,
         collapsed: !otherProjectsExpanded,
         custom: false,
+        color: undefined,
       });
     }
     return next;
@@ -239,30 +239,11 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     return pointerCollisions.length > 0 ? pointerCollisions : closestCorners(args);
   }, []);
 
-  const openCreateDialog = useCallback(() => {
-    setDialogName("");
-    setDialog({ kind: "create" });
-  }, []);
-
-  const openRenameDialog = useCallback((section: SidebarProjectSectionRender) => {
-    if (!section.custom) return;
-    setDialogName(section.name);
-    setDialog({ kind: "rename", sectionId: section.id });
-  }, []);
-
-  const handleDialogSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      const name = dialogName.trim();
-      if (!dialog || !name) return;
-      if (dialog.kind === "create") {
-        addSection(name);
-      } else {
-        renameSection(dialog.sectionId, name);
-      }
-      setDialog(null);
+  const openRenameDialog = useCallback(
+    (section: SidebarProjectSectionRender) => {
+      if (section.custom) onRenameSection(section);
     },
-    [addSection, dialog, dialogName, renameSection],
+    [onRenameSection],
   );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -338,126 +319,66 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   );
 
   return (
-    <>
-      <SidebarGroup className="group-data-[collapsible=icon]:hidden px-1 py-1">
-        <div className="mb-1 px-2">
-          <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
-          <div className="mt-1 grid grid-cols-2 gap-1">
-            <Button
-              className="justify-start"
-              onClick={onAddProject}
-              size="xs"
-              variant="ghost-muted"
-            >
-              <PlusIcon />
-              Add project
-            </Button>
-            <Button
-              className="justify-start"
-              data-testid="sidebar-create-project-section"
-              onClick={openCreateDialog}
-              size="xs"
-              variant="ghost-muted"
-            >
-              <FolderPlusIcon />
-              New section
-            </Button>
-          </div>
-        </div>
-        <DndContext
-          collisionDetection={collisionDetection}
-          onDragCancel={handleDragCancel}
-          onDragEnd={handleDragEnd}
-          onDragStart={handleDragStart}
-          sensors={sensors}
-        >
-          <SidebarMenu className="gap-px">
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={selectedProjectKey === null}
-                onClick={() => onSelectProject(null)}
-                size="sm"
-              >
-                <FolderIcon className="text-icon-muted" />
-                <span>All projects</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SortableContext
-              items={renderedSections
-                .filter((section) => section.custom)
-                .map((section) => sectionDragId(section.id))}
-              strategy={verticalListSortingStrategy}
-            >
-              {renderedSections.map((section) => (
-                <ProjectSection
-                  key={section.id}
-                  onDelete={deleteSection}
-                  onMoveProject={moveProject}
-                  onNewThreadInProject={onNewThreadInProject}
-                  onOpenProjectSettings={onOpenProjectSettings}
-                  onRemoveProject={onRemoveProject}
-                  onOpenRename={openRenameDialog}
-                  onSelectProject={onSelectProject}
-                  onSetExpanded={setSectionExpanded}
-                  activeThreadKey={activeThreadKey}
-                  isProjectExpanded={isProjectExpanded}
-                  onThreadClick={onThreadClick}
-                  onThreadContextMenu={onThreadContextMenu}
-                  onToggleProject={onToggleProject}
-                  projectByKey={projectByKey}
-                  section={section}
-                  sections={renderedSections}
-                  selectedProjectKey={selectedProjectKey}
-                  threadsByProjectKey={threadsByProjectKey}
-                />
-              ))}
-            </SortableContext>
-          </SidebarMenu>
-          <DragOverlay dropAnimation={null}>
-            {activeProjectKey ? (
-              <ProjectDragPreview project={projectByKey.get(activeProjectKey) ?? null} />
-            ) : null}
-          </DragOverlay>
-        </DndContext>
-      </SidebarGroup>
-      <Dialog
-        onOpenChange={(open) => {
-          if (!open) setDialog(null);
-        }}
-        open={dialog !== null}
+    <SidebarGroup className="group-data-[collapsible=icon]:hidden px-1 py-1">
+      <div className="mb-1 px-2">
+        <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
+      </div>
+      <DndContext
+        collisionDetection={collisionDetection}
+        onDragCancel={handleDragCancel}
+        onDragEnd={handleDragEnd}
+        onDragStart={handleDragStart}
+        sensors={sensors}
       >
-        <DialogPopup className="max-w-md">
-          <form onSubmit={handleDialogSubmit}>
-            <DialogHeader>
-              <DialogTitle>
-                {dialog?.kind === "rename" ? "Rename project section" : "Create project section"}
-              </DialogTitle>
-              <DialogDescription>
-                Group projects in the sidebar without changing their T3 project settings.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogPanel>
-              <Input
-                aria-label="Project section name"
-                autoFocus
-                maxLength={80}
-                onChange={(event) => setDialogName(event.target.value)}
-                placeholder="e.g. Work"
-                value={dialogName}
+        <SidebarMenu className="gap-px">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={selectedProjectKey === null}
+              onClick={() => onSelectProject(null)}
+              size="sm"
+            >
+              <FolderIcon className="text-icon-muted" />
+              <span>All projects</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SortableContext
+            items={renderedSections
+              .filter((section) => section.custom)
+              .map((section) => sectionDragId(section.id))}
+            strategy={verticalListSortingStrategy}
+          >
+            {renderedSections.map((section) => (
+              <ProjectSection
+                key={section.id}
+                onDelete={deleteSection}
+                onMoveProject={moveProject}
+                onNewThreadInProject={onNewThreadInProject}
+                onOpenProjectSettings={onOpenProjectSettings}
+                onRemoveProject={onRemoveProject}
+                onOpenRename={openRenameDialog}
+                onSelectProject={onSelectProject}
+                onSetExpanded={setSectionExpanded}
+                activeThreadKey={activeThreadKey}
+                isProjectExpanded={isProjectExpanded}
+                onThreadClick={onThreadClick}
+                onThreadContextMenu={onThreadContextMenu}
+                onToggleProject={onToggleProject}
+                projectByKey={projectByKey}
+                section={section}
+                sections={renderedSections}
+                selectedProjectKey={selectedProjectKey}
+                threadsByProjectKey={threadsByProjectKey}
               />
-            </DialogPanel>
-            <DialogFooter>
-              <Button onClick={() => setDialog(null)} type="button" variant="outline">
-                Cancel
-              </Button>
-              <Button disabled={dialogName.trim().length === 0} type="submit">
-                Save
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogPopup>
-      </Dialog>
-    </>
+            ))}
+          </SortableContext>
+        </SidebarMenu>
+        <DragOverlay dropAnimation={null}>
+          {activeProjectKey ? (
+            <ProjectDragPreview project={projectByKey.get(activeProjectKey) ?? null} />
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+    </SidebarGroup>
   );
 }
 
@@ -503,7 +424,7 @@ const ProjectSection = memo(function ProjectSection(props: {
         section={props.section}
       />
       {expanded ? (
-        <ul className="ms-3 border-sidebar-border/60 border-s ps-1">
+        <ul>
           <SortableContext items={[...sectionProjectKeys]} strategy={verticalListSortingStrategy}>
             {sectionProjectKeys.map((projectKey) => {
               const project = props.projectByKey.get(projectKey);
@@ -521,6 +442,7 @@ const ProjectSection = memo(function ProjectSection(props: {
                   onThreadContextMenu={props.onThreadContextMenu}
                   onToggleProject={props.onToggleProject}
                   project={project}
+                  folderColor={props.section.color}
                   sectionId={props.section.custom ? props.section.id : null}
                   sections={props.sections}
                   selected={props.selectedProjectKey === projectKey}
@@ -547,6 +469,7 @@ function SortableSectionHeader(props: {
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
 }) {
   const { section } = props;
+  const setSectionColor = useUiStateStore((store) => store.setSidebarProjectSectionColor);
   const sortable = useSortable({
     data: {
       type: "section",
@@ -625,6 +548,32 @@ function SortableSectionHeader(props: {
                 <SettingsIcon />
                 Rename section
               </MenuItem>
+              <MenuSub>
+                <MenuSubTrigger>
+                  <PaletteIcon />
+                  Folder color
+                </MenuSubTrigger>
+                <MenuSubPopup>
+                  <MenuItem onClick={() => setSectionColor(section.id, null)}>
+                    <span aria-hidden className="size-3 rounded-full border border-border" />
+                    None
+                    {section.color === undefined ? <CheckIcon className="ms-auto" /> : null}
+                  </MenuItem>
+                  {PROJECT_ICON_COLORS.map((color) => (
+                    <MenuItem
+                      key={color.value}
+                      onClick={() => setSectionColor(section.id, color.value)}
+                    >
+                      <span
+                        aria-hidden
+                        className={cn("size-3 rounded-full", color.swatchClassName)}
+                      />
+                      {color.label}
+                      {section.color === color.value ? <CheckIcon className="ms-auto" /> : null}
+                    </MenuItem>
+                  ))}
+                </MenuSubPopup>
+              </MenuSub>
               <MenuSeparator />
               <MenuItem onClick={() => props.onDelete(section.id)} variant="destructive">
                 <Trash2Icon />
@@ -640,6 +589,7 @@ function SortableSectionHeader(props: {
 
 const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly project: SidebarProjectSnapshot;
+  readonly folderColor: ProjectIconColor | undefined;
   readonly sectionId: string | null;
   readonly sections: readonly SidebarProjectSectionRender[];
   readonly selected: boolean;
@@ -690,7 +640,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
       <div className="group/project-row relative">
         <SidebarMenuButton
           aria-expanded={props.isProjectExpanded}
-          className="pe-12"
+          className="group-hover/project-row:pe-20 group-focus-within/project-row:pe-20 pointer-coarse:pe-20"
           isActive={props.selected}
           onClick={() => {
             props.onToggleProject(project.projectKey, !props.isProjectExpanded);
@@ -705,7 +655,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               props.isProjectExpanded && "rotate-90",
             )}
           />
-          <ProjectFavicon className="size-4" project={project} />
+          <ProjectFavicon className="size-4" folderColor={props.folderColor} project={project} />
           <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
           {props.threads.length > 0 ? (
             <span className="shrink-0 text-[10px] text-sidebar-muted-foreground/55">
@@ -718,6 +668,14 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           ) : null}
         </SidebarMenuButton>
         <div className="pointer-events-none absolute inset-y-0 end-1 flex items-center gap-px">
+          <button
+            aria-label={`New thread in ${project.displayName}`}
+            className="pointer-events-auto inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:opacity-100 group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
+            onClick={() => props.onNewThreadInProject(project)}
+            type="button"
+          >
+            <SquarePenIcon aria-hidden className="size-3.5" />
+          </button>
           <button
             aria-label={`Reorder ${project.displayName}`}
             className="pointer-events-auto inline-flex size-6 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
@@ -881,6 +839,68 @@ function SidebarProjectThreadRow(props: {
         </span>
       </button>
     </li>
+  );
+}
+
+/** What the section name dialog is doing: creating a section or renaming one. */
+export type ProjectSectionDialogTarget =
+  | { readonly kind: "create" }
+  | { readonly kind: "rename"; readonly id: string; readonly name: string };
+
+/**
+ * Creates or renames a sidebar section. Mount it with a fresh `key` for each opening so the name
+ * field starts from the target's current name.
+ */
+export function ProjectSectionDialog(props: {
+  readonly target: ProjectSectionDialogTarget;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+}) {
+  const { target } = props;
+  const addSection = useUiStateStore((store) => store.addSidebarProjectSection);
+  const renameSection = useUiStateStore((store) => store.renameSidebarProjectSection);
+  const [name, setName] = useState(target.kind === "rename" ? target.name : "");
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (target.kind === "create") addSection(trimmed);
+    else renameSection(target.id, trimmed);
+    props.onOpenChange(false);
+  };
+  return (
+    <Dialog onOpenChange={props.onOpenChange} open={props.open}>
+      <DialogPopup className="max-w-md">
+        <form onSubmit={handleSubmit}>
+          <DialogHeader>
+            <DialogTitle>
+              {target.kind === "rename" ? "Rename project section" : "Create project section"}
+            </DialogTitle>
+            <DialogDescription>
+              Group projects in the sidebar without changing their T3 project settings.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <Input
+              aria-label="Project section name"
+              autoFocus
+              maxLength={80}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="e.g. Work"
+              value={name}
+            />
+          </DialogPanel>
+          <DialogFooter>
+            <Button onClick={() => props.onOpenChange(false)} type="button" variant="outline">
+              Cancel
+            </Button>
+            <Button disabled={name.trim().length === 0} type="submit">
+              Save
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogPopup>
+    </Dialog>
   );
 }
 

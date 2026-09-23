@@ -328,6 +328,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "project-icon-fallback",
+    title: "Default project icon",
+    to: "/settings/general",
+    searchTerms: ["project icon folder initials monogram letters favicon sidebar"],
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/general",

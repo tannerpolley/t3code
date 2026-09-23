@@ -97,9 +97,11 @@ T3 Code detect an icon again.
 
 Choose **Monogram** in the icon picker to set one or two letters or numbers and a color.
 
-When no image is found, web and desktop show a two-character monogram with a color
-from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
-`Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
+When no image is found, web and desktop show a folder. To tint the folders of every project in a
+sidebar section, open the section's menu and choose **Folder color**. To show initials instead, set
+**Settings → General → Default project icon** to **Initials**: web and desktop then show a
+two-character monogram with a color derived from the saved project name. For example, `Nebula`
+becomes `NA`, `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
 
 ## Keep the default branch current
 

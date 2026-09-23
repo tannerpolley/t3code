@@ -15,6 +15,7 @@ import {
   reorderSidebarProjectSectionProjects,
   reorderSidebarProjectSections,
   renameSidebarProjectSection,
+  setSidebarProjectSectionColor,
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
@@ -209,6 +210,30 @@ describe("uiStateStore pure functions", () => {
       false,
     );
     expect(deleteSidebarProjectSection(ordered, "work").sidebarProjectSections).toHaveLength(1);
+  });
+
+  it("colors a section, clears it, and drops unknown saved colors", () => {
+    const work = addSidebarProjectSection(makeUiState(), { id: "work", name: "Work" });
+    const blue = setSidebarProjectSectionColor(work, "work", "blue");
+    expect(blue.sidebarProjectSections[0]?.color).toBe("blue");
+    expect(setSidebarProjectSectionColor(blue, "work", null).sidebarProjectSections[0]).toEqual({
+      id: "work",
+      name: "Work",
+      projectKeys: [],
+      collapsed: false,
+    });
+    // Saved state is untrusted JSON, so it can carry a color the palette no longer has.
+    const saved: unknown = {
+      sidebarProjectSections: [
+        { id: "a", name: "A", projectKeys: [], color: "blue" },
+        { id: "b", name: "B", projectKeys: [], color: "ultraviolet" },
+      ],
+    };
+    const parsed = parsePersistedState(saved as Parameters<typeof parsePersistedState>[0]);
+    expect(parsed.sidebarProjectSections?.map((section) => section.color)).toEqual([
+      "blue",
+      undefined,
+    ]);
   });
 });
 

@@ -260,7 +260,11 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { SidebarProjectSections } from "./sidebar/SidebarProjectSections";
+import {
+  ProjectSectionDialog,
+  type ProjectSectionDialogTarget,
+  SidebarProjectSections,
+} from "./sidebar/SidebarProjectSections";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -2435,6 +2439,25 @@ export default function Sidebar() {
   const sidebarMode = useUiStateStore((store) => store.sidebarMode);
   const setSidebarMode = useUiStateStore((store) => store.setSidebarMode);
   const sidebarProjectSections = useUiStateStore((store) => store.sidebarProjectSections);
+  // `id` remounts the dialog per opening so its name field starts fresh; `open` stays separate so
+  // the dialog keeps its content while it animates closed.
+  const [sectionDialog, setSectionDialog] = useState<{
+    readonly target: ProjectSectionDialogTarget;
+    readonly open: boolean;
+    readonly id: number;
+  } | null>(null);
+  const openSectionDialog = useCallback((target: ProjectSectionDialogTarget) => {
+    setSectionDialog((current) => ({ target, open: true, id: (current?.id ?? 0) + 1 }));
+  }, []);
+  const openCreateSectionDialog = useCallback(
+    () => openSectionDialog({ kind: "create" }),
+    [openSectionDialog],
+  );
+  const openRenameSectionDialog = useCallback(
+    (section: { readonly id: string; readonly name: string }) =>
+      openSectionDialog({ kind: "rename", id: section.id, name: section.name }),
+    [openSectionDialog],
+  );
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
   const isProjectExpanded = useCallback(
@@ -4603,6 +4626,16 @@ export default function Sidebar() {
   return (
     <>
       <ThreadContextDragGhost />
+      {sectionDialog ? (
+        <ProjectSectionDialog
+          key={sectionDialog.id}
+          target={sectionDialog.target}
+          open={sectionDialog.open}
+          onOpenChange={(open) =>
+            setSectionDialog((current) => (current ? { ...current, open } : current))
+          }
+        />
+      ) : null}
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         className="gap-0 min-h-full"
@@ -4750,6 +4783,7 @@ export default function Sidebar() {
                 </Combobox>
               }
               onNewProject={openAddProjectCommandPalette}
+              onNewSection={openCreateSectionDialog}
               onNewThread={handleNewThreadClick}
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
@@ -4774,7 +4808,7 @@ export default function Sidebar() {
           <SidebarProjectSections
             activeThreadKey={routeThreadKey}
             isProjectExpanded={isProjectExpanded}
-            onAddProject={openAddProjectCommandPalette}
+            onRenameSection={openRenameSectionDialog}
             onNewThreadInProject={newThreadInSidebarProject}
             onOpenProjectSettings={openProjectSettings}
             onRemoveProject={removeSidebarProject}

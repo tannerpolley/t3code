@@ -186,6 +186,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const PROJECT_ICON_FALLBACK_LABELS = {
+  folder: "Folder",
+  initials: "Initials",
+} as const;
+
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
   split: "Split",
@@ -531,6 +536,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.projectIconFallback !== DEFAULT_UNIFIED_SETTINGS.projectIconFallback
+        ? ["Default project icon"]
+        : []),
       ...(settings.notificationMode !== DEFAULT_UNIFIED_SETTINGS.notificationMode
         ? ["Thread notifications"]
         : []),
@@ -680,6 +688,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
+      settings.projectIconFallback,
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
       settings.wordWrap,
@@ -755,6 +764,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      projectIconFallback: DEFAULT_UNIFIED_SETTINGS.projectIconFallback,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
@@ -2385,6 +2395,46 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("project-icon-fallback")}
+          description="Shown for projects without a favicon or custom icon."
+          resetAction={
+            settings.projectIconFallback !== DEFAULT_UNIFIED_SETTINGS.projectIconFallback ? (
+              <SettingResetButton
+                label="default project icon"
+                onClick={() =>
+                  updateSettings({
+                    projectIconFallback: DEFAULT_UNIFIED_SETTINGS.projectIconFallback,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.projectIconFallback}
+              onValueChange={(value) => {
+                if (value === "folder" || value === "initials") {
+                  updateSettings({ projectIconFallback: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Default project icon">
+                <SelectValue>
+                  {PROJECT_ICON_FALLBACK_LABELS[settings.projectIconFallback]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="folder">
+                  {PROJECT_ICON_FALLBACK_LABELS.folder}
+                </SelectItem>
+                <SelectItem hideIndicator value="initials">
+                  {PROJECT_ICON_FALLBACK_LABELS.initials}
                 </SelectItem>
               </SelectPopup>
             </Select>

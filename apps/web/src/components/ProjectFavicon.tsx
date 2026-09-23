@@ -3,11 +3,13 @@ import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
-import { FolderCodeIcon } from "lucide-react";
+import type { ProjectIconColor } from "@t3tools/contracts";
+import { FolderCodeIcon, FolderIcon } from "lucide-react";
 import type { IconName } from "lucide-react/dynamic";
 import type { ComponentType } from "react";
 import { lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
+import { useClientSettings } from "../hooks/useSettings";
 import { projectFaviconUrlAtom } from "../state/assets";
 import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
@@ -34,6 +36,8 @@ export function ProjectFavicon(input: {
   project: ProjectFaviconProject;
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
+  /** Tints the automatic folder, e.g. with the color of the project's sidebar section. */
+  folderColor?: ProjectIconColor | undefined;
 }) {
   const { project } = input;
   const src = useAtomValue(
@@ -43,6 +47,12 @@ export function ProjectFavicon(input: {
       faviconPath: project.faviconPath,
     }),
   );
+  // The automatic icon for a project without a favicon: initials only when chosen in settings.
+  const initialsFallback =
+    useClientSettings((settings) => settings.projectIconFallback) === "initials";
+  const fallbackName = initialsFallback ? project.title : undefined;
+  const fallbackColorClassName =
+    input.folderColor === undefined ? undefined : projectIconColorClassName(input.folderColor);
   if (project.projectIcon?.kind === "monogram") {
     return (
       <ProjectMonogram
@@ -80,14 +90,14 @@ export function ProjectFavicon(input: {
       </span>
     );
   }
-  const FallbackIcon = input.fallbackIcon ?? FolderCodeIcon;
+  const FallbackIcon = input.fallbackIcon ?? FolderIcon;
 
   if (!src || isProjectFaviconFallbackUrl(src)) {
     return (
       <ProjectFaviconFallback
-        className={input.className}
+        className={cn(input.className, fallbackColorClassName)}
         icon={FallbackIcon}
-        projectName={project.title}
+        projectName={fallbackName}
       />
     );
   }
@@ -103,8 +113,9 @@ export function ProjectFavicon(input: {
       key={cacheKey}
       src={src}
       className={input.className}
+      fallbackClassName={cn(input.className, fallbackColorClassName)}
       fallbackIcon={FallbackIcon}
-      fallbackProjectName={project.title}
+      fallbackProjectName={fallbackName}
     />
   );
 }
@@ -147,11 +158,13 @@ function ProjectFaviconFallback({
 function ProjectFaviconImage({
   src,
   className,
+  fallbackClassName,
   fallbackIcon: FallbackIcon,
   fallbackProjectName,
 }: {
   readonly src: string;
   readonly className?: string | undefined;
+  readonly fallbackClassName?: string | undefined;
   readonly fallbackIcon: ComponentType<{ className?: string }>;
   readonly fallbackProjectName?: string | undefined;
 }) {
@@ -167,7 +180,7 @@ function ProjectFaviconImage({
     <>
       {displayedSrc === null ? (
         <ProjectFaviconFallback
-          className={className}
+          className={fallbackClassName}
           icon={FallbackIcon}
           projectName={fallbackProjectName}
         />

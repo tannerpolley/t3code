@@ -1,5 +1,6 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import type { PullRequestMergeMethod } from "@t3tools/contracts";
+import { ProjectIconColor, type PullRequestMergeMethod } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 import { randomUUID } from "./lib/utils";
@@ -26,7 +27,11 @@ export interface SidebarProjectSection {
   name: string;
   projectKeys: string[];
   collapsed: boolean;
+  /** Tints the automatic folder icons of the section's projects. */
+  color?: ProjectIconColor;
 }
+
+const isProjectIconColor = Schema.is(ProjectIconColor);
 
 export type SidebarMode = "projects" | "activity";
 
@@ -129,7 +134,15 @@ function sanitizeSidebarProjectSections(value: unknown): SidebarProjectSection[]
       claimedProjectKeys.add(key);
       return true;
     });
-    return [{ id, name, projectKeys, collapsed: candidate.collapsed === true }];
+    return [
+      {
+        id,
+        name,
+        projectKeys,
+        collapsed: candidate.collapsed === true,
+        ...(isProjectIconColor(candidate.color) ? { color: candidate.color } : {}),
+      },
+    ];
   });
 }
 
@@ -448,6 +461,23 @@ export function renameSidebarProjectSection(
   };
 }
 
+export function setSidebarProjectSectionColor(
+  state: UiState,
+  sectionId: string,
+  color: ProjectIconColor | null,
+): UiState {
+  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
+  if (!section || (section.color ?? null) === color) return state;
+  return {
+    ...state,
+    sidebarProjectSections: state.sidebarProjectSections.map((candidate) => {
+      if (candidate.id !== sectionId) return candidate;
+      const { color: _color, ...rest } = candidate;
+      return color === null ? rest : { ...rest, color };
+    }),
+  };
+}
+
 export function deleteSidebarProjectSection(state: UiState, sectionId: string): UiState {
   const sidebarProjectSections = state.sidebarProjectSections.filter(
     (section) => section.id !== sectionId,
@@ -629,6 +659,7 @@ interface UiStateStore extends UiState {
   setSidebarOtherProjectsExpanded: (expanded: boolean) => void;
   addSidebarProjectSection: (name: string) => void;
   renameSidebarProjectSection: (sectionId: string, name: string) => void;
+  setSidebarProjectSectionColor: (sectionId: string, color: ProjectIconColor | null) => void;
   deleteSidebarProjectSection: (sectionId: string) => void;
   setSidebarProjectSectionExpanded: (sectionId: string, expanded: boolean) => void;
   moveProjectToSidebarProjectSection: (projectKey: string, sectionId: string | null) => void;
@@ -662,6 +693,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => addSidebarProjectSection(state, { id: randomUUID(), name })),
   renameSidebarProjectSection: (sectionId, name) =>
     set((state) => renameSidebarProjectSection(state, sectionId, name)),
+  setSidebarProjectSectionColor: (sectionId, color) =>
+    set((state) => setSidebarProjectSectionColor(state, sectionId, color)),
   deleteSidebarProjectSection: (sectionId) =>
     set((state) => deleteSidebarProjectSection(state, sectionId)),
   setSidebarProjectSectionExpanded: (sectionId, expanded) =>
