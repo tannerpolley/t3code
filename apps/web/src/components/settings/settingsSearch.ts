@@ -384,6 +384,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork sections folders automatic organize sort new projects"],
   },
   {
+    id: "agent-browser-in-panel",
+    title: "Agent browser opens in the side panel",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork browser preview agent side panel floating mini player"],
+  },
+  {
     id: "lineage-details-expanded",
     title: "Expand agent details by default",
     to: "/settings/customizations",

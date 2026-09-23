@@ -495,6 +495,8 @@ export const ClientSettingsSchema = Schema.Struct({
   lineageDetailsExpanded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Place unsorted projects under the Organize by folder root into their folder's section. */
   autoOrganizeByFolder: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Show a browser tab an agent uses in the right panel instead of the floating mini player. */
+  agentBrowserInPanel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1724,6 +1726,7 @@ export const ClientSettingsPatch = Schema.Struct({
   topBackButton: Schema.optionalKey(Schema.Boolean),
   lineageDetailsExpanded: Schema.optionalKey(Schema.Boolean),
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
+  agentBrowserInPanel: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

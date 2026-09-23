@@ -35,6 +35,8 @@ export interface BrowserDefaults {
   readonly zoomFactor: number;
   readonly appearance: PreviewAppearancePreference;
   readonly autoShowFloatingPreview: boolean;
+  /** Agent-used tabs show in the right panel rather than the floating mini player. */
+  readonly agentBrowserInPanel: boolean;
   readonly profiles: ReadonlyArray<BrowserProfile>;
   readonly profileId: string;
 }
@@ -44,6 +46,7 @@ const toBrowserDefaults = (settings: {
   readonly browserDefaultZoomFactor: number;
   readonly browserDefaultAppearance: PreviewAppearancePreference;
   readonly browserAutoShowFloatingPreview: boolean;
+  readonly agentBrowserInPanel: boolean;
   readonly browserProfiles: ReadonlyArray<BrowserProfile>;
   readonly browserDefaultProfileId: string;
 }): BrowserDefaults => {
@@ -53,6 +56,7 @@ const toBrowserDefaults = (settings: {
     zoomFactor: settings.browserDefaultZoomFactor,
     appearance: settings.browserDefaultAppearance,
     autoShowFloatingPreview: settings.browserAutoShowFloatingPreview,
+    agentBrowserInPanel: settings.agentBrowserInPanel,
     profiles,
     // A default pointing at a deleted profile falls back rather than opening
     // tabs into a partition with no profile behind it.

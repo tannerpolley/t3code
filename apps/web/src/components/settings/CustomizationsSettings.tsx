@@ -65,6 +65,12 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Put projects that are in no section yet into their folder's section automatically, using the Organize by folder root. Projects you move by hand stay where you put them.",
   },
   {
+    key: "agentBrowserInPanel",
+    searchId: "agent-browser-in-panel",
+    description:
+      "When an agent uses the in-app browser, show it in the right side panel instead of the small floating player.",
+  },
+  {
     key: "lineageDetailsExpanded",
     searchId: "lineage-details-expanded",
     description:
