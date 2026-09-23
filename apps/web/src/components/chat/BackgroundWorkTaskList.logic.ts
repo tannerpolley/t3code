@@ -3,7 +3,10 @@ import type {
   OrchestrationV2ThreadProjection,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
+
+import type { SidebarThreadSummary } from "../../types";
 
 export interface BackgroundWorkTaskRow {
   readonly taskId: string;
@@ -38,7 +41,7 @@ export function describeBackgroundWorkTasks(
       taskId: task.taskId,
       label: task.description ?? task.taskId,
       kind:
-        item?.type === "subagent" || subagent !== undefined || /agent/.test(task.taskType ?? "")
+        item?.type === "subagent" || subagent !== undefined || isAgentTask(task)
           ? "subagent"
           : "process",
       startedAt: startedAt === null ? null : DateTime.formatIso(startedAt),
@@ -46,4 +49,50 @@ export function describeBackgroundWorkTasks(
         (item?.type === "subagent" ? item.childThreadId : null) ?? subagent?.childThreadId ?? null,
     };
   });
+}
+
+/** `subagent` turn items and Claude's `local_agent` / `remote_agent` roster entries are agents. */
+function isAgentTask(task: OrchestrationV2PendingBackgroundTask): boolean {
+  return /agent/.test(task.taskType ?? "");
+}
+
+/**
+ * Sidebar rows without loading the thread projection. Running subagent child threads carry the
+ * link and start time; the pending roster (empty while the parent's own turn runs) adds
+ * processes, plus agent tasks that no running child thread accounts for.
+ */
+export function describeSidebarBackgroundWork(
+  tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+  runningChildren: ReadonlyArray<
+    Pick<SidebarThreadSummary, "id" | "title" | "latestRun" | "runtime">
+  >,
+): ReadonlyArray<BackgroundWorkTaskRow> {
+  const agentTasks = tasks.filter(isAgentTask);
+  return [
+    ...runningChildren.map((child) => ({
+      taskId: child.id,
+      label: child.title,
+      kind: "subagent" as const,
+      startedAt: resolveThreadWorkingStartedAt(child),
+      childThreadId: child.id,
+    })),
+    // ponytail: the shell has no task id on child threads, so agent tasks pair with children by
+    // count; join on an id if the summary ever carries one.
+    ...agentTasks.slice(runningChildren.length).map((task) => ({
+      taskId: task.taskId,
+      label: task.description ?? task.taskId,
+      kind: "subagent" as const,
+      startedAt: null,
+      childThreadId: null,
+    })),
+    ...tasks
+      .filter((task) => !isAgentTask(task))
+      .map((task) => ({
+        taskId: task.taskId,
+        label: task.description ?? task.taskId,
+        kind: "process" as const,
+        startedAt: null,
+        childThreadId: null,
+      })),
+  ];
 }

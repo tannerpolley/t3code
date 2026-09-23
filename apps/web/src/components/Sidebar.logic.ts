@@ -1,4 +1,8 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  resolveThreadWorkingStartedAt,
+  threadRuntimeIsActive,
+} from "@t3tools/client-runtime/state/models";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import {
@@ -932,6 +936,35 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return "waiting";
   }
   return "ready";
+}
+
+/**
+ * Running subagent child threads keyed by their parent's scoped thread key. The Projects view
+ * hides subagent threads, so this is how a parent row lists the ones still working.
+ */
+export function groupRunningSubagentsByParent<
+  TThread extends Pick<
+    SidebarThreadSummary,
+    "environmentId" | "lineage" | "runtime" | "archivedAt"
+  >,
+>(threads: readonly TThread[]): ReadonlyMap<string, TThread[]> {
+  const byParent = new Map<string, TThread[]>();
+  for (const thread of threads) {
+    const parentThreadId = thread.lineage.parentThreadId;
+    if (
+      parentThreadId === null ||
+      thread.lineage.relationshipToParent !== "subagent" ||
+      thread.archivedAt !== null ||
+      !threadRuntimeIsActive(thread.runtime)
+    ) {
+      continue;
+    }
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
+    const siblings = byParent.get(key);
+    if (siblings) siblings.push(thread);
+    else byParent.set(key, [thread]);
+  }
+  return byParent;
 }
 
 export type SidebarV2TopStatusKind =

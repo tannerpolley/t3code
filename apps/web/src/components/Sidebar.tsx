@@ -209,6 +209,7 @@ import {
   useThreadJumpHintVisibility,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
+  groupRunningSubagentsByParent,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -2802,6 +2803,10 @@ export default function Sidebar() {
     }
     return grouped;
   }, [logicalProjectKeyByScopedProjectRef, threads]);
+  const runningSubagentsByParentKey = useMemo(
+    () => groupRunningSubagentsByParent(threads),
+    [threads],
+  );
   const searchEnvironmentIds = useConnectedEnvironmentIds();
   // useThreadSearch owns the debounce and the two-character floor.
   const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
@@ -4853,6 +4858,7 @@ export default function Sidebar() {
             sections={sidebarProjectSections}
             selectedProjectKey={projectScopeKey}
             threadsByProjectKey={sidebarProjectThreadsByKey}
+            runningSubagentsByParentKey={runningSubagentsByParentKey}
           />
         ) : null}
         <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0 flex-1">

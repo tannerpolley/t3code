@@ -1,3 +1,4 @@
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
@@ -18,6 +19,7 @@ import {
   getProjectSortTimestamp,
   getSidebarForkParentThreadId,
   getSidebarThreadIdsToPrewarm,
+  groupRunningSubagentsByParent,
   hasUnseenCompletion,
   isContextMenuPointerDown,
   isSidebarSubagentThread,
@@ -2204,4 +2206,41 @@ describe("navigation after parking a thread", () => {
       ).toBe(expected);
     },
   );
+});
+
+describe("groupRunningSubagentsByParent", () => {
+  const child = (
+    id: string,
+    overrides: { status?: "running" | "completed" | "idle"; fork?: boolean } = {},
+  ) => ({
+    id,
+    environmentId: localEnvironmentId,
+    archivedAt: null,
+    lineage: {
+      parentThreadId: ThreadId.make("parent"),
+      relationshipToParent: overrides.fork ? ("fork" as const) : ("subagent" as const),
+      rootThreadId: ThreadId.make("parent"),
+    },
+    runtime: {
+      status: overrides.status ?? "running",
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: null,
+      lastError: null,
+      updatedAt: "2026-09-23T10:00:00.000Z",
+    },
+  });
+
+  it("keeps only running subagent children, keyed by their parent", () => {
+    const grouped = groupRunningSubagentsByParent([
+      child("running"),
+      child("finished", { status: "completed" }),
+      child("waiting-on-own-work", { status: "idle" }),
+      child("fork", { fork: true }),
+    ]);
+    expect([...grouped.keys()]).toEqual([
+      scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("parent"))),
+    ]);
+    expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual(["running"]);
+  });
 });

@@ -46,6 +46,8 @@ import {
   SquarePenIcon,
   Trash2Icon,
 } from "lucide-react";
+import { BackgroundWorkTaskList } from "../chat/BackgroundWorkTaskList";
+import { describeSidebarBackgroundWork } from "../chat/BackgroundWorkTaskList.logic";
 import {
   Fragment,
   memo,
@@ -107,6 +109,7 @@ import {
 } from "./SidebarProjectSections.logic";
 
 const UNGROUPED_SECTION_ID = "__ungrouped__";
+const NO_THREADS: readonly SidebarThreadSummary[] = [];
 
 type SidebarProjectSectionRender = {
   readonly id: string;
@@ -185,6 +188,8 @@ interface SidebarProjectSectionsProps {
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
   readonly onRemoveProject: (project: SidebarProjectSnapshot) => void;
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
+  readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   readonly isProjectExpanded: (projectKey: string) => boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
   readonly activeThreadKey: string | null;
@@ -213,6 +218,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     projects,
     sections,
     selectedProjectKey,
+    runningSubagentsByParentKey,
     threadsByProjectKey,
   } = props;
   // Off restores the original Projects view: heading, action row, All projects, chevrons and grips.
@@ -595,6 +601,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                   sections={renderedSections}
                   selectedProjectKey={selectedProjectKey}
                   threadsByProjectKey={threadsByProjectKey}
+                  runningSubagentsByParentKey={runningSubagentsByParentKey}
                 />
               ))}
           </SortableContext>
@@ -650,6 +657,8 @@ const ProjectSection = memo(function ProjectSection(props: {
     position: { x: number; y: number },
   ) => void;
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
+  readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
 }) {
   const { setNodeRef: setDropRef } = useDroppable({
     data: {
@@ -718,6 +727,7 @@ const ProjectSection = memo(function ProjectSection(props: {
                     sections={props.sections}
                     selected={props.selectedProjectKey === projectKey}
                     threads={props.threadsByProjectKey.get(project.projectKey) ?? []}
+                    runningSubagentsByParentKey={props.runningSubagentsByParentKey}
                   />
                 </Fragment>
               ) : null;
@@ -942,6 +952,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
     position: { x: number; y: number },
   ) => void;
   readonly threads: readonly SidebarThreadSummary[];
+  readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
 }) {
   const { project, codexStyle } = props;
   const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef } = useSortable({
@@ -1098,6 +1109,11 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               onClick={props.onThreadClick}
               onContextMenu={props.onThreadContextMenu}
               thread={thread}
+              runningSubagents={
+                props.runningSubagentsByParentKey.get(
+                  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                ) ?? NO_THREADS
+              }
             />
           ))}
           {props.threads.length === 0 ? (
@@ -1185,14 +1201,22 @@ function SidebarProjectThreadRow(props: {
     thread: SidebarThreadSummary,
     position: { x: number; y: number },
   ) => void;
+  readonly runningSubagents: readonly SidebarThreadSummary[];
 }): ReactNode {
   const status = resolveSidebarThreadStatus(props.thread);
   const activeThreadKey = scopedThreadKey(
     scopeThreadRef(props.thread.environmentId, props.thread.id),
   );
   const active = props.activeThreadKey === activeThreadKey;
+  const workRows = describeSidebarBackgroundWork(
+    props.thread.pendingBackgroundTasks,
+    props.runningSubagents,
+  );
+  // Opens by itself while the thread waits on this work; a manual toggle wins for this row.
+  const [manualWorkOpen, setManualWorkOpen] = useState<boolean | null>(null);
+  const workOpen = manualWorkOpen ?? status === "waiting";
   return (
-    <li className="list-none">
+    <li className="relative list-none">
       <button
         type="button"
         aria-current={active ? "page" : undefined}
@@ -1216,11 +1240,45 @@ function SidebarProjectThreadRow(props: {
           />
         )}
         <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
-        <span className="shrink-0 text-[10px] text-sidebar-muted-foreground/55">
-          {compactThreadTime(props.thread)}
-        </span>
+        {workRows.length > 0 ? (
+          // Room for the work toggle, which sits over this spot because buttons cannot nest.
+          <span aria-hidden className="w-8 shrink-0" />
+        ) : (
+          <span className="shrink-0 text-[10px] text-sidebar-muted-foreground/55">
+            {compactThreadTime(props.thread)}
+          </span>
+        )}
         {props.codexStyle ? <ThreadStatusMark status={status} /> : null}
       </button>
+      {workRows.length > 0 ? (
+        <button
+          type="button"
+          aria-expanded={workOpen}
+          aria-label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
+          className={cn(
+            "absolute top-1.5 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+            // Left of the 14px status mark and its 8px gap in Codex style; flush with the padding otherwise.
+            props.codexStyle ? "right-[30px]" : "right-2",
+          )}
+          onClick={() => setManualWorkOpen(!workOpen)}
+        >
+          {workRows.length}
+          {workOpen ? (
+            <ChevronDownIcon aria-hidden className="size-3" />
+          ) : (
+            <ChevronRightIcon aria-hidden className="size-3" />
+          )}
+        </button>
+      ) : null}
+      {workRows.length > 0 && workOpen ? (
+        <div className="ms-3 border-s border-sidebar-border/60 ps-1">
+          <BackgroundWorkTaskList
+            compact
+            environmentId={props.thread.environmentId}
+            rows={workRows}
+          />
+        </div>
+      ) : null}
     </li>
   );
 }

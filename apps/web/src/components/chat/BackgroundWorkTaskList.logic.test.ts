@@ -1,7 +1,10 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { describeBackgroundWorkTasks } from "./BackgroundWorkTaskList.logic";
+import {
+  describeBackgroundWorkTasks,
+  describeSidebarBackgroundWork,
+} from "./BackgroundWorkTaskList.logic";
 
 const startedAt = DateTime.makeUnsafe("2026-09-23T10:00:00.000Z");
 
@@ -50,5 +53,48 @@ describe("describeBackgroundWorkTasks", () => {
       { turnItems: [], subagents: [] },
     );
     expect(rows.map((row) => row.kind)).toEqual(["process", "subagent"]);
+  });
+});
+
+describe("describeSidebarBackgroundWork", () => {
+  const runningChild = {
+    id: "child-thread",
+    title: "Review the diff",
+    latestRun: null,
+    runtime: { activeRunId: null, activityStartedAt: "2026-09-23T10:00:00.000Z" },
+  } as never;
+
+  it("links running children, and lists processes and agents no child accounts for", () => {
+    const rows = describeSidebarBackgroundWork(
+      [
+        { taskId: "agent-1", description: "Review the diff", taskType: "subagent" },
+        { taskId: "agent-2", description: "Explore", taskType: "local_agent" },
+        { taskId: "bash-1", description: "sleep 20", taskType: "local_bash" },
+      ] as never,
+      [runningChild],
+    );
+    expect(rows).toEqual([
+      {
+        taskId: "child-thread",
+        label: "Review the diff",
+        kind: "subagent",
+        startedAt: "2026-09-23T10:00:00.000Z",
+        childThreadId: "child-thread",
+      },
+      {
+        taskId: "agent-2",
+        label: "Explore",
+        kind: "subagent",
+        startedAt: null,
+        childThreadId: null,
+      },
+      {
+        taskId: "bash-1",
+        label: "sleep 20",
+        kind: "process",
+        startedAt: null,
+        childThreadId: null,
+      },
+    ]);
   });
 });
