@@ -25,7 +25,7 @@ export function ThreadDetailsSection({
       <div className="mb-1 flex min-h-8 min-w-0 items-center justify-between gap-2 px-1.5">
         <h3
           id={headingId}
-          className="min-w-0 truncate text-[11px] font-medium text-muted-foreground select-none"
+          className="min-w-0 truncate text-xs font-semibold text-muted-foreground select-none"
         >
           {title}
         </h3>

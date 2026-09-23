@@ -817,7 +817,7 @@ function SortableSectionHeader(props: {
         {...(draggable && codexStyle ? { ...attributes, ...listeners } : {})}
         aria-expanded={expanded}
         className={cn(
-          "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left text-xs font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+          "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left text-[13px] font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
           codexStyle ? "gap-1" : "gap-1.5",
         )}
         onClick={() => {
@@ -828,7 +828,7 @@ function SortableSectionHeader(props: {
         {codexStyle ? null : chevron}
         <span className="truncate">{projectSectionName(section)}</span>
         {codexStyle ? chevron : null}
-        <span className="ms-auto shrink-0 text-[10px] text-sidebar-muted-foreground/55">
+        <span className="ms-auto shrink-0 text-[11px] text-sidebar-muted-foreground/55">
           {section.projectKeys.length}
         </span>
       </button>
@@ -977,8 +977,8 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           aria-expanded={props.isProjectExpanded}
           className={
             codexStyle
-              ? "group-hover/project-row:pe-14 group-focus-within/project-row:pe-14 pointer-coarse:pe-14"
-              : "pe-12"
+              ? "h-8 text-sm group-hover/project-row:pe-14 group-focus-within/project-row:pe-14 pointer-coarse:pe-14"
+              : "h-8 pe-12 text-sm"
           }
           isActive={props.selected}
           onClick={() => {
@@ -1005,11 +1005,11 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           />
           <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
           {props.threads.length > 0 ? (
-            <span className="shrink-0 text-[10px] text-sidebar-muted-foreground/55">
+            <span className="shrink-0 text-[11px] text-sidebar-muted-foreground/55">
               {props.threads.length}
             </span>
           ) : project.groupedProjectCount > 1 ? (
-            <span className="shrink-0 text-[10px] text-sidebar-muted-foreground/55">
+            <span className="shrink-0 text-[11px] text-sidebar-muted-foreground/55">
               {project.groupedProjectCount}
             </span>
           ) : null}
@@ -1204,7 +1204,7 @@ function SidebarProjectThreadRow(props: {
         aria-current={active ? "page" : undefined}
         aria-label={`${props.thread.title}, ${status}`}
         className={cn(
-          "group/project-thread flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs outline-none transition-colors",
+          "group/project-thread flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors",
           active
             ? "bg-sidebar-row-active text-sidebar-foreground"
             : "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
@@ -1226,7 +1226,7 @@ function SidebarProjectThreadRow(props: {
           // Room for the work toggle, which sits over this spot because buttons cannot nest.
           <span aria-hidden className="w-8 shrink-0" />
         ) : (
-          <span className="shrink-0 text-[10px] text-sidebar-muted-foreground/55">
+          <span className="shrink-0 text-[11px] text-sidebar-muted-foreground/55">
             {compactThreadTime(props.thread)}
           </span>
         )}
@@ -1238,7 +1238,7 @@ function SidebarProjectThreadRow(props: {
           aria-expanded={workOpen}
           aria-label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
           className={cn(
-            "absolute top-1.5 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+            "absolute top-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
             // Left of the 14px status mark and its 8px gap in Codex style; flush with the padding otherwise.
             props.codexStyle ? "right-[30px]" : "right-2",
           )}
