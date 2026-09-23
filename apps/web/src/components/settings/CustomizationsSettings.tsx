@@ -65,6 +65,12 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Put projects that are in no section yet into their folder's section automatically, using the Organize by folder root. Projects you move by hand stay where you put them.",
   },
   {
+    key: "activityNeedsYouFirst",
+    searchId: "activity-needs-you-first",
+    description:
+      "In the Activity list, threads waiting on you (a question, an approval, a failure or a usage limit) sit at the top until you deal with them. Off keeps the standard order: newest first, then threads you arranged by dragging.",
+  },
+  {
     key: "agentBrowserInPanel",
     searchId: "agent-browser-in-panel",
     description:

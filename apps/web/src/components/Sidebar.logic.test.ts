@@ -5,6 +5,7 @@ import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
+  floatNeedsYouThreads,
   animateSidebarLayoutChanges,
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
@@ -2242,5 +2243,19 @@ describe("groupRunningSubagentsByParent", () => {
       scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("parent"))),
     ]);
     expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual(["running"]);
+  });
+});
+
+describe("floatNeedsYouThreads", () => {
+  it("puts threads waiting on the user first and keeps both groups in order", () => {
+    const status = {
+      a: "ready",
+      b: "input",
+      c: "working",
+      d: "approval",
+      e: "failed",
+    } as const;
+    const ordered = floatNeedsYouThreads(["a", "b", "c", "d", "e"] as const, (id) => status[id]);
+    expect(ordered).toEqual(["b", "d", "e", "a", "c"]);
   });
 });

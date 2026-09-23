@@ -390,6 +390,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork sections folders automatic organize sort new projects"],
   },
   {
+    id: "activity-needs-you-first",
+    title: "Threads that need you go first",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork activity sort order urgent question approval failed top"],
+  },
+  {
     id: "agent-browser-in-panel",
     title: "Agent browser opens in the side panel",
     to: "/settings/customizations",

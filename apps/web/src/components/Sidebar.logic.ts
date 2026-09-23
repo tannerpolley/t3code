@@ -890,6 +890,25 @@ export type SidebarThreadStatus =
   | "limited"
   | "ready";
 
+const NEEDS_YOU_STATUSES: ReadonlySet<SidebarThreadStatus> = new Set([
+  "approval",
+  "input",
+  "failed",
+  "limited",
+]);
+
+/** Threads waiting on the user first; both groups keep their incoming order. */
+export function floatNeedsYouThreads<T>(
+  threads: readonly T[],
+  statusOf: (thread: T) => SidebarThreadStatus,
+): T[] {
+  const needsYou: T[] = [];
+  const rest: T[] = [];
+  for (const thread of threads)
+    (NEEDS_YOU_STATUSES.has(statusOf(thread)) ? needsYou : rest).push(thread);
+  return [...needsYou, ...rest];
+}
+
 export function shouldRecedeSidebarThread(input: {
   status: SidebarThreadStatus;
   isUnread: boolean;
