@@ -823,14 +823,6 @@ function SortableSectionHeader(props: {
       </button>
       {section.custom ? (
         <>
-          <button
-            aria-label={`Add project to ${section.name}`}
-            className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:opacity-100 group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
-            onClick={() => openCommandPalette({ open: "add-project", sectionId: section.id })}
-            type="button"
-          >
-            <FolderPlusIcon aria-hidden className="size-3.5" />
-          </button>
           {codexStyle || !draggable ? null : (
             <button
               aria-label={`Reorder ${section.name} section`}
