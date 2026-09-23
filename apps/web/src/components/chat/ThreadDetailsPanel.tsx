@@ -25,6 +25,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
+import { ThreadBackgroundProcessesPanel } from "./BackgroundWorkTaskList";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
 interface VersionMismatchIssue {
@@ -226,6 +227,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
         {!props.draftId ? (
           <ThreadRelationshipsPanel environmentId={props.environmentId} threadId={props.threadId} />
+        ) : null}
+
+        {!props.draftId ? (
+          <ThreadBackgroundProcessesPanel
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+          />
         ) : null}
       </ScrollArea>
     </div>

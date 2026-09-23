@@ -26,6 +26,9 @@ vi.mock("./ThreadAutomationsPanel", () => ({
 vi.mock("./ThreadRelationshipsControl", () => ({
   ThreadRelationshipsPanel: () => null,
 }));
+vi.mock("./BackgroundWorkTaskList", () => ({
+  ThreadBackgroundProcessesPanel: () => null,
+}));
 
 import { ThreadDetailsPanel, type ThreadDetailsPanelProps } from "./ThreadDetailsPanel";
 

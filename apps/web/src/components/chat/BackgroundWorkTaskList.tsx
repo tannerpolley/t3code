@@ -1,12 +1,17 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { BotIcon, TerminalIcon } from "lucide-react";
 
+import { useThreadProjection, useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
-import type { BackgroundWorkTaskRow } from "./BackgroundWorkTaskList.logic";
+import {
+  type BackgroundWorkTaskRow,
+  describeBackgroundWorkTasks,
+} from "./BackgroundWorkTaskList.logic";
+import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 /**
  * One row per pending background task; subagents with a thread open it like their Lineage row.
@@ -78,5 +83,31 @@ export function BackgroundWorkTaskList(props: {
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * Thread details block for the thread's pending non-agent background work (Claude background
+ * shells and monitors, Codex background terminals), which Lineage leaves out. Hidden when empty.
+ */
+export function ThreadBackgroundProcessesPanel(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const ref = scopeThreadRef(props.environmentId, props.threadId);
+  const tasks = useThreadShell(ref)?.pendingBackgroundTasks ?? [];
+  const projection = useThreadProjection(ref)?.projection ?? null;
+  const rows =
+    tasks.length === 0 || projection === null
+      ? []
+      : describeBackgroundWorkTasks(tasks, projection).filter((row) => row.kind === "process");
+  if (rows.length === 0) return null;
+  return (
+    <ThreadDetailsSection
+      headingId="thread-details-background-processes-heading"
+      title="Background processes"
+    >
+      <BackgroundWorkTaskList compact environmentId={props.environmentId} rows={rows} />
+    </ThreadDetailsSection>
   );
 }

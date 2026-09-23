@@ -49,11 +49,10 @@ export function SubagentTooltipContent(props: SubagentDetailsProps & { title: st
   );
 }
 
-/**
- * The lines a lineage hover card shows: model and effort, status and time, where it works, and its
- * latest progress. Lineage also shows them inline when a row is expanded.
- */
-export function SubagentDetails(props: SubagentDetailsProps) {
+/** "Model · Effort" for a subagent or related thread, from its run record or its thread shell. */
+export function resolveSubagentModelLabel(
+  props: Pick<SubagentDetailsProps, "model" | "provider" | "childThread">,
+): string {
   const model = props.model?.trim() || props.childThread?.modelSelection.model.trim();
   const modelSlug = props.provider
     ? resolveSelectableModel(props.provider.driver, model, props.provider.models)
@@ -68,7 +67,25 @@ export function SubagentDetails(props: SubagentDetailsProps) {
     props.childThread?.modelSelection.options,
     providerModel?.capabilities?.optionDescriptors,
   );
-  const modelLabel = effort ? `${modelName} · ${effort}` : modelName;
+  return effort ? `${modelName} · ${effort}` : modelName;
+}
+
+/** The latest progress while running, the result once settled, flattened and capped. */
+export function subagentDetailPreview(
+  props: Pick<SubagentDetailsProps, "status" | "result" | "progress">,
+): string {
+  const settled =
+    props.status !== undefined &&
+    ["completed", "failed", "cancelled", "interrupted"].includes(props.status);
+  const result = props.result?.trim();
+  const progress = props.progress?.trim();
+  const detail = (settled ? result || progress : progress || result) || "";
+  const compactDetail = detail.replace(/\s+/g, " ");
+  return compactDetail.length > 280 ? `${compactDetail.slice(0, 280).trimEnd()}…` : compactDetail;
+}
+
+/** Project and branch/worktree lines, only where the child works somewhere else than the parent. */
+export function SubagentWorkspaceLines(props: SubagentDetailsProps) {
   const currentWorkspace = props.parentThread?.worktreePath ?? props.parentProject?.workspaceRoot;
   const childWorkspace = props.childThread?.worktreePath ?? props.childProject?.workspaceRoot;
   const metadata = [
@@ -90,15 +107,35 @@ export function SubagentDetails(props: SubagentDetailsProps) {
         ]
       : []),
   ];
+  return metadata.map(({ label, value }) => {
+    const Icon = label === "Branch" ? GitBranchIcon : FolderIcon;
+    return (
+      <div key={label} className="flex min-w-0 items-center gap-2">
+        <Icon aria-hidden className="size-3 shrink-0" />
+        <span className="sr-only">{label}</span>
+        <MiddleTruncate value={value} className="flex text-foreground/75" showTitle={false} />
+      </div>
+    );
+  });
+}
+
+/** One progress or result line. */
+export function SubagentPreviewLine({ text }: { readonly text: string }) {
+  if (!text) return null;
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <TerminalIcon aria-hidden className="size-3 shrink-0" />
+      <MiddleTruncate value={text} className="flex text-foreground/75" showTitle={false} />
+    </div>
+  );
+}
+
+/**
+ * The lines a lineage hover card shows: model and effort, status and time, where it works, and its
+ * latest progress. Lineage also shows them inline when a fork or parent row is expanded.
+ */
+export function SubagentDetails(props: SubagentDetailsProps) {
   const status = props.status;
-  const settled =
-    status !== undefined && ["completed", "failed", "cancelled", "interrupted"].includes(status);
-  const result = props.result?.trim();
-  const progress = props.progress?.trim();
-  const detail = (settled ? result || progress : progress || result) || "";
-  const compactDetail = detail.trim().replace(/\s+/g, " ");
-  const preview =
-    compactDetail.length > 280 ? `${compactDetail.slice(0, 280).trimEnd()}…` : compactDetail;
   const driver = props.provider?.driver ?? props.driver;
   const working =
     status !== undefined && ["running", "in_progress", "pending", "waiting"].includes(status);
@@ -123,7 +160,9 @@ export function SubagentDetails(props: SubagentDetailsProps) {
         ) : (
           <BotIcon className="size-3 shrink-0" />
         )}
-        <span className="min-w-0 truncate text-foreground/75">{modelLabel}</span>
+        <span className="min-w-0 truncate text-foreground/75">
+          {resolveSubagentModelLabel(props)}
+        </span>
       </div>
       {status === undefined ? null : (
         <div className="flex min-w-0 items-center justify-between gap-4">
@@ -145,22 +184,8 @@ export function SubagentDetails(props: SubagentDetailsProps) {
           {props.elapsed}
         </div>
       )}
-      {metadata.map(({ label, value }) => {
-        const Icon = label === "Branch" ? GitBranchIcon : FolderIcon;
-        return (
-          <div key={label} className="flex min-w-0 items-center gap-2">
-            <Icon aria-hidden className="size-3 shrink-0" />
-            <span className="sr-only">{label}</span>
-            <MiddleTruncate value={value} className="flex text-foreground/75" showTitle={false} />
-          </div>
-        );
-      })}
-      {preview ? (
-        <div className="flex min-w-0 items-center gap-2">
-          <TerminalIcon aria-hidden className="size-3 shrink-0" />
-          <MiddleTruncate value={preview} className="flex text-foreground/75" showTitle={false} />
-        </div>
-      ) : null}
+      <SubagentWorkspaceLines {...props} />
+      <SubagentPreviewLine text={subagentDetailPreview(props)} />
     </>
   );
 }

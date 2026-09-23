@@ -1,7 +1,14 @@
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
-import { SubagentDetails, SubagentTooltipContent } from "./SubagentTooltipContent";
+import {
+  resolveSubagentModelLabel,
+  SubagentDetails,
+  SubagentPreviewLine,
+  SubagentTooltipContent,
+  SubagentWorkspaceLines,
+  subagentDetailPreview,
+} from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -19,7 +26,12 @@ import {
   canDetachThreadProviderSession,
   resolveLatestMergeBackRun,
 } from "@t3tools/client-runtime/state/thread-workflows";
-import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2LatestVisibleMessageSummary,
+  OrchestrationV2ThreadShell,
+  ThreadId,
+} from "@t3tools/contracts";
 import { groupBy } from "effect/Array";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -51,6 +63,9 @@ import {
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
+import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
+import { describeSidebarBackgroundWork } from "./BackgroundWorkTaskList.logic";
+import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -168,6 +183,22 @@ function relationshipThreadTitle(input: {
 }): string {
   if (!input.isSubagent) return input.title;
   return formatSubagentDisplayTitle(input.title);
+}
+
+/**
+ * A subagent row's progress line. Claude subagents report progress, then a result; Codex ones
+ * send neither while they run, so the child thread's latest assistant message (from its shell,
+ * no projection subscription) stands in.
+ */
+export function resolveSubagentProgressText(input: {
+  readonly status: string;
+  readonly progress?: string | null | undefined;
+  readonly result: string | null;
+  readonly latestMessage: Pick<OrchestrationV2LatestVisibleMessageSummary, "role" | "text"> | null;
+}): string {
+  const reported = subagentDetailPreview(input);
+  if (reported || input.latestMessage?.role !== "assistant") return reported;
+  return subagentDetailPreview({ progress: input.latestMessage.text });
 }
 
 export function ThreadRelationshipsPanel(props: {
@@ -410,32 +441,52 @@ export function ThreadRelationshipsPanel(props: {
               ) : (
                 relationshipHint
               );
-              const relationshipContent = (
+              const statusMark = <ThreadStatusMark status={lineageStatusMark(edge.status)} />;
+              // Agents lead with what runs them; their name moves into the details.
+              const relationshipContent = agent ? (
+                <>
+                  <ThreadRelationshipIcon
+                    driver={providerDriver}
+                    provider={provider}
+                    fallbackIcon={RelationshipIcon}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-4 text-foreground/85">
+                    {resolveSubagentModelLabel({
+                      model: agent.model,
+                      provider,
+                      childThread: node?.thread ?? undefined,
+                    })}
+                    <span className="sr-only">
+                      , {threadTitle}, {agent.status}
+                    </span>
+                  </span>
+                  {agent.startedAt ? (
+                    <span className="shrink-0 text-[11px] font-normal tabular-nums text-muted-foreground">
+                      <AgentElapsed agent={agent} />
+                    </span>
+                  ) : null}
+                  {statusMark}
+                </>
+              ) : (
                 <>
                   <ThreadRelationshipIcon
                     driver={isSubagent && !isParent ? providerDriver : undefined}
                     provider={provider}
                     fallbackIcon={RelationshipIcon}
-                    status={edge.status}
                   />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-medium leading-4 text-foreground/85">
-                      {threadTitle}
-                    </span>
-                    {agent ? <span className="sr-only">{agent.status}</span> : null}
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-4 text-foreground/85">
+                    {threadTitle}
                   </span>
-                  {agent ? (
-                    agent.startedAt ? (
-                      <span className="shrink-0 text-[11px] font-normal tabular-nums text-muted-foreground">
-                        <AgentElapsed agent={agent} />
-                      </span>
-                    ) : null
-                  ) : (
-                    <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                  )}
+                  {statusMark}
+                  <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                 </>
               );
               const rowExpanded = !node?.missing && detailsExpanded(threadId);
+              // The child's own pending background work, read from its shell rather than its projection.
+              const processRows =
+                agent && rowExpanded
+                  ? describeSidebarBackgroundWork(node?.thread?.pendingBackgroundTasks ?? [], [])
+                  : [];
               const detailsToggle = node?.missing ? null : (
                 <Button
                   size="icon-xs"
@@ -530,25 +581,45 @@ export function ThreadRelationshipsPanel(props: {
                     {detailsToggle}
                   </div>
                   {rowExpanded ? (
-                    // The hover card's lines, kept open; agents add their run status.
                     <div className="grid gap-1.5 pb-2 ps-9 pe-2 text-xs text-muted-foreground">
-                      <SubagentDetails
-                        model={agent?.model ?? null}
-                        provider={provider}
-                        driver={providerDriver}
-                        {...(agent
-                          ? {
-                              elapsed: <AgentElapsed agent={agent} />,
-                              status: agent.status,
-                              result: agent.result,
-                              progress: agent.progress,
-                            }
-                          : {})}
-                        parentThread={currentThread ?? undefined}
-                        childThread={node?.thread ?? undefined}
-                        parentProject={currentProject}
-                        childProject={project}
-                      />
+                      {agent ? (
+                        // Name, what it is running now, where it works, and its progress; the
+                        // model, time, and status are already on the row.
+                        <>
+                          <span className="truncate text-foreground/75">{threadTitle}</span>
+                          {processRows.length > 0 ? (
+                            <BackgroundWorkTaskList
+                              compact
+                              environmentId={props.environmentId}
+                              rows={processRows}
+                            />
+                          ) : null}
+                          <SubagentWorkspaceLines
+                            model={agent.model}
+                            parentThread={currentThread ?? undefined}
+                            childThread={node?.thread ?? undefined}
+                            parentProject={currentProject}
+                            childProject={project}
+                          />
+                          <SubagentPreviewLine
+                            text={resolveSubagentProgressText({
+                              ...agent,
+                              latestMessage: node?.thread?.latestVisibleMessage ?? null,
+                            })}
+                          />
+                        </>
+                      ) : (
+                        // The hover card's lines, kept open.
+                        <SubagentDetails
+                          model={null}
+                          provider={provider}
+                          driver={providerDriver}
+                          parentThread={currentThread ?? undefined}
+                          childThread={node?.thread ?? undefined}
+                          parentProject={currentProject}
+                          childProject={project}
+                        />
+                      )}
                     </div>
                   ) : null}
                 </li>

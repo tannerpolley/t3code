@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { resolveThreadLineageWindow, ThreadLineageRowList } from "./ThreadRelationshipsControl";
+import {
+  resolveSubagentProgressText,
+  resolveThreadLineageWindow,
+  ThreadLineageRowList,
+} from "./ThreadRelationshipsControl";
 
 const rows = Array.from({ length: 20 }, (_, index) => `row-${index}`);
 
@@ -45,5 +49,41 @@ describe("thread lineage row list", () => {
     expect(list).toContain("overflow-y-auto");
     expect(list).toContain("overscroll-contain");
     expect(markup.indexOf("</ul>")).toBeLessThan(markup.indexOf("<button"));
+  });
+});
+
+describe("subagent progress line", () => {
+  const assistant = { role: "assistant" as const, text: "Running  the\n unit tests" };
+
+  it("prefers reported progress, then the result once settled", () => {
+    expect(
+      resolveSubagentProgressText({
+        status: "running",
+        progress: "Reading files",
+        result: null,
+        latestMessage: assistant,
+      }),
+    ).toBe("Reading files");
+    expect(
+      resolveSubagentProgressText({
+        status: "completed",
+        progress: "Reading files",
+        result: "All good",
+        latestMessage: assistant,
+      }),
+    ).toBe("All good");
+  });
+
+  it("falls back to the child's latest assistant message when nothing is reported", () => {
+    expect(
+      resolveSubagentProgressText({ status: "running", result: null, latestMessage: assistant }),
+    ).toBe("Running the unit tests");
+    expect(
+      resolveSubagentProgressText({
+        status: "running",
+        result: null,
+        latestMessage: { role: "user", text: "Check the change" },
+      }),
+    ).toBe("");
   });
 });

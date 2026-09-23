@@ -27,9 +27,6 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  CircleAlertIcon,
-  CircleXIcon,
-  ClockIcon,
   EllipsisIcon,
   FilterIcon,
   FolderIcon,
@@ -39,7 +36,6 @@ import {
   FolderTreeIcon,
   RotateCcwIcon,
   GripVerticalIcon,
-  MessageCircleQuestionIcon,
   PaletteIcon,
   PlusIcon,
   SettingsIcon,
@@ -73,7 +69,13 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore";
 import { cn } from "~/lib/utils";
 import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
-import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
+import {
+  hasUnseenCompletion,
+  resolveSidebarThreadStatus,
+  resolveThreadLastVisitedAt,
+  type SidebarThreadStatus,
+} from "../Sidebar.logic";
+import { ThreadStatusMark } from "../ThreadStatusMark";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -96,7 +98,6 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { SidebarGroup, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
-import { Spinner } from "../ui/spinner";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -1147,35 +1148,6 @@ const THREAD_STATUS_DOT_CLASS: Record<SidebarThreadStatus, string> = {
   working: "bg-sky-500",
 };
 
-/** The right-side mark for a thread that is running or needs you; settled threads show none. */
-function ThreadStatusMark({ status }: { readonly status: SidebarThreadStatus }) {
-  const iconClass = "size-3.5 shrink-0";
-  switch (status) {
-    case "working":
-      return (
-        <Spinner aria-label="Working" className={cn(iconClass, "text-sidebar-muted-foreground")} />
-      );
-    case "waiting":
-      // Its own turn is done but subagents or background tasks still run: same spinner, amber, half speed.
-      return (
-        <Spinner
-          aria-label="Waiting on background work"
-          className={cn(iconClass, "text-amber-500 [animation-duration:2s]!")}
-        />
-      );
-    case "approval":
-      return <CircleAlertIcon aria-hidden className={cn(iconClass, "text-amber-500")} />;
-    case "input":
-      return <MessageCircleQuestionIcon aria-hidden className={cn(iconClass, "text-amber-500")} />;
-    case "failed":
-      return <CircleXIcon aria-hidden className={cn(iconClass, "text-red-500")} />;
-    case "limited":
-      return <ClockIcon aria-hidden className={cn(iconClass, "text-amber-500")} />;
-    case "ready":
-      return null;
-  }
-}
-
 /** A zero-height marker, so showing it never shifts the rows around it. */
 function ProjectDropLine() {
   return (
@@ -1208,6 +1180,16 @@ function SidebarProjectThreadRow(props: {
     scopeThreadRef(props.thread.environmentId, props.thread.id),
   );
   const active = props.activeThreadKey === activeThreadKey;
+  const localLastVisitedAt = useUiStateStore(
+    (state) => state.threadLastVisitedAtById[activeThreadKey],
+  );
+  // Finished while you were away and not opened since: a green dot where the spinner was.
+  const unseenCompletion =
+    status === "ready" &&
+    hasUnseenCompletion({
+      ...props.thread,
+      lastVisitedAt: resolveThreadLastVisitedAt(props.thread.lastVisitedAt, localLastVisitedAt),
+    });
   const workRows = describeSidebarBackgroundWork(
     props.thread.pendingBackgroundTasks,
     props.runningSubagents,
@@ -1248,7 +1230,7 @@ function SidebarProjectThreadRow(props: {
             {compactThreadTime(props.thread)}
           </span>
         )}
-        {props.codexStyle ? <ThreadStatusMark status={status} /> : null}
+        {props.codexStyle ? <ThreadStatusMark status={unseenCompletion ? "done" : status} /> : null}
       </button>
       {workRows.length > 0 ? (
         <button
