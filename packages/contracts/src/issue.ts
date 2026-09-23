@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -99,6 +100,8 @@ export const IssueRepositorySummary = Schema.Struct({
   owner: TrimmedNonEmptyString,
   ownerIsOrganization: Schema.Boolean,
   isPrivate: Schema.Boolean,
+  isArchived: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+  isFork: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   /** GitHub's open_issues_count, which also counts open pull requests. */
   openIssuesAndPullRequests: NonNegativeInt,
   pushedAt: Schema.NullOr(IsoDateTime),

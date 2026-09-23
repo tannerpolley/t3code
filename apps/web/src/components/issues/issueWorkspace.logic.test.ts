@@ -2,9 +2,16 @@ import { EnvironmentId, type IssueRepositorySummary, type IssueSummary } from "@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  DEFAULT_ISSUE_FILTER_PREFERENCES,
+  changedIssueFilterCount,
   filterAndSortIssues,
+  groupRepositoriesByOwner,
+  issueListStateFor,
+  issueStateFilter,
   mergeIssueRepositoryTargets,
-  visibleIssueRepositoryTargets,
+  repositoryKnownEmpty,
+  repositoryListed,
+  repositoryShown,
 } from "./issueWorkspace.logic";
 
 const issue = (
@@ -48,6 +55,7 @@ describe("issue workspace filtering", () => {
     expect(
       filterAndSortIssues(rows, {
         query: "octocat v1",
+        state: "all",
         milestone: "with",
         assignee: "assigned",
         sort: "updated",
@@ -56,6 +64,7 @@ describe("issue workspace filtering", () => {
     expect(
       filterAndSortIssues(rows, {
         query: "docs",
+        state: "all",
         milestone: "without",
         assignee: "unassigned",
         sort: "updated",
@@ -64,7 +73,12 @@ describe("issue workspace filtering", () => {
   });
 
   it("supports the workspace issue sort choices", () => {
-    const filters = { query: "", milestone: "all" as const, assignee: "all" as const };
+    const filters = {
+      query: "",
+      state: "all" as const,
+      milestone: "all" as const,
+      assignee: "all" as const,
+    };
     expect(
       filterAndSortIssues(rows, { ...filters, sort: "updated" }).map((row) => row.number),
     ).toEqual([2, 1]);
@@ -78,6 +92,35 @@ describe("issue workspace filtering", () => {
       filterAndSortIssues(rows, { ...filters, sort: "title" }).map((row) => row.title),
     ).toEqual(["Documentation", "Release blocker"]);
   });
+
+  it("keeps only closed issues when Closed is shown without Open", () => {
+    const preferences = { ...DEFAULT_ISSUE_FILTER_PREFERENCES, open: false, closed: true };
+    const state = issueStateFilter(preferences)!;
+    expect(issueListStateFor(state)).toBe("all");
+    const closed = issue(3, "Shipped", { state: "closed" });
+    expect(
+      filterAndSortIssues([...rows, closed], {
+        query: "",
+        state,
+        milestone: "all",
+        assignee: "all",
+        sort: "updated",
+      }).map((row) => row.number),
+    ).toEqual([3]);
+    expect(issueStateFilter({ ...preferences, closed: false })).toBeNull();
+  });
+
+  it("matches the repository name so one search finds a repository's issues", () => {
+    const filters = {
+      query: "acme/app",
+      state: "all" as const,
+      milestone: "all" as const,
+      assignee: "all" as const,
+      sort: "number" as const,
+    };
+    expect(filterAndSortIssues(rows, filters, "acme/app").map((row) => row.number)).toEqual([2, 1]);
+    expect(filterAndSortIssues(rows, filters, "acme/other")).toEqual([]);
+  });
 });
 
 const repository = (
@@ -89,6 +132,8 @@ const repository = (
   owner: name.split("/")[0]!,
   ownerIsOrganization: false,
   isPrivate: false,
+  isArchived: false,
+  isFork: false,
   openIssuesAndPullRequests: 1,
   pushedAt: "2026-09-01T00:00:00Z",
   ...overrides,
@@ -120,27 +165,62 @@ describe("issue repository targets", () => {
     ]);
   });
 
-  it("skips repositories without open work only in the open view", () => {
-    const targets = mergeIssueRepositoryTargets([
-      {
-        environmentId: local,
-        repositories: [
-          repository("me/busy"),
-          repository("me/quiet", { openIssuesAndPullRequests: 0 }),
-          repository("me/enterprise", { host: "ghe.example.com" }),
-        ],
-      },
-    ]);
+  it("applies the archived, fork, visibility and owner filters together", () => {
+    const shown = (target: IssueRepositorySummary, changes = {}) =>
+      repositoryShown(target, { ...DEFAULT_ISSUE_FILTER_PREFERENCES, ...changes });
+    const archivedFork = repository("me/old", { isArchived: true, isFork: true });
+    const privateOrg = repository("org/app", { isPrivate: true, ownerIsOrganization: true });
 
+    expect(shown(repository("me/app"))).toBe(true);
+    expect(shown(archivedFork)).toBe(false);
+    expect(shown(archivedFork, { archived: true })).toBe(false);
+    expect(shown(archivedFork, { archived: true, forks: true })).toBe(true);
+    expect(shown(privateOrg)).toBe(true);
+    expect(shown(privateOrg, { private: false })).toBe(false);
+    expect(shown(privateOrg, { organizations: false })).toBe(false);
+    expect(shown(repository("me/app"), { personal: false })).toBe(false);
+    expect(changedIssueFilterCount({ ...DEFAULT_ISSUE_FILTER_PREFERENCES, forks: true })).toBe(1);
+    expect(changedIssueFilterCount({ ...DEFAULT_ISSUE_FILTER_PREFERENCES, sort: "title" })).toBe(0);
+  });
+
+  it("treats a zero open count as empty only in the open view", () => {
+    const quiet = repository("me/quiet", { openIssuesAndPullRequests: 0 });
+    expect(repositoryKnownEmpty(quiet, "open")).toBe(true);
+    expect(repositoryKnownEmpty(quiet, "all")).toBe(false);
+    expect(repositoryKnownEmpty(repository("me/busy"), "open")).toBe(false);
+  });
+
+  it("lists an empty repository only with Empty shown and nothing narrowing the list", () => {
+    const preferences = DEFAULT_ISSUE_FILTER_PREFERENCES;
+    const empty = { count: 0, settled: true };
+    expect(repositoryListed({ count: 0, settled: false }, preferences, true)).toBe(true);
+    expect(repositoryListed({ count: 2, settled: true }, preferences, true)).toBe(true);
+    expect(repositoryListed(empty, preferences, false)).toBe(false);
+    expect(repositoryListed(empty, { ...preferences, empty: true }, false)).toBe(true);
+    expect(repositoryListed(empty, { ...preferences, empty: true }, true)).toBe(false);
+  });
+
+  it("groups repositories under the signed-in account first, then owners alphabetically", () => {
+    const groups = groupRepositoriesByOwner(
+      [
+        repository("zeta/tool", { ownerIsOrganization: true }),
+        repository("Me/new"),
+        repository("acme/site", { ownerIsOrganization: true }),
+        repository("me/old"),
+      ],
+      ["me"],
+    );
     expect(
-      visibleIssueRepositoryTargets(targets, { host: undefined, state: "open" }).map(
-        (target) => target.repository,
-      ),
-    ).toEqual(["me/busy", "me/enterprise"]);
-    expect(
-      visibleIssueRepositoryTargets(targets, { host: "GitHub.com", state: "all" }).map(
-        (target) => target.repository,
-      ),
-    ).toEqual(["me/busy", "me/quiet"]);
+      groups.map((group) => [
+        group.owner,
+        group.isViewer,
+        group.isOrganization,
+        group.repositories.map((target) => target.repository),
+      ]),
+    ).toEqual([
+      ["Me", true, false, ["Me/new", "me/old"]],
+      ["acme", false, true, ["acme/site"]],
+      ["zeta", false, true, ["zeta/tool"]],
+    ]);
   });
 });

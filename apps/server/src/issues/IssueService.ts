@@ -79,6 +79,7 @@ const RawRepositorySchema = Schema.Struct({
   owner: Schema.Struct({ login: TrimmedNonEmptyString, type: Schema.String }),
   private: Schema.Boolean,
   archived: Schema.Boolean,
+  fork: Schema.Boolean,
   has_issues: Schema.Boolean,
   open_issues_count: NonNegativeInt,
   pushed_at: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -342,7 +343,7 @@ function mapGitHubError(
 
 /**
  * Repositories the viewer controls: ones they own, plus organization repositories they
- * administer. Archived repositories and ones with issues disabled are left out.
+ * administer. Repositories with issues disabled are left out.
  */
 export function selectIssueRepositories(
   host: string,
@@ -356,7 +357,7 @@ export function selectIssueRepositories(
     const ownedByViewer = repository.owner.login.toLowerCase() === viewer;
     const administeredOrganization =
       repository.owner.type === "Organization" && repository.permissions?.admin === true;
-    if (repository.archived || !repository.has_issues) continue;
+    if (!repository.has_issues) continue;
     if (!ownedByViewer && !administeredOrganization) continue;
     const name = safeRepository(host, repository.full_name);
     if (name === null || seen.has(name)) continue;
@@ -367,6 +368,8 @@ export function selectIssueRepositories(
       owner: repository.owner.login,
       ownerIsOrganization: repository.owner.type === "Organization",
       isPrivate: repository.private,
+      isArchived: repository.archived,
+      isFork: repository.fork,
       openIssuesAndPullRequests: repository.open_issues_count,
       pushedAt: repository.pushed_at ?? null,
     });

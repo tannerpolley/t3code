@@ -4,7 +4,6 @@ import {
   EnvironmentAuthorizationError as EnvironmentAuthorizationErrorClass,
   IssueReadError as IssueReadErrorClass,
   type EnvironmentId,
-  type IssueListState,
   type IssueRef,
   type IssueSummary,
   type ScopedThreadRef,
@@ -13,31 +12,38 @@ import {
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, CircleDotIcon, RefreshCwIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeftIcon, CircleDotIcon, LockIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { IssueDetailPanel } from "../components/issues/IssueDetailPanel";
-import { IssueTree } from "../components/issues/IssueTree";
+import { IssueFilterMenu } from "../components/issues/IssueFilterMenu";
+import { IssueTree, IssueTreeRow, IssueTreeTag } from "../components/issues/IssueTree";
 import {
   acceptIssueListPage,
   type IssueListSnapshot,
 } from "../components/issues/issuePaging.logic";
 import { groupIssuesByMilestone } from "../components/issues/issueTree.logic";
 import {
+  DEFAULT_ISSUE_FILTER_PREFERENCES,
+  IssueFilterPreferences,
   filterAndSortIssues,
+  groupRepositoriesByOwner,
+  issueListStateFor,
+  issueStateFilter,
   mergeIssueRepositoryTargets,
   repositoryKey,
-  visibleIssueRepositoryTargets,
+  repositoryKnownEmpty,
+  repositoryListed,
+  repositoryShown,
   type IssueRepositoryTarget,
-  type IssueAssigneeFilter,
-  type IssueMilestoneFilter,
-  type IssueSort,
 } from "../components/issues/issueWorkspace.logic";
 import { RightPanelTabs } from "../components/RightPanelTabs";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/ui/input-group";
 import { SidebarInset } from "../components/ui/sidebar";
 import { Spinner } from "../components/ui/spinner";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import {
@@ -61,10 +67,6 @@ export interface IssuesSearch {
   readonly repository?: string;
   readonly number?: number;
   readonly issueQuery?: string;
-  readonly issueSort?: IssueSort;
-  readonly issueMilestone?: IssueMilestoneFilter;
-  readonly issueAssignee?: IssueAssigneeFilter;
-  readonly issueState?: IssueListState;
   readonly selectedEnvironmentId?: EnvironmentId;
   readonly selectedHost?: string;
   readonly selectedRepository?: string;
@@ -175,32 +177,14 @@ function issueListScopeKey(target: IssueListTarget): string {
   ]);
 }
 
+const ISSUE_FILTERS_STORAGE_KEY = "t3code:issues-filters";
+
 type IssuePagingState = {
   readonly cursor: string | null;
   readonly generation: number;
   readonly snapshot: IssueListSnapshot | null;
   readonly refreshing: boolean;
 };
-
-const DEFAULT_ISSUE_SORT: IssueSort = "updated";
-const DEFAULT_ISSUE_MILESTONE_FILTER: IssueMilestoneFilter = "all";
-const DEFAULT_ISSUE_ASSIGNEE_FILTER: IssueAssigneeFilter = "all";
-
-function issueSort(value: IssueSort | undefined): IssueSort {
-  return value === "oldest" || value === "number" || value === "title" ? value : DEFAULT_ISSUE_SORT;
-}
-
-function issueMilestoneFilter(value: IssueMilestoneFilter | undefined): IssueMilestoneFilter {
-  return value === "with" || value === "without" ? value : DEFAULT_ISSUE_MILESTONE_FILTER;
-}
-
-function issueListState(value: IssueListState | undefined): IssueListState {
-  return value === "all" ? value : "open";
-}
-
-function issueAssigneeFilter(value: IssueAssigneeFilter | undefined): IssueAssigneeFilter {
-  return value === "assigned" || value === "unassigned" ? value : DEFAULT_ISSUE_ASSIGNEE_FILTER;
-}
 
 export const Route = createFileRoute("/_chat/issues")({
   validateSearch: (raw: Record<string, unknown>): IssuesSearch => {
@@ -209,12 +193,6 @@ export const Route = createFileRoute("/_chat/issues")({
     const repository = optionalString(raw.repository, 200);
     const number = optionalNumber(raw.number);
     const issueQuery = optionalString(raw.issueQuery, 200);
-    const issueSortValue = optionalString(raw.issueSort) as IssueSort | undefined;
-    const issueMilestoneValue = optionalString(raw.issueMilestone) as
-      | IssueMilestoneFilter
-      | undefined;
-    const issueAssigneeValue = optionalString(raw.issueAssignee) as IssueAssigneeFilter | undefined;
-    const issueStateValue = optionalString(raw.issueState) as IssueListState | undefined;
     const selectedEnvironmentId = optionalString(raw.selectedEnvironmentId, 200);
     const selectedHost = optionalString(raw.selectedHost);
     const selectedRepository = optionalString(raw.selectedRepository, 200);
@@ -226,10 +204,6 @@ export const Route = createFileRoute("/_chat/issues")({
       ...(repository === undefined ? {} : { repository }),
       ...(number === undefined ? {} : { number }),
       ...(issueQuery === undefined ? {} : { issueQuery }),
-      ...(issueSortValue === undefined ? {} : { issueSort: issueSortValue }),
-      ...(issueMilestoneValue === undefined ? {} : { issueMilestone: issueMilestoneValue }),
-      ...(issueAssigneeValue === undefined ? {} : { issueAssignee: issueAssigneeValue }),
-      ...(issueStateValue === undefined ? {} : { issueState: issueStateValue }),
       ...(selectedEnvironmentId === undefined
         ? {}
         : { selectedEnvironmentId: selectedEnvironmentId as EnvironmentId }),
@@ -276,7 +250,13 @@ function IssuesRouteView() {
     [capableEnvironmentIds, environmentLabels],
   );
   const issueRepositories = useIssueRepositories(capableEnvironmentList);
-  const listState = issueListState(search.issueState);
+  const [preferences, setPreferences] = useLocalStorage(
+    ISSUE_FILTERS_STORAGE_KEY,
+    DEFAULT_ISSUE_FILTER_PREFERENCES,
+    IssueFilterPreferences,
+  );
+  const stateFilter = issueStateFilter(preferences);
+  const listState = issueListStateFor(stateFilter ?? "open");
   // ponytail: when two environments share a GitHub account, the first (by label) reads each
   // repository. Per-environment sections if that ever matters.
   const repositoryTargets = useMemo(
@@ -320,28 +300,25 @@ function IssuesRouteView() {
   );
   const explicitScopeMissing =
     explicitScope && urlRepository === null && !issueRepositories.isPending;
-  const visibleRepositories = useMemo(
-    () =>
-      explicitScope
-        ? urlRepository === null
-          ? []
-          : [urlRepository]
-        : visibleIssueRepositoryTargets(repositoryTargets, {
-            host: search.host,
-            state: listState,
-          }),
-    [explicitScope, listState, repositoryTargets, search.host, urlRepository],
-  );
-  const hiddenEmptyRepositoryCount = explicitScope
-    ? 0
-    : repositoryTargets.length - visibleRepositories.length;
+  // A repository link shows that repository whatever the Filter menu says.
+  const shownRepositories = useMemo(() => {
+    if (stateFilter === null) return [];
+    if (explicitScope) return urlRepository === null ? [] : [urlRepository];
+    const host = search.host?.toLowerCase();
+    return repositoryTargets.filter(
+      (target) =>
+        (host === undefined || target.host === host) && repositoryShown(target, preferences),
+    );
+  }, [explicitScope, preferences, repositoryTargets, search.host, stateFilter, urlRepository]);
   const baseListTargets = useMemo<ReadonlyArray<IssueListTarget>>(
     () =>
-      visibleRepositories.map((target) => ({
-        environmentId: target.environmentId,
-        input: { host: target.host, repository: target.repository, state: listState },
-      })),
-    [listState, visibleRepositories],
+      shownRepositories
+        .filter((target) => !repositoryKnownEmpty(target, stateFilter ?? "open"))
+        .map((target) => ({
+          environmentId: target.environmentId,
+          input: { host: target.host, repository: target.repository, state: listState },
+        })),
+    [listState, shownRepositories, stateFilter],
   );
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
@@ -428,10 +405,6 @@ function IssuesRouteView() {
             ...(next.repository ? { repository: next.repository } : {}),
             ...(next.number ? { number: next.number } : {}),
             ...(next.issueQuery ? { issueQuery: next.issueQuery } : {}),
-            ...(next.issueSort ? { issueSort: next.issueSort } : {}),
-            ...(next.issueMilestone ? { issueMilestone: next.issueMilestone } : {}),
-            ...(next.issueAssignee ? { issueAssignee: next.issueAssignee } : {}),
-            ...(next.issueState === "all" ? { issueState: next.issueState } : {}),
             ...(next.selectedEnvironmentId
               ? { selectedEnvironmentId: next.selectedEnvironmentId }
               : {}),
@@ -699,155 +672,261 @@ function IssuesRouteView() {
     environments.some((environment) => environment.serverConfig !== null) ||
     environmentsBootstrapped;
   const refreshing = Object.values(pagingByKey).some((state) => state.refreshing);
-  const scopeUnavailable = [...issueErrors.values()].some((error) => error.scopeUnavailable);
-  const selectedRepositoryKey =
-    urlRepository === null ? "" : repositoryKey(urlRepository.host, urlRepository.repository);
   const hosts = [...new Set(repositoryTargets.map((target) => target.host))].toSorted(
     (left, right) => left.localeCompare(right),
   );
+  const query = search.issueQuery ?? "";
   const filters = {
-    query: search.issueQuery ?? "",
-    sort: issueSort(search.issueSort),
-    milestone: issueMilestoneFilter(search.issueMilestone),
-    assignee: issueAssigneeFilter(search.issueAssignee),
+    query,
+    state: stateFilter ?? "open",
+    sort: preferences.sort,
+    milestone: preferences.milestone,
+    assignee: preferences.assignee,
   };
+  const narrowed = query.trim() !== "" || filters.milestone !== "all" || filters.assignee !== "all";
+  const stateNoun = (count: number) =>
+    filters.state === "all" ? (count === 1 ? "issue" : "issues") : filters.state;
+  const viewerLogins = [
+    ...new Set(issueRepositories.answers.map((answer) => answer.result.viewer.login)),
+  ];
+  const fetchedAt = Object.values(pagingByKey).reduce<string | null>(
+    (latest, state) =>
+      state.snapshot !== null && (latest === null || state.snapshot.fetchedAt > latest)
+        ? state.snapshot.fetchedAt
+        : latest,
+    null,
+  );
 
-  const repositoryChooser =
-    repositoryTargets.length > 0 ? (
-      <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-        <span className="sr-only">GitHub repository</span>
-        <select
-          aria-label="GitHub repository"
-          className="min-w-0 max-w-full rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          value={selectedRepositoryKey}
-          onChange={(event) =>
-            selectRepository(
-              repositoryTargets.find(
-                (target) => repositoryKey(target.host, target.repository) === event.target.value,
-              ) ?? null,
-            )
-          }
-        >
-          <option value="">All repositories</option>
-          {repositoryTargets.map((target) => (
-            <option
-              key={repositoryKey(target.host, target.repository)}
-              value={repositoryKey(target.host, target.repository)}
-            >
-              {target.repository}
-            </option>
-          ))}
-        </select>
-      </label>
-    ) : null;
+  // Owners and repositories start collapsed, as a compact overview. A search, a repository
+  // link, a failure or the open issue opens them; a user's own choice wins after that.
+  const [expansionChoices, setExpansionChoices] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  );
+  const isExpanded = (key: string, openByDefault: boolean) =>
+    expansionChoices.get(key) ?? openByDefault;
+  const toggleExpanded = (key: string, expanded: boolean) =>
+    setExpansionChoices((current) => new Map(current).set(key, !expanded));
 
-  const repositorySections = visibleRepositories.map((target) => {
+  const repositoryEntries = shownRepositories.flatMap((target) => {
+    const key = repositoryKey(target.host, target.repository);
     const baseTarget = baseListTargets.find(
       (candidate) =>
         candidate.environmentId === target.environmentId && sameRepository(candidate.input, target),
     );
-    if (baseTarget === undefined) return null;
-    const key = issueListScopeKey(baseTarget);
-    const state = pagingByKey[key];
+    const scopeKey = baseTarget === undefined ? null : issueListScopeKey(baseTarget);
+    const state = scopeKey === null ? undefined : pagingByKey[scopeKey];
     const snapshot = state?.snapshot ?? null;
-    const error = issueErrors.get(key) ?? null;
-    const projectPending =
-      issueLists.answers.some(
-        (answer) => issueListScopeKey(answer.target) === key && answer.waiting,
-      ) ||
-      (snapshot === null && issueLists.isPending);
-    const filteredIssues = snapshot ? filterAndSortIssues(snapshot.issues, filters) : [];
-    const groups = snapshot
-      ? groupIssuesByMilestone(snapshot.milestones, filteredIssues).map((group) => ({
-          ...group,
-          issues: filterAndSortIssues(group.issues, filters),
-        }))
+    const error = scopeKey === null ? null : (issueErrors.get(scopeKey) ?? null);
+    const filteredIssues = snapshot
+      ? filterAndSortIssues(snapshot.issues, filters, target.repository)
       : [];
+    const settled = scopeKey === null || (snapshot !== null && snapshot.issuesComplete && !error);
+    const count = filteredIssues.length;
+    if (!explicitScope && !repositoryListed({ count, settled }, preferences, narrowed)) return [];
     const selectedIssueNumber =
       activeIssueSurface !== null &&
       activeIssueSurface.environmentId === target.environmentId &&
       sameRepository(activeIssueSurface, target)
         ? activeIssueSurface.number
         : undefined;
+    const countLabel: ReactNode =
+      scopeKey === null ? (
+        `0 ${stateNoun(0)}`
+      ) : snapshot === null && error === null ? (
+        <Spinner className="size-3" />
+      ) : snapshot === null ? (
+        <span className="text-amber-600 dark:text-amber-400">unavailable</span>
+      ) : (
+        `${count}${snapshot.issuesComplete ? "" : "+"} ${stateNoun(count)}`
+      );
+    return [
+      {
+        ...target,
+        key,
+        scopeKey,
+        state,
+        snapshot,
+        error,
+        filteredIssues,
+        count,
+        settled,
+        countLabel,
+        selectedIssueNumber,
+      },
+    ];
+  });
+  type RepositoryEntry = (typeof repositoryEntries)[number];
+  const ownerGroups = groupRepositoriesByOwner(repositoryEntries, viewerLogins);
+  const openAll = explicitScope || query.trim() !== "";
+  const totalCount = repositoryEntries.reduce((sum, entry) => sum + entry.count, 0);
+  const totalIncomplete = repositoryEntries.some((entry) => !entry.settled);
 
-    return (
-      <section key={key} className="border-b border-border/60 pb-3 last:border-b-0">
-        <div className="px-4 pb-2 pt-3">
-          <h2 className="text-sm font-semibold">{target.repository}</h2>
-          <p className="text-xs text-muted-foreground">
-            {target.host}
-            {target.isPrivate ? " · private" : ""}
-            {target.ownerIsOrganization ? " · organization" : ""}
-            {capableEnvironmentList.length > 1
-              ? ` · ${environmentLabels.get(target.environmentId) ?? target.environmentId}`
-              : ""}
-          </p>
+  const renderRepositoryBody = (entry: RepositoryEntry) => {
+    const { scopeKey, state, snapshot, error, filteredIssues } = entry;
+    const message = (text: string) => (
+      <p className="py-1.5 ps-10 pe-4 text-xs text-muted-foreground">{text}</p>
+    );
+    if (scopeKey === null) return message(`No ${filters.state} issues`);
+    if (snapshot === null && error === null) {
+      return (
+        <div className="flex items-center gap-2 py-1.5 ps-10 text-xs text-muted-foreground">
+          <Spinner className="size-3.5" />
+          Loading issues
         </div>
-        {snapshot === null && error === null ? (
-          <div className="flex min-h-24 items-center justify-center gap-2 text-xs text-muted-foreground">
-            <Spinner className="size-4" />
-            Loading issues
+      );
+    }
+    if (snapshot === null && error !== null) {
+      return (
+        <div className="my-1 ms-10 me-3 flex items-start justify-between gap-3 rounded-lg border border-border/60 px-3 py-2 text-sm">
+          <div>
+            <p className="font-medium">{error.title}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{error.description}</p>
+            {error.retryAt !== undefined ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Retry after {retryDeadline(error.retryAt)}.
+              </p>
+            ) : null}
           </div>
-        ) : snapshot === null && error !== null ? (
-          <div className="mx-4 flex items-start justify-between gap-3 rounded-lg border border-border/60 px-3 py-3 text-sm">
-            <div>
-              <p className="font-medium">{error.title}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{error.description}</p>
-              {error.retryAt !== undefined ? (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Retry after {retryDeadline(error.retryAt)}.
-                </p>
-              ) : null}
-            </div>
+          <Button onClick={refreshIssues} size="xs" variant="outline">
+            Retry
+          </Button>
+        </div>
+      );
+    }
+    if (snapshot === null) return null;
+    // Empty milestones are context in the full list and noise in narrowed results.
+    const groups = groupIssuesByMilestone(snapshot.milestones, filteredIssues)
+      .map((group) => ({
+        ...group,
+        issues: filterAndSortIssues(group.issues, filters, entry.repository),
+      }))
+      .filter((group) => !narrowed || group.issues.length > 0);
+    const pending =
+      issueLists.answers.some(
+        (answer) => issueListScopeKey(answer.target) === scopeKey && answer.waiting,
+      ) || state?.refreshing === true;
+    return (
+      <>
+        {filteredIssues.length > 0 ? (
+          <IssueTree
+            key={scopeKey}
+            groups={groups}
+            issuesComplete={snapshot.issuesComplete}
+            onSelect={(issue) => selectIssue(issue, entry, snapshot)}
+            {...(entry.selectedIssueNumber === undefined
+              ? {}
+              : { selectedIssueNumber: entry.selectedIssueNumber })}
+          />
+        ) : snapshot.issues.length > 0 && narrowed ? (
+          message("No issues match these filters")
+        ) : snapshot.issuesComplete ? (
+          message(`No ${filters.state === "all" ? "" : `${filters.state} `}issues`)
+        ) : (
+          message("No matching issues loaded yet")
+        )}
+        {error !== null ? (
+          <div className="my-1 ms-10 me-3 flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
+            <span>{error.title}. Showing the last issues loaded.</span>
             <Button onClick={refreshIssues} size="xs" variant="outline">
               Retry
             </Button>
           </div>
-        ) : snapshot !== null ? (
-          <>
-            {snapshot.issues.length === 0 && snapshot.issuesComplete ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground">
-                {listState === "open" ? "No open issues." : "No issues."}
-              </p>
-            ) : filteredIssues.length === 0 && snapshot.issues.length > 0 ? (
-              <p className="px-4 py-4 text-sm text-muted-foreground">
-                No issues match these filters.
-              </p>
-            ) : (
-              <IssueTree
-                key={key}
-                groups={groups}
-                issuesComplete={snapshot.issuesComplete}
-                onSelect={(issue) => selectIssue(issue, target, snapshot)}
-                {...(selectedIssueNumber === undefined ? {} : { selectedIssueNumber })}
-              />
-            )}
-            {error !== null ? (
-              <div className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
-                <span>{error.title}. Showing the last issues loaded.</span>
-                <Button onClick={refreshIssues} size="xs" variant="outline">
-                  Retry
-                </Button>
-              </div>
-            ) : null}
-            {snapshot.nextCursor !== null ? (
-              <div className="flex justify-center px-2 pb-2">
-                <Button
-                  disabled={projectPending || state?.refreshing === true}
-                  onClick={() => loadMore(key)}
-                  size="sm"
-                  variant="outline"
-                >
-                  {projectPending ? <Spinner className="size-3.5" /> : null}
-                  Load more issues
-                </Button>
-              </div>
-            ) : null}
-          </>
+        ) : null}
+        {snapshot.nextCursor !== null ? (
+          <div className="py-1 ps-10">
+            <Button
+              disabled={pending}
+              onClick={() => loadMore(scopeKey)}
+              size="xs"
+              variant="outline"
+            >
+              {pending ? <Spinner className="size-3" /> : null}
+              Load more issues
+            </Button>
+          </div>
+        ) : null}
+      </>
+    );
+  };
+
+  const ownerTree = ownerGroups.map((group) => {
+    const ownerOpen = isExpanded(
+      `owner:${group.key}`,
+      openAll ||
+        group.repositories.some(
+          (entry) => entry.error !== null || entry.selectedIssueNumber !== undefined,
+        ),
+    );
+    const ownerCount = group.repositories.reduce((sum, entry) => sum + entry.count, 0);
+    const ownerIncomplete = group.repositories.some((entry) => !entry.settled);
+    const ownerPanelId = `issue-owner-${group.key.replace(/[^a-z0-9_-]/gi, "-")}`;
+    return (
+      <section key={group.key}>
+        <IssueTreeRow
+          level={0}
+          controls={ownerPanelId}
+          expanded={ownerOpen}
+          onToggle={() => toggleExpanded(`owner:${group.key}`, ownerOpen)}
+          count={`${group.repositories.length} ${group.repositories.length === 1 ? "repo" : "repos"} · ${ownerCount}${ownerIncomplete ? "+" : ""} ${stateNoun(ownerCount)}`}
+        >
+          <span className="min-w-0 truncate text-sm font-semibold">{group.owner}</span>
+          <IssueTreeTag>
+            {group.isOrganization ? "Org" : group.isViewer ? "Personal" : "User"}
+          </IssueTreeTag>
+          {hosts.length > 1 ? (
+            <span className="truncate text-[11px] text-muted-foreground">{group.host}</span>
+          ) : null}
+        </IssueTreeRow>
+        {ownerOpen ? (
+          <div id={ownerPanelId}>
+            {group.repositories.map((entry) => {
+              const repositoryOpen = isExpanded(
+                `repository:${entry.key}`,
+                openAll || entry.error !== null || entry.selectedIssueNumber !== undefined,
+              );
+              const panelId = `issue-repository-${entry.key.replace(/[^a-z0-9_-]/gi, "-")}`;
+              return (
+                <section key={entry.key}>
+                  <IssueTreeRow
+                    level={1}
+                    controls={panelId}
+                    expanded={repositoryOpen}
+                    onToggle={() => toggleExpanded(`repository:${entry.key}`, repositoryOpen)}
+                    count={entry.countLabel}
+                  >
+                    <span className="min-w-0 truncate text-[13px] font-medium">
+                      {entry.repository.slice(entry.repository.indexOf("/") + 1)}
+                    </span>
+                    {entry.isPrivate ? (
+                      <LockIcon
+                        aria-label="Private"
+                        className="size-3 shrink-0 text-muted-foreground"
+                      />
+                    ) : null}
+                    {entry.isArchived ? <IssueTreeTag>Archived</IssueTreeTag> : null}
+                    {entry.isFork ? <IssueTreeTag>Fork</IssueTreeTag> : null}
+                    {capableEnvironmentList.length > 1 ? (
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
+                      </span>
+                    ) : null}
+                  </IssueTreeRow>
+                  {repositoryOpen ? <div id={panelId}>{renderRepositoryBody(entry)}</div> : null}
+                </section>
+              );
+            })}
+          </div>
         ) : null}
       </section>
     );
   });
+
+  const showAllRepositories =
+    repositoryTargets.length > 0 ? (
+      <Button onClick={() => selectRepository(null)} size="xs" variant="outline">
+        Show all repositories
+      </Button>
+    ) : null;
 
   const listContent = !capabilitiesKnown ? (
     <div className="flex min-h-56 items-center justify-center">
@@ -863,7 +942,7 @@ function IssuesRouteView() {
   ) : repositoryTargets.length === 0 && issueRepositories.isPending ? (
     <div className="flex min-h-56 items-center justify-center gap-2 text-xs text-muted-foreground">
       <Spinner className="size-4" />
-      Loading repositories
+      Loading repositories and issues
     </div>
   ) : repositoryTargets.length === 0 && repositoryErrors.length > 0 ? (
     <Empty className="min-h-56 flex-none py-12">
@@ -883,7 +962,7 @@ function IssuesRouteView() {
           This repository is not one you own or administer on GitHub.
         </EmptyDescription>
       </EmptyHeader>
-      {repositoryChooser}
+      {showAllRepositories}
     </Empty>
   ) : repositoryTargets.length === 0 ? (
     <Empty className="min-h-56 flex-none py-12">
@@ -894,19 +973,35 @@ function IssuesRouteView() {
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
-  ) : visibleRepositories.length === 0 ? (
+  ) : stateFilter === null ? (
     <Empty className="min-h-56 flex-none py-12">
       <EmptyHeader>
-        <EmptyTitle>No open issues</EmptyTitle>
-        <EmptyDescription>Choose Open and closed to include closed issues.</EmptyDescription>
+        <EmptyTitle>No issue states shown</EmptyTitle>
+        <EmptyDescription>Select Open or Closed in Filter to show issues.</EmptyDescription>
       </EmptyHeader>
     </Empty>
   ) : (
     <>
-      {repositorySections}
-      {hiddenEmptyRepositoryCount > 0 ? (
-        <p className="px-4 py-3 text-xs text-muted-foreground">
-          {hiddenEmptyRepositoryCount} repositories with no open issues are hidden.
+      <div className="flex items-baseline justify-between px-4 pb-1.5 text-[11px] text-muted-foreground">
+        <span className="font-semibold uppercase tracking-wide">Repositories</span>
+        <span className="tabular-nums">
+          {repositoryEntries.length} of {repositoryTargets.length} shown
+        </span>
+      </div>
+      {ownerGroups.length > 0 ? (
+        <div className="px-2 pb-2">{ownerTree}</div>
+      ) : (
+        <Empty className="min-h-40 flex-none py-8">
+          <EmptyHeader>
+            <EmptyTitle>No repositories match these filters</EmptyTitle>
+            <EmptyDescription>Change the filters or search to show repositories.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+      {fetchedAt !== null ? (
+        <p className="px-4 pb-4 text-right text-[11px] text-muted-foreground">
+          Updated{" "}
+          {new Date(fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
         </p>
       ) : null}
     </>
@@ -924,85 +1019,61 @@ function IssuesRouteView() {
           >
             GitHub Issues
           </h1>
+          {viewerLogins.map((login) => (
+            <span
+              key={login}
+              className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:inline-flex"
+            >
+              <span aria-hidden className="size-1.5 rounded-full bg-emerald-500" />
+              {login}
+            </span>
+          ))}
           <Button
-            aria-label="Refresh issues"
             disabled={refreshing || baseListTargets.length === 0}
             onClick={refreshIssues}
-            size="icon-xs"
-            variant="ghost"
+            size="xs"
+            variant="outline"
           >
             <RefreshCwIcon aria-hidden className={cn(refreshing && "animate-spin")} />
+            Refresh
           </Button>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <input
-            aria-label="Search issues"
-            className="min-w-44 flex-1 rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onChange={(event) => updateSearch({ issueQuery: event.target.value || undefined })}
-            placeholder="Search issues"
-            type="search"
-            value={search.issueQuery ?? ""}
+        <div className="mt-2 flex items-center gap-2">
+          <InputGroup className="min-w-0 flex-1">
+            <InputGroupAddon>
+              <SearchIcon aria-hidden />
+            </InputGroupAddon>
+            <InputGroupInput
+              aria-label="Find a repository or issue"
+              onChange={(event) => updateSearch({ issueQuery: event.target.value || undefined })}
+              placeholder="Find a repository or issue"
+              type="search"
+              value={query}
+            />
+          </InputGroup>
+          <IssueFilterMenu
+            host={explicitScope ? "" : (search.host ?? "")}
+            hosts={explicitScope ? [] : hosts}
+            onChange={setPreferences}
+            onHostChange={(host) => updateSearch({ host: host || undefined })}
+            preferences={preferences}
           />
-          {repositoryChooser}
-          <select
-            aria-label="Filter issues by state"
-            className="rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground"
-            onChange={(event) => updateSearch({ issueState: event.target.value as IssueListState })}
-            value={listState}
-          >
-            <option value="open">Open</option>
-            <option value="all">Open and closed</option>
-          </select>
-          <select
-            aria-label="Filter issues by GitHub host"
-            className="rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground"
-            disabled={explicitScope}
-            onChange={(event) => updateSearch({ host: event.target.value || undefined })}
-            value={explicitScope ? "" : (search.host ?? "")}
-          >
-            <option value="">All hosts</option>
-            {hosts.map((host) => (
-              <option key={host} value={host}>
-                {host}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Filter issues by milestone"
-            className="rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground"
-            onChange={(event) =>
-              updateSearch({ issueMilestone: event.target.value as IssueMilestoneFilter })
-            }
-            value={filters.milestone}
-          >
-            <option value="all">All milestones</option>
-            <option value="with">With milestone</option>
-            <option value="without">No milestone</option>
-          </select>
-          <select
-            aria-label="Filter issues by assignment"
-            className="rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground"
-            onChange={(event) =>
-              updateSearch({ issueAssignee: event.target.value as IssueAssigneeFilter })
-            }
-            value={filters.assignee}
-          >
-            <option value="all">All assignments</option>
-            <option value="assigned">Assigned</option>
-            <option value="unassigned">Unassigned</option>
-          </select>
-          <select
-            aria-label="Sort issues"
-            className="rounded-[var(--control-radius)] border border-input bg-background px-2 py-1.5 text-xs text-foreground"
-            onChange={(event) => updateSearch({ issueSort: event.target.value as IssueSort })}
-            value={filters.sort}
-          >
-            <option value="updated">Recently updated</option>
-            <option value="oldest">Oldest updated</option>
-            <option value="number">Issue number</option>
-            <option value="title">Title</option>
-          </select>
+          {stateFilter !== null && repositoryEntries.length > 0 ? (
+            <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:inline">
+              {totalCount}
+              {totalIncomplete ? "+" : ""} {stateNoun(totalCount)}
+            </span>
+          ) : null}
         </div>
+        {explicitScope && urlRepository !== null ? (
+          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="min-w-0 truncate">
+              Showing{" "}
+              <span className="font-medium text-foreground">{urlRepository.repository}</span>
+            </span>
+            {showAllRepositories}
+          </div>
+        ) : null}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto pt-3">{listContent}</div>
     </section>

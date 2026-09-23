@@ -140,11 +140,14 @@ does not show its diff, so marks are made and read on web and desktop.
 When a connected environment has GitHub Issues support, open **Issues** from the sidebar. It lists
 issues from every repository your GitHub account owns and every organization repository you
 administer, whether or not the repository is a T3 Code project. Repositories you only collaborate
-on, including the upstream of a fork, are left out. Issues are grouped by repository and milestone.
+on, including the upstream of a fork, are left out. Issues are grouped by owner, then repository,
+then milestone; your own account comes first.
 
-Open issues are shown by default; choose **Open and closed** to include closed ones. Repositories
-with no open issues are hidden in the open view. Search, or narrow by repository, host, milestone, or
-assignment, and use the sort control to order issues within each milestone.
+Use **Filter** to choose what is shown: open and closed issues; archived, forked, empty, public,
+private, personal, and organization repositories; milestone and assignment; and how issues are
+sorted. Open issues are shown by default, with archived, forked, and empty repositories hidden.
+Filter choices are remembered in that browser. The search box matches repository names and issue
+details.
 
 Select an issue to open its read-only details in a resizable panel; use **Open on GitHub** for
 comments or other actions.

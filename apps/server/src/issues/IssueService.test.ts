@@ -277,6 +277,7 @@ function rawRepository(
     owner: { login: fullName.split("/")[0], type: "User" },
     private: false,
     archived: false,
+    fork: false,
     has_issues: true,
     open_issues_count: 3,
     pushed_at: "2026-01-03T00:00:00Z",
@@ -293,7 +294,7 @@ it.effect("lists only repositories the viewer owns or administers, across pages"
           [
             rawRepository("octocat/app"),
             rawRepository("OctoCat/Fork", { has_issues: false }),
-            rawRepository("octocat/old", { archived: true }),
+            rawRepository("octocat/old", { archived: true, fork: true }),
             rawRepository("acme/admin", {
               owner: { login: "acme", type: "Organization" },
               permissions: { admin: true },
@@ -318,10 +319,13 @@ it.effect("lists only repositories the viewer owns or administers, across pages"
       result.repositories.map((repository) => [
         repository.repository,
         repository.ownerIsOrganization,
+        repository.isArchived,
+        repository.isFork,
       ]),
       [
-        ["octocat/app", false],
-        ["acme/admin", true],
+        ["octocat/app", false, false, false],
+        ["octocat/old", false, true, true],
+        ["acme/admin", true, false, false],
       ],
     );
     assert.isTrue(result.complete);
