@@ -2440,6 +2440,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     providerSessionId: ProviderSessionId,
     reason: Schema.optional(Schema.String),
+    /** Rejects the detach when the thread has worked or held work since this time. */
+    ifIdleSince: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),

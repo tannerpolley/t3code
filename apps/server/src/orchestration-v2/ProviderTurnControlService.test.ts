@@ -272,6 +272,7 @@ it.effect(
           closeInstance: () => Effect.void,
           release: () => Effect.void,
           detach: () => Effect.void,
+          unloadProviderThread: () => Effect.succeed(false),
         }),
       );
       const controlLayer = providerTurnControlLayer.pipe(

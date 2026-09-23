@@ -115,6 +115,7 @@ function makeExecutorLayer(input: {
         closeInstance: () => Effect.void,
         release: () => record("release"),
         detach: () => record("detach"),
+        unloadProviderThread: () => Effect.succeed(false),
       }),
     ),
     Layer.succeed(

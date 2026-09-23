@@ -3,6 +3,7 @@ import {
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
+  type OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
   ProviderSessionId,
@@ -175,6 +176,14 @@ export interface ProviderSessionManagerV2Shape {
      */
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  /**
+   * Unloads one native thread from its live shared runtime (a settled native
+   * subagent) unless an attached app thread still uses it. True when it asked
+   * the runtime to unload; resuming the thread later loads it again.
+   */
+  readonly unloadProviderThread: (
+    providerThread: OrchestrationV2ProviderThread,
+  ) => Effect.Effect<boolean>;
 }
 
 export class ProviderSessionManagerV2 extends Context.Service<
@@ -1764,6 +1773,7 @@ export const layerWithOptions = (
           Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
             const currentEntry = (yield* Ref.get(sessions)).get(key);
+            let sessionProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread> = [];
             if (currentEntry?.supportsMultipleProviderThreads === true) {
               const projection = yield* Effect.option(
                 projectionStore.getThreadRecords(input.threadId, [
@@ -1777,6 +1787,7 @@ export const layerWithOptions = (
                     .filter((thread) => thread.providerSessionId === input.providerSessionId)
                     .map((thread) => [thread.id, thread] as const),
                 );
+                sessionProviderThreads = [...providerThreads.values()];
                 const activeTurns = projection.value.providerTurns.filter(
                   (turn) => turn.status === "running" && providerThreads.has(turn.providerThreadId),
                 );
@@ -1866,6 +1877,21 @@ export const layerWithOptions = (
               });
               return;
             }
+            // A shared runtime outlives this thread, so unload the native
+            // threads it no longer needs: this thread's own and its native
+            // subagents' that no other attached app thread still uses.
+            const unloadThread = detached.value.runtime.unloadThread;
+            if (unloadThread !== undefined) {
+              yield* Effect.forEach(
+                sessionProviderThreads.filter(
+                  (providerThread) =>
+                    providerThread.appThreadId === null ||
+                    !detached.value.attachedThreadIds.has(providerThread.appThreadId),
+                ),
+                unloadThread,
+                { discard: true },
+              );
+            }
             yield* scheduleIdleRelease(input.providerSessionId);
           }).pipe(
             Effect.catchCause((cause) =>
@@ -1878,6 +1904,37 @@ export const layerWithOptions = (
               ),
             ),
           ),
+        unloadProviderThread: (providerThread) =>
+          Effect.gen(function* () {
+            const { appThreadId, providerSessionId } = providerThread;
+            if (providerSessionId === null) return false;
+            const key = sessionKey(providerSessionId);
+            const entry = (yield* Ref.get(sessions)).get(key);
+            const unload = entry?.runtime.unloadThread;
+            if (
+              entry === undefined ||
+              unload === undefined ||
+              (appThreadId !== null && entry.attachedThreadIds.has(appThreadId))
+            ) {
+              return false;
+            }
+            yield* unload(providerThread);
+            // An attach that raced the unload must resume before its next turn.
+            if (appThreadId !== null) {
+              yield* Ref.update(sessions, (current) => {
+                const latest = current.get(key);
+                if (latest?.loadedProviderThreadKeyByThread.has(appThreadId) !== true) {
+                  return current;
+                }
+                const loadedProviderThreadKeyByThread = new Map(
+                  latest.loadedProviderThreadKeyByThread,
+                );
+                loadedProviderThreadKeyByThread.delete(appThreadId);
+                return new Map(current).set(key, { ...latest, loadedProviderThreadKeyByThread });
+              });
+            }
+            return true;
+          }),
       } satisfies ProviderSessionManagerV2Shape);
     }),
   );

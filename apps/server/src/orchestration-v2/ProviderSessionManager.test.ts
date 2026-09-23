@@ -14,6 +14,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  type ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -100,6 +101,7 @@ interface TestProviderRuntimeState {
   readonly closeCount: number;
   readonly interruptCount: number;
   readonly resumeCount: number;
+  readonly unloadedProviderThreadIds: ReadonlyArray<ProviderThreadId>;
   readonly eventQueues: ReadonlyMap<string, Queue.Queue<ProviderAdapterV2Event, Cause.Done>>;
 }
 
@@ -108,6 +110,7 @@ const emptyState: TestProviderRuntimeState = {
   closeCount: 0,
   interruptCount: 0,
   resumeCount: 0,
+  unloadedProviderThreadIds: [],
   eventQueues: new Map(),
 };
 
@@ -320,6 +323,11 @@ function makeProviderAdapter(
               ...current,
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
+          unloadThread: (providerThread) =>
+            Ref.update(state, (current) => ({
+              ...current,
+              unloadedProviderThreadIds: [...current.unloadedProviderThreadIds, providerThread.id],
+            })),
           startTurn: () => Effect.void,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
@@ -2810,9 +2818,33 @@ it.effect(
         });
         yield* resumeSecondThread;
         assert.equal((yield* Ref.get(state)).resumeCount, 4);
+        // The second thread never recorded a provider thread, so nothing of its own unloads.
+        assert.deepEqual((yield* Ref.get(state)).unloadedProviderThreadIds, []);
+
+        // A native thread an attached app thread still uses stays loaded; a
+        // settled native subagent nobody attached to unloads.
+        assert.isFalse(yield* manager.unloadProviderThread(secondProviderThread));
+        const nativeSubagentThread = {
+          ...secondProviderThread,
+          id: idAllocator.derive.providerThread({
+            driver: CODEX_DRIVER,
+            nativeThreadId: "native-subagent",
+          }),
+          appThreadId: ThreadId.make("thread:native-subagent"),
+        };
+        assert.isTrue(yield* manager.unloadProviderThread(nativeSubagentThread));
+        assert.deepEqual((yield* Ref.get(state)).unloadedProviderThreadIds, [
+          nativeSubagentThread.id,
+        ]);
+        yield* Ref.update(state, (current) => ({ ...current, unloadedProviderThreadIds: [] }));
 
         yield* manager.detach({ providerSessionId, threadId: firstThreadId });
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+        // The shared runtime stays up for the second thread, but the first
+        // thread's native thread (and its MCP servers) unloads.
+        assert.deepEqual((yield* Ref.get(state)).unloadedProviderThreadIds, [
+          firstProviderThread.id,
+        ]);
         assert.equal((yield* Ref.get(state)).closeCount, 0);
         assert.equal((yield* Ref.get(state)).interruptCount, 1);
 

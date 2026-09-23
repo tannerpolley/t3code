@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   ForwardCompatibleNullable,
+  NonNegativeInt,
   ProjectId,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -1280,6 +1281,8 @@ export const ServerSettings = Schema.Struct({
    * Empty falls back to `addProjectBaseDirectory`.
    */
   projectFolderRoot: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Disconnect a thread's agent session after this many idle minutes; 0 keeps sessions open. */
+  idleAgentSessionMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1583,6 +1586,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   projectFolderRoot: Schema.optionalKey(TrimmedString),
+  idleAgentSessionMinutes: Schema.optionalKey(NonNegativeInt),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

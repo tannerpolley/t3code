@@ -348,6 +348,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork sections subsections folders workspaces organize mirror"],
   },
   {
+    id: "idle-agent-session-disconnect",
+    title: "Disconnect idle agent sessions",
+    to: "/settings/customizations",
+    searchTerms: ["idle agent session disconnect stop timeout memory mcp processes"],
+  },
+  {
     id: "codex-style-sidebar",
     title: "Codex-style project sidebar",
     to: "/settings/customizations",

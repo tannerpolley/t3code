@@ -1,4 +1,5 @@
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
+import * as IdleSessionReaper from "./IdleSessionReaper.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
 import {
@@ -299,6 +300,15 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   scheduledTaskProvided,
   UsageLimitRecoveryWorker.workerLive.pipe(
     Layer.provide(Layer.mergeAll(projectionStoreLayer, threadManagementProvided)),
+  ),
+  IdleSessionReaper.workerLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        projectionStoreLayer,
+        threadManagementProvided,
+        providerSessionManagerProvided,
+      ),
+    ),
   ),
   providerContinuationWorkerProvided,
   agentSessionImporterProvided,

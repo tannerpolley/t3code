@@ -96,6 +96,7 @@ import {
 } from "./SubagentProjection.ts";
 import { ThreadForkServiceV2 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import { threadIdleSinceMs } from "./ThreadIdleness.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -2997,6 +2998,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: `Provider session ${command.providerSessionId} does not belong to thread ${command.threadId}.`,
         });
+      }
+      if (command.ifIdleSince !== undefined) {
+        // Decided under the thread lock, so a message that re-engaged the
+        // thread after the idle sweep read it always wins.
+        const activity = yield* projectionStore
+          .getThreadRecords(command.threadId, ["runs", "runtimeRequests", "subagents"])
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        const idleSinceMs = threadIdleSinceMs(activity);
+        if (idleSinceMs === null || idleSinceMs > DateTime.toEpochMillis(command.ifIdleSince)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} became active before its idle session disconnect.`,
+          });
+        }
       }
       const now = yield* DateTime.now;
       yield* emit(

@@ -5191,6 +5191,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   }),
               ),
             ),
+          // Codex unloads a thread, and stops its MCP servers, once its last
+          // subscriber leaves. thread/resume subscribes again.
+          unloadThread: (providerThread) =>
+            getNativeThreadId(providerThread).pipe(
+              Effect.flatMap((threadId) => client.request("thread/unsubscribe", { threadId })),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.codex.thread-unsubscribe-failed", {
+                  providerThreadId: providerThread.id,
+                  cause,
+                }),
+              ),
+              Effect.asVoid,
+            ),
           resumeThread: (threadInput) =>
             Effect.gen(function* () {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);

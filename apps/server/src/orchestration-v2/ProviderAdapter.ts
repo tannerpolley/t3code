@@ -517,6 +517,12 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly ensureThread: (
     input: ProviderAdapterV2EnsureThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
+  /**
+   * Runtimes shared by several app threads release one native thread's
+   * resources (and its MCP servers) when that thread detaches. A later
+   * resumeThread loads it again. Best effort: failures are the adapter's to log.
+   */
+  readonly unloadThread?: (providerThread: OrchestrationV2ProviderThread) => Effect.Effect<void>;
   readonly resumeThread: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly threadId?: ThreadId;

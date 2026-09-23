@@ -112,6 +112,8 @@ function ProviderPluginsSection() {
 
 const PROJECT_ICON_FALLBACK_LABELS = { folder: "Folder", initials: "Initials" } as const;
 const SIDEBAR_TOGGLE_POSITION_LABELS = { left: "Left", right: "Right" } as const;
+const IDLE_AGENT_SESSION_MINUTES = [0, 15, 30, 60, 120] as const;
+const idleAgentSessionLabel = (minutes: number) => (minutes === 0 ? "Off" : `${minutes} minutes`);
 
 export function CustomizationsSettings() {
   const settings = useClientSettings();
@@ -122,6 +124,7 @@ export function CustomizationsSettings() {
   const scopedSettings = useScopedSettings();
   const updateScopedSettings = useUpdateScopedSettings();
   const folderRootMixed = useScopedSettingsMixed(["projectFolderRoot"]);
+  const idleMinutesMixed = useScopedSettingsMixed(["idleAgentSessionMinutes"]);
   const baseDirectory = scopedSettings.addProjectBaseDirectory;
   const folderRoot =
     scopedSettings.projectFolderRoot || (baseDirectory.startsWith("/") ? baseDirectory : "");
@@ -236,6 +239,39 @@ export function CustomizationsSettings() {
                 Organize
               </Button>
             </div>
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["idleAgentSessionMinutes"]}
+          {...searchableSetting("idle-agent-session-disconnect")}
+          description="Stop a thread's agent session, and the MCP servers it started, after it sits idle this long. The next message reconnects it. Working threads, pending approvals, and running subagents are never touched."
+          control={
+            <Select
+              value={String(scopedSettings.idleAgentSessionMinutes)}
+              onValueChange={(value) =>
+                updateScopedSettings({ idleAgentSessionMinutes: Number(value) })
+              }
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="Disconnect idle agent sessions after"
+              >
+                <SelectValue>
+                  {idleMinutesMixed
+                    ? "Mixed"
+                    : idleAgentSessionLabel(scopedSettings.idleAgentSessionMinutes)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {IDLE_AGENT_SESSION_MINUTES.map((minutes) => (
+                  <SelectItem hideIndicator key={minutes} value={String(minutes)}>
+                    {idleAgentSessionLabel(minutes)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
         <SettingsRow
