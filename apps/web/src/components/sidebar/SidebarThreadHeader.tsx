@@ -90,23 +90,23 @@ export function SidebarThreadHeader({
 
   return (
     <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2 px-1">
-        <span className="text-[11px] font-medium text-sidebar-muted-foreground/70">
-          Sidebar view
-        </span>
-        <ToggleGroup
-          aria-label="Sidebar view"
-          size="sm"
-          value={[sidebarMode]}
-          onValueChange={(next) => {
-            const mode = next[0];
-            if (mode === "projects" || mode === "activity") onSidebarModeChange(mode);
-          }}
-        >
-          <Toggle value="projects">Projects</Toggle>
-          <Toggle value="activity">Activity</Toggle>
-        </ToggleGroup>
-      </div>
+      {/* The app's standard segmented control, spanning the sidebar like the search row below. */}
+      <ToggleGroup
+        aria-label="Sidebar view"
+        className="w-full"
+        value={[sidebarMode]}
+        onValueChange={(next) => {
+          const mode = next[0];
+          if (mode === "projects" || mode === "activity") onSidebarModeChange(mode);
+        }}
+      >
+        <Toggle className="flex-1" value="projects">
+          Projects
+        </Toggle>
+        <Toggle className="flex-1" value="activity">
+          Activity
+        </Toggle>
+      </ToggleGroup>
       <div className="flex items-center gap-1">
         <div
           ref={searchFieldRef}

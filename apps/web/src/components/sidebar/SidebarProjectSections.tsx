@@ -370,9 +370,6 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
 
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden px-1 py-1">
-      <div className="mb-1 px-2">
-        <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
-      </div>
       <DndContext
         collisionDetection={collisionDetection}
         onDragCancel={handleDragCancel}
