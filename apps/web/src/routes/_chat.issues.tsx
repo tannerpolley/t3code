@@ -12,7 +12,15 @@ import {
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, CircleDotIcon, LockIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  CircleDotIcon,
+  LockIcon,
+  PinIcon,
+  PinOffIcon,
+  RefreshCwIcon,
+  SearchIcon,
+} from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { IssueDetailPanel } from "../components/issues/IssueDetailPanel";
@@ -722,7 +730,10 @@ function IssuesRouteView() {
       : [];
     const settled = scopeKey === null || (snapshot !== null && snapshot.issuesComplete && !error);
     const count = filteredIssues.length;
-    if (!explicitScope && !repositoryListed({ count, settled }, preferences, narrowed)) return [];
+    const pinned = preferences.pinned.includes(key);
+    if (!explicitScope && !repositoryListed({ count, settled, pinned }, preferences, narrowed)) {
+      return [];
+    }
     const selectedIssueNumber =
       activeIssueSurface !== null &&
       activeIssueSurface.environmentId === target.environmentId &&
@@ -750,6 +761,7 @@ function IssuesRouteView() {
         filteredIssues,
         count,
         settled,
+        pinned,
         countLabel,
         selectedIssueNumber,
       },
@@ -760,6 +772,12 @@ function IssuesRouteView() {
   const openAll = explicitScope || query.trim() !== "";
   const totalCount = repositoryEntries.reduce((sum, entry) => sum + entry.count, 0);
   const totalIncomplete = repositoryEntries.some((entry) => !entry.settled);
+
+  const togglePinned = (key: string, pinned: boolean) =>
+    setPreferences((current) => ({
+      ...current,
+      pinned: pinned ? current.pinned.filter((entry) => entry !== key) : [...current.pinned, key],
+    }));
 
   const renderRepositoryBody = (entry: RepositoryEntry) => {
     const { scopeKey, state, snapshot, error, filteredIssues } = entry;
@@ -887,30 +905,52 @@ function IssuesRouteView() {
               const panelId = `issue-repository-${entry.key.replace(/[^a-z0-9_-]/gi, "-")}`;
               return (
                 <section key={entry.key}>
-                  <IssueTreeRow
-                    level={1}
-                    controls={panelId}
-                    expanded={repositoryOpen}
-                    onToggle={() => toggleExpanded(`repository:${entry.key}`, repositoryOpen)}
-                    count={entry.countLabel}
-                  >
-                    <span className="min-w-0 truncate text-[13px] font-medium">
-                      {entry.repository.slice(entry.repository.indexOf("/") + 1)}
-                    </span>
-                    {entry.isPrivate ? (
-                      <LockIcon
-                        aria-label="Private"
-                        className="size-3 shrink-0 text-muted-foreground"
-                      />
-                    ) : null}
-                    {entry.isArchived ? <IssueTreeTag>Archived</IssueTreeTag> : null}
-                    {entry.isFork ? <IssueTreeTag>Fork</IssueTreeTag> : null}
-                    {capableEnvironmentList.length > 1 ? (
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
+                  <div className="group/repository flex items-center">
+                    <IssueTreeRow
+                      level={1}
+                      controls={panelId}
+                      expanded={repositoryOpen}
+                      onToggle={() => toggleExpanded(`repository:${entry.key}`, repositoryOpen)}
+                      count={entry.countLabel}
+                    >
+                      <span className="min-w-0 truncate text-[13px] font-medium">
+                        {entry.repository.slice(entry.repository.indexOf("/") + 1)}
                       </span>
-                    ) : null}
-                  </IssueTreeRow>
+                      {entry.isPrivate ? (
+                        <LockIcon
+                          aria-label="Private"
+                          className="size-3 shrink-0 text-muted-foreground"
+                        />
+                      ) : null}
+                      {entry.isArchived ? <IssueTreeTag>Archived</IssueTreeTag> : null}
+                      {entry.isFork ? <IssueTreeTag>Fork</IssueTreeTag> : null}
+                      {entry.pinned ? <IssueTreeTag>Pinned</IssueTreeTag> : null}
+                      {capableEnvironmentList.length > 1 ? (
+                        <span className="truncate text-[11px] text-muted-foreground">
+                          {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
+                        </span>
+                      ) : null}
+                    </IssueTreeRow>
+                    <Button
+                      aria-label={
+                        entry.pinned
+                          ? `Unpin ${entry.repository}`
+                          : `Always show ${entry.repository}`
+                      }
+                      title={entry.pinned ? "Unpin" : "Always show, whatever the filters say"}
+                      aria-pressed={entry.pinned}
+                      className={cn(
+                        "shrink-0",
+                        !entry.pinned &&
+                          "opacity-0 pointer-coarse:opacity-100 group-hover/repository:opacity-100 focus-visible:opacity-100",
+                      )}
+                      onClick={() => togglePinned(entry.key, entry.pinned)}
+                      size="icon-xs"
+                      variant="ghost"
+                    >
+                      {entry.pinned ? <PinOffIcon /> : <PinIcon />}
+                    </Button>
+                  </div>
                   {repositoryOpen ? <div id={panelId}>{renderRepositoryBody(entry)}</div> : null}
                 </section>
               );

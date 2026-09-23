@@ -4,11 +4,13 @@ import type {
   IssueRepositorySummary,
   IssueSummary,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 /**
  * The issue list's Filter menu, saved per browser. Each flag is a positive "show" choice, so an
- * unchecked box always hides something.
+ * unchecked box always hides something. `pinned` holds repository keys that always show, whatever the
+ * repository choices say.
  */
 export const IssueFilterPreferences = Schema.Struct({
   open: Schema.Boolean,
@@ -23,6 +25,7 @@ export const IssueFilterPreferences = Schema.Struct({
   milestone: Schema.Literals(["all", "with", "without"]),
   assignee: Schema.Literals(["all", "assigned", "unassigned"]),
   sort: Schema.Literals(["updated", "oldest", "number", "title"]),
+  pinned: Schema.Array(Schema.String).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type IssueFilterPreferences = typeof IssueFilterPreferences.Type;
 export type IssueSort = IssueFilterPreferences["sort"];
@@ -43,12 +46,13 @@ export const DEFAULT_ISSUE_FILTER_PREFERENCES: IssueFilterPreferences = {
   milestone: "all",
   assignee: "all",
   sort: "updated",
+  pinned: [],
 };
 
-/** How many Filter menu choices differ from the defaults; sorting is not a filter. */
+/** How many Filter menu choices differ from the defaults; sorting and pins are not filters. */
 export function changedIssueFilterCount(preferences: IssueFilterPreferences): number {
   return (Object.keys(DEFAULT_ISSUE_FILTER_PREFERENCES) as Array<keyof IssueFilterPreferences>)
-    .filter((key) => key !== "sort")
+    .filter((key) => key !== "sort" && key !== "pinned")
     .filter((key) => preferences[key] !== DEFAULT_ISSUE_FILTER_PREFERENCES[key]).length;
 }
 
@@ -155,16 +159,17 @@ export function mergeIssueRepositoryTargets(
   );
 }
 
-/** Repository-level Filter choices: archived, fork, visibility and owner kind. */
+/** Repository-level Filter choices: archived, fork, visibility and owner kind. Pins bypass them. */
 export function repositoryShown(
   target: IssueRepositorySummary,
   preferences: IssueFilterPreferences,
 ): boolean {
   return (
-    (preferences.archived || !target.isArchived) &&
-    (preferences.forks || !target.isFork) &&
-    (target.isPrivate ? preferences.private : preferences.public) &&
-    (target.ownerIsOrganization ? preferences.organizations : preferences.personal)
+    preferences.pinned.includes(repositoryKey(target.host, target.repository)) ||
+    ((preferences.archived || !target.isArchived) &&
+      (preferences.forks || !target.isFork) &&
+      (target.isPrivate ? preferences.private : preferences.public) &&
+      (target.ownerIsOrganization ? preferences.organizations : preferences.personal))
   );
 }
 
@@ -181,14 +186,14 @@ export function repositoryKnownEmpty(
 
 /**
  * Whether a shown repository stays in the tree. Loading, failed and partly loaded repositories
- * stay; an empty one needs the Empty filter and no search or narrowing hiding its issues.
+ * stay; an empty one needs the Empty filter or a pin, and no search or narrowing hiding its issues.
  */
 export function repositoryListed(
-  entry: { readonly count: number; readonly settled: boolean },
+  entry: { readonly count: number; readonly settled: boolean; readonly pinned: boolean },
   preferences: IssueFilterPreferences,
   narrowed: boolean,
 ): boolean {
-  return !entry.settled || entry.count > 0 || (preferences.empty && !narrowed);
+  return !entry.settled || entry.count > 0 || ((preferences.empty || entry.pinned) && !narrowed);
 }
 
 export interface IssueOwnerGroup<T> {

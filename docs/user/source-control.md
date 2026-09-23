@@ -149,6 +149,10 @@ sorted. Open issues are shown by default, with archived, forked, and empty repos
 Filter choices are remembered in that browser. The search box matches repository names and issue
 details.
 
+To keep one repository visible while its kind is hidden, such as a single fork, show it once, then
+use the pin button on its row. A pinned repository ignores the repository filters but still follows
+the issue filters and search. Pins are remembered with your filter choices.
+
 Select an issue to open its read-only details in a resizable panel; use **Open on GitHub** for
 comments or other actions.
 

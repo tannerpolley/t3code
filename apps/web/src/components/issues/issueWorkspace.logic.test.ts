@@ -1,18 +1,23 @@
 import { EnvironmentId, type IssueRepositorySummary, type IssueSummary } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_ISSUE_FILTER_PREFERENCES,
+  IssueFilterPreferences,
   changedIssueFilterCount,
   filterAndSortIssues,
   groupRepositoriesByOwner,
   issueListStateFor,
   issueStateFilter,
   mergeIssueRepositoryTargets,
+  repositoryKey,
   repositoryKnownEmpty,
   repositoryListed,
   repositoryShown,
 } from "./issueWorkspace.logic";
+
+const decodePreferences = Schema.decodeUnknownSync(IssueFilterPreferences);
 
 const issue = (
   number: number,
@@ -183,6 +188,26 @@ describe("issue repository targets", () => {
     expect(changedIssueFilterCount({ ...DEFAULT_ISSUE_FILTER_PREFERENCES, sort: "title" })).toBe(0);
   });
 
+  it("shows a pinned repository whatever the repository filters say", () => {
+    const fork = repository("me/fork", { isFork: true, isArchived: true, isPrivate: true });
+    const pinned = [repositoryKey(fork.host, "ME/Fork")];
+    expect(repositoryShown(fork, { ...DEFAULT_ISSUE_FILTER_PREFERENCES, private: false })).toBe(
+      false,
+    );
+    expect(
+      repositoryShown(fork, { ...DEFAULT_ISSUE_FILTER_PREFERENCES, private: false, pinned }),
+    ).toBe(true);
+    expect(changedIssueFilterCount({ ...DEFAULT_ISSUE_FILTER_PREFERENCES, pinned })).toBe(0);
+  });
+
+  it("keeps saved filters from before pins existed", () => {
+    const { pinned: _pinned, ...saved } = { ...DEFAULT_ISSUE_FILTER_PREFERENCES, forks: true };
+    expect(decodePreferences(saved)).toEqual({
+      ...DEFAULT_ISSUE_FILTER_PREFERENCES,
+      forks: true,
+    });
+  });
+
   it("treats a zero open count as empty only in the open view", () => {
     const quiet = repository("me/quiet", { openIssuesAndPullRequests: 0 });
     expect(repositoryKnownEmpty(quiet, "open")).toBe(true);
@@ -190,11 +215,13 @@ describe("issue repository targets", () => {
     expect(repositoryKnownEmpty(repository("me/busy"), "open")).toBe(false);
   });
 
-  it("lists an empty repository only with Empty shown and nothing narrowing the list", () => {
+  it("lists an empty repository only with Empty shown or a pin, and nothing narrowing the list", () => {
     const preferences = DEFAULT_ISSUE_FILTER_PREFERENCES;
-    const empty = { count: 0, settled: true };
-    expect(repositoryListed({ count: 0, settled: false }, preferences, true)).toBe(true);
-    expect(repositoryListed({ count: 2, settled: true }, preferences, true)).toBe(true);
+    const empty = { count: 0, settled: true, pinned: false };
+    expect(repositoryListed({ ...empty, settled: false }, preferences, true)).toBe(true);
+    expect(repositoryListed({ ...empty, count: 2 }, preferences, true)).toBe(true);
+    expect(repositoryListed({ ...empty, pinned: true }, preferences, false)).toBe(true);
+    expect(repositoryListed({ ...empty, pinned: true }, preferences, true)).toBe(false);
     expect(repositoryListed(empty, preferences, false)).toBe(false);
     expect(repositoryListed(empty, { ...preferences, empty: true }, false)).toBe(true);
     expect(repositoryListed(empty, { ...preferences, empty: true }, true)).toBe(false);
