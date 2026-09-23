@@ -378,6 +378,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork branch picker current local remote collapse"],
   },
   {
+    id: "auto-organize-by-folder",
+    title: "Keep projects organized by folder",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork sections folders automatic organize sort new projects"],
+  },
+  {
     id: "lineage-details-expanded",
     title: "Expand agent details by default",
     to: "/settings/customizations",

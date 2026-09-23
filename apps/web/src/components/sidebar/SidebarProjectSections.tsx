@@ -69,7 +69,7 @@ import type { SidebarThreadSummary } from "../../types";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore";
 import { cn } from "~/lib/utils";
-import { useClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 import { Button } from "../ui/button";
 import {
@@ -249,6 +249,24 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     },
     [sections],
   );
+  // Unsorted projects under the folder root join their folder's section on their own. The store
+  // leaves state untouched when nothing moves, so this settles after one pass.
+  const autoOrganize = useClientSettings((settings) => settings.autoOrganizeByFolder);
+  const folderRoot = usePrimarySettings(
+    (settings) => settings.projectFolderRoot || settings.addProjectBaseDirectory,
+  );
+  const organizeByFolder = useUiStateStore((store) => store.organizeSidebarSectionsByFolder);
+  useEffect(() => {
+    if (!autoOrganize || !folderRoot.startsWith("/")) return;
+    organizeByFolder(
+      projects.map((project) => ({
+        projectKey: project.projectKey,
+        workspaceRoots: project.memberProjects.map((member) => member.workspaceRoot),
+      })),
+      folderRoot,
+      true,
+    );
+  }, [autoOrganize, folderRoot, organizeByFolder, projects]);
   const placements = useProjectSectionPlacements((store) => store.placements);
   const resolvePlacement = useProjectSectionPlacements((store) => store.resolve);
 

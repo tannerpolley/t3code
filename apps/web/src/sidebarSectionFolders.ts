@@ -26,14 +26,54 @@ export function organizeSectionsByFolder(input: {
   readonly projects: readonly FolderOrganizedProject[];
   readonly root: string;
   readonly makeId: () => string;
-}): SidebarProjectSection[] {
+  /** Place only projects in no section yet, leaving ones sorted by hand where they are. */
+  readonly onlyUnsorted?: boolean;
+}): { readonly sections: SidebarProjectSection[]; readonly changed: boolean } {
   const root = trimTrailingSlashes(input.root);
-  if (root.length === 0) return [...input.sections];
+  const unchanged = { sections: [...input.sections], changed: false };
+  if (root.length === 0) return unchanged;
+
+  // Shallowest first, so a superproject is placed before the projects inside it.
+  const located = input.projects
+    .flatMap((project) => {
+      const path = project.workspaceRoots
+        .map(trimTrailingSlashes)
+        .filter((candidate) => isInside(candidate, root))
+        .toSorted((left, right) => left.length - right.length)[0];
+      return path === undefined ? [] : [{ projectKey: project.projectKey, path }];
+    })
+    .toSorted((left, right) => left.path.length - right.path.length);
+
+  // Each project's section folders: [section] or [section, subsection].
+  const foldersByKey = new Map<string, readonly string[]>();
+  for (const project of located) {
+    const superproject = located
+      .filter((other) => other !== project && isInside(project.path, other.path))
+      .toSorted((left, right) => right.path.length - left.path.length)[0];
+    if (superproject) {
+      const inherited = foldersByKey.get(superproject.projectKey);
+      if (inherited) foldersByKey.set(project.projectKey, inherited);
+      continue;
+    }
+    const folders = project.path
+      .slice(root.length + 1)
+      .split("/")
+      .slice(0, -1)
+      .slice(0, 2);
+    if (folders.length > 0) foldersByKey.set(project.projectKey, folders);
+  }
+
+  const sorted = new Set(input.sections.flatMap((section) => section.projectKeys));
+  const moves = [...foldersByKey].filter(
+    ([projectKey]) => !input.onlyUnsorted || !sorted.has(projectKey),
+  );
+  if (moves.length === 0) return unchanged;
+
   const sections = input.sections.map((section) => ({
     ...section,
     projectKeys: [...section.projectKeys],
   }));
-
+  let changed = false;
   const findOrCreate = (name: string, parentId: string | undefined): SidebarProjectSection => {
     const existing = sections.find(
       (section) =>
@@ -48,48 +88,23 @@ export function organizeSectionsByFolder(input: {
       ...(parentId === undefined ? {} : { parentId }),
     };
     sections.push(created);
+    changed = true;
     return created;
   };
 
-  // Shallowest first, so a superproject is placed before the projects inside it.
-  const located = input.projects
-    .flatMap((project) => {
-      const path = project.workspaceRoots
-        .map(trimTrailingSlashes)
-        .filter((candidate) => isInside(candidate, root))
-        .toSorted((left, right) => left.length - right.length)[0];
-      return path === undefined ? [] : [{ projectKey: project.projectKey, path }];
-    })
-    .toSorted((left, right) => left.path.length - right.path.length);
-
-  const placements = new Map<string, string>();
-  for (const project of located) {
-    const superproject = located
-      .filter((other) => other !== project && isInside(project.path, other.path))
-      .toSorted((left, right) => right.path.length - left.path.length)[0];
-    if (superproject) {
-      const target = placements.get(superproject.projectKey);
-      if (target) placements.set(project.projectKey, target);
-      continue;
-    }
-    const folders = project.path
-      .slice(root.length + 1)
-      .split("/")
-      .slice(0, -1);
-    if (folders.length === 0) continue;
+  for (const [projectKey, folders] of moves) {
     const section = findOrCreate(folders[0]!, undefined);
     const target = folders[1] === undefined ? section : findOrCreate(folders[1], section.id);
-    placements.set(project.projectKey, target.id);
-  }
-
-  for (const [projectKey, sectionId] of placements) {
-    for (const section of sections) {
-      if (section.id === sectionId) {
-        if (!section.projectKeys.includes(projectKey)) section.projectKeys.push(projectKey);
-      } else {
-        section.projectKeys = section.projectKeys.filter((key) => key !== projectKey);
+    for (const candidate of sections) {
+      const has = candidate.projectKeys.includes(projectKey);
+      if (candidate.id === target.id && !has) {
+        candidate.projectKeys.push(projectKey);
+        changed = true;
+      } else if (candidate.id !== target.id && has) {
+        candidate.projectKeys = candidate.projectKeys.filter((key) => key !== projectKey);
+        changed = true;
       }
     }
   }
-  return sections;
+  return changed ? { sections, changed } : unchanged;
 }

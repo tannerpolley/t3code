@@ -59,6 +59,12 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Group the branch picker into collapsible Current, Local and Remote sections. Off shows one flat list.",
   },
   {
+    key: "autoOrganizeByFolder",
+    searchId: "auto-organize-by-folder",
+    description:
+      "Put projects that are in no section yet into their folder's section automatically, using the Organize by folder root. Projects you move by hand stay where you put them.",
+  },
+  {
     key: "lineageDetailsExpanded",
     searchId: "lineage-details-expanded",
     description:

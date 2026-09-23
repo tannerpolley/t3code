@@ -744,6 +744,7 @@ interface UiStateStore extends UiState {
   organizeSidebarSectionsByFolder: (
     projects: readonly FolderOrganizedProject[],
     root: string,
+    onlyUnsorted?: boolean,
   ) => void;
   renameSidebarProjectSection: (sectionId: string, name: string) => void;
   setSidebarProjectSectionColor: (sectionId: string, color: ProjectIconColor | null) => void;
@@ -778,16 +779,17 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setSidebarMode: (mode) => set((state) => setSidebarMode(state, mode)),
   setSidebarOtherProjectsExpanded: (expanded) =>
     set((state) => setSidebarOtherProjectsExpanded(state, expanded)),
-  organizeSidebarSectionsByFolder: (projects, root) =>
-    set((state) => ({
-      ...state,
-      sidebarProjectSections: organizeSectionsByFolder({
+  organizeSidebarSectionsByFolder: (projects, root, onlyUnsorted = false) =>
+    set((state) => {
+      const organized = organizeSectionsByFolder({
         sections: state.sidebarProjectSections,
         projects,
         root,
         makeId: randomUUID,
-      }),
-    })),
+        onlyUnsorted,
+      });
+      return organized.changed ? { ...state, sidebarProjectSections: organized.sections } : state;
+    }),
   addSidebarProjectSection: (name, parentId) =>
     set((state) =>
       addSidebarProjectSection(state, {

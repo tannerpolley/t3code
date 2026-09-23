@@ -8,6 +8,7 @@ const ROOT = "/home/me/Workspaces";
 function organize(
   projects: Array<[string, string]>,
   sections: SidebarProjectSection[] = [],
+  onlyUnsorted = false,
 ): SidebarProjectSection[] {
   let next = 0;
   return organizeSectionsByFolder({
@@ -15,7 +16,8 @@ function organize(
     projects: projects.map(([projectKey, path]) => ({ projectKey, workspaceRoots: [path] })),
     root: `${ROOT}/`,
     makeId: () => `new-${++next}`,
-  });
+    onlyUnsorted,
+  }).sections;
 }
 
 const shape = (sections: SidebarProjectSection[]) =>
@@ -77,5 +79,32 @@ describe("organizeSectionsByFolder", () => {
     );
     expect(second.map((section) => section.id)).toEqual(first.map((section) => section.id));
     expect(second[0]?.projectKeys).toEqual(["b", "a"]);
+  });
+
+  it("places only unsorted projects when asked, and reports no change once they are", () => {
+    const mine: SidebarProjectSection = {
+      id: "mine",
+      name: "Favorites",
+      projectKeys: ["moved"],
+      collapsed: false,
+    };
+    const projects: Array<[string, string]> = [
+      ["moved", `${ROOT}/Engineering/moved`],
+      ["fresh", `${ROOT}/Applications/fresh`],
+    ];
+    const once = organize(projects, [mine], true);
+    // The hand-moved project stays put, and its folder's section is not created for it.
+    expect(shape(once)).toEqual([
+      { name: "Favorites", parentId: undefined, projectKeys: ["moved"] },
+      { name: "Applications", parentId: undefined, projectKeys: ["fresh"] },
+    ]);
+    const again = organizeSectionsByFolder({
+      sections: once,
+      projects: projects.map(([projectKey, path]) => ({ projectKey, workspaceRoots: [path] })),
+      root: ROOT,
+      makeId: () => "unused",
+      onlyUnsorted: true,
+    });
+    expect(again.changed).toBe(false);
   });
 });
