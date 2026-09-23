@@ -100,6 +100,22 @@ export function SidebarThreadHeader({
   const newThreadLabel = newThreadShortcutLabel
     ? `New thread (${newThreadShortcutLabel})`
     : "New thread";
+  const newThreadTooltip = showNewThreadInProjectHint ? (
+    <span className="flex flex-col gap-0.5">
+      <span>{newThreadLabel}</span>
+      <span className="text-muted-foreground">
+        New thread in current project: Shift+click
+        {newThreadInProjectShortcutLabel ? ` (${newThreadInProjectShortcutLabel})` : ""}
+      </span>
+    </span>
+  ) : (
+    newThreadLabel
+  );
+  const newProjectButton = (
+    <SidebarHeaderIconButton label="New project" onClick={onNewProject}>
+      <FolderPlusIcon />
+    </SidebarHeaderIconButton>
+  );
 
   return (
     <div className="space-y-1">
@@ -150,61 +166,95 @@ export function SidebarThreadHeader({
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
         <div className="flex shrink-0 items-center">
-          {/* One button, like Codex: Activity on or off over the Projects view. */}
           {projectsViewEnabled ? (
-            <SidebarHeaderIconButton
-              aria-pressed={showingActivity}
-              className={cn(showingActivity && "bg-sidebar-row-active text-sidebar-foreground")}
-              label={showingActivity ? "Show projects" : "Show activity"}
-              onClick={() => onSidebarModeChange(showingActivity ? "projects" : "activity")}
-            >
-              <ActivityIcon />
-            </SidebarHeaderIconButton>
-          ) : null}
-          {hasProjects ? (
             <>
-              {projectsView ? null : projectScope}
-              <SidebarHeaderIconButton label="New project" onClick={onNewProject}>
-                <FolderPlusIcon />
+              {/* Buttons both views share stay in place, so Activity is always at the end. */}
+              {hasProjects ? newProjectButton : null}
+              <SidebarHeaderIconButton
+                aria-pressed={showingActivity}
+                className={cn(showingActivity && "bg-sidebar-row-active text-sidebar-foreground")}
+                label={showingActivity ? "Show projects" : "Show activity"}
+                onClick={() => onSidebarModeChange(showingActivity ? "projects" : "activity")}
+              >
+                <ActivityIcon />
               </SidebarHeaderIconButton>
-              {projectsView ? (
-                <SidebarHeaderIconButton
-                  data-testid="sidebar-create-project-section"
-                  label="New section"
-                  onClick={onNewSection}
-                >
-                  <ListPlusIcon />
-                </SidebarHeaderIconButton>
-              ) : null}
             </>
-          ) : null}
-          {projectsView && hasProjects ? null : (
-            <SidebarHeaderIconButton
-              label="New thread"
-              tooltip={
-                showNewThreadInProjectHint ? (
-                  <span className="flex flex-col gap-0.5">
-                    <span>{newThreadLabel}</span>
-                    <span className="text-muted-foreground">
-                      New thread in current project: Shift+click
-                      {newThreadInProjectShortcutLabel
-                        ? ` (${newThreadInProjectShortcutLabel})`
-                        : ""}
-                    </span>
-                  </span>
-                ) : (
-                  newThreadLabel
-                )
-              }
-              disabled={newThreadDisabled}
-              onClick={onNewThread}
-            >
-              <SquarePenIcon />
-            </SidebarHeaderIconButton>
+          ) : (
+            <>
+              {hasProjects ? projectScope : null}
+              {hasProjects ? newProjectButton : null}
+              <SidebarHeaderIconButton
+                label="New thread"
+                tooltip={newThreadTooltip}
+                disabled={newThreadDisabled}
+                onClick={onNewThread}
+              >
+                <SquarePenIcon />
+              </SidebarHeaderIconButton>
+            </>
           )}
         </div>
       </div>
+      {/* Each view's own actions sit on a row of their own, labeled. */}
+      {projectsViewEnabled ? (
+        <div className="flex min-w-0 items-center gap-1">
+          {projectsView ? (
+            <SidebarHeaderLabeledButton
+              data-testid="sidebar-create-project-section"
+              onClick={onNewSection}
+            >
+              <ListPlusIcon />
+              <span>New section</span>
+            </SidebarHeaderLabeledButton>
+          ) : (
+            <>
+              {hasProjects ? projectScope : null}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <SidebarHeaderLabeledButton
+                      disabled={newThreadDisabled}
+                      onClick={onNewThread}
+                    />
+                  }
+                >
+                  <SquarePenIcon />
+                  <span>New thread</span>
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">{newThreadTooltip}</TooltipPopup>
+              </Tooltip>
+            </>
+          )}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * A compact text-and-icon button for a view's own actions under search. Spreads unknown props
+ * through so it can serve as a popup trigger's render target.
+ */
+export function SidebarHeaderLabeledButton({
+  className,
+  children,
+  ...rest
+}: {
+  className?: string | undefined;
+  children?: ReactNode;
+} & Omit<ComponentProps<typeof SidebarMenuButton>, "children" | "className" | "isActive">) {
+  return (
+    <SidebarMenuButton
+      size="sm"
+      type="button"
+      {...rest}
+      className={cn(
+        "h-7 w-auto min-w-0 max-w-full gap-1.5 px-2 text-xs text-sidebar-muted-foreground hover:text-sidebar-foreground [&>span]:truncate [&_svg]:size-3.5",
+        className,
+      )}
+    >
+      {children}
+    </SidebarMenuButton>
   );
 }
 

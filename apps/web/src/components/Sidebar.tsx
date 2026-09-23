@@ -59,6 +59,7 @@ import {
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
   CheckIcon,
+  ChevronDownIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -259,7 +260,11 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
-import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import {
+  SidebarHeaderIconButton,
+  SidebarHeaderLabeledButton,
+  SidebarThreadHeader,
+} from "./sidebar/SidebarThreadHeader";
 import {
   ProjectSectionDialog,
   type ProjectSectionDialogTarget,
@@ -4683,13 +4688,24 @@ export default function Sidebar() {
                 >
                   <ComboboxTrigger
                     render={
-                      <SidebarHeaderIconButton
-                        label={
-                          scopedProjectGroup
-                            ? `Filter threads by project: ${scopedProjectGroup.displayName}`
-                            : "Filter threads by project"
-                        }
-                      />
+                      // With the Projects view on, the filter sits in the Activity row, labeled.
+                      projectsViewEnabled ? (
+                        <SidebarHeaderLabeledButton
+                          aria-label={
+                            scopedProjectGroup
+                              ? `Filter threads by project: ${scopedProjectGroup.displayName}`
+                              : "Filter threads by project"
+                          }
+                        />
+                      ) : (
+                        <SidebarHeaderIconButton
+                          label={
+                            scopedProjectGroup
+                              ? `Filter threads by project: ${scopedProjectGroup.displayName}`
+                              : "Filter threads by project"
+                          }
+                        />
+                      )
                     }
                   >
                     {scopedProjectGroup ? (
@@ -4701,6 +4717,12 @@ export default function Sidebar() {
                     ) : (
                       <FolderIcon className="size-4" />
                     )}
+                    {projectsViewEnabled ? (
+                      <>
+                        <span>{scopedProjectGroup?.displayName ?? "All projects"}</span>
+                        <ChevronDownIcon className="opacity-60" />
+                      </>
+                    ) : null}
                   </ComboboxTrigger>
                   <ComboboxPopup
                     align="start"
