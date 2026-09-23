@@ -33,6 +33,7 @@ import {
   FilterIcon,
   FolderIcon,
   FolderOpenIcon,
+  FolderPlusIcon,
   MessageCircleQuestionIcon,
   PaletteIcon,
   SettingsIcon,
@@ -43,6 +44,7 @@ import {
   Fragment,
   memo,
   useCallback,
+  useEffect,
   useMemo,
   useState,
   type FormEvent,
@@ -52,6 +54,11 @@ import {
 
 import type { ProjectIconColor } from "@t3tools/contracts";
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
+import { openCommandPalette } from "../../commandPaletteBus";
+import {
+  resolveProjectPlacements,
+  useProjectSectionPlacements,
+} from "../../projectSectionPlacement";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { SidebarThreadSummary } from "../../types";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -198,6 +205,21 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const reorderSections = useUiStateStore((store) => store.reorderSidebarProjectSections);
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
   const [projectDrop, setProjectDrop] = useState<ProjectDrop | null>(null);
+  const placements = useProjectSectionPlacements((store) => store.placements);
+  const resolvePlacement = useProjectSectionPlacements((store) => store.resolve);
+
+  // A project added from a section's Add project joins it as soon as it appears, and again if
+  // its key changes before its repository identity settles.
+  useEffect(() => {
+    const { moves, resolved } = resolveProjectPlacements({
+      placements,
+      projects,
+      sections,
+      now: Date.now(),
+    });
+    for (const move of moves) moveProject(move.projectKey, move.sectionId);
+    for (const refKey of resolved) resolvePlacement(refKey);
+  }, [moveProject, placements, projects, resolvePlacement, sections]);
 
   const projectByKey = useMemo(
     () => new Map(projects.map((project) => [project.projectKey, project] as const)),
@@ -548,6 +570,14 @@ function SortableSectionHeader(props: {
       </button>
       {section.custom ? (
         <>
+          <button
+            aria-label={`Add project to ${section.name}`}
+            className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:opacity-100 group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
+            onClick={() => openCommandPalette({ open: "add-project", sectionId: section.id })}
+            type="button"
+          >
+            <FolderPlusIcon aria-hidden className="size-3.5" />
+          </button>
           <Menu>
             <MenuTrigger
               render={
@@ -561,6 +591,12 @@ function SortableSectionHeader(props: {
               <EllipsisIcon aria-hidden className="size-3.5" />
             </MenuTrigger>
             <MenuPopup align="end" className="min-w-40">
+              <MenuItem
+                onClick={() => openCommandPalette({ open: "add-project", sectionId: section.id })}
+              >
+                <FolderPlusIcon />
+                Add project
+              </MenuItem>
               <MenuItem onClick={() => props.onOpenRename(section)}>
                 <SettingsIcon />
                 Rename section

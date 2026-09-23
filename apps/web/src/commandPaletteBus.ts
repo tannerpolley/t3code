@@ -11,6 +11,8 @@ const COMMAND_PALETTE_OPEN_EVENT = "t3code:open-command-palette";
 
 export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-thread-in";
+  /** The sidebar section a project added from this opening joins. */
+  readonly sectionId?: string;
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
 }

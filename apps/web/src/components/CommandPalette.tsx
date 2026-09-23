@@ -4,6 +4,7 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { placeAddedProject, setAddProjectSection } from "../projectSectionPlacement";
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -562,6 +563,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onOpenCommandPalette((detail) => {
+        setAddProjectSection(detail.open === "add-project" ? (detail.sectionId ?? null) : null);
         if (detail.open === "new-thread-in") {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
@@ -578,6 +580,10 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       }),
     [openAddProject, openNewThreadIn, setOpen],
   );
+  // A section's add-project target lasts only for the opening that set it.
+  useEffect(() => {
+    if (!state.open) setAddProjectSection(null);
+  }, [state.open]);
 
   return (
     <ComposerHandleContext value={composerHandleRef}>
@@ -2175,6 +2181,7 @@ function OpenCommandPaletteDialog(props: {
         cwd,
       );
       if (existing) {
+        placeAddedProject(scopeProjectRef(existing.environmentId, existing.id));
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
@@ -2231,6 +2238,7 @@ function OpenCommandPaletteDialog(props: {
         }
         return;
       }
+      placeAddedProject(scopeProjectRef(input.environmentId, projectId));
 
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(input.environmentId, projectId)),
@@ -2459,8 +2467,9 @@ function OpenCommandPaletteDialog(props: {
       }
       return;
     }
-    setOpen(false);
     const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
+    placeAddedProject(projectRef);
+    setOpen(false);
     // The create event usually lands before this call returns; give the shell
     // stream a moment so the draft opens with its project resolved instead of
     // flashing the project picker.
