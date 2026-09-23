@@ -15,7 +15,7 @@
  * the picker's popup can anchor to that width rather than to its 28px trigger.
  */
 import {
-  ActivityIcon,
+  FoldersIcon,
   FolderPlusIcon,
   ListPlusIcon,
   SearchIcon,
@@ -168,15 +168,19 @@ export function SidebarThreadHeader({
         <div className="flex shrink-0 items-center">
           {projectsViewEnabled ? (
             <>
-              {/* Buttons both views share stay in place, so Activity is always at the end. */}
+              {/* Buttons both views share stay in place, so the Projects toggle is always at the end.
+                Activity is the default view; the toggle glows blue while Projects is on. */}
               {hasProjects ? newProjectButton : null}
               <SidebarHeaderIconButton
-                aria-pressed={showingActivity}
-                className={cn(showingActivity && "bg-sidebar-row-active text-sidebar-foreground")}
+                aria-pressed={!showingActivity}
+                className={cn(
+                  !showingActivity &&
+                    "bg-blue-500/15 text-blue-500 hover:bg-blue-500/20 hover:text-blue-500",
+                )}
                 label={showingActivity ? "Show projects" : "Show activity"}
                 onClick={() => onSidebarModeChange(showingActivity ? "projects" : "activity")}
               >
-                <ActivityIcon />
+                <FoldersIcon />
               </SidebarHeaderIconButton>
             </>
           ) : (

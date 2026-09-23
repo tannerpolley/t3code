@@ -32,7 +32,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     key: "projectsView",
     searchId: "projects-view",
     description:
-      "Offer a Projects view of sections and projects, switched with the Activity button beside search. Off shows only the standard Activity list.",
+      "Offer a Projects view of sections and projects, turned on and off with the folder button beside search (blue while on). Off shows only the standard Activity list.",
   },
   {
     key: "codexStyleSidebar",
