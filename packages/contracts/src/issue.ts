@@ -122,10 +122,39 @@ export const IssueDetailInput = Schema.Struct({
 });
 export type IssueDetailInput = typeof IssueDetailInput.Type;
 
+export const IssueComment = Schema.Struct({
+  author: Schema.NullOr(IssueActor),
+  body: Schema.String,
+  createdAt: IsoDateTime,
+  url: IssueUrl,
+});
+export type IssueComment = typeof IssueComment.Type;
+
+/** A pull request that closes the issue or mentions it in its timeline. */
+export const IssueLinkedPullRequest = Schema.Struct({
+  /** `owner/name`, which can differ from the issue's repository. */
+  repository: Repository,
+  number: IssueNumber,
+  title: Schema.String,
+  state: Schema.Literals(["open", "closed", "merged"]),
+  isDraft: Schema.Boolean,
+  url: IssueUrl,
+  closesIssue: Schema.Boolean,
+});
+export type IssueLinkedPullRequest = typeof IssueLinkedPullRequest.Type;
+
 export const IssueDetailResult = Schema.Struct({
   ...IssueContext,
   issue: IssueSummary,
   body: Schema.String,
+  /**
+   * The most recent comments, oldest first. Fewer than `issue.commentCount` means older ones
+   * were left out.
+   */
+  comments: Schema.Array(IssueComment).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  linkedPullRequests: Schema.Array(IssueLinkedPullRequest).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type IssueDetailResult = typeof IssueDetailResult.Type;
 

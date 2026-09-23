@@ -52,6 +52,7 @@ describe("ThreadDetailsPanel", () => {
       environmentId,
       threadId: "thread:thread-details" as ThreadId,
       activeProjectName: undefined,
+      activeProjectRepositoryIdentity: undefined,
       activeProjectScripts: [],
       preferredScriptId: null,
       keybindings: [],

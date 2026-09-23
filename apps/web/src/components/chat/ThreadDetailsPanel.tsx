@@ -2,6 +2,7 @@ import type {
   EditorId,
   EnvironmentId,
   ProjectScript,
+  RepositoryIdentity,
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { cn } from "../../lib/utils";
 import { OpenInPicker } from "./OpenInPicker";
+import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
@@ -39,6 +41,8 @@ export interface ThreadDetailsPanelProps {
   threadId: ThreadId;
   draftId?: DraftId;
   activeProjectName: string | undefined;
+  /** Where the project's issues live; the Version Control section lists them. */
+  activeProjectRepositoryIdentity: RepositoryIdentity | null | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
@@ -203,6 +207,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   activeThreadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
                   {...(props.draftId ? { draftId: props.draftId } : {})}
                   {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                />
+              ) : null}
+              {!props.draftId ? (
+                <ThreadDetailsIssueRows
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                  repositoryIdentity={props.activeProjectRepositoryIdentity}
                 />
               ) : null}
             </div>

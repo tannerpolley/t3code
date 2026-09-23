@@ -95,6 +95,28 @@ describe("GitHub issue contract boundaries", () => {
     expect(decodeDetailResult(detailResult)).toMatchObject({ issue, body: "" });
   });
 
+  it("decodes a detail result from a server that predates comments and linked pull requests", () => {
+    const decoded = decodeDetailResult(detailResult);
+    expect(decoded.comments).toEqual([]);
+    expect(decoded.linkedPullRequests).toEqual([]);
+    expect(() =>
+      decodeDetailResult({
+        ...detailResult,
+        linkedPullRequests: [
+          {
+            repository: "owner/repo",
+            number: 7,
+            title: "Fix",
+            state: "draft",
+            isDraft: true,
+            url: "https://github.com/owner/repo/pull/7",
+            closesIssue: true,
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
   it("round-trips the list result through the JSON wire codec", () => {
     const codec = Schema.toCodecJson(IssueListResult);
     const encoded = Schema.encodeUnknownSync(codec)(listResult);

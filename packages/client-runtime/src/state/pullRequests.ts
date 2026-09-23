@@ -92,7 +92,8 @@ function updateCached<A, E>(
   registry.update(atom, AsyncResult.map(update));
 }
 
-function createPullRequestRefreshAtomFamily<R, E>(
+/** Bumps after pull request mutations and agent turns; other GitHub reads can refresh on it too. */
+export function createPullRequestRefreshAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return createEnvironmentRpcSubscriptionAtomFamily(runtime, {

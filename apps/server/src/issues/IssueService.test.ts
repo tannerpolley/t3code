@@ -385,7 +385,7 @@ it.effect("maps malformed upstream data safely and normalizes null detail bodies
     assert.notInclude(malformedError.message, "secret-token");
 
     const detailHarness = makeHarness({
-      responses: [httpResponse(rawIssue(7, { body: null }))],
+      responses: [httpResponse(graphQlDetail(graphQlIssue({ body: null })))],
     });
     const detailService = yield* service(detailHarness);
     const detail = yield* detailService.detail({
@@ -396,9 +396,184 @@ it.effect("maps malformed upstream data safely and normalizes null detail bodies
   }),
 );
 
+function graphQlPullRequest(
+  number: number,
+  overrides: Readonly<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    number,
+    title: `PR ${number}`,
+    state: "OPEN",
+    isDraft: false,
+    url: `https://${HOST}/${REPOSITORY}/pull/${number}`,
+    repository: { nameWithOwner: REPOSITORY },
+    ...overrides,
+  };
+}
+
+function graphQlIssue(overrides: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    __typename: "Issue",
+    number: 7,
+    title: "Issue 7",
+    body: "Body",
+    state: "CLOSED",
+    stateReason: "NOT_PLANNED",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-02T00:00:00Z",
+    author: { login: "octocat", avatarUrl: "https://avatars.test/u/1?v=4" },
+    assignees: { nodes: [] },
+    labels: { nodes: [{ name: "bug", color: "d73a4a" }] },
+    milestone: null,
+    comments: { totalCount: 0, nodes: [] },
+    closedByPullRequestsReferences: { nodes: [] },
+    timelineItems: { nodes: [] },
+    ...overrides,
+  };
+}
+
+function graphQlDetail(issue: unknown, errors?: ReadonlyArray<unknown>): unknown {
+  return {
+    data: { repository: { issueOrPullRequest: issue } },
+    ...(errors === undefined ? {} : { errors }),
+  };
+}
+
+it.effect("reads issue detail, comments, and linked pull requests in one GraphQL request", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse(
+          graphQlDetail(
+            graphQlIssue({
+              comments: {
+                totalCount: 150,
+                nodes: [
+                  {
+                    author: null,
+                    body: "First kept",
+                    createdAt: "2026-01-03T00:00:00Z",
+                    url: `https://${HOST}/${REPOSITORY}/issues/7#issuecomment-1`,
+                  },
+                  null,
+                  {
+                    author: { login: "hubot", avatarUrl: null },
+                    body: "Latest",
+                    createdAt: "2026-01-04T00:00:00Z",
+                    url: `https://${HOST}/${REPOSITORY}/issues/7#issuecomment-2`,
+                  },
+                ],
+              },
+              closedByPullRequestsReferences: {
+                nodes: [graphQlPullRequest(11, { state: "MERGED" })],
+              },
+              timelineItems: {
+                nodes: [
+                  { source: { __typename: "Issue" } },
+                  {
+                    source: {
+                      __typename: "PullRequest",
+                      ...graphQlPullRequest(11, { state: "MERGED" }),
+                    },
+                  },
+                  {
+                    source: {
+                      __typename: "PullRequest",
+                      ...graphQlPullRequest(11, {
+                        state: "CLOSED",
+                        repository: { nameWithOwner: "Acme/Fork" },
+                        url: `https://${HOST}/Acme/Fork/pull/11`,
+                      }),
+                    },
+                  },
+                  {
+                    source: {
+                      __typename: "PullRequest",
+                      ...graphQlPullRequest(12, { isDraft: true }),
+                    },
+                  },
+                  {},
+                ],
+              },
+            }),
+            // Partial errors, such as an SSO-hidden cross-reference, keep the issue readable.
+            [{ type: "FORBIDDEN", message: "Resource protected by organization SAML" }],
+          ),
+        ),
+      ],
+    });
+    const issues = yield* service(harness);
+    const detail = yield* issues.detail({ ...listInput, number: 7 });
+
+    assert.equal(harness.calls.length, 1);
+    assert.include(harness.calls[0]!.join(" "), "graphql");
+    assert.equal(detail.issue.state, "closed");
+    assert.equal(detail.issue.stateReason, "not_planned");
+    assert.equal(detail.issue.commentCount, 150);
+    assert.equal(detail.issue.author?.avatarUrl, "https://avatars.test/u/1");
+    assert.deepEqual(
+      detail.comments.map((comment) => [comment.author?.login ?? null, comment.body]),
+      [
+        [null, "First kept"],
+        ["hubot", "Latest"],
+      ],
+    );
+    assert.deepEqual(
+      detail.linkedPullRequests.map((pr) => [
+        pr.repository,
+        pr.number,
+        pr.state,
+        pr.isDraft,
+        pr.closesIssue,
+      ]),
+      [
+        [REPOSITORY, 11, "merged", false, true],
+        ["Acme/Fork", 11, "closed", false, false],
+        [REPOSITORY, 12, "open", true, false],
+      ],
+    );
+  }),
+);
+
+it.effect("maps a missing issue to inaccessible and a GraphQL rate limit to rate-limited", () =>
+  Effect.gen(function* () {
+    const missing = makeHarness({
+      responses: [
+        {
+          stdout: httpResponse({
+            data: { repository: null },
+            errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository" }],
+          }),
+          exitCode: 1,
+        },
+      ],
+    });
+    const missingError = yield* (yield* service(missing))
+      .detail({ ...listInput, number: 7 })
+      .pipe(Effect.flip);
+    assert.equal(missingError.code, "inaccessible");
+
+    const limited = makeHarness({
+      responses: [
+        {
+          stdout: httpResponse({ errors: [{ type: "RATE_LIMITED", message: "limit" }] }),
+          exitCode: 1,
+        },
+      ],
+    });
+    const limitedError = yield* (yield* service(limited))
+      .detail({ ...listInput, number: 7 })
+      .pipe(Effect.flip);
+    assert.equal(limitedError.code, "rate-limited");
+    assert.equal(limited.rateLimitRecords.length, 1);
+  }),
+);
+
 it.effect("rejects pull request detail responses", () =>
   Effect.gen(function* () {
-    const harness = makeHarness({ responses: [httpResponse(rawPullRequest(7))] });
+    const harness = makeHarness({
+      responses: [httpResponse(graphQlDetail({ __typename: "PullRequest" }))],
+    });
     const issues = yield* service(harness);
     const error = yield* issues.detail({ ...listInput, number: 7 }).pipe(Effect.flip);
 

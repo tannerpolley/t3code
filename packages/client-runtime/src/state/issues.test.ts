@@ -9,6 +9,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
@@ -40,6 +41,8 @@ it.effect("keeps a late issue response on its own issue and environment", () =>
         viewer: { accountId: "42", login: "reader" },
         fetchedAt: "2026-09-21T00:00:00Z",
         body: title,
+        comments: [],
+        linkedPullRequests: [],
         issue: {
           number,
           title,
@@ -145,6 +148,100 @@ it.effect("keeps a late issue response on its own issue and environment", () =>
         (yield* AtomRegistry.getResult(registry, selected, { suspendOnWaiting: true })).issue.title,
       ).toBe("first issue 2");
       expect(calls).toEqual(["first:1", "first:2", "second:1"]);
+    }),
+  ),
+);
+
+it.effect("re-reads an open issue when an agent turn finishes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("local");
+      const turnFinished = yield* PubSub.unbounded<number>();
+      const reads: number[] = [];
+      const secondRead = yield* Deferred.make<void>();
+      const target = new PrimaryConnectionTarget({
+        environmentId,
+        label: "local",
+        httpBaseUrl: "https://local.example.test",
+        wsBaseUrl: "wss://local.example.test",
+      });
+      const client = {
+        [WS_METHODS.issuesDetail]: (input: IssueDetailInput) =>
+          Effect.gen(function* () {
+            reads.push(input.number);
+            if (reads.length === 2) yield* Deferred.succeed(secondRead, undefined);
+            return {
+              repository: { host: input.host, repository: input.repository },
+              viewer: { accountId: "42", login: "reader" },
+              fetchedAt: "2026-09-21T00:00:00Z",
+              body: `read ${reads.length}`,
+              comments: [],
+              linkedPullRequests: [],
+              issue: {
+                number: input.number,
+                title: `read ${reads.length}`,
+                url: "https://github.com/owner/repo/issues/1",
+                state: "open",
+                stateReason: null,
+                author: null,
+                assignees: [],
+                labels: [],
+                milestone: null,
+                createdAt: "2026-09-21T00:00:00Z",
+                updatedAt: "2026-09-21T00:00:00Z",
+                commentCount: 0,
+              },
+            } as IssueDetailResult;
+          }),
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(turnFinished),
+      } as unknown as WsRpcProtocolClient;
+      const session: RpcSession = {
+        client,
+        ready: Effect.void,
+        probe: Effect.void,
+        closed: Effect.never,
+        initialConfig: Effect.never,
+        subscribeServerConfig: () => Stream.empty,
+      };
+      const supervisor = EnvironmentSupervisor.of({
+        target,
+        state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+          ...AVAILABLE_CONNECTION_STATE,
+          desired: true,
+          network: "online",
+          phase: "connected",
+          attempt: 1,
+          generation: 1,
+        }),
+        session: yield* SubscriptionRef.make(Option.some(session)),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      });
+      const environments = EnvironmentRegistry.of({
+        run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        followStream: (_id, stream) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      } as EnvironmentRegistry["Service"]);
+      const queries = createIssueEnvironmentAtoms(
+        Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
+      );
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const detail = queries.detail({
+        environmentId,
+        input: { host: "github.com", repository: "owner/repo", number: 1 },
+      });
+      const unmount = registry.mount(detail);
+      yield* Effect.addFinalizer(() => Effect.sync(unmount));
+      expect(
+        (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).body,
+      ).toBe("read 1");
+
+      yield* PubSub.publish(turnFinished, 1);
+      yield* Deferred.await(secondRead);
+      expect(reads).toEqual([1, 1]);
     }),
   ),
 );

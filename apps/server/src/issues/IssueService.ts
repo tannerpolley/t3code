@@ -16,6 +16,7 @@ import {
   TrimmedNonEmptyString,
   type IssueDetailInput as IssueDetailInputType,
   type IssueDetailResult as IssueDetailResultType,
+  type IssueLinkedPullRequest,
   type IssueListInput as IssueListInputType,
   type IssueListResult as IssueListResultType,
   type IssueListState,
@@ -31,7 +32,9 @@ import * as GitHubPullRequestCli from "../pullRequest/GitHubPullRequestCli.ts";
 
 const API_TIMEOUT_MS = 30_000;
 const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-const DETAIL_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+// A detail read carries up to DETAIL_COMMENT_LIMIT comment bodies of up to 64 KiB each.
+const DETAIL_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const DETAIL_COMMENT_LIMIT = 100;
 const MAX_PAGE = 1_000_000;
 const CURSOR_MAX_LENGTH = 4_096;
 const GITHUB_HOST = "github.com";
@@ -86,6 +89,146 @@ const RawRepositorySchema = Schema.Struct({
   permissions: Schema.optional(Schema.Struct({ admin: Schema.Boolean })),
 });
 type RawRepository = Schema.Schema.Type<typeof RawRepositorySchema>;
+
+const GRAPHQL_PULL_REQUEST_FIELDS = "number title state isDraft url repository { nameWithOwner }";
+const ISSUE_DETAIL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issueOrPullRequest(number: $number) {
+      __typename
+      ... on Issue {
+        number title body state stateReason createdAt updatedAt
+        author { login avatarUrl }
+        assignees(first: 100) { nodes { login avatarUrl } }
+        labels(first: 100) { nodes { name color } }
+        milestone {
+          number title state dueOn
+          openIssues: issues(states: OPEN) { totalCount }
+          closedIssues: issues(states: CLOSED) { totalCount }
+        }
+        comments(last: ${DETAIL_COMMENT_LIMIT}) {
+          totalCount
+          nodes { author { login avatarUrl } body createdAt url }
+        }
+        closedByPullRequestsReferences(first: 25, includeClosedPrs: true) {
+          nodes { ${GRAPHQL_PULL_REQUEST_FIELDS} }
+        }
+        timelineItems(last: 100, itemTypes: [CROSS_REFERENCED_EVENT]) {
+          nodes {
+            ... on CrossReferencedEvent {
+              source { __typename ... on PullRequest { ${GRAPHQL_PULL_REQUEST_FIELDS} } }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+const encodeGraphQlRequest = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      query: Schema.String,
+      variables: Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number])),
+    }),
+  ),
+);
+
+/** A connection whose nodes GitHub may null out, e.g. when an organization's SSO hides one. */
+const graphQlNodes = <S extends Schema.Top>(node: S) =>
+  Schema.Struct({ nodes: Schema.NullOr(Schema.Array(Schema.NullOr(node))) });
+const GraphQlUrl = Schema.String.check(Schema.isPattern(/^https?:\/\/[^\s]+$/iu));
+const GraphQlActorSchema = Schema.Struct({
+  login: TrimmedNonEmptyString,
+  avatarUrl: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const GraphQlPullRequestSchema = Schema.Struct({
+  __typename: Schema.optional(Schema.Literal("PullRequest")),
+  number: IssueNumber,
+  title: Schema.String,
+  state: Schema.Literals(["OPEN", "CLOSED", "MERGED"]),
+  isDraft: Schema.Boolean,
+  url: GraphQlUrl,
+  repository: Schema.Struct({ nameWithOwner: TrimmedNonEmptyString }),
+});
+type GraphQlPullRequest = Schema.Schema.Type<typeof GraphQlPullRequestSchema>;
+const GraphQlIssueSchema = Schema.Struct({
+  __typename: Schema.Literal("Issue"),
+  number: IssueNumber,
+  title: Schema.String,
+  body: Schema.NullOr(Schema.String),
+  state: Schema.Literals(["OPEN", "CLOSED"]),
+  stateReason: Schema.NullOr(Schema.String),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  author: Schema.NullOr(GraphQlActorSchema),
+  assignees: graphQlNodes(GraphQlActorSchema),
+  labels: Schema.NullOr(
+    graphQlNodes(
+      Schema.Struct({
+        name: TrimmedNonEmptyString,
+        color: Schema.NullOr(Schema.String.check(Schema.isPattern(/^[0-9a-f]{6}$/iu))),
+      }),
+    ),
+  ),
+  milestone: Schema.NullOr(
+    Schema.Struct({
+      number: IssueNumber,
+      title: TrimmedNonEmptyString,
+      state: Schema.Literals(["OPEN", "CLOSED"]),
+      dueOn: Schema.NullOr(IsoDateTime),
+      openIssues: Schema.Struct({ totalCount: NonNegativeInt }),
+      closedIssues: Schema.Struct({ totalCount: NonNegativeInt }),
+    }),
+  ),
+  comments: Schema.Struct({
+    totalCount: NonNegativeInt,
+    ...graphQlNodes(
+      Schema.Struct({
+        author: Schema.NullOr(GraphQlActorSchema),
+        body: Schema.String,
+        createdAt: IsoDateTime,
+        url: GraphQlUrl,
+      }),
+    ).fields,
+  }),
+  closedByPullRequestsReferences: Schema.NullOr(graphQlNodes(GraphQlPullRequestSchema)),
+  timelineItems: graphQlNodes(
+    Schema.Struct({
+      // Other sources (issues) carry only their __typename.
+      source: Schema.optional(
+        Schema.NullOr(
+          Schema.Union([GraphQlPullRequestSchema, Schema.Struct({ __typename: Schema.String })]),
+        ),
+      ),
+    }),
+  ),
+});
+type GraphQlIssue = Schema.Schema.Type<typeof GraphQlIssueSchema>;
+const GraphQlIssueDetailResponseSchema = Schema.Struct({
+  data: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        repository: Schema.NullOr(
+          Schema.Struct({
+            issueOrPullRequest: Schema.NullOr(
+              Schema.Union([
+                GraphQlIssueSchema,
+                Schema.Struct({ __typename: Schema.Literal("PullRequest") }),
+              ]),
+            ),
+          }),
+        ),
+      }),
+    ),
+  ),
+});
+const GraphQlErrorsSchema = Schema.Struct({
+  errors: Schema.optional(Schema.Array(Schema.Struct({ type: Schema.optional(Schema.String) }))),
+});
+const decodeGraphQlIssueDetail = Schema.decodeEffect(
+  Schema.fromJsonString(GraphQlIssueDetailResponseSchema),
+);
+const decodeGraphQlErrors = Schema.decodeUnknownOption(Schema.fromJsonString(GraphQlErrorsSchema));
 
 const IssueCursorSchema = Schema.Struct({
   v: Schema.Literal(2),
@@ -234,6 +377,79 @@ function normalizeIssue(host: string, repository: string, issue: RawIssue): Issu
     updatedAt: issue.updated_at,
     commentCount: issue.comments,
   };
+}
+
+function presentNodes<A>(
+  connection: { readonly nodes: ReadonlyArray<A | null> | null } | null,
+): A[] {
+  return connection?.nodes?.filter((node): node is A => node !== null) ?? [];
+}
+
+function normalizeGraphQlActor(actor: Schema.Schema.Type<typeof GraphQlActorSchema>): {
+  readonly login: string;
+  readonly avatarUrl: string | null;
+} {
+  return { login: actor.login, avatarUrl: normalizeAvatarUrl(actor.avatarUrl) };
+}
+
+function normalizeGraphQlIssue(
+  host: string,
+  repository: string,
+  issue: GraphQlIssue,
+): IssueSummaryType {
+  const milestone = issue.milestone;
+  return {
+    number: issue.number,
+    title: issue.title,
+    url: issueUrl(host, repository, issue.number),
+    state: issue.state === "OPEN" ? "open" : "closed",
+    // GraphQL spells REST's `not_planned` as NOT_PLANNED.
+    stateReason: issue.stateReason?.toLowerCase() ?? null,
+    author: issue.author === null ? null : normalizeGraphQlActor(issue.author),
+    assignees: presentNodes(issue.assignees).map(normalizeGraphQlActor),
+    labels: presentNodes(issue.labels).map((label) => ({ name: label.name, color: label.color })),
+    milestone:
+      milestone === null
+        ? null
+        : {
+            number: milestone.number,
+            title: milestone.title,
+            state: milestone.state === "OPEN" ? "open" : "closed",
+            dueAt: milestone.dueOn,
+            url: milestoneUrl(host, repository, milestone.number),
+            openCount: milestone.openIssues.totalCount,
+            closedCount: milestone.closedIssues.totalCount,
+          },
+    createdAt: issue.createdAt,
+    updatedAt: issue.updatedAt,
+    commentCount: issue.comments.totalCount,
+  };
+}
+
+/** Closing pull requests first, then ones that only mention the issue, each listed once. */
+function linkedPullRequests(issue: GraphQlIssue): IssueLinkedPullRequest[] {
+  const referencing = presentNodes(issue.timelineItems).flatMap(({ source }) =>
+    source != null && "number" in source ? [source] : [],
+  );
+  const candidates: Array<readonly [GraphQlPullRequest, boolean]> = [
+    ...presentNodes(issue.closedByPullRequestsReferences).map((pr) => [pr, true] as const),
+    ...referencing.map((pr) => [pr, false] as const),
+  ];
+  const linked = new Map<string, IssueLinkedPullRequest>();
+  for (const [pr, closesIssue] of candidates) {
+    const key = `${pr.repository.nameWithOwner.toLowerCase()}#${pr.number}`;
+    if (linked.has(key)) continue;
+    linked.set(key, {
+      repository: pr.repository.nameWithOwner,
+      number: pr.number,
+      title: pr.title,
+      state: pr.state === "OPEN" ? "open" : pr.state === "MERGED" ? "merged" : "closed",
+      isDraft: pr.isDraft,
+      url: pr.url,
+      closesIssue,
+    });
+  }
+  return [...linked.values()];
 }
 
 function responseFromStdout(stdout: string): ApiResponse | null {
@@ -437,6 +653,11 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     readonly scope: IssueRepositoryScope;
     readonly endpoint: string;
     readonly maxOutputBytes: number;
+    /** Sent over stdin to the `graphql` endpoint. */
+    readonly graphql?: {
+      readonly query: string;
+      readonly variables: Readonly<Record<string, string | number>>;
+    };
   }): Effect.fn.Return<ApiResponse, IssueReadError> {
     const key = { provider: "github" as const, host: input.scope.host };
     const lease = yield* rateLimits
@@ -454,7 +675,11 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     return yield* github
       .execute({
         cwd: input.scope.cwd,
-        args: ["api", "--include", "--hostname", input.scope.host, input.endpoint],
+        args:
+          input.graphql === undefined
+            ? ["api", "--include", "--hostname", input.scope.host, input.endpoint]
+            : ["api", "--include", "--hostname", input.scope.host, "graphql", "--input", "-"],
+        ...(input.graphql === undefined ? {} : { stdin: encodeGraphQlRequest(input.graphql) }),
         timeoutMs: API_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes,
         allowNonZeroExit: true,
@@ -471,9 +696,12 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               );
             }
             const response = responseFromStdout(result.stdout);
+            // gh also exits non-zero for a 200 GraphQL answer that carries errors; the caller
+            // reads those from the body.
             if (
               response === null ||
-              (result.exitCode !== 0 && (!response.httpEnvelope || response.status < 400))
+              (result.exitCode !== 0 &&
+                (!response.httpEnvelope || (response.status < 400 && input.graphql === undefined)))
             ) {
               return yield* readError(
                 input.operation,
@@ -481,7 +709,13 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 "GitHub returned an invalid response.",
               );
             }
-            if (isRateLimitedResponse(response)) {
+            const graphQlRateLimited =
+              input.graphql !== undefined &&
+              Option.match(decodeGraphQlErrors(response.body), {
+                onNone: () => false,
+                onSome: ({ errors }) => errors?.some((e) => e.type === "RATE_LIMITED") === true,
+              });
+            if (graphQlRateLimited || isRateLimitedResponse(response)) {
               const retryAt = retryAtFromHeaders(response.headers, yield* Clock.currentTimeMillis);
               return yield* readError(
                 input.operation,
@@ -691,33 +925,51 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                   "The issue is not accessible to this account.",
                 );
               }
+              const [owner, name] = scope.repository.split("/");
               const response = yield* executeApi({
                 operation: "detail",
                 scope,
-                endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.number}`,
+                endpoint: "graphql",
                 maxOutputBytes: DETAIL_MAX_OUTPUT_BYTES,
+                graphql: {
+                  query: ISSUE_DETAIL_QUERY,
+                  variables: { owner: owner!, name: name!, number: input.number },
+                },
               });
-              const raw = yield* Schema.decodeEffect(Schema.fromJsonString(RawIssueSchema))(
-                response.body,
-              ).pipe(
+              const decoded = yield* decodeGraphQlIssueDetail(response.body).pipe(
                 Effect.mapError(() =>
                   readError("detail", "invalid-response", "GitHub returned an invalid issue."),
                 ),
               );
-              if (Object.hasOwn(raw, "pull_request")) {
+              // A missing repository or number comes back as null data plus a NOT_FOUND error.
+              const raw = decoded.data?.repository?.issueOrPullRequest ?? null;
+              if (raw === null) {
+                return yield* readError(
+                  "detail",
+                  "inaccessible",
+                  "The issue is not accessible to this account.",
+                );
+              }
+              if (raw.__typename !== "Issue") {
                 return yield* readError(
                   "detail",
                   "unsupported",
                   "Pull requests are not GitHub issues.",
                 );
               }
-              const issue = normalizeIssue(scope.host, scope.repository, raw);
               return {
                 repository: { host: scope.host, repository: scope.repository },
                 viewer: { accountId: identity.accountId, login: identity.viewer },
                 fetchedAt: DateTime.formatIso(yield* DateTime.now),
-                issue,
+                issue: normalizeGraphQlIssue(scope.host, scope.repository, raw),
                 body: raw.body ?? "",
+                comments: presentNodes(raw.comments).map((comment) => ({
+                  author: comment.author === null ? null : normalizeGraphQlActor(comment.author),
+                  body: comment.body,
+                  createdAt: comment.createdAt,
+                  url: comment.url,
+                })),
+                linkedPullRequests: linkedPullRequests(raw),
               } satisfies IssueDetailResultType;
             }),
         )

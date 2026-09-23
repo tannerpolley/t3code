@@ -1,7 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
-import type { EnvironmentId, IssueRef, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueComment,
+  IssueLinkedPullRequest,
+  IssueRef,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   EnvironmentAuthorizationError as EnvironmentAuthorizationErrorClass,
   IssueReadError as IssueReadErrorClass,
@@ -22,6 +28,8 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
+import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
+import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { issueEnvironment } from "~/state/issues";
@@ -103,6 +111,114 @@ function retryDeadline(retryAt: number): string {
   return Number.isNaN(date.getTime()) ? String(retryAt) : date.toLocaleString();
 }
 
+function LinkedPullRequests({
+  pullRequests,
+  issueRepository,
+  threadRef,
+}: {
+  readonly pullRequests: ReadonlyArray<IssueLinkedPullRequest>;
+  readonly issueRepository: string;
+  readonly threadRef: ScopedThreadRef | null;
+}) {
+  // Without a thread this opens the pull requests page, or the link itself when no project matches.
+  const openPrLink = useOpenPrLink(threadRef ?? undefined);
+  return (
+    <section className="mb-5">
+      <h2 className="mb-1.5 text-xs text-muted-foreground">Linked pull requests</h2>
+      <ul className="flex flex-col gap-0.5">
+        {pullRequests.map((pr) => {
+          const url = safeExternalUrl(pr.url);
+          const presentation =
+            PULL_REQUEST_STATE_PRESENTATION[pr.state === "open" && pr.isDraft ? "draft" : pr.state];
+          return (
+            <li key={`${pr.repository}#${pr.number}`}>
+              <a
+                className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-accent"
+                href={url ?? undefined}
+                onClick={url ? (event) => openPrLink(event, url) : undefined}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                <presentation.Icon
+                  aria-label={presentation.label}
+                  className={cn("size-3.5 shrink-0", presentation.toneClassName)}
+                />
+                <span className="min-w-0 flex-1 truncate text-foreground">
+                  {pr.repository.toLowerCase() === issueRepository.toLowerCase() ? null : (
+                    <span className="font-mono text-muted-foreground">{pr.repository} </span>
+                  )}
+                  <span className="text-muted-foreground">#{pr.number}</span> {pr.title}
+                </span>
+                {pr.closesIssue ? (
+                  <Badge className="shrink-0" size="sm" variant="outline">
+                    closes
+                  </Badge>
+                ) : null}
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function IssueComments({
+  comments,
+  totalCount,
+  issueUrl,
+  environmentId,
+  threadRef,
+}: {
+  readonly comments: ReadonlyArray<IssueComment>;
+  readonly totalCount: number;
+  readonly issueUrl: string | null;
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef | null;
+}) {
+  const hidden = totalCount - comments.length;
+  return (
+    <section className="mt-5 flex flex-col gap-4 border-t border-border/50 pt-4">
+      {hidden > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          {hidden} earlier {hidden === 1 ? "comment" : "comments"} not shown
+          {issueUrl ? (
+            <>
+              {" · "}
+              <a
+                className="underline-offset-2 hover:text-foreground hover:underline"
+                href={issueUrl}
+                rel="noopener noreferrer"
+                target="_blank"
+              >
+                Open on GitHub
+              </a>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+      {comments.map((comment) => (
+        <article key={comment.url} className="min-w-0">
+          <p className="mb-1.5 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">{actorLabel(comment.author)}</span>{" "}
+            commented {formatRelativeTimeLabel(comment.createdAt)}
+          </p>
+          {comment.body.trim().length > 0 ? (
+            <ChatMarkdown
+              cwd={undefined}
+              environmentId={environmentId}
+              threadRef={threadRef ?? undefined}
+              text={comment.body}
+            />
+          ) : (
+            <p className="text-sm italic text-muted-foreground">No content.</p>
+          )}
+        </article>
+      ))}
+    </section>
+  );
+}
+
 export function IssueDetailPanel({
   environmentId,
   reference,
@@ -159,7 +275,7 @@ export function IssueDetailPanel({
     );
   }
 
-  const { issue, body, repository } = query.data;
+  const { issue, body, repository, comments, linkedPullRequests } = query.data;
   const issueUrl = safeExternalUrl(issue.url);
   const canOpenBesideThread = threadRef !== null && onOpenBesideThread !== undefined;
   return (
@@ -279,6 +395,13 @@ export function IssueDetailPanel({
               : "None"}
           </dd>
         </dl>
+        {linkedPullRequests.length > 0 ? (
+          <LinkedPullRequests
+            issueRepository={repository.repository}
+            pullRequests={linkedPullRequests}
+            threadRef={threadRef}
+          />
+        ) : null}
         <div className="border-t border-border/50 pt-4">
           {body.trim().length > 0 ? (
             <ChatMarkdown
@@ -291,6 +414,15 @@ export function IssueDetailPanel({
             <p className="text-sm italic text-muted-foreground">No description.</p>
           )}
         </div>
+        {issue.commentCount > 0 ? (
+          <IssueComments
+            comments={comments}
+            environmentId={environmentId}
+            issueUrl={issueUrl}
+            threadRef={threadRef}
+            totalCount={issue.commentCount}
+          />
+        ) : null}
         {query.isPending ? (
           <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
             <Spinner className="size-3" /> Refreshing issue…

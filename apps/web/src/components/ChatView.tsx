@@ -10219,6 +10219,7 @@ export default function ChatView(props: ChatViewProps) {
     threadId: activeThread.id,
     ...(draftId ? { draftId } : {}),
     activeProjectName: activeProject?.title,
+    activeProjectRepositoryIdentity: activeProject?.repositoryIdentity,
     activeProjectScripts: activeProject?.scripts,
     preferredScriptId: activeProject
       ? (lastInvokedScriptByProjectId[activeProject.id] ?? null)
