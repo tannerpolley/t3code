@@ -943,6 +943,45 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("waiting");
   });
 
+  it("reports waiting on background work below approval, input, and a failed turn", () => {
+    const backgroundWait = { ...runtime, status: "idle" as const };
+    const latestRun = (status: "completed" | "failed") => ({
+      runId: "run-1" as never,
+      status,
+      requestedAt: null,
+      startedAt: null,
+      completedAt: null,
+      assistantMessageId: null,
+    });
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime: backgroundWait,
+        latestRun: latestRun("completed"),
+      }),
+    ).toBe("waiting");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, runtime: backgroundWait }),
+    ).toBe("approval");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true, runtime: backgroundWait }),
+    ).toBe("input");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime: backgroundWait,
+        latestRun: latestRun("failed"),
+      }),
+    ).toBe("failed");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime: { ...backgroundWait, lastErrorClass: "usage_limit" as const },
+        latestRun: latestRun("failed"),
+      }),
+    ).toBe("limited");
+  });
+
   it("defaults to ready with no runtime", () => {
     expect(resolveSidebarThreadStatus(idle)).toBe("ready");
   });

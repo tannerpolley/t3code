@@ -296,6 +296,8 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { BackgroundWorkTaskList } from "./chat/BackgroundWorkTaskList";
+import { describeBackgroundWorkTasks } from "./chat/BackgroundWorkTaskList.logic";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
@@ -6779,11 +6781,15 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
   }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+  // Collapsed by default, and per thread: switching threads never carries an open list along.
+  const [expandedBackgroundWorkThreadId, setExpandedBackgroundWorkThreadId] =
+    useState<ThreadId | null>(null);
   const backgroundWorkBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (activeBackgroundTasks.length === 0 || !activeThread) {
       return null;
     }
     const count = activeBackgroundTasks.length;
+    const expanded = expandedBackgroundWorkThreadId === activeThread.id;
     return {
       id: `background-work:${activeThread.id}`,
       variant: "default",
@@ -6795,19 +6801,47 @@ export default function ChatView(props: ChatViewProps) {
         />
       ),
       title: count === 1 ? "Waiting on background task" : `Waiting on ${count} background tasks`,
-      description: activeBackgroundTasks.map((task) => task.description || task.taskId).join(", "),
+      description: expanded
+        ? undefined
+        : activeBackgroundTasks.map((task) => task.description || task.taskId).join(", "),
+      children:
+        expanded && serverProjection ? (
+          <BackgroundWorkTaskList
+            environmentId={environmentId}
+            rows={describeBackgroundWorkTasks(activeBackgroundTasks, serverProjection)}
+          />
+        ) : undefined,
       actions: (
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={isStoppingBackgroundWork}
-          onClick={() => void handleStopBackgroundWork()}
-        >
-          {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
-        </Button>
+        <>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={isStoppingBackgroundWork}
+            onClick={() => void handleStopBackgroundWork()}
+          >
+            {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-expanded={expanded}
+            aria-label={expanded ? "Hide background tasks" : "Show background tasks"}
+            onClick={() => setExpandedBackgroundWorkThreadId(expanded ? null : activeThread.id)}
+          >
+            <ChevronDownIcon className={cn("size-3.5", !expanded && "rotate-180")} />
+          </Button>
+        </>
       ),
     };
-  }, [activeBackgroundTasks, activeThread, handleStopBackgroundWork, isStoppingBackgroundWork]);
+  }, [
+    activeBackgroundTasks,
+    activeThread,
+    environmentId,
+    expandedBackgroundWorkThreadId,
+    handleStopBackgroundWork,
+    isStoppingBackgroundWork,
+    serverProjection,
+  ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
   // pill); sending a message clears it as a side effect of the send path.

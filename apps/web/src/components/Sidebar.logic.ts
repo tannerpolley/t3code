@@ -904,7 +904,8 @@ export function shouldRecedeSidebarThread(input: {
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
->;
+> &
+  Partial<Pick<SidebarThreadSummary, "latestRun">>;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals) {
@@ -919,11 +920,16 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   ) {
     return "working";
   }
+  // Runtime parks at "idle" while background work is pending, which would hide a failed
+  // turn; the latest run keeps the real outcome.
+  const failed =
+    thread.runtime?.status === "failed" ||
+    (thread.runtime?.status === "idle" && thread.latestRun?.status === "failed");
+  if (failed) {
+    return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "failed";
+  }
   if (thread.runtime?.status === "idle") {
     return "waiting";
-  }
-  if (thread.runtime?.status === "failed") {
-    return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   return "ready";
 }

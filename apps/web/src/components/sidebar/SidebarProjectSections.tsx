@@ -1139,6 +1139,14 @@ function ThreadStatusMark({ status }: { readonly status: SidebarThreadStatus }) 
       return (
         <Spinner aria-label="Working" className={cn(iconClass, "text-sidebar-muted-foreground")} />
       );
+    case "waiting":
+      // Its own turn is done but subagents or background tasks still run: same spinner, amber, half speed.
+      return (
+        <Spinner
+          aria-label="Waiting on background work"
+          className={cn(iconClass, "text-amber-500 [animation-duration:2s]!")}
+        />
+      );
     case "approval":
       return <CircleAlertIcon aria-hidden className={cn(iconClass, "text-amber-500")} />;
     case "input":
@@ -1148,7 +1156,6 @@ function ThreadStatusMark({ status }: { readonly status: SidebarThreadStatus }) 
     case "limited":
       return <ClockIcon aria-hidden className={cn(iconClass, "text-amber-500")} />;
     case "ready":
-    case "waiting":
       return null;
   }
 }

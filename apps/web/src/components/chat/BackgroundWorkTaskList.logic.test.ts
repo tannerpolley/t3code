@@ -1,0 +1,54 @@
+import * as DateTime from "effect/DateTime";
+import { describe, expect, it } from "vite-plus/test";
+
+import { describeBackgroundWorkTasks } from "./BackgroundWorkTaskList.logic";
+
+const startedAt = DateTime.makeUnsafe("2026-09-23T10:00:00.000Z");
+
+describe("describeBackgroundWorkTasks", () => {
+  it("joins turn-item tasks to their subagent thread and start time", () => {
+    const projection = {
+      turnItems: [
+        {
+          id: "item-1",
+          type: "subagent",
+          subagentId: "node-1",
+          childThreadId: null,
+          nativeItemRef: { nativeId: "native-1" },
+          startedAt,
+        },
+        { id: "item-2", type: "command_execution", nativeItemRef: null, startedAt: null },
+      ],
+      subagents: [{ id: "node-1", childThreadId: "child-thread", startedAt, nativeTaskRef: null }],
+    } as never;
+    expect(
+      describeBackgroundWorkTasks(
+        [
+          { taskId: "native-1", description: "Review the diff", taskType: "subagent" },
+          { taskId: "item-2", taskType: "command_execution" },
+        ] as never,
+        projection,
+      ),
+    ).toEqual([
+      {
+        taskId: "native-1",
+        label: "Review the diff",
+        kind: "subagent",
+        startedAt: "2026-09-23T10:00:00.000Z",
+        childThreadId: "child-thread",
+      },
+      { taskId: "item-2", label: "item-2", kind: "process", startedAt: null, childThreadId: null },
+    ]);
+  });
+
+  it("classifies roster-only tasks by their task type", () => {
+    const rows = describeBackgroundWorkTasks(
+      [
+        { taskId: "bg-1", description: "sleep 20", taskType: "local_bash" },
+        { taskId: "bg-2", description: "Explore", taskType: "local_agent" },
+      ] as never,
+      { turnItems: [], subagents: [] },
+    );
+    expect(rows.map((row) => row.kind)).toEqual(["process", "subagent"]);
+  });
+});
