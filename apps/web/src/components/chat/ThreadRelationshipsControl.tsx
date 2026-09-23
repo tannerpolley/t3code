@@ -17,6 +17,7 @@ import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   isParentThreadRelationship,
+  resolveSubagentStatus,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
   type ThreadRelationshipEdge,
@@ -283,8 +284,15 @@ export function ThreadRelationshipsPanel(props: {
     { id: "previous", label: "Previous agents", rows: previous, expanded: false },
   ];
   const runningCount =
-    projection?.subagents.filter((agent) => agent.status === "running").length ??
-    active.filter(({ edge }) => edge.status === "running").length;
+    projection?.subagents.filter(
+      (agent) =>
+        lineageStatusMark(
+          resolveSubagentStatus(
+            agent,
+            agent.childThreadId === null ? null : graph.nodes.get(agent.childThreadId)?.thread,
+          ),
+        ) === "working",
+    ).length ?? active.filter(({ edge }) => lineageStatusMark(edge.status) === "working").length;
 
   if (relationshipRows.length === 0 && runningCount === 0) {
     return null;
@@ -430,7 +438,7 @@ export function ThreadRelationshipsPanel(props: {
                   provider={provider}
                   driver={providerDriver}
                   elapsed={<AgentElapsed agent={agent} />}
-                  status={agent.status}
+                  status={edge.status ?? agent.status}
                   result={agent.result}
                   progress={agent.progress}
                   parentThread={currentThread ?? undefined}
@@ -457,7 +465,7 @@ export function ThreadRelationshipsPanel(props: {
                       childThread: node?.thread ?? undefined,
                     })}
                     <span className="sr-only">
-                      , {threadTitle}, {agent.status}
+                      , {threadTitle}, {edge.status ?? agent.status}
                     </span>
                   </span>
                   {agent.startedAt ? (

@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   ThreadId,
@@ -39,6 +40,18 @@ export function resolveMergeBackTargetThreadId(
   return projection.thread.forkedFrom?.type === "run"
     ? projection.thread.forkedFrom.threadId
     : projection.thread.lineage.parentThreadId;
+}
+
+/**
+ * A subagent's display status. The parent's subagent record settles with the run that spawned
+ * it and is not reopened when the child is steered into a new run, so the child thread's own
+ * live run wins while it has one.
+ */
+export function resolveSubagentStatus(
+  subagent: Pick<OrchestrationV2Subagent, "status">,
+  childThread: Pick<OrchestrationV2ThreadShell, "activityRunStatus"> | null | undefined,
+): string {
+  return childThread?.activityRunStatus ?? subagent.status;
 }
 
 function edgeKey(edge: ThreadRelationshipEdge): string {
@@ -96,7 +109,7 @@ export function deriveThreadRelationshipGraph(input: {
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
-        status: subagent.status,
+        status: resolveSubagentStatus(subagent, threadsById.get(subagent.childThreadId)),
       });
     }
     for (const transfer of input.projection.contextTransfers) {

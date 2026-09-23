@@ -38,6 +38,36 @@ describe("thread relationships", () => {
     ]);
   });
 
+  it("shows a steered child as running even though its subagent record settled", () => {
+    const parent = ThreadId.make("thread-parent");
+    const child = ThreadId.make("thread-child");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: child,
+          title: "Delegated task",
+          activityRunStatus: "running",
+          status: "running",
+          forkedFrom: null,
+          lineage: {
+            rootThreadId: parent,
+            parentThreadId: parent,
+            relationshipToParent: "subagent",
+          },
+        },
+      ] as never,
+      projection: {
+        thread: { id: parent },
+        subagents: [{ childThreadId: child, status: "completed" }],
+        contextTransfers: [],
+      } as never,
+    });
+
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ targetThreadId: child, kind: "subagent", status: "running" }),
+    ]);
+  });
+
   it("keeps missing parents and cycles navigable without recursive traversal", () => {
     const root = ThreadId.make("thread-root");
     const child = ThreadId.make("thread-child");
