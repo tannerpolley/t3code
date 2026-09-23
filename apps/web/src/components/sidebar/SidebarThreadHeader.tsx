@@ -3,8 +3,8 @@
  *
  * Search owns the row's text and spans it. Project scope collapses to an icon
  * that sits with new-project and new-thread as a segmented group at the end.
- * The Projects view drops scope and new-thread, which its project rows already
- * offer, and adds new-section instead.
+ * With the Codex-style sidebar, the Projects view drops scope and new-thread,
+ * which its project rows already offer, and adds new-section instead.
  * The scope icon swaps to the project favicon while a project is selected,
  * so the header still names the scope after the row that showed it is gone.
  *
@@ -22,6 +22,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
+import { useClientSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SidebarMenuButton } from "../ui/sidebar";
@@ -83,7 +84,9 @@ export function SidebarThreadHeader({
   // list; pointing aria-activedescendant at a removed option strands the
   // screen reader on nothing.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
-  const projectsView = sidebarMode === "projects";
+  // Only the Codex-style Projects view trims the header; the original keeps the Activity header.
+  const projectsView =
+    useClientSettings((settings) => settings.codexStyleSidebar) && sidebarMode === "projects";
   const newThreadLabel = newThreadShortcutLabel
     ? `New thread (${newThreadShortcutLabel})`
     : "New thread";

@@ -24,6 +24,7 @@ import {
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useUiStateStore } from "../uiStateStore";
+import { useClientSettings } from "../hooks/useSettings";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
@@ -270,6 +271,7 @@ export function BranchToolbarBranchSelector({
     [refs],
   );
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
+  const branchPickerGroups = useClientSettings((settings) => settings.branchPickerGroups);
   const branchPickerCollapsedGroups = useUiStateStore((state) => state.branchPickerCollapsedGroups);
   const setBranchPickerGroupCollapsed = useUiStateStore(
     (state) => state.setBranchPickerGroupCollapsed,
@@ -279,9 +281,9 @@ export function BranchToolbarBranchSelector({
       buildBranchPickerRefItems({
         refs,
         collapsedGroups: branchPickerCollapsedGroups,
-        searching: normalizedDeferredBranchQuery.length > 0,
+        flat: normalizedDeferredBranchQuery.length > 0 || !branchPickerGroups,
       }),
-    [refs, branchPickerCollapsedGroups, normalizedDeferredBranchQuery],
+    [refs, branchPickerCollapsedGroups, normalizedDeferredBranchQuery, branchPickerGroups],
   );
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =

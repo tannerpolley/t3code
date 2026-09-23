@@ -47,6 +47,10 @@ const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 export const ProjectIconFallback = Schema.Literals(["folder", "initials"]);
 export type ProjectIconFallback = typeof ProjectIconFallback.Type;
 
+/** Which edge of the open sidebar holds its toggle; a collapsed sidebar always keeps it left. */
+export const SidebarTogglePosition = Schema.Literals(["left", "right"]);
+export type SidebarTogglePosition = typeof SidebarTogglePosition.Type;
+
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
@@ -477,6 +481,15 @@ export const ClientSettingsSchema = Schema.Struct({
   projectIconFallback: ProjectIconFallback.pipe(
     Schema.withDecodingDefault(Effect.succeed("folder" as const)),
   ),
+  // Customizations: this fork's UI changes, each switchable back to the original behavior.
+  codexStyleSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sectionFolderColors: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  versionControlIssues: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  branchPickerGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarTogglePosition: SidebarTogglePosition.pipe(
+    Schema.withDecodingDefault(Effect.succeed("left" as const)),
+  ),
+  topBackButton: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1688,6 +1701,12 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   projectIconFallback: Schema.optionalKey(ProjectIconFallback),
+  codexStyleSidebar: Schema.optionalKey(Schema.Boolean),
+  sectionFolderColors: Schema.optionalKey(Schema.Boolean),
+  versionControlIssues: Schema.optionalKey(Schema.Boolean),
+  branchPickerGroups: Schema.optionalKey(Schema.Boolean),
+  sidebarTogglePosition: Schema.optionalKey(SidebarTogglePosition),
+  topBackButton: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

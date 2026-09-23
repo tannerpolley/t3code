@@ -23,7 +23,8 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/archived"
+  | "/settings/customizations";
 
 /**
  * Where a setting can be edited. Device-local rows have no scope: they render
@@ -94,6 +95,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
+  "/settings/customizations": "Customizations",
 };
 
 /** Anchor id of the first row bound to `command` on the Keybindings page. */
@@ -330,8 +332,46 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "project-icon-fallback",
     title: "Default project icon",
-    to: "/settings/general",
+    to: "/settings/customizations",
     searchTerms: ["project icon folder initials monogram letters favicon sidebar"],
+  },
+  {
+    id: "codex-style-sidebar",
+    title: "Codex-style project sidebar",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork codex projects view chevron drag grip spinner dots"],
+  },
+  {
+    id: "section-folder-colors",
+    title: "Section folder colors",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork section folder color tint icon"],
+  },
+  {
+    id: "version-control-issues",
+    title: "Issues in Version Control",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork github issues thread details version control"],
+  },
+  {
+    id: "branch-picker-groups",
+    title: "Branch picker groups",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork branch picker current local remote collapse"],
+  },
+  {
+    id: "top-back-button",
+    title: "Back button at the top",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork back button settings sidebar top left"],
+  },
+  {
+    id: "sidebar-toggle-position",
+    // A search for "toggle sidebar" means the keybinding, so this row ranks after it.
+    title: "Toggle button position",
+    to: "/settings/customizations",
+    secondary: true,
+    searchTerms: ["customization fork sidebar toggle collapse left right corner"],
   },
   {
     id: "response-streaming",
@@ -848,6 +888,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
+  "/settings/customizations": null,
 };
 
 /** Search keeps the selected target. A missing row can explain its owning scope instead. */

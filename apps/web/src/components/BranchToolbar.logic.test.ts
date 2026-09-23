@@ -894,7 +894,7 @@ describe("buildBranchPickerRefItems", () => {
     const { items, headerByItem } = buildBranchPickerRefItems({
       refs,
       collapsedGroups: [],
-      searching: false,
+      flat: false,
     });
 
     expect(items.map((item) => headerByItem.get(item)?.label ?? item)).toEqual([
@@ -918,7 +918,7 @@ describe("buildBranchPickerRefItems", () => {
     const { items, headerByItem } = buildBranchPickerRefItems({
       refs,
       collapsedGroups: ["local"],
-      searching: false,
+      flat: false,
     });
 
     expect(items).not.toContain("main");
@@ -932,7 +932,7 @@ describe("buildBranchPickerRefItems", () => {
     const { headerByItem } = buildBranchPickerRefItems({
       refs: [ref("main"), ref("dev")],
       collapsedGroups: [],
-      searching: false,
+      flat: false,
     });
 
     expect([...headerByItem.values()].map((header) => header.group)).toEqual(["local"]);
@@ -942,7 +942,7 @@ describe("buildBranchPickerRefItems", () => {
     const { items, headerByItem } = buildBranchPickerRefItems({
       refs,
       collapsedGroups: ["current", "local", "remote"],
-      searching: true,
+      flat: true,
     });
 
     expect(items).toEqual(refs.map((candidate) => candidate.name));

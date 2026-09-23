@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
-import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -30,6 +30,39 @@ import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
+/**
+ * The page a sidebar Back leaves: Settings, a project's settings, Usage, Pull Requests or Issues.
+ * Null on thread pages, which have nothing to go back from.
+ */
+function useSidebarBack() {
+  const navigate = useNavigate();
+  const canGoBack = useCanGoBack();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const page = useLocation({
+    select: (location) =>
+      /^\/settings(?:\/|$)/.test(location.pathname)
+        ? "settings"
+        : /^\/projects\/[^/]+\/?$/.test(location.pathname)
+          ? "project-settings"
+          : location.pathname === "/usage"
+            ? "usage"
+            : location.pathname === "/pull-requests"
+              ? "pull-requests"
+              : location.pathname === "/issues"
+                ? "issues"
+                : null,
+  });
+  const goBack = useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+    if (canGoBack) {
+      window.history.back();
+      return;
+    }
+    void navigate({ to: "/" });
+  }, [canGoBack, isMobile, navigate, setOpenMobile]);
+  return { page, goBack };
+}
+
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
 }: {
@@ -45,6 +78,10 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
+  const topBackButton = useClientSettings((settings) => settings.topBackButton);
+  // With the toggle at the right edge, the header's left needs no room for it.
+  const toggleOnRight = useClientSettings((settings) => settings.sidebarTogglePosition === "right");
+  const back = useSidebarBack();
 
   return (
     <SidebarHeader
@@ -62,7 +99,36 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
-      <SidebarBrand onBackdrop={backdropVariant !== null} />
+      <div
+        className={cn(
+          "relative z-10 flex min-w-0 items-center gap-1",
+          toggleOnRight
+            ? "md:ml-[var(--workspace-controls-left)]"
+            : "md:ml-[var(--workspace-titlebar-content-left)]",
+        )}
+      >
+        {topBackButton && back.page ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <SidebarMenuButton
+                  aria-label="Back"
+                  className={cn(
+                    "size-7 shrink-0",
+                    backdropVariant && "text-white [&_svg]:text-white/90 hover:bg-white/15",
+                  )}
+                  onClick={back.goBack}
+                  size="icon"
+                >
+                  <ArrowLeftIcon />
+                </SidebarMenuButton>
+              }
+            />
+            <TooltipPopup side="bottom">Back</TooltipPopup>
+          </Tooltip>
+        ) : null}
+        <SidebarBrand onBackdrop={backdropVariant !== null} />
+      </div>
       {pillLabel ? (
         <Badge
           className="relative z-10 ml-1 hidden rounded-full px-1.5 text-muted-foreground @[15rem]/sidebar-header:inline-flex"
@@ -82,7 +148,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
+        "relative z-10 hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -130,22 +196,11 @@ function SidebarUtilityItem({
 
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
-  const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
-  const currentFooterPage = useLocation({
-    select: (location) =>
-      /^\/settings(?:\/|$)/.test(location.pathname)
-        ? "settings"
-        : /^\/projects\/[^/]+\/?$/.test(location.pathname)
-          ? "project-settings"
-          : location.pathname === "/usage"
-            ? "usage"
-            : location.pathname === "/pull-requests"
-              ? "pull-requests"
-              : location.pathname === "/issues"
-                ? "issues"
-                : null,
-  });
+  const back = useSidebarBack();
+  const topBackButton = useClientSettings((settings) => settings.topBackButton);
+  // Back sits at the top unless switched off in Customizations; then it replaces this row.
+  const showFooterBack = back.page !== null && !topBackButton;
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
   const closeMobileSidebar = useCallback(() => {
@@ -176,20 +231,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
 
-  const handleBackClick = useCallback(() => {
-    closeMobileSidebar();
-    if (canGoBack) {
-      window.history.back();
-      return;
-    }
-    void navigate({ to: "/" });
-  }, [canGoBack, closeMobileSidebar, navigate]);
-
   return (
     <SidebarMenu className="flex-row items-center">
-      {currentFooterPage ? (
+      {showFooterBack ? (
         <SidebarMenuItem className="min-w-0 flex-1">
-          <SidebarMenuButton onClick={handleBackClick}>
+          <SidebarMenuButton onClick={back.goBack}>
             <ArrowLeftIcon />
             <span>Back</span>
           </SidebarMenuButton>

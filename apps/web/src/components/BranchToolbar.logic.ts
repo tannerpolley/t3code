@@ -350,10 +350,11 @@ function branchPickerGroupOf(ref: VcsRef): BranchPickerGroup {
 export function buildBranchPickerRefItems(input: {
   refs: readonly VcsRef[];
   collapsedGroups: readonly BranchPickerGroup[];
-  searching: boolean;
+  /** One ungrouped list: while searching, or when grouping is switched off in Customizations. */
+  flat: boolean;
 }): { items: string[]; headerByItem: Map<string, BranchPickerGroupHeader> } {
   const headerByItem = new Map<string, BranchPickerGroupHeader>();
-  if (input.searching) {
+  if (input.flat) {
     return { items: input.refs.map((ref) => ref.name), headerByItem };
   }
   const namesByGroup: Record<BranchPickerGroup, string[]> = { current: [], local: [], remote: [] };

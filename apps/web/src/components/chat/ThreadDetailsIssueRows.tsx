@@ -10,6 +10,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { useClientSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironment } from "~/state/environments";
 import { issueEnvironment } from "~/state/issues";
@@ -44,10 +45,11 @@ export function ThreadDetailsIssueRows({
   threadId: ThreadId;
   repositoryIdentity: RepositoryIdentity | null | undefined;
 }) {
+  const enabled = useClientSettings((settings) => settings.versionControlIssues);
   const environment = useEnvironment(environmentId);
   const target = threadIssueRepository(repositoryIdentity);
   const capable = environment?.serverConfig?.environment.capabilities.githubIssues === true;
-  if (target === null || !capable) return null;
+  if (!enabled || target === null || !capable) return null;
   return <IssueRows environmentId={environmentId} threadId={threadId} {...target} />;
 }
 

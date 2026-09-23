@@ -26,6 +26,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import {
   CheckIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   CircleXIcon,
   ClockIcon,
@@ -34,8 +35,10 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
+  GripVerticalIcon,
   MessageCircleQuestionIcon,
   PaletteIcon,
+  PlusIcon,
   SettingsIcon,
   SquarePenIcon,
   Trash2Icon,
@@ -64,6 +67,7 @@ import type { SidebarThreadSummary } from "../../types";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore";
 import { cn } from "~/lib/utils";
+import { useClientSettings } from "../../hooks/useSettings";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 import { Button } from "../ui/button";
 import {
@@ -86,7 +90,7 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { SidebarGroup, SidebarMenu, SidebarMenuButton } from "../ui/sidebar";
+import { SidebarGroup, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { Spinner } from "../ui/spinner";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
@@ -157,7 +161,9 @@ interface SidebarProjectSectionsProps {
   readonly sections: readonly SidebarProjectSection[];
   readonly selectedProjectKey: string | null;
   readonly onSelectProject: (projectKey: string | null) => void;
+  readonly onAddProject: () => void;
   /** Opens the section name dialog, which the sidebar owns so its header can create sections. */
+  readonly onNewSection: () => void;
   readonly onRenameSection: (section: { readonly id: string; readonly name: string }) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
@@ -177,6 +183,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const {
     activeThreadKey,
     isProjectExpanded,
+    onAddProject,
+    onNewSection,
     onRenameSection,
     onNewThreadInProject,
     onOpenProjectSettings,
@@ -190,6 +198,9 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     selectedProjectKey,
     threadsByProjectKey,
   } = props;
+  // Off restores the original Projects view: heading, action row, All projects, chevrons and grips.
+  const codexStyle = useClientSettings((settings) => settings.codexStyleSidebar);
+  const folderColors = useClientSettings((settings) => settings.sectionFolderColors);
   const deleteSection = useUiStateStore((store) => store.deleteSidebarProjectSection);
   const setCustomSectionExpanded = useUiStateStore(
     (store) => store.setSidebarProjectSectionExpanded,
@@ -272,10 +283,13 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    // Space picks a row up; Enter stays the row's own expand and collapse.
+    // Codex style drags whole rows, so Space picks a row up and Enter stays the row's own expand
+    // and collapse. Otherwise a grip button is the handle and takes the default Space or Enter.
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
-      keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] },
+      ...(codexStyle
+        ? { keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] } }
+        : {}),
     }),
   );
   // The pointer sits over a project and its section at once; the project is the precise target.
@@ -370,6 +384,32 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
 
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden px-1 py-1">
+      {codexStyle ? null : (
+        <div className="mb-1 px-2">
+          <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
+          <div className="mt-1 grid grid-cols-2 gap-1">
+            <Button
+              className="justify-start"
+              onClick={onAddProject}
+              size="xs"
+              variant="ghost-muted"
+            >
+              <PlusIcon />
+              Add project
+            </Button>
+            <Button
+              className="justify-start"
+              data-testid="sidebar-create-project-section"
+              onClick={onNewSection}
+              size="xs"
+              variant="ghost-muted"
+            >
+              <FolderPlusIcon />
+              New section
+            </Button>
+          </div>
+        </div>
+      )}
       <DndContext
         collisionDetection={collisionDetection}
         onDragCancel={handleDragCancel}
@@ -379,6 +419,18 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         sensors={sensors}
       >
         <SidebarMenu className="gap-px">
+          {codexStyle ? null : (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={selectedProjectKey === null}
+                onClick={() => onSelectProject(null)}
+                size="sm"
+              >
+                <FolderIcon className="text-icon-muted" />
+                <span>All projects</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
           <SortableContext
             items={renderedSections
               .filter((section) => section.custom)
@@ -388,6 +440,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
             {renderedSections.map((section) => (
               <ProjectSection
                 key={section.id}
+                codexStyle={codexStyle}
+                folderColors={folderColors}
                 drop={projectDrop?.sectionId === section.id ? projectDrop : null}
                 onDelete={deleteSection}
                 onMoveProject={moveProject}
@@ -423,6 +477,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
 
 const ProjectSection = memo(function ProjectSection(props: {
   readonly section: SidebarProjectSectionRender;
+  readonly codexStyle: boolean;
+  readonly folderColors: boolean;
   /** Where a dragged project would land in this section, if here. */
   readonly drop: ProjectDrop | null;
   readonly sections: readonly SidebarProjectSectionRender[];
@@ -464,13 +520,17 @@ const ProjectSection = memo(function ProjectSection(props: {
       className={cn("group/section rounded-md", highlighted && "bg-sidebar-row-selected/60")}
     >
       <SortableSectionHeader
+        codexStyle={props.codexStyle}
+        folderColors={props.folderColors}
         onDelete={props.onDelete}
         onOpenRename={props.onOpenRename}
         onSetExpanded={props.onSetExpanded}
         section={props.section}
       />
       {expanded ? (
-        <ul>
+        <ul
+          className={props.codexStyle ? undefined : "ms-3 border-sidebar-border/60 border-s ps-1"}
+        >
           <SortableContext items={[...sectionProjectKeys]} strategy={verticalListSortingStrategy}>
             {sectionProjectKeys.map((projectKey) => {
               const project = props.projectByKey.get(projectKey);
@@ -478,6 +538,7 @@ const ProjectSection = memo(function ProjectSection(props: {
                 <Fragment key={projectKey}>
                   {props.drop?.beforeKey === projectKey ? <ProjectDropLine /> : null}
                   <SortableProjectRow
+                    codexStyle={props.codexStyle}
                     onMoveProject={props.onMoveProject}
                     onNewThreadInProject={props.onNewThreadInProject}
                     onOpenProjectSettings={props.onOpenProjectSettings}
@@ -489,7 +550,7 @@ const ProjectSection = memo(function ProjectSection(props: {
                     onThreadContextMenu={props.onThreadContextMenu}
                     onToggleProject={props.onToggleProject}
                     project={project}
-                    folderColor={props.section.color}
+                    folderColor={props.folderColors ? props.section.color : undefined}
                     sectionId={props.section.custom ? props.section.id : null}
                     sections={props.sections}
                     selected={props.selectedProjectKey === projectKey}
@@ -513,6 +574,8 @@ const ProjectSection = memo(function ProjectSection(props: {
 
 function SortableSectionHeader(props: {
   readonly section: SidebarProjectSectionRender;
+  readonly codexStyle: boolean;
+  readonly folderColors: boolean;
   readonly onOpenRename: (section: SidebarProjectSectionRender) => void;
   readonly onDelete: (sectionId: string) => void;
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
@@ -527,8 +590,28 @@ function SortableSectionHeader(props: {
     disabled: !section.custom,
     id: sectionDragId(section.id),
   });
-  const { attributes, listeners, setNodeRef, isDragging, transform, transition } = sortable;
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    isDragging,
+    transform,
+    transition,
+  } = sortable;
+  const { codexStyle } = props;
   const expanded = !section.collapsed;
+  const chevron = (
+    <ChevronDownIcon
+      aria-hidden
+      className={cn(
+        "size-3 shrink-0 transition-transform",
+        codexStyle &&
+          "opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100",
+        !expanded && "-rotate-90",
+      )}
+    />
+  );
 
   return (
     <div
@@ -543,24 +626,23 @@ function SortableSectionHeader(props: {
         transition,
       }}
     >
-      {/* The whole header drags a custom section; the chevron shows while the section is hovered. */}
+      {/* Codex style drags a custom section by its whole header and shows the chevron on hover;
+          otherwise a grip button drags it. */}
       <button
-        {...(section.custom ? { ...attributes, ...listeners } : {})}
+        {...(section.custom && codexStyle ? { ...attributes, ...listeners } : {})}
         aria-expanded={expanded}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md px-1 text-left text-xs font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        className={cn(
+          "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left text-xs font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+          codexStyle ? "gap-1" : "gap-1.5",
+        )}
         onClick={() => {
           props.onSetExpanded(section.id, !expanded);
         }}
         type="button"
       >
+        {codexStyle ? null : chevron}
         <span className="truncate">{projectSectionName(section)}</span>
-        <ChevronDownIcon
-          aria-hidden
-          className={cn(
-            "size-3 shrink-0 opacity-0 transition-transform group-hover/section:opacity-100 group-focus-within/section:opacity-100",
-            !expanded && "-rotate-90",
-          )}
-        />
+        {codexStyle ? chevron : null}
         <span className="ms-auto shrink-0 text-[10px] text-sidebar-muted-foreground/55">
           {section.projectKeys.length}
         </span>
@@ -575,6 +657,18 @@ function SortableSectionHeader(props: {
           >
             <FolderPlusIcon aria-hidden className="size-3.5" />
           </button>
+          {codexStyle ? null : (
+            <button
+              aria-label={`Reorder ${section.name} section`}
+              className="inline-flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
+              ref={setActivatorNodeRef}
+              type="button"
+              {...attributes}
+              {...listeners}
+            >
+              <GripVerticalIcon aria-hidden className="size-3.5" />
+            </button>
+          )}
           <Menu>
             <MenuTrigger
               render={
@@ -598,32 +692,34 @@ function SortableSectionHeader(props: {
                 <SettingsIcon />
                 Rename section
               </MenuItem>
-              <MenuSub>
-                <MenuSubTrigger>
-                  <PaletteIcon />
-                  Folder color
-                </MenuSubTrigger>
-                <MenuSubPopup>
-                  <MenuItem onClick={() => setSectionColor(section.id, null)}>
-                    <span aria-hidden className="size-3 rounded-full border border-border" />
-                    None
-                    {section.color === undefined ? <CheckIcon className="ms-auto" /> : null}
-                  </MenuItem>
-                  {PROJECT_ICON_COLORS.map((color) => (
-                    <MenuItem
-                      key={color.value}
-                      onClick={() => setSectionColor(section.id, color.value)}
-                    >
-                      <span
-                        aria-hidden
-                        className={cn("size-3 rounded-full", color.swatchClassName)}
-                      />
-                      {color.label}
-                      {section.color === color.value ? <CheckIcon className="ms-auto" /> : null}
+              {props.folderColors ? (
+                <MenuSub>
+                  <MenuSubTrigger>
+                    <PaletteIcon />
+                    Folder color
+                  </MenuSubTrigger>
+                  <MenuSubPopup>
+                    <MenuItem onClick={() => setSectionColor(section.id, null)}>
+                      <span aria-hidden className="size-3 rounded-full border border-border" />
+                      None
+                      {section.color === undefined ? <CheckIcon className="ms-auto" /> : null}
                     </MenuItem>
-                  ))}
-                </MenuSubPopup>
-              </MenuSub>
+                    {PROJECT_ICON_COLORS.map((color) => (
+                      <MenuItem
+                        key={color.value}
+                        onClick={() => setSectionColor(section.id, color.value)}
+                      >
+                        <span
+                          aria-hidden
+                          className={cn("size-3 rounded-full", color.swatchClassName)}
+                        />
+                        {color.label}
+                        {section.color === color.value ? <CheckIcon className="ms-auto" /> : null}
+                      </MenuItem>
+                    ))}
+                  </MenuSubPopup>
+                </MenuSub>
+              ) : null}
               <MenuSeparator />
               <MenuItem onClick={() => props.onDelete(section.id)} variant="destructive">
                 <Trash2Icon />
@@ -639,6 +735,7 @@ function SortableSectionHeader(props: {
 
 const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly project: SidebarProjectSnapshot;
+  readonly codexStyle: boolean;
   readonly folderColor: ProjectIconColor | undefined;
   readonly sectionId: string | null;
   readonly sections: readonly SidebarProjectSectionRender[];
@@ -658,8 +755,8 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   ) => void;
   readonly threads: readonly SidebarThreadSummary[];
 }) {
-  const { project } = props;
-  const { attributes, isDragging, listeners, setNodeRef } = useSortable({
+  const { project, codexStyle } = props;
+  const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef } = useSortable({
     data: {
       type: "project",
       sectionId: props.sectionId,
@@ -674,11 +771,15 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
     // Rows stay put while dragging; the drop line shows where this one lands.
     <li ref={setNodeRef} className={cn("relative rounded-md", isDragging && "opacity-40")}>
       <div className="group/project-row relative">
+        {/* Codex style drags the whole row; otherwise the grip button is the handle. */}
         <SidebarMenuButton
-          {...attributes}
-          {...listeners}
+          {...(codexStyle ? { ...attributes, ...listeners } : {})}
           aria-expanded={props.isProjectExpanded}
-          className="group-hover/project-row:pe-14 group-focus-within/project-row:pe-14 pointer-coarse:pe-14"
+          className={
+            codexStyle
+              ? "group-hover/project-row:pe-14 group-focus-within/project-row:pe-14 pointer-coarse:pe-14"
+              : "pe-12"
+          }
           isActive={props.selected}
           onClick={() => {
             props.onToggleProject(project.projectKey, !props.isProjectExpanded);
@@ -686,11 +787,20 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           size="sm"
           title={project.displayName}
         >
+          {codexStyle ? null : (
+            <ChevronRightIcon
+              aria-hidden
+              className={cn(
+                "size-3 shrink-0 text-icon-muted transition-transform",
+                props.isProjectExpanded && "rotate-90",
+              )}
+            />
+          )}
           <ProjectFavicon
             className="size-4"
             folderColor={props.folderColor}
             project={project}
-            {...(props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
+            {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
           />
           <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
           {props.threads.length > 0 ? (
@@ -704,14 +814,27 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           ) : null}
         </SidebarMenuButton>
         <div className="pointer-events-none absolute inset-y-0 end-1 flex items-center gap-px">
-          <button
-            aria-label={`New thread in ${project.displayName}`}
-            className="pointer-events-auto inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:opacity-100 group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
-            onClick={() => props.onNewThreadInProject(project)}
-            type="button"
-          >
-            <SquarePenIcon aria-hidden className="size-3.5" />
-          </button>
+          {codexStyle ? (
+            <button
+              aria-label={`New thread in ${project.displayName}`}
+              className="pointer-events-auto inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:opacity-100 group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
+              onClick={() => props.onNewThreadInProject(project)}
+              type="button"
+            >
+              <SquarePenIcon aria-hidden className="size-3.5" />
+            </button>
+          ) : (
+            <button
+              aria-label={`Reorder ${project.displayName}`}
+              className="pointer-events-auto inline-flex size-6 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
+              ref={setActivatorNodeRef}
+              type="button"
+              {...attributes}
+              {...listeners}
+            >
+              <GripVerticalIcon aria-hidden className="size-3.5" />
+            </button>
+          )}
           <Menu>
             <MenuTrigger
               render={
@@ -775,10 +898,11 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
         </div>
       </div>
       {props.isProjectExpanded ? (
-        <ul className="ps-6">
+        <ul className={codexStyle ? "ps-6" : "ms-5 border-sidebar-border/60 border-s ps-2"}>
           {props.threads.map((thread) => (
             <SidebarProjectThreadRow
               key={`${thread.environmentId}:${thread.id}`}
+              codexStyle={codexStyle}
               activeThreadKey={props.activeThreadKey}
               onClick={props.onThreadClick}
               onContextMenu={props.onThreadContextMenu}
@@ -805,6 +929,16 @@ function ProjectDragPreview(props: { readonly project: SidebarProjectSnapshot | 
     </div>
   );
 }
+
+const THREAD_STATUS_DOT_CLASS: Record<SidebarThreadStatus, string> = {
+  approval: "bg-amber-500",
+  failed: "bg-red-500",
+  input: "bg-indigo-500",
+  ready: "bg-emerald-500/70",
+  waiting: "bg-sky-500/60",
+  limited: "bg-amber-500/60",
+  working: "bg-sky-500",
+};
 
 /** The right-side mark for a thread that is running or needs you; settled threads show none. */
 function ThreadStatusMark({ status }: { readonly status: SidebarThreadStatus }) {
@@ -845,6 +979,8 @@ function compactThreadTime(thread: SidebarThreadSummary): string {
 
 function SidebarProjectThreadRow(props: {
   readonly thread: SidebarThreadSummary;
+  /** Codex style marks status on the right; otherwise a dot leads the row. */
+  readonly codexStyle: boolean;
   readonly activeThreadKey: string | null;
   readonly onClick: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
   readonly onContextMenu: (
@@ -875,11 +1011,17 @@ function SidebarProjectThreadRow(props: {
           props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });
         }}
       >
+        {props.codexStyle ? null : (
+          <span
+            aria-hidden
+            className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
+          />
+        )}
         <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
         <span className="shrink-0 text-[10px] text-sidebar-muted-foreground/55">
           {compactThreadTime(props.thread)}
         </span>
-        <ThreadStatusMark status={status} />
+        {props.codexStyle ? <ThreadStatusMark status={status} /> : null}
       </button>
     </li>
   );
