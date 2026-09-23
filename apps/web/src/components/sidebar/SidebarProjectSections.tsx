@@ -11,6 +11,7 @@ import {
   type CollisionDetection,
   type DragCancelEvent,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import {
@@ -25,17 +26,21 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import {
   CheckIcon,
   ChevronDownIcon,
-  ChevronRightIcon,
+  CircleAlertIcon,
+  CircleXIcon,
+  ClockIcon,
   EllipsisIcon,
   FilterIcon,
   FolderIcon,
-  GripVerticalIcon,
+  FolderOpenIcon,
+  MessageCircleQuestionIcon,
   PaletteIcon,
   SettingsIcon,
   SquarePenIcon,
   Trash2Icon,
 } from "lucide-react";
 import {
+  Fragment,
   memo,
   useCallback,
   useMemo,
@@ -74,8 +79,14 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { SidebarGroup, SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
+import { SidebarGroup, SidebarMenu, SidebarMenuButton } from "../ui/sidebar";
+import { Spinner } from "../ui/spinner";
 import { ProjectFavicon } from "../ProjectFavicon";
+import {
+  resolveProjectDrop,
+  type ProjectDrop,
+  type ProjectDropOver,
+} from "./SidebarProjectSections.logic";
 
 const UNGROUPED_SECTION_ID = "__ungrouped__";
 
@@ -120,8 +131,14 @@ function sectionIdFromDragData(
   return data.sectionId;
 }
 
-function sectionIdForDrop(sectionId: string | null | undefined): string | null | undefined {
-  return sectionId === UNGROUPED_SECTION_ID ? null : sectionId;
+/** What the pointer is over, in the terms the drop logic reads. */
+function projectDropOverOf(
+  over: { readonly id: string | number; readonly data: { readonly current?: unknown } } | null,
+): ProjectDropOver | null {
+  const data = over?.data.current as SidebarProjectDragData | undefined;
+  if (!over || !data) return null;
+  if (data.type === "project") return { type: "project", projectKey: String(over.id) };
+  return { type: "section", sectionId: data.sectionId ?? UNGROUPED_SECTION_ID };
 }
 
 function projectSectionName(section: SidebarProjectSectionRender): string {
@@ -180,6 +197,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   );
   const reorderSections = useUiStateStore((store) => store.reorderSidebarProjectSections);
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
+  const [projectDrop, setProjectDrop] = useState<ProjectDrop | null>(null);
 
   const projectByKey = useMemo(
     () => new Map(projects.map((project) => [project.projectKey, project] as const)),
@@ -231,12 +249,24 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   );
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    // Space picks a row up; Enter stays the row's own expand and collapse.
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+      keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] },
+    }),
   );
+  // The pointer sits over a project and its section at once; the project is the precise target.
   const collisionDetection = useCallback<CollisionDetection>((args) => {
     const pointerCollisions = pointerWithin(args);
-    return pointerCollisions.length > 0 ? pointerCollisions : closestCorners(args);
+    if (pointerCollisions.length === 0) return closestCorners(args);
+    const typeOf = (collision: (typeof pointerCollisions)[number]) =>
+      args.droppableContainers.find((container) => container.id === collision.id)?.data.current
+        ?.type;
+    const preferred =
+      pointerCollisions.find((collision) => typeOf(collision) === "project") ??
+      pointerCollisions.find((collision) => typeOf(collision) === "section");
+    return preferred ? [preferred] : pointerCollisions;
   }, []);
 
   const openRenameDialog = useCallback(
@@ -251,13 +281,32 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     setActiveProjectKey(activeData?.type === "project" ? String(event.active.id) : null);
   }, []);
 
+  const handleDragOver = useCallback(
+    (event: DragOverEvent) => {
+      const activeData = event.active.data.current as SidebarProjectDragData | undefined;
+      const over = projectDropOverOf(event.over);
+      setProjectDrop(
+        activeData?.type === "project" && over
+          ? resolveProjectDrop({
+              projectKey: String(event.active.id),
+              over,
+              sections: renderedSections,
+            })
+          : null,
+      );
+    },
+    [renderedSections],
+  );
+
   const handleDragCancel = useCallback((_event: DragCancelEvent) => {
     setActiveProjectKey(null);
+    setProjectDrop(null);
   }, []);
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       setActiveProjectKey(null);
+      setProjectDrop(null);
       const activeData = event.active.data.current as SidebarProjectDragData | undefined;
       const overData = event.over?.data.current as SidebarProjectDragData | undefined;
       if (!activeData || !event.over) return;
@@ -282,38 +331,17 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
 
       if (activeData.type !== "project") return;
       const projectKey = String(event.active.id);
-      const sourceSectionId = activeData.sectionId;
-      const targetSectionId = sectionIdForDrop(sectionIdFromDragData(overData));
-      if (targetSectionId === undefined || sourceSectionId === targetSectionId) {
-        if (sourceSectionId === null || overData?.type !== "project") return;
-        const section = renderedSections.find((candidate) => candidate.id === sourceSectionId);
-        if (!section) return;
-        const fromIndex = section.projectKeys.indexOf(projectKey);
-        const toIndex = section.projectKeys.indexOf(String(event.over.id));
-        if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
-          reorderSectionProjects(
-            sourceSectionId,
-            arrayMove([...section.projectKeys], fromIndex, toIndex),
-          );
-        }
+      const over = projectDropOverOf(event.over);
+      const drop = over
+        ? resolveProjectDrop({ projectKey, over, sections: renderedSections })
+        : null;
+      if (drop === null) return;
+      if (drop.projectKeys === null) {
+        moveProject(projectKey, null);
         return;
       }
-
-      moveProject(projectKey, targetSectionId);
-      if (targetSectionId === null) return;
-      const targetSection = renderedSections.find((candidate) => candidate.id === targetSectionId);
-      if (!targetSection) return;
-      const targetProjectKeys = targetSection.projectKeys.filter((key) => key !== projectKey);
-      const targetIndex =
-        overData?.type === "project"
-          ? targetProjectKeys.indexOf(String(event.over.id))
-          : targetProjectKeys.length;
-      targetProjectKeys.splice(
-        targetIndex < 0 ? targetProjectKeys.length : targetIndex,
-        0,
-        projectKey,
-      );
-      reorderSectionProjects(targetSectionId, targetProjectKeys);
+      if (activeData.sectionId !== drop.sectionId) moveProject(projectKey, drop.sectionId);
+      reorderSectionProjects(drop.sectionId, [...drop.projectKeys]);
     },
     [moveProject, reorderSectionProjects, reorderSections, renderedSections, sections],
   );
@@ -327,20 +355,11 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         collisionDetection={collisionDetection}
         onDragCancel={handleDragCancel}
         onDragEnd={handleDragEnd}
+        onDragOver={handleDragOver}
         onDragStart={handleDragStart}
         sensors={sensors}
       >
         <SidebarMenu className="gap-px">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              isActive={selectedProjectKey === null}
-              onClick={() => onSelectProject(null)}
-              size="sm"
-            >
-              <FolderIcon className="text-icon-muted" />
-              <span>All projects</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           <SortableContext
             items={renderedSections
               .filter((section) => section.custom)
@@ -350,6 +369,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
             {renderedSections.map((section) => (
               <ProjectSection
                 key={section.id}
+                drop={projectDrop?.sectionId === section.id ? projectDrop : null}
                 onDelete={deleteSection}
                 onMoveProject={moveProject}
                 onNewThreadInProject={onNewThreadInProject}
@@ -384,6 +404,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
 
 const ProjectSection = memo(function ProjectSection(props: {
   readonly section: SidebarProjectSectionRender;
+  /** Where a dragged project would land in this section, if here. */
+  readonly drop: ProjectDrop | null;
   readonly sections: readonly SidebarProjectSectionRender[];
   readonly projectByKey: ReadonlyMap<string, SidebarProjectSnapshot>;
   readonly selectedProjectKey: string | null;
@@ -405,7 +427,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   ) => void;
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
 }) {
-  const { setNodeRef: setDropRef, isOver } = useDroppable({
+  const { setNodeRef: setDropRef } = useDroppable({
     data: {
       type: "section-container",
       sectionId: props.section.custom ? props.section.id : null,
@@ -414,9 +436,14 @@ const ProjectSection = memo(function ProjectSection(props: {
   });
   const expanded = !props.section.collapsed;
   const sectionProjectKeys = expanded ? props.section.projectKeys : [];
+  // A line marks the landing spot; a section with no visible order highlights instead.
+  const highlighted = props.drop !== null && (props.drop.beforeKey === undefined || !expanded);
 
   return (
-    <li ref={setDropRef} className={cn("rounded-md", isOver && "bg-sidebar-row-selected/60")}>
+    <li
+      ref={setDropRef}
+      className={cn("group/section rounded-md", highlighted && "bg-sidebar-row-selected/60")}
+    >
       <SortableSectionHeader
         onDelete={props.onDelete}
         onOpenRename={props.onOpenRename}
@@ -429,28 +456,31 @@ const ProjectSection = memo(function ProjectSection(props: {
             {sectionProjectKeys.map((projectKey) => {
               const project = props.projectByKey.get(projectKey);
               return project ? (
-                <SortableProjectRow
-                  key={projectKey}
-                  onMoveProject={props.onMoveProject}
-                  onNewThreadInProject={props.onNewThreadInProject}
-                  onOpenProjectSettings={props.onOpenProjectSettings}
-                  onRemoveProject={props.onRemoveProject}
-                  onSelectProject={props.onSelectProject}
-                  activeThreadKey={props.activeThreadKey}
-                  isProjectExpanded={props.isProjectExpanded(project.projectKey)}
-                  onThreadClick={props.onThreadClick}
-                  onThreadContextMenu={props.onThreadContextMenu}
-                  onToggleProject={props.onToggleProject}
-                  project={project}
-                  folderColor={props.section.color}
-                  sectionId={props.section.custom ? props.section.id : null}
-                  sections={props.sections}
-                  selected={props.selectedProjectKey === projectKey}
-                  threads={props.threadsByProjectKey.get(project.projectKey) ?? []}
-                />
+                <Fragment key={projectKey}>
+                  {props.drop?.beforeKey === projectKey ? <ProjectDropLine /> : null}
+                  <SortableProjectRow
+                    onMoveProject={props.onMoveProject}
+                    onNewThreadInProject={props.onNewThreadInProject}
+                    onOpenProjectSettings={props.onOpenProjectSettings}
+                    onRemoveProject={props.onRemoveProject}
+                    onSelectProject={props.onSelectProject}
+                    activeThreadKey={props.activeThreadKey}
+                    isProjectExpanded={props.isProjectExpanded(project.projectKey)}
+                    onThreadClick={props.onThreadClick}
+                    onThreadContextMenu={props.onThreadContextMenu}
+                    onToggleProject={props.onToggleProject}
+                    project={project}
+                    folderColor={props.section.color}
+                    sectionId={props.section.custom ? props.section.id : null}
+                    sections={props.sections}
+                    selected={props.selectedProjectKey === projectKey}
+                    threads={props.threadsByProjectKey.get(project.projectKey) ?? []}
+                  />
+                </Fragment>
               ) : null;
             })}
           </SortableContext>
+          {props.drop?.beforeKey === null ? <ProjectDropLine /> : null}
           {sectionProjectKeys.length === 0 ? (
             <li className="px-2 py-1 text-[11px] text-sidebar-muted-foreground/55">
               {props.section.custom ? "Drop projects here" : "No ungrouped projects"}
@@ -478,15 +508,7 @@ function SortableSectionHeader(props: {
     disabled: !section.custom,
     id: sectionDragId(section.id),
   });
-  const {
-    attributes,
-    listeners,
-    setActivatorNodeRef,
-    setNodeRef,
-    isDragging,
-    transform,
-    transition,
-  } = sortable;
+  const { attributes, listeners, setNodeRef, isDragging, transform, transition } = sortable;
   const expanded = !section.collapsed;
 
   return (
@@ -502,35 +524,30 @@ function SortableSectionHeader(props: {
         transition,
       }}
     >
+      {/* The whole header drags a custom section; the chevron shows while the section is hovered. */}
       <button
+        {...(section.custom ? { ...attributes, ...listeners } : {})}
         aria-expanded={expanded}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-1 text-left text-xs font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md px-1 text-left text-xs font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => {
           props.onSetExpanded(section.id, !expanded);
         }}
         type="button"
       >
+        <span className="truncate">{projectSectionName(section)}</span>
         <ChevronDownIcon
           aria-hidden
-          className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")}
+          className={cn(
+            "size-3 shrink-0 opacity-0 transition-transform group-hover/section:opacity-100 group-focus-within/section:opacity-100",
+            !expanded && "-rotate-90",
+          )}
         />
-        <span className="truncate">{projectSectionName(section)}</span>
         <span className="ms-auto shrink-0 text-[10px] text-sidebar-muted-foreground/55">
           {section.projectKeys.length}
         </span>
       </button>
       {section.custom ? (
         <>
-          <button
-            aria-label={`Reorder ${section.name} section`}
-            className="inline-flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
-            ref={setActivatorNodeRef}
-            type="button"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVerticalIcon aria-hidden className="size-3.5" />
-          </button>
           <Menu>
             <MenuTrigger
               render={
@@ -609,15 +626,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly threads: readonly SidebarThreadSummary[];
 }) {
   const { project } = props;
-  const {
-    attributes,
-    isDragging,
-    listeners,
-    setActivatorNodeRef,
-    setNodeRef,
-    transform,
-    transition,
-  } = useSortable({
+  const { attributes, isDragging, listeners, setNodeRef } = useSortable({
     data: {
       type: "project",
       sectionId: props.sectionId,
@@ -629,18 +638,14 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   );
 
   return (
-    <li
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition,
-      }}
-      className={cn("relative rounded-md", isDragging && "opacity-0")}
-    >
+    // Rows stay put while dragging; the drop line shows where this one lands.
+    <li ref={setNodeRef} className={cn("relative rounded-md", isDragging && "opacity-40")}>
       <div className="group/project-row relative">
         <SidebarMenuButton
+          {...attributes}
+          {...listeners}
           aria-expanded={props.isProjectExpanded}
-          className="group-hover/project-row:pe-20 group-focus-within/project-row:pe-20 pointer-coarse:pe-20"
+          className="group-hover/project-row:pe-14 group-focus-within/project-row:pe-14 pointer-coarse:pe-14"
           isActive={props.selected}
           onClick={() => {
             props.onToggleProject(project.projectKey, !props.isProjectExpanded);
@@ -648,14 +653,12 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           size="sm"
           title={project.displayName}
         >
-          <ChevronRightIcon
-            aria-hidden
-            className={cn(
-              "size-3 shrink-0 text-icon-muted transition-transform",
-              props.isProjectExpanded && "rotate-90",
-            )}
+          <ProjectFavicon
+            className="size-4"
+            folderColor={props.folderColor}
+            project={project}
+            {...(props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
           />
-          <ProjectFavicon className="size-4" folderColor={props.folderColor} project={project} />
           <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
           {props.threads.length > 0 ? (
             <span className="shrink-0 text-[10px] text-sidebar-muted-foreground/55">
@@ -675,16 +678,6 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             type="button"
           >
             <SquarePenIcon aria-hidden className="size-3.5" />
-          </button>
-          <button
-            aria-label={`Reorder ${project.displayName}`}
-            className="pointer-events-auto inline-flex size-6 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
-            ref={setActivatorNodeRef}
-            type="button"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVerticalIcon aria-hidden className="size-3.5" />
           </button>
           <Menu>
             <MenuTrigger
@@ -749,7 +742,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
         </div>
       </div>
       {props.isProjectExpanded ? (
-        <ul className="ms-5 border-sidebar-border/60 border-s ps-2">
+        <ul className="ps-6">
           {props.threads.map((thread) => (
             <SidebarProjectThreadRow
               key={`${thread.environmentId}:${thread.id}`}
@@ -774,22 +767,42 @@ function ProjectDragPreview(props: { readonly project: SidebarProjectSnapshot | 
   if (props.project === null) return null;
   return (
     <div className="flex h-7 w-[min(20rem,calc(100vw-2rem))] min-w-0 items-center gap-2 rounded-md border border-sidebar-border bg-sidebar px-2 text-sm text-sidebar-foreground shadow-lg">
-      <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-icon-muted" />
       <ProjectFavicon className="size-4 shrink-0" project={props.project} />
       <span className="min-w-0 flex-1 truncate font-medium">{props.project.displayName}</span>
     </div>
   );
 }
 
-const THREAD_STATUS_DOT_CLASS: Record<SidebarThreadStatus, string> = {
-  approval: "bg-amber-500",
-  failed: "bg-red-500",
-  input: "bg-indigo-500",
-  ready: "bg-emerald-500/70",
-  waiting: "bg-sky-500/60",
-  limited: "bg-amber-500/60",
-  working: "bg-sky-500",
-};
+/** The right-side mark for a thread that is running or needs you; settled threads show none. */
+function ThreadStatusMark({ status }: { readonly status: SidebarThreadStatus }) {
+  const iconClass = "size-3.5 shrink-0";
+  switch (status) {
+    case "working":
+      return (
+        <Spinner aria-label="Working" className={cn(iconClass, "text-sidebar-muted-foreground")} />
+      );
+    case "approval":
+      return <CircleAlertIcon aria-hidden className={cn(iconClass, "text-amber-500")} />;
+    case "input":
+      return <MessageCircleQuestionIcon aria-hidden className={cn(iconClass, "text-amber-500")} />;
+    case "failed":
+      return <CircleXIcon aria-hidden className={cn(iconClass, "text-red-500")} />;
+    case "limited":
+      return <ClockIcon aria-hidden className={cn(iconClass, "text-amber-500")} />;
+    case "ready":
+    case "waiting":
+      return null;
+  }
+}
+
+/** A zero-height marker, so showing it never shifts the rows around it. */
+function ProjectDropLine() {
+  return (
+    <li aria-hidden className="relative h-0 list-none">
+      <span className="absolute inset-x-2 -top-px h-0.5 rounded-full bg-blue-500" />
+    </li>
+  );
+}
 
 function compactThreadTime(thread: SidebarThreadSummary): string {
   const label = formatRelativeTimeLabel(thread.latestUserMessageAt ?? thread.updatedAt);
@@ -829,14 +842,11 @@ function SidebarProjectThreadRow(props: {
           props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });
         }}
       >
-        <span
-          aria-hidden
-          className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
-        />
         <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
         <span className="shrink-0 text-[10px] text-sidebar-muted-foreground/55">
           {compactThreadTime(props.thread)}
         </span>
+        <ThreadStatusMark status={status} />
       </button>
     </li>
   );
