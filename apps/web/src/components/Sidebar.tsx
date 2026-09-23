@@ -2456,6 +2456,11 @@ export default function Sidebar() {
     () => openSectionDialog({ kind: "create" }),
     [openSectionDialog],
   );
+  const openCreateSubsectionDialog = useCallback(
+    (parent: { readonly id: string; readonly name: string }) =>
+      openSectionDialog({ kind: "create", parent: { id: parent.id, name: parent.name } }),
+    [openSectionDialog],
+  );
   const openRenameSectionDialog = useCallback(
     (section: { readonly id: string; readonly name: string }) =>
       openSectionDialog({ kind: "rename", id: section.id, name: section.name }),
@@ -4814,6 +4819,7 @@ export default function Sidebar() {
             onAddProject={openAddProjectCommandPalette}
             onNewSection={openCreateSectionDialog}
             onRenameSection={openRenameSectionDialog}
+            onNewSubsection={openCreateSubsectionDialog}
             onNewThreadInProject={newThreadInSidebarProject}
             onOpenProjectSettings={openProjectSettings}
             onRemoveProject={removeSidebarProject}

@@ -1,10 +1,21 @@
 import type { ClientSettings } from "@t3tools/contracts";
+import { buildProjectGroups, selectProjectGroupingSettings } from "../../logicalProject";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useProjects } from "../../state/entities";
+import { useUiStateStore } from "../../uiStateStore";
+import { Button } from "../ui/button";
+import { DraftInput } from "../ui/draft-input";
+import { toastManager } from "../ui/toast";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 
 type CustomizationSwitchKey = {
   [Key in keyof ClientSettings]: ClientSettings[Key] extends boolean ? Key : never;
@@ -60,6 +71,43 @@ const SIDEBAR_TOGGLE_POSITION_LABELS = { left: "Left", right: "Right" } as const
 export function CustomizationsSettings() {
   const settings = useClientSettings();
   const updateSettings = useUpdateClientSettings();
+  const projects = useProjects();
+  // Paths belong to the machine running T3, so the root is an environment setting like
+  // "Add project starts in", which it falls back to when empty.
+  const scopedSettings = useScopedSettings();
+  const updateScopedSettings = useUpdateScopedSettings();
+  const folderRootMixed = useScopedSettingsMixed(["projectFolderRoot"]);
+  const baseDirectory = scopedSettings.addProjectBaseDirectory;
+  const folderRoot =
+    scopedSettings.projectFolderRoot || (baseDirectory.startsWith("/") ? baseDirectory : "");
+  const organize = () => {
+    if (!folderRoot.startsWith("/")) {
+      toastManager.add({
+        type: "error",
+        title: "Use a full folder path",
+        description:
+          "Organize by folder needs a path starting with /, such as /home/you/Workspaces.",
+      });
+      return;
+    }
+    // The sidebar's own grouping, so each checkout lands under the key the sidebar shows.
+    const groups = buildProjectGroups({
+      projects,
+      settings: selectProjectGroupingSettings(settings),
+    });
+    useUiStateStore.getState().organizeSidebarSectionsByFolder(
+      groups.map((group) => ({
+        projectKey: group.key,
+        workspaceRoots: group.members.map((member) => member.project.workspaceRoot),
+      })),
+      folderRoot,
+    );
+    toastManager.add({
+      type: "success",
+      title: "Sections organized",
+      description: `Projects under ${folderRoot} now follow its folders.`,
+    });
+  };
 
   return (
     <SettingsPageContainer>
@@ -108,6 +156,41 @@ export function CustomizationsSettings() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["projectFolderRoot"]}
+          {...searchableSetting("organize-by-folder")}
+          description={
+            'Mirror a folder\'s layout as sections: root/A/B/project goes to section A, subsection B. Projects inside another project stay with it; projects elsewhere keep their place. Safe to run again. Leave empty to use "Add project starts in" when that is a full path.'
+          }
+          control={
+            <div className="flex w-full items-center gap-2 sm:w-96">
+              <DraftInput
+                aria-label="Folder to organize by"
+                className="min-w-0 flex-1"
+                onCommit={(next) => updateScopedSettings({ projectFolderRoot: next })}
+                placeholder={
+                  folderRootMixed
+                    ? "Mixed"
+                    : baseDirectory.startsWith("/")
+                      ? baseDirectory
+                      : "/home/you/Workspaces"
+                }
+                size="sm"
+                spellCheck={false}
+                value={folderRootMixed ? "" : scopedSettings.projectFolderRoot}
+              />
+              <Button
+                disabled={folderRoot.length === 0}
+                onClick={organize}
+                size="sm"
+                variant="outline"
+              >
+                Organize
+              </Button>
+            </div>
           }
         />
         <SettingsRow

@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 import { randomUUID } from "./lib/utils";
+import { organizeSectionsByFolder, type FolderOrganizedProject } from "./sidebarSectionFolders";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 // Version 1 stored card visibility, not folder expansion.
@@ -29,6 +30,8 @@ export interface SidebarProjectSection {
   collapsed: boolean;
   /** Tints the automatic folder icons of the section's projects. */
   color?: ProjectIconColor;
+  /** The top-level section this subsection sits under; sections nest one level deep. */
+  parentId?: string;
 }
 
 const isProjectIconColor = Schema.is(ProjectIconColor);
@@ -130,7 +133,7 @@ function sanitizeSidebarProjectSections(value: unknown): SidebarProjectSection[]
 
   const seenIds = new Set<string>();
   const claimedProjectKeys = new Set<string>();
-  return value.flatMap((entry) => {
+  const sections: SidebarProjectSection[] = value.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const candidate = entry as Record<string, unknown>;
     const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
@@ -150,8 +153,18 @@ function sanitizeSidebarProjectSections(value: unknown): SidebarProjectSection[]
         projectKeys,
         collapsed: candidate.collapsed === true,
         ...(isProjectIconColor(candidate.color) ? { color: candidate.color } : {}),
+        ...(typeof candidate.parentId === "string" && candidate.parentId.length > 0
+          ? { parentId: candidate.parentId }
+          : {}),
       },
     ];
+  });
+  // A parent must exist and be top-level itself; anything else becomes a top-level section.
+  const topLevelIds = new Set(sections.filter((section) => !section.parentId).map((s) => s.id));
+  return sections.map((section) => {
+    if (section.parentId === undefined || topLevelIds.has(section.parentId)) return section;
+    const { parentId: _orphaned, ...rest } = section;
+    return rest;
   });
 }
 
@@ -462,18 +475,24 @@ export function setSidebarMode(state: UiState, mode: SidebarMode): UiState {
 
 export function addSidebarProjectSection(
   state: UiState,
-  section: Pick<SidebarProjectSection, "id" | "name">,
+  section: Pick<SidebarProjectSection, "id" | "name" | "parentId">,
 ): UiState {
   const id = section.id.trim();
   const name = normalizeSidebarProjectSectionName(section.name);
   if (!id || !name || state.sidebarProjectSections.some((candidate) => candidate.id === id)) {
     return state;
   }
+  const parent =
+    section.parentId === undefined
+      ? undefined
+      : state.sidebarProjectSections.find((candidate) => candidate.id === section.parentId);
+  // Subsections nest one level: the parent must exist and be top-level.
+  if (section.parentId !== undefined && (!parent || parent.parentId !== undefined)) return state;
   return {
     ...state,
     sidebarProjectSections: [
       ...state.sidebarProjectSections,
-      { id, name, projectKeys: [], collapsed: false },
+      { id, name, projectKeys: [], collapsed: false, ...(parent ? { parentId: parent.id } : {}) },
     ],
   };
 }
@@ -511,13 +530,21 @@ export function setSidebarProjectSectionColor(
   };
 }
 
+/**
+ * Removes a section. A subsection's projects move up to its parent; a top-level section takes its
+ * subsections with it, and their projects return to Other projects.
+ */
 export function deleteSidebarProjectSection(state: UiState, sectionId: string): UiState {
-  const sidebarProjectSections = state.sidebarProjectSections.filter(
-    (section) => section.id !== sectionId,
-  );
-  return sidebarProjectSections.length === state.sidebarProjectSections.length
-    ? state
-    : { ...state, sidebarProjectSections };
+  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
+  if (!section) return state;
+  const sidebarProjectSections = state.sidebarProjectSections.flatMap((candidate) => {
+    if (candidate.id === sectionId || candidate.parentId === sectionId) return [];
+    if (candidate.id === section.parentId) {
+      return [{ ...candidate, projectKeys: [...candidate.projectKeys, ...section.projectKeys] }];
+    }
+    return [candidate];
+  });
+  return { ...state, sidebarProjectSections };
 }
 
 export function setSidebarProjectSectionExpanded(
@@ -690,7 +717,11 @@ interface UiStateStore extends UiState {
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   setSidebarOtherProjectsExpanded: (expanded: boolean) => void;
-  addSidebarProjectSection: (name: string) => void;
+  addSidebarProjectSection: (name: string, parentId?: string) => void;
+  organizeSidebarSectionsByFolder: (
+    projects: readonly FolderOrganizedProject[],
+    root: string,
+  ) => void;
   renameSidebarProjectSection: (sectionId: string, name: string) => void;
   setSidebarProjectSectionColor: (sectionId: string, color: ProjectIconColor | null) => void;
   deleteSidebarProjectSection: (sectionId: string) => void;
@@ -723,8 +754,24 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setSidebarMode: (mode) => set((state) => setSidebarMode(state, mode)),
   setSidebarOtherProjectsExpanded: (expanded) =>
     set((state) => setSidebarOtherProjectsExpanded(state, expanded)),
-  addSidebarProjectSection: (name) =>
-    set((state) => addSidebarProjectSection(state, { id: randomUUID(), name })),
+  organizeSidebarSectionsByFolder: (projects, root) =>
+    set((state) => ({
+      ...state,
+      sidebarProjectSections: organizeSectionsByFolder({
+        sections: state.sidebarProjectSections,
+        projects,
+        root,
+        makeId: randomUUID,
+      }),
+    })),
+  addSidebarProjectSection: (name, parentId) =>
+    set((state) =>
+      addSidebarProjectSection(state, {
+        id: randomUUID(),
+        name,
+        ...(parentId === undefined ? {} : { parentId }),
+      }),
+    ),
   renameSidebarProjectSection: (sectionId, name) =>
     set((state) => renameSidebarProjectSection(state, sectionId, name)),
   setSidebarProjectSectionColor: (sectionId, color) =>

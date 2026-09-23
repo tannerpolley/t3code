@@ -35,6 +35,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
+  FolderTreeIcon,
   GripVerticalIcon,
   MessageCircleQuestionIcon,
   PaletteIcon,
@@ -107,7 +108,11 @@ type SidebarProjectSectionRender = {
   readonly projectKeys: readonly string[];
   readonly collapsed: boolean;
   readonly custom: boolean;
+  /** The folder tint its projects show: its own color, or its parent section's. */
   readonly color: ProjectIconColor | undefined;
+  /** The color chosen on this section itself, as its Folder color menu shows it. */
+  readonly ownColor: ProjectIconColor | undefined;
+  readonly parentId: string | undefined;
 };
 
 type ProjectDragData = {
@@ -164,6 +169,7 @@ interface SidebarProjectSectionsProps {
   readonly onAddProject: () => void;
   /** Opens the section name dialog, which the sidebar owns so its header can create sections. */
   readonly onNewSection: () => void;
+  readonly onNewSubsection: (parent: { readonly id: string; readonly name: string }) => void;
   readonly onRenameSection: (section: { readonly id: string; readonly name: string }) => void;
   readonly onOpenProjectSettings: (project: SidebarProjectSnapshot) => void;
   readonly onNewThreadInProject: (project: SidebarProjectSnapshot) => void;
@@ -185,6 +191,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     isProjectExpanded,
     onAddProject,
     onNewSection,
+    onNewSubsection,
     onRenameSection,
     onNewThreadInProject,
     onOpenProjectSettings,
@@ -245,13 +252,19 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         claimed.add(projectKey);
         return true;
       });
+      const parent =
+        section.parentId === undefined
+          ? undefined
+          : sections.find((candidate) => candidate.id === section.parentId);
       next.push({
         id: section.id,
         name: section.name,
         projectKeys,
         collapsed: section.collapsed,
         custom: true,
-        color: section.color,
+        color: section.color ?? parent?.color,
+        ownColor: section.color,
+        parentId: section.parentId,
       });
     }
     const ungroupedProjectKeys = projects
@@ -265,6 +278,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         collapsed: !otherProjectsExpanded,
         custom: false,
         color: undefined,
+        ownColor: undefined,
+        parentId: undefined,
       });
     }
     return next;
@@ -299,9 +314,18 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     const typeOf = (collision: (typeof pointerCollisions)[number]) =>
       args.droppableContainers.find((container) => container.id === collision.id)?.data.current
         ?.type;
+    // A subsection's body sits inside its section's, so the smallest container is the real one.
+    const area = (collision: (typeof pointerCollisions)[number]) => {
+      const rect = args.droppableRects.get(collision.id);
+      return rect ? rect.width * rect.height : Number.POSITIVE_INFINITY;
+    };
+    const innermostContainer = pointerCollisions
+      .filter((collision) => typeOf(collision) === "section-container")
+      .toSorted((left, right) => area(left) - area(right))[0];
     const preferred =
       pointerCollisions.find((collision) => typeOf(collision) === "project") ??
-      pointerCollisions.find((collision) => typeOf(collision) === "section");
+      pointerCollisions.find((collision) => typeOf(collision) === "section") ??
+      innermostContainer;
     return preferred ? [preferred] : pointerCollisions;
   }, []);
 
@@ -433,36 +457,42 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
           )}
           <SortableContext
             items={renderedSections
-              .filter((section) => section.custom)
+              .filter((section) => section.custom && section.parentId === undefined)
               .map((section) => sectionDragId(section.id))}
             strategy={verticalListSortingStrategy}
           >
-            {renderedSections.map((section) => (
-              <ProjectSection
-                key={section.id}
-                codexStyle={codexStyle}
-                folderColors={folderColors}
-                drop={projectDrop?.sectionId === section.id ? projectDrop : null}
-                onDelete={deleteSection}
-                onMoveProject={moveProject}
-                onNewThreadInProject={onNewThreadInProject}
-                onOpenProjectSettings={onOpenProjectSettings}
-                onRemoveProject={onRemoveProject}
-                onOpenRename={openRenameDialog}
-                onSelectProject={onSelectProject}
-                onSetExpanded={setSectionExpanded}
-                activeThreadKey={activeThreadKey}
-                isProjectExpanded={isProjectExpanded}
-                onThreadClick={onThreadClick}
-                onThreadContextMenu={onThreadContextMenu}
-                onToggleProject={onToggleProject}
-                projectByKey={projectByKey}
-                section={section}
-                sections={renderedSections}
-                selectedProjectKey={selectedProjectKey}
-                threadsByProjectKey={threadsByProjectKey}
-              />
-            ))}
+            {renderedSections
+              .filter((section) => section.parentId === undefined)
+              .map((section) => (
+                <ProjectSection
+                  key={section.id}
+                  codexStyle={codexStyle}
+                  folderColors={folderColors}
+                  projectDrop={projectDrop}
+                  subsections={renderedSections.filter(
+                    (candidate) => candidate.parentId === section.id,
+                  )}
+                  onNewSubsection={onNewSubsection}
+                  onDelete={deleteSection}
+                  onMoveProject={moveProject}
+                  onNewThreadInProject={onNewThreadInProject}
+                  onOpenProjectSettings={onOpenProjectSettings}
+                  onRemoveProject={onRemoveProject}
+                  onOpenRename={openRenameDialog}
+                  onSelectProject={onSelectProject}
+                  onSetExpanded={setSectionExpanded}
+                  activeThreadKey={activeThreadKey}
+                  isProjectExpanded={isProjectExpanded}
+                  onThreadClick={onThreadClick}
+                  onThreadContextMenu={onThreadContextMenu}
+                  onToggleProject={onToggleProject}
+                  projectByKey={projectByKey}
+                  section={section}
+                  sections={renderedSections}
+                  selectedProjectKey={selectedProjectKey}
+                  threadsByProjectKey={threadsByProjectKey}
+                />
+              ))}
           </SortableContext>
         </SidebarMenu>
         <DragOverlay dropAnimation={null}>
@@ -479,8 +509,11 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly section: SidebarProjectSectionRender;
   readonly codexStyle: boolean;
   readonly folderColors: boolean;
-  /** Where a dragged project would land in this section, if here. */
-  readonly drop: ProjectDrop | null;
+  /** Where a dragged project would land; this section shows it when it is the target. */
+  readonly projectDrop: ProjectDrop | null;
+  /** Rendered inside this section, before its projects; empty for subsections themselves. */
+  readonly subsections: readonly SidebarProjectSectionRender[];
+  readonly onNewSubsection: (parent: { readonly id: string; readonly name: string }) => void;
   readonly sections: readonly SidebarProjectSectionRender[];
   readonly projectByKey: ReadonlyMap<string, SidebarProjectSnapshot>;
   readonly selectedProjectKey: string | null;
@@ -511,17 +544,25 @@ const ProjectSection = memo(function ProjectSection(props: {
   });
   const expanded = !props.section.collapsed;
   const sectionProjectKeys = expanded ? props.section.projectKeys : [];
+  const drop = props.projectDrop?.sectionId === props.section.id ? props.projectDrop : null;
   // A line marks the landing spot; a section with no visible order highlights instead.
-  const highlighted = props.drop !== null && (props.drop.beforeKey === undefined || !expanded);
+  const highlighted = drop !== null && (drop.beforeKey === undefined || !expanded);
+  const isSubsection = props.section.parentId !== undefined;
 
   return (
     <li
       ref={setDropRef}
-      className={cn("group/section rounded-md", highlighted && "bg-sidebar-row-selected/60")}
+      className={cn(
+        "group/section rounded-md",
+        // The original look already indents under a guide line; Codex style indents subsections.
+        isSubsection && props.codexStyle && "ms-3",
+        highlighted && "bg-sidebar-row-selected/60",
+      )}
     >
       <SortableSectionHeader
         codexStyle={props.codexStyle}
         folderColors={props.folderColors}
+        onNewSubsection={isSubsection ? undefined : props.onNewSubsection}
         onDelete={props.onDelete}
         onOpenRename={props.onOpenRename}
         onSetExpanded={props.onSetExpanded}
@@ -531,12 +572,15 @@ const ProjectSection = memo(function ProjectSection(props: {
         <ul
           className={props.codexStyle ? undefined : "ms-3 border-sidebar-border/60 border-s ps-1"}
         >
+          {props.subsections.map((subsection) => (
+            <ProjectSection key={subsection.id} {...props} section={subsection} subsections={[]} />
+          ))}
           <SortableContext items={[...sectionProjectKeys]} strategy={verticalListSortingStrategy}>
             {sectionProjectKeys.map((projectKey) => {
               const project = props.projectByKey.get(projectKey);
               return project ? (
                 <Fragment key={projectKey}>
-                  {props.drop?.beforeKey === projectKey ? <ProjectDropLine /> : null}
+                  {drop?.beforeKey === projectKey ? <ProjectDropLine /> : null}
                   <SortableProjectRow
                     codexStyle={props.codexStyle}
                     onMoveProject={props.onMoveProject}
@@ -560,8 +604,8 @@ const ProjectSection = memo(function ProjectSection(props: {
               ) : null;
             })}
           </SortableContext>
-          {props.drop?.beforeKey === null ? <ProjectDropLine /> : null}
-          {sectionProjectKeys.length === 0 ? (
+          {drop?.beforeKey === null ? <ProjectDropLine /> : null}
+          {sectionProjectKeys.length === 0 && props.subsections.length === 0 ? (
             <li className="px-2 py-1 text-[11px] text-sidebar-muted-foreground/55">
               {props.section.custom ? "Drop projects here" : "No ungrouped projects"}
             </li>
@@ -576,6 +620,10 @@ function SortableSectionHeader(props: {
   readonly section: SidebarProjectSectionRender;
   readonly codexStyle: boolean;
   readonly folderColors: boolean;
+  /** Offered on top-level sections only; subsections nest one level deep. */
+  readonly onNewSubsection:
+    | ((parent: { readonly id: string; readonly name: string }) => void)
+    | undefined;
   readonly onOpenRename: (section: SidebarProjectSectionRender) => void;
   readonly onDelete: (sectionId: string) => void;
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
@@ -587,7 +635,8 @@ function SortableSectionHeader(props: {
       type: "section",
       sectionId: section.id,
     } satisfies SectionDragData,
-    disabled: !section.custom,
+    // Only top-level sections reorder; subsections keep the order they were made in.
+    disabled: !section.custom || section.parentId !== undefined,
     id: sectionDragId(section.id),
   });
   const {
@@ -600,6 +649,7 @@ function SortableSectionHeader(props: {
     transition,
   } = sortable;
   const { codexStyle } = props;
+  const draggable = section.custom && section.parentId === undefined;
   const expanded = !section.collapsed;
   const chevron = (
     <ChevronDownIcon
@@ -629,7 +679,7 @@ function SortableSectionHeader(props: {
       {/* Codex style drags a custom section by its whole header and shows the chevron on hover;
           otherwise a grip button drags it. */}
       <button
-        {...(section.custom && codexStyle ? { ...attributes, ...listeners } : {})}
+        {...(draggable && codexStyle ? { ...attributes, ...listeners } : {})}
         aria-expanded={expanded}
         className={cn(
           "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left text-xs font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
@@ -657,7 +707,7 @@ function SortableSectionHeader(props: {
           >
             <FolderPlusIcon aria-hidden className="size-3.5" />
           </button>
-          {codexStyle ? null : (
+          {codexStyle || !draggable ? null : (
             <button
               aria-label={`Reorder ${section.name} section`}
               className="inline-flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
@@ -688,6 +738,12 @@ function SortableSectionHeader(props: {
                 <FolderPlusIcon />
                 Add project
               </MenuItem>
+              {props.onNewSubsection ? (
+                <MenuItem onClick={() => props.onNewSubsection?.(section)}>
+                  <FolderTreeIcon />
+                  New subsection
+                </MenuItem>
+              ) : null}
               <MenuItem onClick={() => props.onOpenRename(section)}>
                 <SettingsIcon />
                 Rename section
@@ -702,7 +758,7 @@ function SortableSectionHeader(props: {
                     <MenuItem onClick={() => setSectionColor(section.id, null)}>
                       <span aria-hidden className="size-3 rounded-full border border-border" />
                       None
-                      {section.color === undefined ? <CheckIcon className="ms-auto" /> : null}
+                      {section.ownColor === undefined ? <CheckIcon className="ms-auto" /> : null}
                     </MenuItem>
                     {PROJECT_ICON_COLORS.map((color) => (
                       <MenuItem
@@ -714,7 +770,9 @@ function SortableSectionHeader(props: {
                           className={cn("size-3 rounded-full", color.swatchClassName)}
                         />
                         {color.label}
-                        {section.color === color.value ? <CheckIcon className="ms-auto" /> : null}
+                        {section.ownColor === color.value ? (
+                          <CheckIcon className="ms-auto" />
+                        ) : null}
                       </MenuItem>
                     ))}
                   </MenuSubPopup>
@@ -874,7 +932,9 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                         key={section.id}
                         onClick={() => props.onMoveProject(project.projectKey, section.id)}
                       >
-                        {section.name}
+                        {section.parentId === undefined
+                          ? section.name
+                          : `${props.sections.find((parent) => parent.id === section.parentId)?.name ?? ""} / ${section.name}`}
                       </MenuItem>
                     ))}
                     {props.sectionId !== null ? (
@@ -1029,7 +1089,7 @@ function SidebarProjectThreadRow(props: {
 
 /** What the section name dialog is doing: creating a section or renaming one. */
 export type ProjectSectionDialogTarget =
-  | { readonly kind: "create" }
+  | { readonly kind: "create"; readonly parent?: { readonly id: string; readonly name: string } }
   | { readonly kind: "rename"; readonly id: string; readonly name: string };
 
 /**
@@ -1049,7 +1109,7 @@ export function ProjectSectionDialog(props: {
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) return;
-    if (target.kind === "create") addSection(trimmed);
+    if (target.kind === "create") addSection(trimmed, target.parent?.id);
     else renameSection(target.id, trimmed);
     props.onOpenChange(false);
   };
@@ -1059,7 +1119,11 @@ export function ProjectSectionDialog(props: {
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>
-              {target.kind === "rename" ? "Rename project section" : "Create project section"}
+              {target.kind === "rename"
+                ? "Rename project section"
+                : target.parent
+                  ? `New subsection in ${target.parent.name}`
+                  : "Create project section"}
             </DialogTitle>
             <DialogDescription>
               Group projects in the sidebar without changing their T3 project settings.

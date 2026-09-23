@@ -342,6 +342,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork projects view sections activity sidebar mode"],
   },
   {
+    id: "organize-by-folder",
+    title: "Organize by folder",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork sections subsections folders workspaces organize mirror"],
+  },
+  {
     id: "codex-style-sidebar",
     title: "Codex-style project sidebar",
     to: "/settings/customizations",

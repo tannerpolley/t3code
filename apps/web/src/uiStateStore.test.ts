@@ -226,6 +226,46 @@ describe("uiStateStore pure functions", () => {
     expect(deleteSidebarProjectSection(ordered, "work").sidebarProjectSections).toHaveLength(1);
   });
 
+  it("nests subsections one level and hands their projects up when deleted", () => {
+    const work = addSidebarProjectSection(makeUiState(), { id: "work", name: "Work" });
+    const idaes = addSidebarProjectSection(work, { id: "idaes", name: "IDAES", parentId: "work" });
+    // A subsection cannot hold another subsection, and needs a real parent.
+    expect(addSidebarProjectSection(idaes, { id: "deep", name: "Deep", parentId: "idaes" })).toBe(
+      idaes,
+    );
+    expect(addSidebarProjectSection(idaes, { id: "lost", name: "Lost", parentId: "nope" })).toBe(
+      idaes,
+    );
+    const placed = moveProjectToSidebarProjectSection(
+      moveProjectToSidebarProjectSection(idaes, "pyomo", "idaes"),
+      "mea",
+      "work",
+    );
+    expect(deleteSidebarProjectSection(placed, "idaes").sidebarProjectSections).toEqual([
+      { id: "work", name: "Work", projectKeys: ["mea", "pyomo"], collapsed: false },
+    ]);
+    // Deleting a section takes its subsections along; their projects become ungrouped.
+    expect(deleteSidebarProjectSection(placed, "work").sidebarProjectSections).toEqual([]);
+  });
+
+  it("keeps saved subsections only under an existing top-level section", () => {
+    const saved: unknown = {
+      sidebarProjectSections: [
+        { id: "a", name: "A", projectKeys: [] },
+        { id: "b", name: "B", projectKeys: [], parentId: "a" },
+        { id: "c", name: "C", projectKeys: [], parentId: "b" },
+        { id: "d", name: "D", projectKeys: [], parentId: "gone" },
+      ],
+    };
+    const parsed = parsePersistedState(saved as Parameters<typeof parsePersistedState>[0]);
+    expect(parsed.sidebarProjectSections?.map((section) => section.parentId)).toEqual([
+      undefined,
+      "a",
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("colors a section, clears it, and drops unknown saved colors", () => {
     const work = addSidebarProjectSection(makeUiState(), { id: "work", name: "Work" });
     const blue = setSidebarProjectSectionColor(work, "work", "blue");
