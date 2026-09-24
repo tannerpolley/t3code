@@ -1585,6 +1585,9 @@ function commandInputFromClaudeTool(toolName: string, input: ClaudeNativeToolInp
 // Subagents project through the normal subagent lifecycle and must not be
 // double-counted when background_tasks_changed includes them.
 const CLAUDE_OPAQUE_BACKGROUND_TASK_TYPES = new Set(["local_bash"]);
+// How long a wake turn's permission callback waits for its continuation run.
+// Attaching normally takes well under a second.
+const CLAUDE_WAKE_TURN_ATTACH_TIMEOUT = "30 seconds";
 
 function isClaudeOpaqueBackgroundTaskType(taskType: string | null | undefined): boolean {
   return typeof taskType === "string" && CLAUDE_OPAQUE_BACKGROUND_TASK_TYPES.has(taskType);
@@ -2684,6 +2687,12 @@ export function makeClaudeAdapterV2(
           >(),
         );
         const requestedContinuations = yield* Ref.make(new Set<string>());
+        // Completed and replaced each time startTurn finishes attaching a turn.
+        const turnAttached = yield* Ref.make(yield* Deferred.make<void>());
+        const signalTurnAttached = Deferred.make<void>().pipe(
+          Effect.flatMap((next) => Ref.getAndSet(turnAttached, next)),
+          Effect.flatMap((previous) => Deferred.succeed(previous, undefined)),
+        );
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
@@ -3983,6 +3992,39 @@ export function makeClaudeAdapterV2(
           return { node, request, turnItem };
         });
 
+        // The CLI aborted the permission callback: close the request so the
+        // user cannot answer a prompt the agent is no longer waiting on.
+        const emitCancelledRequest = Effect.fnUntraced(function* (
+          artifacts: Effect.Success<ReturnType<typeof buildApprovalRequestArtifacts>>,
+        ) {
+          const now = yield* DateTime.now;
+          yield* Effect.all(
+            [
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now },
+              }),
+              emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: { ...artifacts.node, status: "cancelled", completedAt: now },
+              }),
+              emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  ...artifacts.turnItem,
+                  status: "cancelled",
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              }),
+            ],
+            { concurrency: 1 },
+          );
+        });
+
         const ensureReasoningBlock = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           itemId: string,
@@ -4337,6 +4379,73 @@ export function makeClaudeAdapterV2(
           }
         });
 
+        // Requests one continuation run for this native thread's wake output.
+        // Returns false when no continuation will attach (unroutable).
+        const offerWakeContinuation = Effect.fnUntraced(function* (nativeThreadId: string) {
+          const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(nativeThreadId);
+          if (route === undefined) {
+            yield* Effect.logWarning("orchestration-v2.claude-wake-turn-unroutable", {
+              providerSessionId: input.providerSessionId,
+              nativeThreadId,
+            });
+            return false;
+          }
+          const shouldOffer = yield* Ref.modify(requestedContinuations, (current) => {
+            if (current.has(nativeThreadId)) {
+              return [false, current] as const;
+            }
+            const updated = new Set(current);
+            updated.add(nativeThreadId);
+            return [true, updated] as const;
+          });
+          if (!shouldOffer) {
+            return true;
+          }
+          const detail = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.detail ?? null;
+          yield* Effect.logInfo("orchestration-v2.claude-wake-turn-detected", {
+            providerSessionId: input.providerSessionId,
+            threadId: route.threadId,
+            providerThreadId: route.providerThreadId,
+          });
+          yield* continuationRequests.offer({
+            threadId: route.threadId,
+            providerThreadId: route.providerThreadId,
+            driver: CLAUDE_PROVIDER,
+            detail,
+          });
+          return true;
+        });
+
+        // A wake turn can call a permission tool (AskUserQuestion, an
+        // approval) before its continuation run attaches. Hold the callback
+        // until a turn attaches so the request lands in that run instead of
+        // being denied; give up when no continuation can come.
+        const awaitWakeTurn = Effect.fnUntraced(
+          function* () {
+            while (true) {
+              // Read the signal before re-checking so an attach in between is
+              // not missed.
+              const attached = yield* Ref.get(turnAttached);
+              const context = yield* Ref.get(activeTurn);
+              if (context !== null) {
+                return context;
+              }
+              const nativeThreadId = (yield* Ref.get(queryContext))?.nativeThreadId;
+              if (
+                nativeThreadId === undefined ||
+                (!(yield* Ref.get(wakeBuffers)).has(nativeThreadId) &&
+                  !(yield* Ref.get(requestedContinuations)).has(nativeThreadId)) ||
+                !(yield* offerWakeContinuation(nativeThreadId))
+              ) {
+                return null;
+              }
+              yield* Deferred.await(attached);
+            }
+          },
+          Effect.timeoutOption(CLAUDE_WAKE_TURN_ATTACH_TIMEOUT),
+          Effect.map(Option.getOrNull),
+        );
+
         const bufferWakeMessage = Effect.fnUntraced(function* (wakeInput: {
           readonly nativeThreadId: string;
           readonly message: SDKMessage;
@@ -4449,38 +4558,7 @@ export function makeClaudeAdapterV2(
           ) {
             return;
           }
-          const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(wakeInput.nativeThreadId);
-          if (route === undefined) {
-            yield* Effect.logWarning("orchestration-v2.claude-wake-turn-unroutable", {
-              providerSessionId: input.providerSessionId,
-              nativeThreadId: wakeInput.nativeThreadId,
-            });
-            return;
-          }
-          const shouldOffer = yield* Ref.modify(requestedContinuations, (current) => {
-            if (current.has(wakeInput.nativeThreadId)) {
-              return [false, current] as const;
-            }
-            const updated = new Set(current);
-            updated.add(wakeInput.nativeThreadId);
-            return [true, updated] as const;
-          });
-          if (!shouldOffer) {
-            return;
-          }
-          const detail =
-            (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId)?.detail ?? null;
-          yield* Effect.logInfo("orchestration-v2.claude-wake-turn-detected", {
-            providerSessionId: input.providerSessionId,
-            threadId: route.threadId,
-            providerThreadId: route.providerThreadId,
-          });
-          yield* continuationRequests.offer({
-            threadId: route.threadId,
-            providerThreadId: route.providerThreadId,
-            driver: CLAUDE_PROVIDER,
-            detail,
-          });
+          yield* offerWakeContinuation(wakeInput.nativeThreadId);
         });
 
         const applyBackgroundTaskRosterMessage = Effect.fnUntraced(function* (input: {
@@ -5283,11 +5361,12 @@ export function makeClaudeAdapterV2(
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
         ) {
-          const context = yield* Ref.get(activeTurn);
+          const context = (yield* Ref.get(activeTurn)) ?? (yield* awaitWakeTurn());
           if (context === null) {
             return {
               behavior: "deny",
-              message: "Claude V2 adapter has no active turn for this tool request.",
+              message:
+                "T3 Code has no active turn to show this request in, so the user cannot see or answer it. Ask in your reply text instead.",
               toolUseID: callbackOptions.toolUseID,
             } satisfies PermissionResult;
           }
@@ -5357,19 +5436,21 @@ export function makeClaudeAdapterV2(
                 }),
               ),
             );
-            return callbackOptions.signal.aborted
-              ? ({
-                  behavior: "deny",
-                  message: "User cancelled tool execution.",
-                } satisfies PermissionResult)
-              : ({
-                  behavior: "allow",
-                  updatedInput: {
-                    questions: toolInput.questions,
-                    answers: claudeSdkUserInputAnswers(resolvedAnswers),
-                  },
-                  toolUseID: callbackOptions.toolUseID,
-                } satisfies PermissionResult);
+            if (callbackOptions.signal.aborted) {
+              yield* emitCancelledRequest(artifacts);
+              return {
+                behavior: "deny",
+                message: "User cancelled tool execution.",
+              } satisfies PermissionResult;
+            }
+            return {
+              behavior: "allow",
+              updatedInput: {
+                questions: toolInput.questions,
+                answers: claudeSdkUserInputAnswers(resolvedAnswers),
+              },
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
           }
 
           if (toolName === "ExitPlanMode") {
@@ -5459,6 +5540,9 @@ export function makeClaudeAdapterV2(
               }),
             ),
           );
+          if (callbackOptions.signal.aborted) {
+            yield* emitCancelledRequest(artifacts);
+          }
 
           return permissionResultFromDecision({
             toolName,
@@ -5842,6 +5926,7 @@ export function makeClaudeAdapterV2(
           },
           (effect, turnInput) =>
             effect.pipe(
+              Effect.ensuring(signalTurnAttached),
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterTurnStartError({
@@ -5937,7 +6022,9 @@ export function makeClaudeAdapterV2(
                 compileClaudeModelSelection(currentTurn.input.modelSelection).promptEffort,
               ),
               attachments: turnInput.message.attachments,
-              priority: "now",
+              // "now" aborts an open permission callback, killing a question
+              // the user may be answering; queue behind it instead.
+              priority: (yield* Ref.get(pendingRuntimeRequests)).size > 0 ? "next" : "now",
               attachmentsDir,
               fileSystem,
               skillNames: yield* userInvocableSkillNames(currentTurn.input.runtimePolicy.cwd),

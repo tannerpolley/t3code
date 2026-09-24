@@ -3720,6 +3720,190 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("holds a wake turn's question until its continuation run attaches", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-question-1"),
+            text: "Check the build.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        // The CLI starts a wake turn on its own (no buffered notification, so
+        // no continuation is requested yet) and the model asks a question.
+        const questionInput = {
+          questions: [
+            {
+              header: "Next",
+              question: "Ship it?",
+              options: [
+                { label: "Yes", description: "Ship now." },
+                { label: "No", description: "Wait." },
+              ],
+              multiSelect: false,
+            },
+          ],
+        };
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "tool-wake-question",
+                  name: "AskUserQuestion",
+                  input: questionInput,
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000911",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // A buffered assistant frame pins pending background work.
+        for (let attempt = 0; !(yield* harness.hasPendingBackgroundWork); attempt++) {
+          assert.isBelow(attempt, 5000, "wake frame buffered");
+          yield* Effect.yieldNow;
+        }
+        assert.lengthOf(harness.continuationRequests, 0);
+        const canUseTool = harness.getOpenedOptions()?.canUseTool;
+        assert.isFunction(canUseTool);
+        const questionResult = yield* Effect.promise(() =>
+          canUseTool!("AskUserQuestion", questionInput, {
+            signal: new AbortController().signal,
+            toolUseID: "tool-wake-question",
+            requestId: "request-wake-question",
+          }),
+        ).pipe(Effect.forkScoped);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-question-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        const findRequest = () =>
+          harness.events.find(
+            (
+              event,
+            ): event is Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }> =>
+              event.type === "runtime_request.updated",
+          );
+        yield* awaitUntil(() => findRequest() !== undefined, "question request");
+        // The continuation run stays open while the question is pending.
+        assert.lengthOf(harness.terminalEvents(), 1);
+
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: findRequest()!.runtimeRequest.id,
+          answers: { "Ship it?": ["Yes"] },
+        });
+        assert.deepEqual(yield* Fiber.join(questionResult), {
+          behavior: "allow",
+          updatedInput: { questions: questionInput.questions, answers: { "Ship it?": "Yes" } },
+          toolUseID: "tool-wake-question",
+        });
+
+        yield* Queue.offer(harness.sdkMessages, wakeResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "continuation terminal");
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("queues a steer behind an open question and cancels a question the CLI aborts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const idAllocator = yield* IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-claude-question-steer");
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Pick a target.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        const canUseTool = harness.getOpenedOptions()?.canUseTool;
+        assert.isFunction(canUseTool);
+        const abort = new AbortController();
+        const questionResult = yield* Effect.promise(() =>
+          canUseTool!(
+            "AskUserQuestion",
+            {
+              questions: [
+                {
+                  header: "Target",
+                  question: "Where?",
+                  options: [
+                    { label: "Prod", description: "Production." },
+                    { label: "Staging", description: "Staging." },
+                  ],
+                  multiSelect: false,
+                },
+              ],
+            },
+            { signal: abort.signal, toolUseID: "tool-steer-question", requestId: "request-steer" },
+          ),
+        ).pipe(Effect.forkScoped);
+        const requestEvents = () =>
+          harness.events.filter(
+            (
+              event,
+            ): event is Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }> =>
+              event.type === "runtime_request.updated",
+          );
+        yield* awaitUntil(() => requestEvents().length === 1, "question request");
+
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            messageId: MessageId.make("message-question-steer"),
+            text: "Delegated task finished.",
+            attachments: [],
+          },
+        });
+        assert.equal(harness.offeredMessages[1]?.priority, "next");
+
+        abort.abort();
+        assert.equal((yield* Fiber.join(questionResult))?.behavior, "deny");
+        yield* awaitUntil(() => requestEvents().length === 2, "cancelled request");
+        assert.equal(requestEvents()[1]?.runtimeRequest.status, "cancelled");
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("leaves buffered wake messages for the continuation queued behind a user turn", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -186,6 +186,11 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
       'A delegated task continued after a restart reports its finished work to its parent instead of "cancelled".',
   },
   {
+    title: "Questions survive steers and wake turns",
+    description:
+      "A Claude question asked right as a turn ends, or while a message is steered in, reaches you instead of failing or silently dropping your answer.",
+  },
+  {
     title: "Early steers wait for the turn",
     description:
       "A steer sent while the agent is still starting its turn is held and delivered once the turn runs, instead of failing.",
