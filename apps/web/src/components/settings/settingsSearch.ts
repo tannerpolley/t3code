@@ -368,6 +368,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "wake-parent-on-resumed-child",
+    title: "Wake the parent when a resumed delegated task finishes",
+    to: "/settings/customizations",
+    searchTerms: [
+      "delegated task subagent child resume send follow-up result report back notify parent wake",
+    ],
+  },
+  {
     id: "codex-style-sidebar",
     title: "Codex-style project sidebar",
     to: "/settings/customizations",
@@ -420,6 +428,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Expand agent details by default",
     to: "/settings/customizations",
     searchTerms: ["customization fork lineage subagent model effort details expand"],
+  },
+  {
+    id: "short-model-names",
+    title: "Short model names",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork model name label short opus sonnet sol claude gpt icon"],
   },
   {
     id: "chat-math",

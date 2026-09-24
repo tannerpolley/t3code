@@ -54,7 +54,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "codex-style-sidebar",
     section: "sidebar",
     description:
-      "Projects view like the Codex app: hover chevrons, rows that toggle and drag, and a spinner on running threads. Off restores chevrons, grip handles, status dots and the All projects row.",
+      "Projects view like the Codex app: hover chevrons, rows that toggle and drag, a blue spinner on running threads, running subagents listed under their thread like Lineage rows, and New thread in the project menu instead of a hover button. Off restores chevrons, grip handles, status dots and the All projects row.",
   },
   {
     key: "sectionFolderColors",
@@ -104,6 +104,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     section: "lineage",
     description:
       "Open every Lineage row's details (model, effort, status, branch, latest progress) by default. Rows you close by hand stay closed. Needs the redesigned Lineage.",
+  },
+  {
+    key: "shortModelNames",
+    searchId: "short-model-names",
+    section: "lineage",
+    description:
+      "Model labels drop the company name the provider icon already shows and lead with the model's own name, then its version: Opus 5.5, Sonnet 5, Sol 6. Applies to the sidebar, Lineage, agent details and the composer's model button, always right after the icon; the model list keeps full names. Off restores the full names.",
   },
   {
     key: "composerCodeFormatting",
@@ -194,6 +201,16 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
     title: "Quitting doesn't fail running agents",
     description:
       "Agents that are mid-turn when you quit are resumed after relaunch instead of being marked failed.",
+  },
+  {
+    title: "Provider subagents show while they run",
+    description:
+      "Claude's and Codex's own subagents show as running under their thread in the sidebar, with the right timer, even while the thread itself is still working.",
+  },
+  {
+    title: "Usage-limit recovery finds its threads",
+    description:
+      "The check for threads to resume or snooze after a usage limit resets no longer fails on a database error.",
   },
   {
     title: "Claude background agents stay in their own thread",
@@ -537,6 +554,11 @@ export function CustomizationsSettings() {
           settingKey="wakeParentOnChildQuestion"
           searchId="wake-parent-on-child-question"
           description="When a delegated task asks you a question or waits on an approval, tell its parent thread once so it can relay or answer it."
+        />
+        <ServerSwitchRow
+          settingKey="wakeParentOnResumedChild"
+          searchId="wake-parent-on-resumed-child"
+          description="When an agent sends new work to a child it already delegated, the child's result reports back and wakes the agent again, like the first result. Turns you start in the child yourself don't."
         />
       </CustomizationsGroup>
       <CustomizationsGroup title="Usage" section="usage" />
