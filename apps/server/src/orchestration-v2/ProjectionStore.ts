@@ -3321,6 +3321,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
                       AND type = 'subagent_result'
                   )
+                  -- A restart-cancelled child that will be continued is still working; its
+                  -- continuation run delivers the result, so the cancellation must not.
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_effect_outbox
+                    WHERE thread_id = child.thread_id
+                      AND effect_type = 'provider-runtime.continue'
+                      AND status IN ('pending', 'running')
+                  )
                   ELSE 0 END
               `;
             case "runtime":

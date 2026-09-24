@@ -181,6 +181,11 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
     description: "A subagent you send new work to shows as running in Lineage, not finished.",
   },
   {
+    title: "Resumed child tasks report their real result",
+    description:
+      'A delegated task continued after a restart reports its finished work to its parent instead of "cancelled".',
+  },
+  {
     title: "Early steers wait for the turn",
     description:
       "A steer sent while the agent is still starting its turn is held and delivered once the turn runs, instead of failing.",
