@@ -2418,6 +2418,16 @@ interface ActiveClaudeToolCall {
 
 const PENDING_CLAUDE_SUBAGENT_MODEL_CAP = 64;
 
+/** A subagent on another model starts from that model's defaults, not the parent's options. */
+function claudeSubagentModelSelection(
+  parentSelection: ModelSelection,
+  model: string | null,
+): ModelSelection {
+  return model && model !== parentSelection.model
+    ? { instanceId: parentSelection.instanceId, model }
+    : parentSelection;
+}
+
 function rememberPendingClaudeSubagentModel(
   pending: Map<string, string>,
   toolUseId: string,
@@ -3510,10 +3520,10 @@ export function makeClaudeAdapterV2(
               parentNodeId: nodeId,
               activeProviderThreadId: null,
               providerInstanceId: input.context.input.modelSelection.instanceId,
-              modelSelection:
-                task.model && task.model !== input.context.input.modelSelection.model
-                  ? { instanceId: input.context.input.modelSelection.instanceId, model: task.model }
-                  : input.context.input.modelSelection,
+              modelSelection: claudeSubagentModelSelection(
+                input.context.input.modelSelection,
+                task.model,
+              ),
               title: subagentThreadTitle({
                 parentTitle: input.context.input.appThread.title,
                 prompt: task.prompt,
@@ -3528,6 +3538,18 @@ export function makeClaudeAdapterV2(
               type: "app_thread.created",
               driver: CLAUDE_PROVIDER,
               appThread: childThread,
+            });
+          } else if (input.model !== undefined && input.model !== existingSubagent.task.model) {
+            // Lineage reads the task model and the sidebar reads the child
+            // thread's selection; an observed model must move both.
+            yield* emitProviderEvent({
+              type: "app_thread.model_selection.updated",
+              driver: CLAUDE_PROVIDER,
+              threadId: childThreadId,
+              modelSelection: claudeSubagentModelSelection(
+                input.context.input.modelSelection,
+                input.model,
+              ),
             });
           }
 

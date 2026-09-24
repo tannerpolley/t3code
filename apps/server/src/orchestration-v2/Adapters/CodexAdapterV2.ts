@@ -892,28 +892,54 @@ export const resolveCodexForkBoundary = Effect.fn("CodexAdapterV2.resolveForkBou
 
 /**
  * The generated `thread/read` response schema does not surface `historyMode`,
- * so the probe goes through the raw request channel with a permissive decode
- * (mirrors the V1 session runtime's paginated-history detection).
+ * `model`, or `reasoningEffort`, so probes go through the raw request channel
+ * with a permissive decode (mirrors the V1 session runtime's paginated-history
+ * detection).
  */
-const CodexThreadHistoryMetadata = Schema.Struct({
+const CodexThreadMetadata = Schema.Struct({
   thread: Schema.Struct({
     historyMode: Schema.optionalKey(Schema.Literals(["legacy", "paginated"])),
+    model: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    reasoningEffort: Schema.optionalKey(Schema.NullOr(Schema.String)),
   }),
 });
-const decodeCodexThreadHistoryMetadata = Schema.decodeUnknownEffect(CodexThreadHistoryMetadata);
+const decodeCodexThreadMetadata = Schema.decodeUnknownEffect(CodexThreadMetadata);
 
-const readCodexThreadHistoryMode = Effect.fn("CodexAdapterV2.readThreadHistoryMode")(function* (
+const readCodexThreadMetadata = Effect.fn("CodexAdapterV2.readThreadMetadata")(function* (
   raw: Pick<CodexClient.CodexAppServerClient["Service"]["raw"], "request">,
   threadId: string,
 ) {
   const response = yield* raw.request("thread/read", { threadId, includeTurns: false });
-  const metadata = yield* decodeCodexThreadHistoryMetadata(response).pipe(
+  const metadata = yield* decodeCodexThreadMetadata(response).pipe(
     Effect.mapError((error) =>
       CodexErrors.CodexAppServerRequestError.invalidPayload("thread/read", "decode-payload", error),
     ),
   );
-  return metadata.thread.historyMode;
+  return metadata.thread;
 });
+
+const readCodexThreadHistoryMode = (
+  raw: Pick<CodexClient.CodexAppServerClient["Service"]["raw"], "request">,
+  threadId: string,
+) => Effect.map(readCodexThreadMetadata(raw, threadId), (thread) => thread.historyMode);
+
+/**
+ * A spawned agent's selection: the model and effort Codex reported win over the
+ * current (initially inherited) selection. A changed model with no reported
+ * effort drops the inherited effort instead of presenting it as the child's.
+ */
+function withCodexReportedModel(
+  selection: ModelSelection,
+  reported: { readonly model?: string | null; readonly reasoningEffort?: string | null },
+): ModelSelection {
+  const model = reported.model?.trim() || selection.model;
+  const effort = reported.reasoningEffort?.trim();
+  if (!effort && model === selection.model) return selection;
+  const options = (selection.options ?? []).filter((option) => option.id !== "reasoningEffort");
+  if (effort) options.push({ id: "reasoningEffort", value: effort });
+  const { options: _previous, ...rest } = selection;
+  return options.length > 0 ? { ...rest, model, options } : { ...rest, model };
+}
 
 export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRollbackTurnCount")(
   function* (input: ProviderAdapterV2RollbackThreadInput) {
@@ -1030,7 +1056,7 @@ interface DeferredCodexRootTerminal {
 interface CodexSubagentThreadContext {
   parentContext: ActiveCodexTurnContext;
   readonly providerThread: OrchestrationV2ProviderThread;
-  readonly childThread: OrchestrationV2AppThread;
+  childThread: OrchestrationV2AppThread;
   readonly subagentNodeId: OrchestrationV2ExecutionNode["id"];
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly childThreadId: ThreadId;
@@ -1495,6 +1521,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           model: input.modelSelection.model,
           now,
         });
+        const sessionScope = yield* Scope.Scope;
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
@@ -2276,13 +2303,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly prompt: string;
           readonly title: string | null;
           readonly model: string | null;
+          readonly reasoningEffort: string | null;
           readonly ordinal: number;
           readonly emitInitialPrompt: boolean;
         }) =>
           Effect.gen(function* () {
-            const registeredSubagents = yield* Ref.get(subagentThreads);
-            if (registeredSubagents.has(input.nativeThreadId)) {
-              return;
+            const registered = (yield* Ref.get(subagentThreads)).get(input.nativeThreadId);
+            if (registered !== undefined) {
+              yield* applySubagentReportedModel(registered, input);
+              return false;
             }
 
             const now = yield* DateTime.now;
@@ -2353,10 +2382,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               parentNodeId: subagentNodeId,
               activeProviderThreadId: providerThread.id,
               providerInstanceId: input.context.input.modelSelection.instanceId,
-              modelSelection: {
-                ...input.context.input.modelSelection,
-                model: task.model ?? input.context.input.modelSelection.model,
-              },
+              // Codex's spawned agent inherits the parent's selection unless it reports its own.
+              modelSelection: withCodexReportedModel(input.context.input.modelSelection, input),
               title: subagentThreadTitle({
                 parentTitle: input.context.projectionAppThread.title,
                 prompt: task.prompt,
@@ -2490,6 +2517,32 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             for (const pendingTurn of pendingTurns) {
               yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
             }
+            return true;
+          });
+
+        /** Records the model and effort Codex reported for a registered agent on its task and child thread. */
+        const applySubagentReportedModel = (
+          subagent: CodexSubagentThreadContext,
+          reported: { readonly model?: string | null; readonly reasoningEffort?: string | null },
+        ) =>
+          Effect.gen(function* () {
+            const model = reported.model?.trim() || null;
+            if (model !== null && model !== subagent.task.model) {
+              subagent.task = { ...subagent.task, model };
+              yield* emitSubagentTaskUpdate({ subagent, status: subagent.task.status });
+            }
+            const modelSelection = withCodexReportedModel(
+              subagent.childThread.modelSelection,
+              reported,
+            );
+            if (modelSelectionsEqual(modelSelection, subagent.childThread.modelSelection)) return;
+            subagent.childThread = { ...subagent.childThread, modelSelection };
+            yield* emitProviderEvent({
+              type: "app_thread.model_selection.updated",
+              driver: CODEX_PROVIDER,
+              threadId: subagent.childThreadId,
+              modelSelection,
+            });
           });
 
         const registerSubagentThreads = (input: {
@@ -2514,6 +2567,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 prompt: input.item.prompt ?? "",
                 title: null,
                 model,
+                reasoningEffort: input.item.reasoningEffort ?? null,
                 ordinal: index + 1,
                 emitInitialPrompt: true,
               });
@@ -2533,17 +2587,38 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 Array.from(registeredSubagents.values()).filter(
                   (subagent) => subagent.parentContext.rootNodeId === context.rootNodeId,
                 ).length + 1;
-              yield* registerSubagentThread({
+              const agentThreadId = input.item.agentThreadId;
+              const created = yield* registerSubagentThread({
                 context,
-                nativeThreadId: input.item.agentThreadId,
-                nativeItemId: `${input.item.id}:${input.item.agentThreadId}`,
+                nativeThreadId: agentThreadId,
+                nativeItemId: `${input.item.id}:${agentThreadId}`,
                 nativeToolCallId: input.item.id,
                 prompt: "",
                 title: input.item.agentPath,
                 model: null,
+                reasoningEffort: null,
                 ordinal,
                 emitInitialPrompt: false,
               });
+              // The activity item carries no model; a role or override can give the
+              // agent its own, which only the spawned thread reports. Forked because
+              // a request cannot await its response inside a notification handler.
+              if (created) {
+                yield* readCodexThreadMetadata(client.raw, agentThreadId).pipe(
+                  Effect.flatMap((thread) =>
+                    Effect.gen(function* () {
+                      const subagent = (yield* Ref.get(subagentThreads)).get(agentThreadId);
+                      if (subagent !== undefined) {
+                        yield* applySubagentReportedModel(subagent, thread);
+                      }
+                    }),
+                  ),
+                  Effect.catchCause((cause) =>
+                    Effect.logDebug("Codex subagent model probe failed", { cause }),
+                  ),
+                  Effect.forkIn(sessionScope),
+                );
+              }
               return;
             }
 

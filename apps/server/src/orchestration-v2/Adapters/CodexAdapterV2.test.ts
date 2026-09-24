@@ -1321,6 +1321,31 @@ function makeCodexReplayTurn(input: {
   };
 }
 
+/** The model probe the adapter sends when an activity item spawns an agent. */
+function codexSubagentThreadRead(input: {
+  readonly id: number;
+  readonly nativeThreadId: string;
+  readonly thread?: { readonly model?: string; readonly reasoningEffort?: string };
+}): Array<CodexReplay.CodexAppServerReplayEntry> {
+  const label = `thread/read/${input.nativeThreadId}`;
+  return [
+    {
+      type: "expect_outbound",
+      label,
+      frame: {
+        id: input.id,
+        method: "thread/read",
+        params: { threadId: input.nativeThreadId, includeTurns: false },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label,
+      frame: { id: input.id, result: { thread: { id: input.nativeThreadId, ...input.thread } } },
+    },
+  ];
+}
+
 function codexReplayPreamble(input: {
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
@@ -3882,6 +3907,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         },
       },
+      ...codexSubagentThreadRead({ id: 4, nativeThreadId: INTERRUPT_CHILD_NATIVE_THREAD }),
       {
         type: "emit_inbound",
         label: "turn/started/child",
@@ -3917,7 +3943,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         type: "expect_outbound",
         label: "turn/interrupt/root",
         frame: {
-          id: 4,
+          id: 5,
           method: "turn/interrupt",
           params: {
             threadId: INTERRUPT_NATIVE_THREAD,
@@ -3928,13 +3954,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       {
         type: "emit_inbound",
         label: "turn/interrupt/root",
-        frame: { id: 4, result: {} },
+        frame: { id: 5, result: {} },
       },
       {
         type: "expect_outbound",
         label: "turn/interrupt/child",
         frame: {
-          id: 5,
+          id: 6,
           method: "turn/interrupt",
           params: {
             threadId: INTERRUPT_CHILD_NATIVE_THREAD,
@@ -3945,13 +3971,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       {
         type: "emit_inbound",
         label: "turn/interrupt/child",
-        frame: { id: 5, result: {} },
+        frame: { id: 6, result: {} },
       },
       {
         type: "expect_outbound",
         label: "thread/backgroundTerminals/terminate/child",
         frame: {
-          id: 6,
+          id: 7,
           method: "thread/backgroundTerminals/terminate",
           params: { threadId: INTERRUPT_CHILD_NATIVE_THREAD, processId: "57682" },
         },
@@ -3959,7 +3985,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       {
         type: "emit_inbound",
         label: "thread/backgroundTerminals/terminate/child",
-        frame: { id: 6, result: { terminated: true } },
+        frame: { id: 7, result: { terminated: true } },
       },
       {
         type: "emit_inbound",
@@ -4103,7 +4129,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         type: "emit_inbound",
         label: "turn/interrupt/child",
         frame: {
-          id: 5,
+          id: 6,
           error: { code: -32_000, message: "child interrupt request failed" },
         },
       },
@@ -4265,7 +4291,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         type: "expect_outbound",
         label: "turn/interrupt/late-child",
         frame: {
-          id: 7,
+          id: 8,
           method: "turn/interrupt",
           params: {
             threadId: INTERRUPT_CHILD_NATIVE_THREAD,
@@ -4276,7 +4302,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       {
         type: "emit_inbound",
         label: "turn/interrupt/late-child",
-        frame: { id: 7, result: {} },
+        frame: { id: 8, result: {} },
       },
       { type: "runtime_exit", status: "success" },
     ],
@@ -4363,7 +4389,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         type: "expect_outbound",
         label: "turn/interrupt/late-child-1",
         frame: {
-          id: 7,
+          id: 8,
           method: "turn/interrupt",
           params: {
             threadId: INTERRUPT_CHILD_NATIVE_THREAD,
@@ -4388,13 +4414,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       {
         type: "emit_inbound",
         label: "turn/interrupt/late-child-1",
-        frame: { id: 7, result: {} },
+        frame: { id: 8, result: {} },
       },
       {
         type: "expect_outbound",
         label: "turn/interrupt/late-child-2",
         frame: {
-          id: 8,
+          id: 9,
           method: "turn/interrupt",
           params: {
             threadId: INTERRUPT_CHILD_NATIVE_THREAD,
@@ -4405,7 +4431,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       {
         type: "emit_inbound",
         label: "turn/interrupt/late-child-2",
-        frame: { id: 8, result: {} },
+        frame: { id: 9, result: {} },
       },
       { type: "runtime_exit", status: "success" },
     ],
@@ -4961,6 +4987,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                         },
                       },
                     },
+                    ...codexSubagentThreadRead({ id: 4, nativeThreadId: "native-limit-child" }),
                     {
                       type: "emit_inbound" as const,
                       label: "turn/started/child",
@@ -5538,6 +5565,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         },
       },
+      ...codexSubagentThreadRead({ id: 4, nativeThreadId: RESUME_CHILD_THREAD }),
       childTurnStarted(RESUME_CHILD_TURN_1),
       childAgentMessage({
         id: "child-first-answer",
@@ -5663,6 +5691,98 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each(["activity", "collab"] as const)(
+    "records a %s-spawned agent's own model and effort on its task and child thread",
+    (source) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const reported = { model: "gpt-6-luna", reasoningEffort: "max" };
+          const spawn: CodexReplay.CodexAppServerReplayEntry = {
+            type: "emit_inbound",
+            label: `item/completed/${source}-spawn`,
+            frame: {
+              method: "item/completed",
+              params: {
+                threadId: RESUME_NATIVE_THREAD,
+                turnId: RESUME_NATIVE_TURN,
+                item:
+                  source === "activity"
+                    ? {
+                        type: "subAgentActivity",
+                        id: "call-model-spawn",
+                        kind: "started",
+                        agentThreadId: RESUME_CHILD_THREAD,
+                        agentPath: "/root/worker",
+                      }
+                    : {
+                        type: "collabAgentToolCall",
+                        id: "call-model-spawn",
+                        tool: "spawnAgent",
+                        status: "completed",
+                        senderThreadId: RESUME_NATIVE_THREAD,
+                        receiverThreadIds: [RESUME_CHILD_THREAD],
+                        prompt: "Audit the change.",
+                        ...reported,
+                        agentsStates: {},
+                      },
+              },
+            },
+          };
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: `codex-${source}-spawn-model`,
+              entries: [
+                ...codexReplayPreamble({
+                  nativeThreadId: RESUME_NATIVE_THREAD,
+                  nativeTurnId: RESUME_NATIVE_TURN,
+                  prompt: RESUME_PROMPT,
+                }),
+                spawn,
+                ...(source === "activity"
+                  ? codexSubagentThreadRead({
+                      id: 4,
+                      nativeThreadId: RESUME_CHILD_THREAD,
+                      thread: reported,
+                    })
+                  : []),
+              ],
+            }),
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-${source}-spawn-model`),
+              text: RESUME_PROMPT,
+            }),
+          );
+          // The sidebar reads the child's selection: created, then any later update.
+          const childSelection = () =>
+            harness.events
+              .flatMap((event) =>
+                event.type === "app_thread.created" && event.appThread.id !== harness.threadId
+                  ? [event.appThread.modelSelection]
+                  : event.type === "app_thread.model_selection.updated"
+                    ? [event.modelSelection]
+                    : [],
+              )
+              .at(-1);
+          yield* awaitUntil(
+            () =>
+              childSelection()?.model === reported.model &&
+              harness.subagentUpdates().at(-1)?.subagent.model === reported.model,
+            "reported model recorded",
+          );
+          assert.deepEqual(childSelection(), {
+            ...CODEX_TEST_MODEL_SELECTION,
+            model: reported.model,
+            options: [{ id: "reasoningEffort", value: reported.reasoningEffort }],
+          });
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+  );
+
   it.effect("rejects duplicate child starts across parent runs", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -5686,7 +5806,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   ...entry,
                   frame:
                     Predicate.isObject(entry.frame) && "id" in entry.frame
-                      ? { ...entry.frame, id: 4 }
+                      ? { ...entry.frame, id: 5 }
                       : entry.frame,
                 }
               : entry,
@@ -5715,6 +5835,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             attemptId: RunAttemptId.make("cross-run-first"),
             text: RESUME_PROMPT,
           }),
+        );
+        // The child's model probe gates the replay; the delayed child completion follows it.
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (e) =>
+                e.type === "provider_turn.updated" &&
+                e.providerTurn.nativeTurnRef?.nativeId === RESUME_CHILD_TURN_1,
+            ),
+          "first child turn started",
         );
         yield* TestClock.adjust("100 millis");
         yield* Deferred.await(firstDone);
@@ -5794,6 +5924,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               (e) =>
                 e.type === "emit_inbound" && e.label === "item/completed/subAgentActivity-started",
             )!,
+            ...codexSubagentThreadRead({ id: 4, nativeThreadId: RESUME_CHILD_THREAD }),
           ];
           if (nativeStatus === "late-activity-completed") {
             entries.push(

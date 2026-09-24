@@ -24,7 +24,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { AnalyticsService } from "../telemetry/AnalyticsService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
@@ -349,6 +349,32 @@ export const layer: Layer.Layer<
                 payload: input.event.appThread,
               }),
             ];
+          case "app_thread.model_selection.updated": {
+            const thread = yield* projections
+              .getThread(input.event.threadId)
+              .pipe(
+                Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)),
+              );
+            if (
+              thread === null ||
+              modelSelectionsEqual(thread.modelSelection, input.event.modelSelection)
+            ) {
+              return [];
+            }
+            const occurredAt = yield* DateTime.now;
+            return [
+              yield* makeDomainEvent(input, {
+                type: "thread.model-selection-updated",
+                threadId: thread.id,
+                payload: {
+                  ...thread,
+                  modelSelection: input.event.modelSelection,
+                  updatedAt: occurredAt,
+                },
+                occurredAt,
+              }),
+            ];
+          }
           case "provider_session.updated":
             return [
               yield* makeDomainEvent(input, {

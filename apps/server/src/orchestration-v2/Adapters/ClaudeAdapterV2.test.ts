@@ -4944,6 +4944,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           const child = harness.events.find((event) => event.type === "app_thread.created");
           assert.equal(child?.appThread.modelSelection?.model, initialModel);
+          // The sidebar reads the child's selection and must follow the model Lineage shows.
+          const childModel =
+            harness.events
+              .flatMap((event) =>
+                event.type === "app_thread.model_selection.updated" &&
+                event.threadId === child?.appThread.id
+                  ? [event.modelSelection.model]
+                  : [],
+              )
+              .at(-1) ?? child?.appThread.modelSelection.model;
+          assert.equal(childModel, subagents.at(-1)?.subagent.model);
         }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
       ),
   );

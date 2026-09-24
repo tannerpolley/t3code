@@ -81,6 +81,13 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     appThread: OrchestrationV2AppThread,
   }),
+  /** A native subagent child's model became known after its thread was created. */
+  Schema.Struct({
+    type: Schema.Literal("app_thread.model_selection.updated"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    modelSelection: ModelSelection,
+  }),
   Schema.Struct({
     type: Schema.Literal("provider_session.updated"),
     driver: ProviderDriverKind,

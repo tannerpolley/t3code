@@ -404,6 +404,8 @@ export function routeProviderEvent(
       }
       return [true, addProviderThread(event.node.providerThreadId)];
     }
+    case "app_thread.model_selection.updated":
+      return [ownsChildThread(event.threadId), state];
     case "subagent.updated":
       return [ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId), state];
     case "message.updated":

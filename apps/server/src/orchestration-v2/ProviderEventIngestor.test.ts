@@ -312,6 +312,49 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect("moves a child's model selection onto its current thread once", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      yield* eventSink.write({ events: [threadEvent] });
+      const before = yield* projectionStore.getThread(threadEvent.threadId);
+      const reported = { ...modelSelection, model: "gpt-6-luna" };
+      const ingest = ingestor.ingestNormalized({
+        providerSessionId: yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+        }),
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "app_thread.model_selection.updated",
+          driver: CODEX_DRIVER,
+          threadId: threadEvent.threadId,
+          modelSelection: reported,
+        },
+      });
+
+      const first = yield* ingest;
+      const repeated = yield* ingest;
+      const thread = yield* projectionStore.getThread(threadEvent.threadId);
+
+      assert.deepEqual(
+        first.map((stored) => stored.event.type),
+        ["thread.model-selection-updated"],
+      );
+      assert.lengthOf(repeated, 0);
+      // Only the selection moves; the rest of the thread's current state is kept.
+      assert.deepEqual(
+        { ...thread, updatedAt: before.updatedAt },
+        { ...before, modelSelection: reported },
+      );
+    }),
+  );
+
   it.effect("carries plan-step durations through consecutive and restarted ingestion", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse("2026-09-07T00:00:00.000Z"));
