@@ -924,10 +924,11 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
+/** Parent-turn assistant text; a subagent's narration is not the parent's message. */
 function assistantTextFromSdkMessage(
   message: SDKMessage,
 ): { readonly nativeItemId: string; readonly text: string } | null {
-  if (message.type !== "assistant") {
+  if (message.type !== "assistant" || message.parent_tool_use_id !== null) {
     return null;
   }
   return {
@@ -2696,6 +2697,14 @@ export function makeClaudeAdapterV2(
         // ended, and its task_notification must both count as wake evidence
         // and hydrate the original subagent node instead of being dropped.
         const sessionSubagentsByTaskId = yield* Ref.make(new Map<string, ActiveClaudeSubagent>());
+        // The turn context that launched (or resumed) each running subagent,
+        // keyed by the tool_use id its frames carry as parent_tool_use_id. A
+        // background subagent keeps streaming after that turn settles; its
+        // frames route through this context to the child thread, never to a
+        // later parent turn or a parent wake.
+        const subagentTurnContextsByToolUseId = yield* Ref.make(
+          new Map<string, ActiveClaudeTurnContext>(),
+        );
         const wakeBuffers = yield* Ref.make(
           new Map<
             string,
@@ -3457,6 +3466,23 @@ export function makeClaudeAdapterV2(
           if (input.toolUseId !== undefined) {
             input.context.subagentsByToolUseId.set(input.toolUseId, subagent);
           }
+          const ownerToolUseId = input.toolUseId;
+          yield* Ref.update(subagentTurnContextsByToolUseId, (current) => {
+            const updated = new Map(current);
+            if (task.status !== "running") {
+              for (const [toolUseId, owner] of current) {
+                if (
+                  owner.subagentsByToolUseId.get(toolUseId)?.task.nativeTaskRef?.nativeId ===
+                  input.taskId
+                ) {
+                  updated.delete(toolUseId);
+                }
+              }
+            } else if (ownerToolUseId !== undefined) {
+              updated.set(ownerToolUseId, input.context);
+            }
+            return updated;
+          });
           // The same terminal protection, applied atomically: a concurrent
           // fiber (live stream vs continuation drain) may have terminalized
           // the registry entry after this update's lookup read it. A resume
@@ -4109,6 +4135,12 @@ export function makeClaudeAdapterV2(
         }) {
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           for (const toolCall of input.context.toolCalls.values()) {
+            // A background subagent outlives a completed turn: its open calls
+            // (child-thread, runId null) finish later through this context.
+            if (input.status === "completed" && toolCall.runId === null) {
+              continue;
+            }
+            input.context.toolCalls.delete(toolCall.nativeItemId);
             const artifacts = buildToolCallArtifacts({
               context: input.context,
               nativeItemId: toolCall.nativeItemId,
@@ -4127,7 +4159,6 @@ export function makeClaudeAdapterV2(
             });
             yield* emitToolCallArtifacts(artifacts);
           }
-          input.context.toolCalls.clear();
 
           if (
             input.context.assistant.emittedNativeItemIds.size === 0 &&
@@ -4522,12 +4553,14 @@ export function makeClaudeAdapterV2(
               });
             });
           }
+          // Subagent frames (parent_tool_use_id set) are the subagent working,
+          // not the parent model waking.
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
             isKnownSubagentTaskStarted ||
-            message.type === "assistant" ||
-            message.type === "user" ||
+            ((message.type === "assistant" || message.type === "user") &&
+              message.parent_tool_use_id === null) ||
             message.type === "result";
           if (!isWakeEvidence) {
             return;
@@ -4757,7 +4790,15 @@ export function makeClaudeAdapterV2(
             }
             return;
           }
-          const context = yield* Ref.get(activeTurn);
+          const subagentToolUseId =
+            message.type === "system" && message.subtype === "task_progress"
+              ? (message.tool_use_id ?? null)
+              : parentToolUseIdFromSdkMessage(message);
+          const context =
+            (subagentToolUseId === null
+              ? undefined
+              : (yield* Ref.get(subagentTurnContextsByToolUseId)).get(subagentToolUseId)) ??
+            (yield* Ref.get(activeTurn));
           if (context === null) {
             // task_notification must buffer wake evidence while still tracked
             // on the roster; clearing first would drop the wake pin.
@@ -4851,8 +4892,8 @@ export function makeClaudeAdapterV2(
           }
 
           if (message.type === "assistant") {
-            context.nativeMessageCursor = message.uuid;
             if (message.parent_tool_use_id === null) {
+              context.nativeMessageCursor = message.uuid;
               context.latestAssistantRateLimited = message.error === "rate_limit";
               if (message.error === "authentication_failed") {
                 context.authenticationFailureMessage = claudeSignedOutMessage({

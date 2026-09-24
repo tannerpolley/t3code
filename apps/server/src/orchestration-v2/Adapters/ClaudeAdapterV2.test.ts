@@ -4769,6 +4769,91 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps a background subagent's post-settle work in its child thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "task-post-settle-subagent";
+        const AGENT_TOOL_USE_ID = "toolu-post-settle-agent";
+        const BASH_TOOL_USE_ID = "toolu-post-settle-bash";
+        const NARRATION = "Now checking the second file.";
+        const subagentFrame = (type: "assistant" | "user", uuid: string, content: unknown) =>
+          claudeSdkFrame({
+            type,
+            message: { role: type, content },
+            parent_tool_use_id: AGENT_TOOL_USE_ID,
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-post-settle-subagent"),
+            text: "Start a background review and stop.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: TASK_ID,
+            tool_use_id: AGENT_TOOL_USE_ID,
+            description: "Background review",
+            task_type: "local_agent",
+            prompt: "Review the change.",
+            uuid: "00000000-0000-4000-8000-000000000901",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          // In flight when the parent turn settles.
+          subagentFrame("assistant", "00000000-0000-4000-8000-000000000902", [
+            { type: "tool_use", id: BASH_TOOL_USE_ID, name: "Bash", input: { command: "ls" } },
+          ]),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000903",
+            result: "Started the review in the background.",
+          }),
+        ]);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* Queue.offerAll(harness.sdkMessages, [
+          subagentFrame("assistant", "00000000-0000-4000-8000-000000000904", [
+            { type: "text", text: NARRATION },
+          ]),
+          subagentFrame("user", "00000000-0000-4000-8000-000000000905", [
+            { type: "tool_result", tool_use_id: BASH_TOOL_USE_ID, content: "a.ts" },
+          ]),
+        ]);
+        const bashItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === BASH_TOOL_USE_ID
+              ? [event.turnItem]
+              : [],
+          );
+        yield* awaitUntil(
+          () => bashItems().at(-1)?.status === "completed",
+          "subagent tool call completed",
+        );
+
+        const childThreadId = harness.events.find((event) => event.type === "subagent.updated")
+          ?.subagent.childThreadId;
+        const completed = bashItems().at(-1);
+        assert.equal(completed?.threadId, childThreadId);
+        assert.include(completed?.type === "command_execution" ? completed.input : "", "ls");
+        assert.isFalse(bashItems().some((item) => item.status === "failed"));
+        // Subagent output neither opens a parent wake nor speaks as the parent.
+        assert.lengthOf(harness.continuationRequests, 0);
+        assert.isFalse(
+          harness.events.some(
+            (event) => event.type === "message.updated" && event.message.text === NARRATION,
+          ),
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect.each(["requested", "observed-before", "observed-after", "inherit"] as const)(
     "records the subagent model from %s without inheriting the parent override",
     (source) =>
