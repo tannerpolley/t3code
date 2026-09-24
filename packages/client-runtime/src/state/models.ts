@@ -163,8 +163,15 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
 // The server suppresses the roster while an interruptible activity run exists,
 // so a remaining roster is stronger than checkpoint-oriented waiting.
 // latestRun keeps the latest run's status for history presentation.
+// A run-less shell with a status is a provider-native subagent's child thread, which reports
+// its subagent record; it has a runtime like any child with runs.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
-  if (thread.latestRunId === null && thread.activeProviderThreadId === null) return null;
+  if (
+    thread.latestRunId === null &&
+    thread.activeProviderThreadId === null &&
+    thread.status === "idle"
+  )
+    return null;
   const hasPendingBackgroundTasks = (thread.pendingBackgroundTasks?.length ?? 0) > 0;
   const status = hasPendingBackgroundTasks ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {

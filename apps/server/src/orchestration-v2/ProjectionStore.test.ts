@@ -299,6 +299,121 @@ it.effect("memory recovery selection includes unfinished items from missing runs
   }).pipe(Effect.provide(projectionStoreMemoryLayer)),
 );
 
+// Provider-native subagents never get runs on their child thread, so the child's shell reads the
+// subagent record its parent owns, in the SQL list, SQL single-thread and memory shell paths.
+const assertNativeSubagentChildShell = Effect.fn("assertNativeSubagentChildShell")(function* () {
+  const store = yield* ProjectionStoreV2;
+  const startedAt = yield* DateTime.now;
+  const completedAt = DateTime.add(startedAt, { seconds: 5 });
+  const parentId = ThreadId.make("thread:native-parent");
+  const childId = ThreadId.make("thread:provider:claudeAgent:native-thread:child");
+  const subagentId = NodeId.make("node:native-subagent");
+  const thread = (id: ThreadId, lineage: { parentThreadId: ThreadId | null }) => ({
+    createdBy: "agent" as const,
+    creationSource: "provider" as const,
+    id,
+    projectId: ProjectId.make("project:native-subagent"),
+    title: "Native subagent",
+    providerInstanceId,
+    modelSelection,
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: {
+      parentThreadId: lineage.parentThreadId,
+      relationshipToParent: lineage.parentThreadId === null ? null : ("subagent" as const),
+      rootThreadId: parentId,
+    },
+    forkedFrom:
+      lineage.parentThreadId === null ? null : { type: "node" as const, nodeId: subagentId },
+    createdAt: startedAt,
+    updatedAt: startedAt,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  });
+  for (const [id, parentThreadId] of [
+    [parentId, null],
+    [childId, parentId],
+  ] as const) {
+    yield* store.apply({
+      id: EventId.make(`event:native-subagent:${id}`),
+      type: "thread.created",
+      threadId: id,
+      occurredAt: startedAt,
+      payload: thread(id, { parentThreadId }),
+    });
+  }
+  const updateSubagent = (status: "running" | "completed") =>
+    store.apply({
+      id: EventId.make(`event:native-subagent:${status}`),
+      type: "subagent.updated",
+      threadId: parentId,
+      nodeId: subagentId,
+      driver,
+      providerInstanceId,
+      occurredAt: status === "running" ? startedAt : completedAt,
+      payload: {
+        id: subagentId,
+        threadId: parentId,
+        runId: null,
+        parentNodeId: NodeId.make("node:native-parent-root"),
+        origin: "provider_native",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: childId,
+        nativeTaskRef: null,
+        prompt: "Review the diff",
+        title: "Review the diff",
+        model: null,
+        status,
+        result: null,
+        startedAt,
+        completedAt: status === "running" ? null : completedAt,
+        updatedAt: status === "running" ? startedAt : completedAt,
+      },
+    });
+  const epochMillis = (value: DateTime.Utc | null | undefined) =>
+    value == null ? null : DateTime.toEpochMillis(value);
+  const childShells = Effect.gen(function* () {
+    const snapshot = yield* store.getShellSnapshot();
+    return [
+      yield* store.getThreadShell(childId),
+      snapshot.threads.find((shell) => shell.id === childId),
+    ];
+  });
+
+  yield* updateSubagent("running");
+  for (const shell of yield* childShells) {
+    assert.equal(shell?.status, "running");
+    assert.equal(shell?.activityRunStatus, "running");
+    assert.equal(epochMillis(shell?.activityRunStartedAt), DateTime.toEpochMillis(startedAt));
+    assert.isNull(shell?.latestRunId);
+  }
+  assert.equal((yield* store.getThreadShell(parentId))?.status, "idle");
+
+  yield* updateSubagent("completed");
+  for (const shell of yield* childShells) {
+    assert.equal(shell?.status, "completed");
+    assert.isNull(shell?.activityRunStatus);
+    assert.equal(epochMillis(shell?.latestRunCompletedAt), DateTime.toEpochMillis(completedAt));
+  }
+});
+
+it.effect("native subagent child shells report the subagent status (SQL)", () =>
+  assertNativeSubagentChildShell().pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("native subagent child shells report the subagent status (memory)", () =>
+  assertNativeSubagentChildShell().pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
+
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
   it.effect("limits turn-start history to the requested runs, including an empty selection", () =>
     Effect.gen(function* () {

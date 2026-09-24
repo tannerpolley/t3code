@@ -20,6 +20,7 @@ import {
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
+  toShellApplicationEvent,
 } from "./ShellStream.ts";
 
 function project(sequence: number, id: string): ApplicationStoredEvent {
@@ -85,6 +86,29 @@ describe("coalesceShellApplicationEvents", () => {
         project(6, "project-a"),
       ]).map((event) => event.sequence),
     ).toEqual([4, 5, 6]);
+  });
+});
+
+describe("toShellApplicationEvent", () => {
+  const subagentUpdate = (origin: "provider_native" | "app_owned") =>
+    ({
+      sequence: 7,
+      event: {
+        threadId: "thread-parent",
+        type: "subagent.updated",
+        payload: { origin, childThreadId: "thread-child" },
+      },
+    }) as unknown as ApplicationStoredEvent;
+
+  it("refreshes a native subagent's child thread, whose shell status reads the record", () => {
+    expect(toShellApplicationEvent(subagentUpdate("provider_native"))).toEqual({
+      sequence: 7,
+      event: { threadId: "thread-child" },
+    });
+    expect(toShellApplicationEvent(subagentUpdate("app_owned"))).toEqual({
+      sequence: 7,
+      event: { threadId: "thread-parent" },
+    });
   });
 });
 

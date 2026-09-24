@@ -71,6 +71,7 @@ import {
   isThreadHistoryTurnStart,
   THREAD_HISTORY_MAX_RAW_TURNS,
 } from "./threadHistoryPaging.ts";
+import { subagentResultOwed } from "./SubagentProjection.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -474,19 +475,29 @@ function needsRecovery(
       return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
     case "subagent-results": {
       const parentThreadId = projection.thread.lineage.parentThreadId;
+      const latestRun = projection.runs.at(-1);
       return (
         projection.thread.lineage.relationshipToParent === "subagent" &&
         parentThreadId !== null &&
         projection.thread.forkedFrom?.type === "node" &&
+        latestRun !== undefined &&
         ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-          projection.runs.at(-1)?.status ?? "idle",
+          latestRun.status,
         ) &&
-        !projection.contextTransfers.some(
-          (transfer) =>
-            transfer.type === "subagent_result" &&
-            transfer.sourceThreadId === projection.thread.id &&
-            transfer.targetThreadId === parentThreadId,
-        )
+        subagentResultOwed({
+          runs: projection.runs,
+          messages: projection.messages,
+          parentThreadId,
+          reportedRunIds: projection.contextTransfers
+            .filter(
+              (transfer) =>
+                transfer.type === "subagent_result" &&
+                transfer.sourceThreadId === projection.thread.id &&
+                transfer.targetThreadId === parentThreadId,
+            )
+            .map((transfer) => transfer.sourcePoint.runId),
+          resultRun: latestRun,
+        })
       );
     }
     case "runtime":
@@ -861,6 +872,9 @@ type ShellThreadRow = {
   readonly has_actionable_proposed_plan: number;
   readonly item_count: number;
   readonly runless_item_count: number;
+  readonly native_subagent_status: string | null;
+  readonly native_subagent_started_at: string | null;
+  readonly native_subagent_completed_at: string | null;
 };
 
 type ShellRunRow = {
@@ -1236,8 +1250,10 @@ function buildVisibleTurnItems(input: {
   ]);
 }
 
+/** `nativeSubagent` is the parent's provider-native subagent record for this child thread, if any. */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
+  nativeSubagent: NativeSubagentActivity | null = null,
 ): OrchestrationV2ThreadShell {
   const latestRun = projection.runs.at(-1) ?? null;
   const activeRun =
@@ -1312,6 +1328,7 @@ export function threadShellFromProjection(
     activityRunStatus: activityRun?.status ?? null,
     activityRunStartedAt: activityRun?.startedAt ?? activityRun?.requestedAt ?? null,
     status: latestRun?.status ?? "idle",
+    ...nativeSubagentShellFields(latestRun?.id ?? null, nativeSubagent),
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
@@ -1395,6 +1412,47 @@ function isActivityRunForShell(
   return isInterruptibleRunForShell(run) || run.status === "waiting";
 }
 
+type NativeSubagentActivity = {
+  readonly status: string;
+  readonly startedAt: DateTime.Utc | null;
+  readonly completedAt: DateTime.Utc | null;
+};
+
+/**
+ * Provider-native subagents (Claude's Task tool, Codex's own agents) never get runs on their child
+ * thread, so a run-less child's shell reports the subagent record its parent owns. Runs win.
+ */
+function nativeSubagentShellFields(
+  latestRunId: RunId | null,
+  subagent: NativeSubagentActivity | null,
+): Partial<
+  Pick<
+    OrchestrationV2ThreadShell,
+    | "status"
+    | "latestRunStartedAt"
+    | "latestRunCompletedAt"
+    | "activityRunStatus"
+    | "activityRunStartedAt"
+  >
+> {
+  if (latestRunId !== null || subagent === null) return {};
+  const status = shellStatusFromStoredRunStatus(
+    subagent.status === "pending"
+      ? "starting"
+      : subagent.status === "idle"
+        ? null
+        : subagent.status,
+  );
+  const active = status === "starting" || status === "running" || status === "waiting";
+  return {
+    status,
+    latestRunStartedAt: subagent.startedAt,
+    latestRunCompletedAt: subagent.completedAt,
+    activityRunStatus: active ? status : null,
+    activityRunStartedAt: active ? subagent.startedAt : null,
+  };
+}
+
 type ShellThreadState = {
   readonly thread: OrchestrationV2ThreadProjection["thread"];
   readonly latestRunId: RunId | null;
@@ -1418,6 +1476,7 @@ type ShellThreadState = {
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
+  readonly nativeSubagent: NativeSubagentActivity | null;
 };
 
 function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2ShellThreadStatus {
@@ -1542,6 +1601,7 @@ function shellFromState(input: {
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
     status: input.state.latestRunStatus,
+    ...nativeSubagentShellFields(input.state.latestRunId, input.state.nativeSubagent),
     lastError: input.state.lastError,
     lastErrorClass: input.state.lastErrorClass,
     usageLimitResetAt: input.state.usageLimitResetAt,
@@ -3241,8 +3301,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   OR json_extract(t.payload_json, '$.limitRecovery.resetAt') IS NOT json_extract(item.payload_json, '$.failure.resetAt')
                 )
                 AND (
-                  ${options.autoResume}
-                  OR (${options.snooze} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
+                  ${booleanInt(options.autoResume)}
+                  OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
               )
             )
@@ -3315,11 +3375,45 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE thread_id = child.thread_id
                     ORDER BY ordinal DESC LIMIT 1
                   ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                  -- Mirrors subagentResultOwed: a reported result stays current until the
+                  -- parent sends the child a later turn.
                   AND NOT EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_context_transfers
-                    WHERE source_thread_id = child.thread_id
-                      AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
-                      AND type = 'subagent_result'
+                    SELECT 1 FROM orchestration_v2_projection_context_transfers AS reported
+                    LEFT JOIN orchestration_v2_projection_runs AS reported_run
+                      ON reported_run.run_id = json_extract(reported.payload_json, '$.sourcePoint.runId')
+                    WHERE reported.source_thread_id = child.thread_id
+                      AND reported.target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                      AND reported.type = 'subagent_result'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM orchestration_v2_projection_messages AS sent
+                        JOIN orchestration_v2_projection_runs AS sent_run
+                          ON sent_run.run_id = sent.run_id
+                        WHERE sent.thread_id = child.thread_id
+                          AND sent.role = 'user'
+                          AND json_extract(sent.payload_json, '$.senderThreadId')
+                            = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                          AND sent_run.ordinal > reported_run.ordinal
+                      )
+                  )
+                  -- A restart recovers a later report only while the parent has not moved on:
+                  -- a parent turn requested after the child's last run ended carried on without it.
+                  AND NOT (
+                    EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_context_transfers
+                      WHERE source_thread_id = child.thread_id
+                        AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                        AND type = 'subagent_result'
+                    )
+                    AND EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs AS parent_run
+                      WHERE parent_run.thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                        AND json_extract(parent_run.payload_json, '$.requestedAt') > (
+                          SELECT json_extract(payload_json, '$.completedAt')
+                          FROM orchestration_v2_projection_runs
+                          WHERE thread_id = child.thread_id
+                          ORDER BY ordinal DESC LIMIT 1
+                        )
+                    )
                   )
                   -- A restart-cancelled child that will be continued is still working; its
                   -- continuation run delivers the result, so the cancellation must not.
@@ -4772,8 +4866,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_turn_items i
                 WHERE i.thread_id = t.thread_id
                   AND i.run_id IS NULL
-              ) AS runless_item_count
+              ) AS runless_item_count,
+              native_subagent.status AS native_subagent_status,
+              native_subagent.started_at AS native_subagent_started_at,
+              native_subagent.completed_at AS native_subagent_completed_at
             FROM orchestration_v2_projection_threads t
+            LEFT JOIN orchestration_v2_projection_subagents native_subagent
+              ON native_subagent.subagent_id = (
+                SELECT s.subagent_id FROM orchestration_v2_projection_subagents s
+                WHERE s.child_thread_id = t.thread_id AND s.origin = 'provider_native'
+                ORDER BY s.updated_at DESC, s.subagent_id DESC
+                LIMIT 1
+              )
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
               location === "active"
                 ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
@@ -5101,6 +5205,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           updatedAt: thread.updatedAt,
           runOrdinalById: runOrdinalsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
           itemCountByRunId: itemCountsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
+          nativeSubagent:
+            row.native_subagent_status === null
+              ? null
+              : {
+                  status: row.native_subagent_status,
+                  startedAt:
+                    row.native_subagent_started_at === null
+                      ? null
+                      : DateTime.makeUnsafe(row.native_subagent_started_at),
+                  completedAt:
+                    row.native_subagent_completed_at === null
+                      ? null
+                      : DateTime.makeUnsafe(row.native_subagent_completed_at),
+                },
         } satisfies ShellThreadState;
       });
 
@@ -5303,6 +5421,21 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
   Effect.gen(function* () {
     const replayState = yield* Ref.make(makeProjectionReplayState());
     const sequence = yield* Ref.make(0);
+    const nativeSubagentOf = (
+      projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>,
+      projection: OrchestrationV2ThreadProjection,
+    ) => {
+      const parentThreadId = projection.thread.lineage.parentThreadId;
+      return parentThreadId === null
+        ? null
+        : (projections
+            .get(parentThreadId)
+            ?.subagents.find(
+              (subagent) =>
+                subagent.origin === "provider_native" &&
+                subagent.childThreadId === projection.thread.id,
+            ) ?? null);
+    };
 
     const service: ProjectionStoreV2Shape = {
       apply: (event) =>
@@ -5339,7 +5472,13 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           const shells = yield* Effect.forEach(
             selectedThreadIds.toSorted((left, right) => String(left).localeCompare(String(right))),
             (threadId) =>
-              service.getThreadProjection(threadId).pipe(Effect.map(threadShellFromProjection)),
+              service
+                .getThreadProjection(threadId)
+                .pipe(
+                  Effect.map((projection) =>
+                    threadShellFromProjection(projection, nativeSubagentOf(existing, projection)),
+                  ),
+                ),
           );
           const visible = shells.filter((thread) => thread.deletedAt === null);
           return {
@@ -5357,7 +5496,11 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           const shell = yield* service
             .getThreadProjection(threadId)
-            .pipe(Effect.map(threadShellFromProjection));
+            .pipe(
+              Effect.map((projection) =>
+                threadShellFromProjection(projection, nativeSubagentOf(existing, projection)),
+              ),
+            );
           return shell.deletedAt === null ? shell : null;
         }),
       getThread: (threadId) =>
@@ -5381,7 +5524,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 !runs.some(isActivityRunForShell) &&
                 !runtimeRequests.some((request) => request.status === "pending"),
             )
-            .map(threadShellFromProjection)
+            .map((projection) => threadShellFromProjection(projection))
             .toSorted(
               (left, right) =>
                 DateTime.toEpochMillis(left.updatedAt) - DateTime.toEpochMillis(right.updatedAt) ||
@@ -5398,7 +5541,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   thread.archivedAt === null &&
                   thread.settledOverride !== "settled",
               )
-              .map(threadShellFromProjection)
+              .map((projection) => threadShellFromProjection(projection))
               .filter(
                 (thread) =>
                   thread.status === "failed" &&

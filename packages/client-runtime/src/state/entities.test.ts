@@ -74,6 +74,20 @@ describe("V2 client presentation", () => {
     expect(shell.source).toBe(v2ThreadShell);
   });
 
+  it("gives a run-less provider-native subagent child the runtime its shell status reports", () => {
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      status: "running",
+      activityRunStatus: "running",
+      activityRunStartedAt: v2ThreadShell.createdAt,
+    });
+    expect(shell.latestRun).toBeNull();
+    expect(shell.runtime).toMatchObject({
+      status: "running",
+      activityStartedAt: "2026-06-20T00:00:00.000Z",
+    });
+  });
+
   it("preserves active ordering and both pull-request sources", () => {
     const linkedPullRequest = {
       projectId: v2ThreadShell.projectId,
