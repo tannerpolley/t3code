@@ -357,9 +357,7 @@ export function normalizeProviderMathDelimiters(
           (/^\$(?=\d(?:[\p{L}\p{N}_-]*\p{L}|[\d,]*(?:\.\d+)?)(?=$|[\s.,!?;:)\]]))/u.test(
             part.slice(index),
           ) ||
-            knownSkills.has(
-              /^\$([\p{L}\p{N}_-]+)/u.exec(part.slice(index))?.[1]?.toLowerCase() ?? "",
-            ))
+            isSkillReference(part.slice(index), knownSkills))
         ) {
           normalized += "\\$";
           index++;
@@ -388,6 +386,16 @@ export function normalizeProviderMathDelimiters(
     normalized = `${normalized.slice(0, start)}\u{e000}${pair.display ? "D" : "I"}${encoded}\u{e001}${normalized.slice(end + pair.close.length)}`;
   }
   return normalized;
+}
+
+// `$name` or a plugin's `$plugin:name` skill reference, followed by a boundary. Plugin-scoped
+// references are never math even when the skill list isn't loaded (`$x:y$` still is).
+const SKILL_REFERENCE = /^\$([\p{L}\p{N}_-]+(?::[\p{L}\p{N}_-]+)?)(?=$|[\s.,!?;:)\]'"])/u;
+
+function isSkillReference(text: string, knownSkills: ReadonlySet<string>): boolean {
+  const name = SKILL_REFERENCE.exec(text)?.[1];
+  if (name === undefined) return false;
+  return name.includes(":") || knownSkills.has(name.toLowerCase());
 }
 
 function remarkProviderMath() {

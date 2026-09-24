@@ -104,6 +104,8 @@ describe("ChatMarkdown math", () => {
       "It costs $5 and $10 total.",
       "Price: $5.00, then $6.",
       "Budget $1,200 or $5k.",
+      // Plugin skill references, even when the skill list isn't loaded.
+      "have more agents use $cse:research and use the $cse:zotero to get them",
     ]) {
       expect(renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={text} />)).not.toContain(
         'class="katex"',
@@ -112,6 +114,9 @@ describe("ChatMarkdown math", () => {
     expect(
       renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Area $2\\pi r$ and $x$."} />),
     ).toContain('<annotation encoding="application/x-tex">2\\pi r</annotation>');
+    expect(
+      renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Maps $x:y$ here."} />),
+    ).toContain('<annotation encoding="application/x-tex">x:y</annotation>');
   });
 
   it("renders provider math once a streaming delimiter closes", () => {
