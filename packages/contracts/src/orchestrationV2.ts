@@ -2664,6 +2664,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  subscribeBackgroundTaskOutput: "orchestration.subscribeBackgroundTaskOutput",
 } as const;
 
 export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
@@ -2955,6 +2956,31 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<Orch
   }
 }
 
+export const OrchestrationV2SubscribeBackgroundTaskOutputInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Provider task id from the thread's pending background tasks. */
+  taskId: TrimmedNonEmptyString,
+});
+export type OrchestrationV2SubscribeBackgroundTaskOutputInput =
+  typeof OrchestrationV2SubscribeBackgroundTaskOutputInput.Type;
+
+/** Output tail chunk. `reset` replaces the client buffer; otherwise `text` appends to it. */
+export const OrchestrationV2BackgroundTaskOutputChunk = Schema.Struct({
+  text: Schema.String,
+  reset: Schema.Boolean,
+});
+export type OrchestrationV2BackgroundTaskOutputChunk =
+  typeof OrchestrationV2BackgroundTaskOutputChunk.Type;
+
+export class OrchestrationV2BackgroundTaskOutputError extends Schema.TaggedError<OrchestrationV2BackgroundTaskOutputError>()(
+  "OrchestrationV2BackgroundTaskOutputError",
+  {
+    taskId: Schema.String,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const OrchestrationV2RpcSchemas = {
   dispatchCommand: {
     input: OrchestrationV2Command,
@@ -2995,6 +3021,10 @@ export const OrchestrationV2RpcSchemas = {
   subscribeThread: {
     input: OrchestrationV2SubscribeThreadInput,
     output: OrchestrationV2ThreadStreamItem,
+  },
+  subscribeBackgroundTaskOutput: {
+    input: OrchestrationV2SubscribeBackgroundTaskOutputInput,
+    output: OrchestrationV2BackgroundTaskOutputChunk,
   },
 } as const;
 

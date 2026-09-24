@@ -1290,6 +1290,7 @@ function SidebarProjectThreadRow(props: {
             compact
             columns={props.codexStyle}
             environmentId={props.thread.environmentId}
+            threadId={props.thread.id}
             rows={workRows}
           />
         </div>

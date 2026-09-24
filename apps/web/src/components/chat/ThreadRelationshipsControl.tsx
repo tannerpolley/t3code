@@ -629,6 +629,7 @@ export function ThreadRelationshipsPanel(props: {
                             <BackgroundWorkTaskList
                               compact
                               environmentId={props.environmentId}
+                              threadId={threadId}
                               rows={processRows}
                             />
                           ) : null}

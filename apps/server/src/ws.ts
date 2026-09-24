@@ -186,6 +186,7 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
+import { subscribeBackgroundTaskOutput } from "./orchestration/backgroundTaskOutput.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
@@ -1958,6 +1959,15 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_V2_WS_METHODS.subscribeThread,
             subscribeOrchestrationV2Thread(input),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput,
+            subscribeBackgroundTaskOutput(input),
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.thread_id": input.threadId,

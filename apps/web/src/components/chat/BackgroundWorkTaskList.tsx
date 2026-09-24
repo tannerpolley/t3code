@@ -9,6 +9,7 @@ import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "./AgentElapsed";
+import { BackgroundProcessOutputButton } from "./BackgroundProcessOutput";
 import {
   type BackgroundWorkTaskRow,
   describeBackgroundWorkTasks,
@@ -25,6 +26,8 @@ import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
  */
 export function BackgroundWorkTaskList(props: {
   readonly environmentId: EnvironmentId;
+  /** The thread that owns these tasks; process rows open its task output. */
+  readonly threadId: ThreadId;
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
   readonly columns?: boolean;
@@ -110,6 +113,20 @@ export function BackgroundWorkTaskList(props: {
           >
             {content}
           </button>
+        ) : row.kind === "process" ? (
+          // Opens the process's live output (Claude background shells write it to a file).
+          <BackgroundProcessOutputButton
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+            taskId={row.taskId}
+            label={row.label}
+            className={cn(
+              "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left hover:bg-accent",
+              padding,
+            )}
+          >
+            {content}
+          </BackgroundProcessOutputButton>
         ) : (
           <div className={cn("flex min-w-0 items-center gap-2 py-1", padding)}>{content}</div>
         );
@@ -153,7 +170,12 @@ export function ThreadBackgroundProcessesPanel(props: {
       headingId="thread-details-background-processes-heading"
       title="Background processes"
     >
-      <BackgroundWorkTaskList compact environmentId={props.environmentId} rows={rows} />
+      <BackgroundWorkTaskList
+        compact
+        environmentId={props.environmentId}
+        threadId={props.threadId}
+        rows={rows}
+      />
     </ThreadDetailsSection>
   );
 }
