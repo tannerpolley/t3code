@@ -1,12 +1,14 @@
 import { CommandId, MessageId, type RuntimeRequestId, type ThreadId } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { pendingUserRequests } from "./SubagentProjection.ts";
-import { ThreadManagementService } from "./ThreadManagementService.ts";
+import { isActiveRun, ThreadManagementService } from "./ThreadManagementService.ts";
 
 /**
  * Tells the parent of an app-owned delegated task, once per request, that the child is waiting
@@ -37,7 +39,7 @@ export const makeNotifyParent = Effect.gen(function* () {
     }
     const request = pendingUserRequests(child).find((candidate) => candidate.id === requestId);
     if (request === undefined) return;
-    const parent = yield* threads.getThreadRecords(lineage.parentThreadId, ["subagents"]);
+    const parent = yield* threads.getThreadRecords(lineage.parentThreadId, ["subagents", "runs"]);
     const task = parent.subagents.find(
       (candidate) =>
         candidate.id === forkedFrom.nodeId &&
@@ -49,6 +51,12 @@ export const makeNotifyParent = Effect.gen(function* () {
       parent.thread.archivedAt !== null ||
       parent.thread.deletedAt !== null
     ) {
+      return;
+    }
+    // A blocking delegate_task wait still owns this task and returns the question itself; a
+    // queued notice would only repeat it after the parent's turn ends.
+    const ownerRun = parent.runs.find((run) => run.id === task.runId);
+    if (task.completionWake === "settled_only" && ownerRun !== undefined && isActiveRun(ownerRun)) {
       return;
     }
     const title = child.thread.title.trim() || "Delegated task";
@@ -71,13 +79,37 @@ export const makeNotifyParent = Effect.gen(function* () {
   });
 });
 
+/**
+ * Startup recovery expires every live request, so the questions still pending afterwards are
+ * the ones answered by message. Their notice may have been lost if the server stopped between
+ * persisting the question and notifying the parent, so this re-offers it once recovery is done;
+ * the keyed command id skips parents that were already told.
+ */
+export class ChildQuestionWake extends Context.Service<
+  ChildQuestionWake,
+  { readonly notifyAfterRecovery: Effect.Effect<void> }
+>()("t3/orchestration-v2/ChildQuestionWake") {}
+
 // Request items land after their runtime request, so the item event is the one that carries
-// the question text. Only live events matter: a restart re-reads nothing, and the keyed command
-// id makes any re-delivery a no-op.
-export const workerLive = Layer.effectDiscard(
+// the question text. Only live events matter here: questions from before startup go through
+// notifyAfterRecovery.
+export const layer = Layer.effect(
+  ChildQuestionWake,
   Effect.gen(function* () {
     const notifyParent = yield* makeNotifyParent;
+    const threads = yield* ThreadManagementService;
+    const projections = yield* ProjectionStoreV2;
     const eventSink = yield* EventSinkV2;
+    const notifyLogged = (threadId: ThreadId, requestId: RuntimeRequestId) =>
+      notifyParent(threadId, requestId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.child-question-wake.failed", {
+            threadId,
+            requestId,
+            cause,
+          }),
+        ),
+      );
     const afterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
     yield* eventSink.stream({ afterSequence, eventType: "turn-item.updated" }).pipe(
       Stream.runForEach((stored) => {
@@ -88,17 +120,39 @@ export const workerLive = Layer.effectDiscard(
         ) {
           return Effect.void;
         }
-        return notifyParent(stored.event.threadId, item.requestId).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("orchestration-v2.child-question-wake.failed", {
-              threadId: stored.event.threadId,
-              requestId: item.requestId,
-              cause,
-            }),
-          ),
-        );
+        return notifyLogged(stored.event.threadId, item.requestId);
       }),
       Effect.forkScoped,
     );
+    return ChildQuestionWake.of({
+      // Runtime recovery's thread set already includes every thread with a pending request.
+      notifyAfterRecovery: projections.getRecoveryThreadIds("runtime").pipe(
+        Effect.flatMap((threadIds) =>
+          Effect.forEach(
+            threadIds,
+            (threadId) =>
+              threads.getThreadRecords(threadId, ["runtimeRequests"]).pipe(
+                Effect.flatMap((thread) =>
+                  Effect.forEach(
+                    thread.runtimeRequests.filter((request) => request.status === "pending"),
+                    (request) => notifyLogged(threadId, request.id),
+                    { discard: true },
+                  ),
+                ),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("orchestration-v2.child-question-wake.recovery-failed", {
+                    threadId,
+                    cause,
+                  }),
+                ),
+              ),
+            { discard: true },
+          ),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.child-question-wake.recovery-failed", { cause }),
+        ),
+      ),
+    });
   }),
 );

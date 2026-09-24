@@ -64,6 +64,7 @@ import * as Schema from "effect/Schema";
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
+  subagentResultOwed,
   delegatedTaskProgress,
   pendingUserRequests,
 } from "../orchestration-v2/SubagentProjection.ts";
@@ -1102,34 +1103,46 @@ const make = Effect.gen(function* () {
         messages: [...childControls.messages, ...resultRecords.messages],
         turnItems: resultRecords.turnItems,
       };
-      const workState = task.result !== null ? "result_available" : progress.state;
-      const status =
-        task.result !== null
-          ? taskStatusForRun(
-              task.status === "completed" ||
-                task.status === "failed" ||
-                task.status === "cancelled" ||
-                task.status === "interrupted"
-                ? { status: task.status }
-                : childRun,
-            )
-          : workState === "result_available"
-            ? taskStatusForRun(progress.resultRun ?? childRun)
-            : taskStatusForRun(childRun) === "queued"
-              ? "queued"
-              : "running";
-      const derivedResult =
-        task.result !== null
-          ? task.result
-          : progress.resultRun !== undefined && isTerminalTaskStatus(status)
-            ? subagentResultForRun(childProjection, progress.resultRun).text
-            : null;
       const resultTransfers = parentProjection.contextTransfers.filter(
         (transfer) =>
           transfer.type === "subagent_result" &&
           transfer.sourceThreadId === task.childThreadId &&
           transfer.targetThreadId === scope.threadId,
       );
+      // A turn this parent sent after the last report reopens the task until that turn reports
+      // back; the previous result stays the summary meanwhile. Turns the user starts in the
+      // child leave the reported result current.
+      const reported =
+        task.result !== null &&
+        (progress.state === "result_available" ||
+          !subagentResultOwed({
+            runs: childControls.runs,
+            messages: childControls.messages,
+            parentThreadId: scope.threadId,
+            reportedRunIds: resultTransfers.map((transfer) => transfer.sourcePoint.runId),
+            resultRun: { ordinal: Number.POSITIVE_INFINITY },
+          }));
+      const workState = reported ? "result_available" : progress.state;
+      const status = reported
+        ? taskStatusForRun(
+            task.status === "completed" ||
+              task.status === "failed" ||
+              task.status === "cancelled" ||
+              task.status === "interrupted"
+              ? { status: task.status }
+              : childRun,
+          )
+        : workState === "result_available"
+          ? taskStatusForRun(progress.resultRun ?? childRun)
+          : taskStatusForRun(childRun) === "queued"
+            ? "queued"
+            : "running";
+      const derivedResult =
+        task.result !== null
+          ? task.result
+          : progress.resultRun !== undefined && isTerminalTaskStatus(status)
+            ? subagentResultForRun(childProjection, progress.resultRun).text
+            : null;
       const resultTransferForRun = (run: OrchestrationV2Run | undefined) =>
         !canExposeTaskRunResult(run)
           ? null
@@ -1208,11 +1221,15 @@ const make = Effect.gen(function* () {
       return response;
     });
 
+  // Returns at a terminal status or as soon as the child waits on the user, whose question the
+  // parent must see before its wait budget runs out.
   const waitForTask = (scope: McpInvocationScope, taskId: NodeId, timeoutMs: number) =>
     Effect.gen(function* () {
       while (true) {
         const result = yield* readTask(scope, taskId, false, true);
-        if (isTerminalTaskStatus(result.status)) return result;
+        if (isTerminalTaskStatus(result.status) || result.waitingOnUser !== undefined) {
+          return result;
+        }
         yield* Effect.sleep(Duration.millis(TASK_POLL_INTERVAL_MS));
       }
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)));
@@ -1491,13 +1508,13 @@ const make = Effect.gen(function* () {
           Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
         );
         const waited = yield* waitForTask(scope, taskId, timeoutMs);
-        if (Option.isSome(waited)) {
+        if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
           return waited.value;
         }
-        // The blocking wait timed out, so it no longer owns delivery: upgrade
-        // the task so a later terminal wakes the parent even mid-turn. Best
-        // effort; on failure the settled_only policy still wakes a settled
-        // parent.
+        // The blocking wait timed out or returned the child's question, so it
+        // no longer owns delivery: upgrade the task so a later terminal wakes
+        // the parent even mid-turn. Best effort; on failure the settled_only
+        // policy still wakes a settled parent.
         yield* threadManagement
           .dispatch({
             type: "delegated_task.wake-policy",
@@ -1533,7 +1550,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return yield* readTask(scope, taskId, true, true);
+        return Option.isSome(waited) ? waited.value : yield* readTask(scope, taskId, true, true);
       }),
     taskStatus: (scope, taskId) => readTask(scope, taskId, false, true),
     cancelTask: (scope, input) =>

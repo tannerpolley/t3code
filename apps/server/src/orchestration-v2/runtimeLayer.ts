@@ -311,8 +311,10 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
       ),
     ),
   ),
-  ChildQuestionWake.workerLive.pipe(
-    Layer.provide(Layer.mergeAll(eventSinkProvided, threadManagementProvided)),
+  ChildQuestionWake.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(eventSinkProvided, threadManagementProvided, projectionStoreLayer),
+    ),
   ),
   providerContinuationWorkerProvided,
   agentSessionImporterProvided,

@@ -36,7 +36,11 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { makeNotifyParent } from "./ChildQuestionWake.ts";
+import {
+  ChildQuestionWake,
+  layer as ChildQuestionWakeLayer,
+  makeNotifyParent,
+} from "./ChildQuestionWake.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layer as ProjectionStoreLayer, ProjectionStoreV2 } from "./ProjectionStore.ts";
@@ -661,6 +665,8 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
 const seedChildWaitingOnUser = (input: {
   readonly name: string;
   readonly requestKind: "user_input" | "auth_refresh";
+  /** settled_only with the parent run active is a blocking delegate_task wait. */
+  readonly completionWake?: "always" | "settled_only";
 }) =>
   Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
@@ -696,6 +702,7 @@ const seedChildWaitingOnUser = (input: {
           payload: {
             ...task,
             childThreadId,
+            completionWake: input.completionWake ?? "always",
             status: "running",
             result: null,
             completedAt: null,
@@ -810,6 +817,37 @@ it.layer(TestLayer)("child question wake", (it) => {
       );
       yield* notify(seeded.childThreadId, seeded.requestId);
       assert.equal((yield* childQuestionNotices(seeded.parentThreadId)).length, 0);
+    }),
+  );
+
+  it.effect("leaves the question to a blocking wait that still owns the task", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedChildWaitingOnUser({
+        name: "blocking-wait",
+        requestKind: "user_input",
+        completionWake: "settled_only",
+      });
+      const notify = yield* makeNotifyParent.pipe(
+        Effect.provide(ServerSettingsService.layerTest()),
+      );
+      yield* notify(seeded.childThreadId, seeded.requestId);
+      assert.equal((yield* childQuestionNotices(seeded.parentThreadId)).length, 0);
+    }),
+  );
+
+  it.effect("after startup recovery, tells the parent about a question that survived it", () =>
+    Effect.gen(function* () {
+      // Seeded without a live worker: the question persisted but its notice never went out.
+      const seeded = yield* seedChildWaitingOnUser({ name: "restart", requestKind: "user_input" });
+      const recover = Effect.gen(function* () {
+        yield* (yield* ChildQuestionWake).notifyAfterRecovery;
+      }).pipe(Effect.provide(ChildQuestionWakeLayer));
+      yield* recover;
+      // A second restart finds the earlier notice instead of posting again.
+      yield* recover;
+      const notices = yield* childQuestionNotices(seeded.parentThreadId);
+      assert.equal(notices.length, 1);
+      assert.include(notices[0]!.text, "Should I also fix the lexer?");
     }),
   );
 

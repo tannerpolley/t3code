@@ -7,6 +7,7 @@ import {
   IsoDateTime,
   MessageId,
   type ModelSelection,
+  NodeId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -25,6 +26,7 @@ import {
   type ProviderOptionDescriptor,
   ProviderThreadId,
   ProviderTurnId,
+  RuntimeRequestId,
   type ScheduledTask,
   ScheduledTaskId,
   type ScheduledTaskUpsertInput,
@@ -36,6 +38,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1633,9 +1636,11 @@ describe("orchestrator MCP toolkit", () => {
             const delegatedStatusDuringFollowup = yield* decodeDelegateTaskResult(
               delegatedStatusDuringFollowupCall.structuredContent,
             ).pipe(Effect.orDie);
+            // The turn this parent sent reopens the task; the previous result stays the summary.
             expect(delegatedStatusDuringFollowup).toMatchObject({
               childRunId: delegated.childRunId,
-              status: "completed",
+              status: "running",
+              workState: "working",
               summary: delegatedStatusAfterFollowup.summary,
               hasPendingChildRuns: true,
               latestTerminalRunId: childFollowup.runId,
@@ -1664,38 +1669,18 @@ describe("orchestrator MCP toolkit", () => {
                 legacyDelegatedRun,
               ),
             ).toBe(true);
-            const completedTaskCancelCall = yield* invoke("task_cancel", {
-              taskId: delegated.taskId,
-              reason: "Must not interrupt a later unrelated child run.",
-              clientRequestId: "cancel-completed-delegated-task-1",
-            });
-            const completedTaskCancel = yield* decodeTaskCancelResult(
-              completedTaskCancelCall.structuredContent,
-            ).pipe(Effect.orDie);
-            expect(completedTaskCancel).toEqual({
-              taskId: delegated.taskId,
-              status: "completed",
-            });
-            expect(
-              (yield* orchestrator.getThreadProjection(delegated.childThreadId)).runs.find(
-                (run) => run.id === activeChildFollowup.runId,
-              )?.status,
-            ).toBe("running");
             const cleanupReportSequence =
               yield* orchestrator.getThreadEventSequence(parentThreadId);
-            const activeChildCleanupCall = yield* invoke("t3_thread_interrupt", {
-              threadId: delegated.childThreadId,
-              runId: activeChildFollowup.runId,
-              reason: "Clean up the active follow-up after verifying task cancellation isolation.",
-              clientRequestId: "interrupt-delegated-child-followup-1",
+            const reopenedTaskCancelCall = yield* invoke("task_cancel", {
+              taskId: delegated.taskId,
+              reason: "Cancel the reopened task's active follow-up.",
+              clientRequestId: "cancel-reopened-delegated-task-1",
             });
-            const activeChildCleanup = yield* decodeThreadInterruptResult(
-              activeChildCleanupCall.structuredContent,
-            ).pipe(Effect.orDie);
-            expect(activeChildCleanup).toMatchObject({
-              runId: activeChildFollowup.runId,
-              status: "interrupt_requested",
-            });
+            expect(
+              yield* decodeTaskCancelResult(reopenedTaskCancelCall.structuredContent).pipe(
+                Effect.orDie,
+              ),
+            ).toEqual({ taskId: delegated.taskId, status: "cancel_requested" });
             yield* waitForProjection(orchestrator, delegated.childThreadId, (projection) =>
               projection.runs.some(
                 (run) => run.id === activeChildFollowup.runId && run.status === "interrupted",
@@ -1717,6 +1702,61 @@ describe("orchestrator MCP toolkit", () => {
               latestTerminalRunId: activeChildFollowup.runId,
               latestTerminalStatus: "interrupted",
             });
+
+            // A turn the user starts in the child is not task work: the reported result stays
+            // current and task_cancel leaves that turn running.
+            const userTurnMessageId = MessageId.make("message:mcp-child:user-turn");
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-child:user-turn"),
+              threadId: delegated.childThreadId,
+              messageId: userTurnMessageId,
+              text: cancellationPrompt,
+              attachments: [],
+              modelSelection: claudeSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            const userTurn = (yield* waitForProjection(
+              orchestrator,
+              delegated.childThreadId,
+              (projection) =>
+                projection.runs.some(
+                  (run) => run.userMessageId === userTurnMessageId && run.status === "running",
+                ),
+            )).runs.find((run) => run.userMessageId === userTurnMessageId)!;
+            const statusDuringUserTurn = yield* decodeDelegateTaskResult(
+              (yield* invoke("task_status", { taskId: delegated.taskId })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(statusDuringUserTurn).toMatchObject({
+              status: "interrupted",
+              workState: "result_available",
+              summary: delegatedStatusAfterCleanup.summary,
+              hasPendingChildRuns: true,
+            });
+            const userTurnCancel = yield* decodeTaskCancelResult(
+              (yield* invoke("task_cancel", {
+                taskId: delegated.taskId,
+                reason: "Must not interrupt a turn the user started in the child.",
+                clientRequestId: "cancel-reported-delegated-task-1",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(userTurnCancel).toEqual({ taskId: delegated.taskId, status: "interrupted" });
+            expect(
+              (yield* orchestrator.getThreadProjection(delegated.childThreadId)).runs.find(
+                (run) => run.id === userTurn.id,
+              )?.status,
+            ).toBe("running");
+            yield* invoke("t3_thread_interrupt", {
+              threadId: delegated.childThreadId,
+              runId: userTurn.id,
+              reason: "Clean up the user's turn after verifying task cancellation isolation.",
+              clientRequestId: "interrupt-child-user-turn-1",
+            });
+            yield* waitForProjection(orchestrator, delegated.childThreadId, (projection) =>
+              projection.runs.some((run) => run.id === userTurn.id && run.status === "interrupted"),
+            );
 
             // A wait-mode child (completionWake settled_only) that completes
             // while the parent run is live does not offer a wake: the
@@ -2398,6 +2438,122 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id === upgradedDelegated.taskId,
               )?.completionDelivery,
             ).toMatchObject({ state: "disposed" });
+            yield* expectOffersToStay(0);
+
+            // A blocking wait returns the child's question instead of holding it until timeout,
+            // and hands later delivery to the completion wake.
+            const tasksBeforeQuestion = new Set(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.map(
+                (task) => task.id,
+              ),
+            );
+            const questionWait = yield* invoke("delegate_task", {
+              task: cancellationPrompt,
+              target: { providerInstanceId: codexInstanceId, model: codexModel },
+              mode: "wait",
+              timeoutMs: 600_000,
+              clientRequestId: "delegate-question-wait-1",
+            }).pipe(Effect.forkChild);
+            const questionTask = (yield* waitForProjection(
+              orchestrator,
+              parentThreadId,
+              (projection) =>
+                projection.subagents.some(
+                  (task) => !tasksBeforeQuestion.has(task.id) && task.childThreadId !== null,
+                ),
+            )).subagents.find((task) => !tasksBeforeQuestion.has(task.id))!;
+            const questionChildThreadId = questionTask.childThreadId!;
+            yield* waitForProjection(orchestrator, questionChildThreadId, (projection) =>
+              projection.runs.some((run) => run.status === "running"),
+            );
+            const questionRequestId = RuntimeRequestId.make("request:question-wait");
+            const questionNodeId = NodeId.make("node:question-wait");
+            const questionAt = yield* DateTime.now;
+            yield* (yield* EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("event:question-wait-request"),
+                  type: "runtime-request.updated",
+                  threadId: questionChildThreadId,
+                  nodeId: questionNodeId,
+                  occurredAt: questionAt,
+                  payload: {
+                    id: questionRequestId,
+                    nodeId: questionNodeId,
+                    providerTurnId: null,
+                    nativeRequestRef: null,
+                    kind: "user_input",
+                    status: "pending",
+                    responseCapability: { type: "message" },
+                    createdAt: questionAt,
+                    resolvedAt: null,
+                  },
+                },
+                {
+                  id: EventId.make("event:question-wait-item"),
+                  type: "turn-item.updated",
+                  threadId: questionChildThreadId,
+                  nodeId: questionNodeId,
+                  occurredAt: questionAt,
+                  payload: {
+                    id: TurnItemId.make("item:question-wait"),
+                    threadId: questionChildThreadId,
+                    runId: null,
+                    nodeId: questionNodeId,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 1,
+                    status: "waiting",
+                    title: null,
+                    startedAt: questionAt,
+                    completedAt: null,
+                    updatedAt: questionAt,
+                    type: "user_input_request",
+                    requestId: questionRequestId,
+                    questions: [
+                      { id: "q1", header: "Scope", question: "Fix the lexer too?", options: [] },
+                    ],
+                  },
+                },
+              ],
+            });
+            const questionResult = yield* decodeDelegateTaskResult(
+              (yield* Fiber.join(questionWait)).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(questionResult).toMatchObject({
+              taskId: questionTask.id,
+              status: "running",
+              waitTimedOut: false,
+              waitingOnUser: {
+                kind: "input",
+                requestIds: [questionRequestId],
+                preview: "Fix the lexer too?",
+              },
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === questionTask.id,
+              )?.completionWake,
+            ).toBe("always");
+            // Clean up without a parent wake: settle delivery before the child terminalizes.
+            yield* orchestrator.dispatch({
+              type: "delegated_task.completion-delivery.dispose",
+              commandId: CommandId.make("command:mcp-parent:dispose-question-wait"),
+              parentThreadId,
+              taskId: questionTask.id,
+            });
+            yield* invoke("task_cancel", {
+              taskId: questionTask.id,
+              reason: "Clean up the question child.",
+              clientRequestId: "cancel-question-wait-1",
+            });
+            yield* waitForProjection(orchestrator, parentThreadId, (projection) =>
+              projection.subagents.some(
+                (task) => task.id === questionTask.id && task.status === "interrupted",
+              ),
+            );
             yield* expectOffersToStay(0);
 
             // The MCP tool cannot force the reverse interleaving (child
@@ -3312,9 +3468,11 @@ describe("orchestrator MCP toolkit", () => {
           const pendingStatus = yield* decodeDelegateTaskResult(
             pendingStatusCall.structuredContent,
           ).pipe(Effect.orDie);
+          // Follow-ups this parent sent reopen the task; the first result stays the summary.
           expect(pendingStatus).toMatchObject({
             childRunId: delegated.childRunId,
-            status: "completed",
+            status: "running",
+            workState: "working",
             summary: delegatedResult,
             resultContextTransferId: delegated.resultContextTransferId,
             hasPendingChildRuns: true,

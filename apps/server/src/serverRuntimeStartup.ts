@@ -29,6 +29,7 @@ import * as ServerConfig from "./config.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as ChildQuestionWake from "./orchestration-v2/ChildQuestionWake.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/LegacyV1ThreadImporter.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
@@ -414,6 +415,7 @@ const make = (options?: StartupOptions) =>
     const keybindings = yield* Keybindings.Keybindings;
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    const childQuestionWake = yield* ChildQuestionWake.ChildQuestionWake;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -545,6 +547,10 @@ const make = (options?: StartupOptions) =>
         ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
       });
       yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
+      yield* runStartupPhase(
+        "orchestration-v2.child-question-notices",
+        childQuestionWake.notifyAfterRecovery,
+      );
       yield* runStartupPhase(
         "projects.auto-pull",
         Effect.gen(function* () {
