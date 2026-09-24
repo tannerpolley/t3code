@@ -29,6 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useClientSettings } from "../../hooks/useSettings";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
@@ -1021,8 +1022,9 @@ function ImportStep({
     [selectedPaths, recent],
   );
   const selected = candidates.filter((candidate) => selectedKeys.has(candidate.key));
+  const codexSettingsOffered = useClientSettings((settings) => settings.onboardingCodexSettings);
   const codexSettingsPreview = selected.flatMap((candidate) => {
-    if (candidate.codexSettings === undefined) return [];
+    if (!codexSettingsOffered || candidate.codexSettings === undefined) return [];
     const settings = environments.find(
       (environment) => environment.environmentId === candidate.environmentId,
     )?.serverConfig?.settings;

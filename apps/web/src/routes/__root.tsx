@@ -174,6 +174,7 @@ function RootRouteView() {
           <EnvironmentThemeSync />
           <GlassAppearanceSync />
           <FontAppearanceSync />
+          <FastShimmerSync />
           <CustomSnoozeDialogHost />
           <CommandPalette>
             <AppSidebarLayout>
@@ -214,6 +215,7 @@ function RootRouteView() {
         <EnvironmentThemeSync />
         <GlassAppearanceSync />
         <FontAppearanceSync />
+        <FastShimmerSync />
         <FirstRunGate
           enabled={primaryEnvironmentAuthenticated}
           hostedStatic={authGateState.status === "hosted-static"}
@@ -315,6 +317,14 @@ function FontAppearanceSync() {
     fontSmoothing,
   ]);
 
+  return null;
+}
+
+function FastShimmerSync() {
+  const fastShimmer = useClientSettings((settings) => settings.fastShimmer);
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-fast-shimmer", fastShimmer);
+  }, [fastShimmer]);
   return null;
 }
 

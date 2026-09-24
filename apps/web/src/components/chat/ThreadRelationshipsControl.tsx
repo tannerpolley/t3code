@@ -250,6 +250,10 @@ export function ThreadRelationshipsPanel(props: {
   const lineageDetailsExpandedById = useUiStateStore((store) => store.lineageDetailsExpandedById);
   const setLineageDetailsExpanded = useUiStateStore((store) => store.setLineageDetailsExpanded);
   const expandDetailsByDefault = useClientSettings((settings) => settings.lineageDetailsExpanded);
+  // Off restores the original rows: title, corner status badge, no details.
+  const redesign = useClientSettings((settings) => settings.threadDetailsRedesign);
+  const isRunning = (status: string | null) =>
+    redesign ? lineageStatusMark(status) === "working" : status === "running";
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = useMemo(
@@ -284,15 +288,14 @@ export function ThreadRelationshipsPanel(props: {
     { id: "previous", label: "Previous agents", rows: previous, expanded: false },
   ];
   const runningCount =
-    projection?.subagents.filter(
-      (agent) =>
-        lineageStatusMark(
-          resolveSubagentStatus(
-            agent,
-            agent.childThreadId === null ? null : graph.nodes.get(agent.childThreadId)?.thread,
-          ),
-        ) === "working",
-    ).length ?? active.filter(({ edge }) => lineageStatusMark(edge.status) === "working").length;
+    projection?.subagents.filter((agent) =>
+      isRunning(
+        resolveSubagentStatus(
+          agent,
+          agent.childThreadId === null ? null : graph.nodes.get(agent.childThreadId)?.thread,
+        ),
+      ),
+    ).length ?? active.filter(({ edge }) => isRunning(edge.status)).length;
 
   if (relationshipRows.length === 0 && runningCount === 0) {
     return null;
@@ -333,7 +336,7 @@ export function ThreadRelationshipsPanel(props: {
   const detailsKey = (threadId: ThreadId) =>
     scopedThreadKey(scopeThreadRef(props.environmentId, threadId));
   const detailsExpanded = (threadId: ThreadId) =>
-    lineageDetailsExpandedById[detailsKey(threadId)] ?? expandDetailsByDefault;
+    redesign && (lineageDetailsExpandedById[detailsKey(threadId)] ?? expandDetailsByDefault);
   const anyDetailsCollapsed = relationshipRows.some(({ threadId }) => !detailsExpanded(threadId));
   const toggleAllDetails = () =>
     setLineageDetailsExpanded(
@@ -353,28 +356,30 @@ export function ThreadRelationshipsPanel(props: {
       data-thread-relationships-panel
       actions={
         <>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  className={THREAD_DETAILS_PANEL_ICON_ACTION_CLASS}
-                  aria-label={anyDetailsCollapsed ? "Expand all details" : "Collapse all details"}
-                  onClick={toggleAllDetails}
-                >
-                  {anyDetailsCollapsed ? (
-                    <ChevronsUpDownIcon className="size-3.5" />
-                  ) : (
-                    <ChevronsDownUpIcon className="size-3.5" />
-                  )}
-                </Button>
-              }
-            />
-            <TooltipPopup side="left">
-              {anyDetailsCollapsed ? "Expand all details" : "Collapse all details"}
-            </TooltipPopup>
-          </Tooltip>
+          {redesign ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className={THREAD_DETAILS_PANEL_ICON_ACTION_CLASS}
+                    aria-label={anyDetailsCollapsed ? "Expand all details" : "Collapse all details"}
+                    onClick={toggleAllDetails}
+                  >
+                    {anyDetailsCollapsed ? (
+                      <ChevronsUpDownIcon className="size-3.5" />
+                    ) : (
+                      <ChevronsDownUpIcon className="size-3.5" />
+                    )}
+                  </Button>
+                }
+              />
+              <TooltipPopup side="left">
+                {anyDetailsCollapsed ? "Expand all details" : "Collapse all details"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           {canDetach ? (
             <Menu>
               <MenuTrigger
@@ -451,7 +456,31 @@ export function ThreadRelationshipsPanel(props: {
               );
               const statusMark = <ThreadStatusMark status={lineageStatusMark(edge.status)} />;
               // Agents lead with what runs them; their name moves into the details.
-              const relationshipContent = agent ? (
+              const relationshipContent = !redesign ? (
+                <>
+                  <ThreadRelationshipIcon
+                    driver={isSubagent && !isParent ? providerDriver : undefined}
+                    provider={provider}
+                    fallbackIcon={RelationshipIcon}
+                    status={edge.status}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium leading-4 text-foreground/85">
+                      {threadTitle}
+                    </span>
+                    {agent ? <span className="sr-only">{edge.status ?? agent.status}</span> : null}
+                  </span>
+                  {agent ? (
+                    agent.startedAt ? (
+                      <span className="shrink-0 text-[11px] font-normal tabular-nums text-muted-foreground">
+                        <AgentElapsed agent={agent} />
+                      </span>
+                    ) : null
+                  ) : (
+                    <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                  )}
+                </>
+              ) : agent ? (
                 <>
                   <ThreadRelationshipIcon
                     driver={providerDriver}
@@ -495,20 +524,21 @@ export function ThreadRelationshipsPanel(props: {
                 agent && rowExpanded
                   ? describeSidebarBackgroundWork(node?.thread?.pendingBackgroundTasks ?? [], [])
                   : [];
-              const detailsToggle = node?.missing ? null : (
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-expanded={rowExpanded}
-                  aria-label={`${rowExpanded ? "Hide" : "Show"} details for ${threadTitle}`}
-                  className="shrink-0 text-muted-foreground"
-                  onClick={() => setLineageDetailsExpanded([detailsKey(threadId)], !rowExpanded)}
-                >
-                  <ChevronDownIcon
-                    className={cn("size-3.5 transition-transform", !rowExpanded && "-rotate-90")}
-                  />
-                </Button>
-              );
+              const detailsToggle =
+                node?.missing || !redesign ? null : (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-expanded={rowExpanded}
+                    aria-label={`${rowExpanded ? "Hide" : "Show"} details for ${threadTitle}`}
+                    className="shrink-0 text-muted-foreground"
+                    onClick={() => setLineageDetailsExpanded([detailsKey(threadId)], !rowExpanded)}
+                  >
+                    <ChevronDownIcon
+                      className={cn("size-3.5 transition-transform", !rowExpanded && "-rotate-90")}
+                    />
+                  </Button>
+                );
               return (
                 <li key={threadId} className="group rounded-lg">
                   <div className="flex h-9 items-center">

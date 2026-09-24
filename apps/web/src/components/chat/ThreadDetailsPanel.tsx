@@ -9,6 +9,7 @@ import type {
 import { AlertTriangleIcon, XIcon } from "lucide-react";
 
 import type { DraftId } from "../../composerDraftStore";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import type { EnvMode, EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
@@ -77,6 +78,7 @@ export interface ThreadDetailsPanelProps {
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+  const threadDetailsRedesign = useClientSettings((settings) => settings.threadDetailsRedesign);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
@@ -229,7 +231,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           <ThreadRelationshipsPanel environmentId={props.environmentId} threadId={props.threadId} />
         ) : null}
 
-        {!props.draftId ? (
+        {!props.draftId && threadDetailsRedesign ? (
           <ThreadBackgroundProcessesPanel
             environmentId={props.environmentId}
             threadId={props.threadId}

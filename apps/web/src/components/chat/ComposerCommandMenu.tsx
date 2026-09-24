@@ -24,6 +24,7 @@ import { memo, useLayoutEffect, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
+import { useClientSettings } from "~/hooks/useSettings";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -246,10 +247,12 @@ const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
 
 function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffix: boolean }) {
   const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
+  // The original app called plugin skills "App"; the Plugin skills customization renames them.
+  const pluginLabel = useClientSettings((settings) => settings.pluginSkills) ? "Plugin" : "App";
   return (
     <Badge className="ms-auto" variant="secondary">
       <Icon aria-hidden="true" className="text-current" />
-      {SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
+      {props.kind === "plugin" ? pluginLabel : SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
       {props.showSkillSuffix ? " Skill" : null}
     </Badge>
   );

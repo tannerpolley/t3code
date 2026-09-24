@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import { useClientSettings } from "../hooks/useSettings";
 import {
   environmentPresentations,
   environmentSummaries,
@@ -101,8 +102,10 @@ export function usePullRequestsSupported() {
   return useAtomValue(environmentSummaries.pullRequestsSupportedAtom);
 }
 
+/** Whether the sidebar offers the Issues page: an environment supports it and the user kept it on. */
 export function useIssuesSupported() {
-  return useAtomValue(environmentSummaries.issuesSupportedAtom);
+  const supported = useAtomValue(environmentSummaries.issuesSupportedAtom);
+  return useClientSettings((settings) => settings.issuesPage) && supported;
 }
 
 export function useEnvironmentMachines() {

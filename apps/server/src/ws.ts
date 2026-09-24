@@ -3263,9 +3263,20 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.previewOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.previewOpen, previewManager.open(input), {
-            "rpc.aggregate": "preview",
-          }),
+          observeRpcEffect(
+            WS_METHODS.previewOpen,
+            // The agent tab cap applies only while "Agent browser tab limits" is on.
+            serverSettings.getSettings.pipe(
+              Effect.map((settings) => settings.agentBrowserTabLimits),
+              Effect.orElseSucceed(() => true),
+              Effect.flatMap((limits) =>
+                previewManager.open(
+                  limits || !input.openedByAgent ? input : { ...input, openedByAgent: false },
+                ),
+              ),
+            ),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.previewNavigate]: (input) =>
           observeRpcEffect(WS_METHODS.previewNavigate, previewManager.navigate(input), {
             "rpc.aggregate": "preview",

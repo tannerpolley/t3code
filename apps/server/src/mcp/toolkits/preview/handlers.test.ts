@@ -17,6 +17,7 @@ import {
   parseThreadSegmentFromAttachmentId,
 } from "../../../attachmentStore.ts";
 import * as ServerConfig from "../../../config.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { claimPreviewRecording, invoke, normalizePreviewOpenInput } from "./handlers.ts";
@@ -95,6 +96,16 @@ describe("stuck tab recovery", () => {
       ]);
       expect(result._tag).toBe("Failure");
       expect(calls.map((call) => call.operation)).toEqual(["navigate", "navigate", "navigate"]);
+    }),
+  );
+
+  it.effect("returns the timeout without healing when agent browser tab limits are off", () =>
+    Effect.gen(function* () {
+      const { result, calls } = yield* run("open", { url: "http://localhost:8791/" }, [
+        "timeout",
+      ]).pipe(Effect.provide(ServerSettings.layerTest({ agentBrowserTabLimits: false })));
+      expect(result._tag).toBe("Failure");
+      expect(calls).toHaveLength(1);
     }),
   );
 

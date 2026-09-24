@@ -500,6 +500,21 @@ export const ClientSettingsSchema = Schema.Struct({
   activityNeedsYouFirst: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Render ``` fenced code blocks as code blocks in the rich text composer. */
   composerCodeFormatting: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Render $…$, $$…$$, \( \) and \[ \] math in chat messages with KaTeX. */
+  chatMath: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Offer to apply supported Codex project settings when onboarding imports projects. */
+  onboardingCodexSettings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Show the Issues page in the sidebar. */
+  issuesPage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Offer Claude Code plugin skills in the composer menus, labeled Plugin. */
+  pluginSkills: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Thread details: Lineage rows led by model and effort with status marks and details, the
+   * Background processes block, the slim background-work bar, and larger section labels.
+   */
+  threadDetailsRedesign: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** The quicker running-activity shimmer. */
+  fastShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1297,6 +1312,11 @@ export const ServerSettings = Schema.Struct({
   topLevelThreadsReadAllProjects: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /**
+   * Agent browser tabs: a thread keeps at most 3 agent-opened tabs, and a tab stuck loading gets
+   * one hard reload and a retry.
+   */
+  agentBrowserTabLimits: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1602,6 +1622,7 @@ export const ServerSettingsPatch = Schema.Struct({
   projectFolderRoot: Schema.optionalKey(TrimmedString),
   idleAgentSessionMinutes: Schema.optionalKey(NonNegativeInt),
   topLevelThreadsReadAllProjects: Schema.optionalKey(Schema.Boolean),
+  agentBrowserTabLimits: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({
@@ -1740,6 +1761,12 @@ export const ClientSettingsPatch = Schema.Struct({
   agentBrowserInPanel: Schema.optionalKey(Schema.Boolean),
   activityNeedsYouFirst: Schema.optionalKey(Schema.Boolean),
   composerCodeFormatting: Schema.optionalKey(Schema.Boolean),
+  chatMath: Schema.optionalKey(Schema.Boolean),
+  onboardingCodexSettings: Schema.optionalKey(Schema.Boolean),
+  issuesPage: Schema.optionalKey(Schema.Boolean),
+  pluginSkills: Schema.optionalKey(Schema.Boolean),
+  threadDetailsRedesign: Schema.optionalKey(Schema.Boolean),
+  fastShimmer: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

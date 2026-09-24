@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 
 /** Sections share header and content insets in both the sidebar and popover. */
@@ -16,6 +17,7 @@ export function ThreadDetailsSection({
   actions?: ReactNode;
   separated?: boolean;
 }) {
+  const largerLabel = useClientSettings((settings) => settings.threadDetailsRedesign);
   return (
     <section
       {...props}
@@ -25,7 +27,10 @@ export function ThreadDetailsSection({
       <div className="mb-1 flex min-h-8 min-w-0 items-center justify-between gap-2 px-1.5">
         <h3
           id={headingId}
-          className="min-w-0 truncate text-xs font-semibold text-muted-foreground select-none"
+          className={cn(
+            "min-w-0 truncate text-muted-foreground select-none",
+            largerLabel ? "text-xs font-semibold" : "text-[11px] font-medium",
+          )}
         >
           {title}
         </h3>

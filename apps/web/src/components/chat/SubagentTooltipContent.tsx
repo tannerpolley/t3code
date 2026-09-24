@@ -7,6 +7,7 @@ import type {
 import { fileBasename } from "@t3tools/client-runtime/markdown-links";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { modelEffortLabel } from "./modelEffortLabel";
+import { useClientSettings } from "~/hooks/useSettings";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import type { ReactNode } from "react";
 import {
@@ -52,6 +53,7 @@ export function SubagentTooltipContent(props: SubagentDetailsProps & { title: st
 /** "Model · Effort" for a subagent or related thread, from its run record or its thread shell. */
 export function resolveSubagentModelLabel(
   props: Pick<SubagentDetailsProps, "model" | "provider" | "childThread">,
+  withEffort = true,
 ): string {
   const model = props.model?.trim() || props.childThread?.modelSelection.model.trim();
   const modelSlug = props.provider
@@ -63,10 +65,12 @@ export function resolveSubagentModelLabel(
     : model
       ? formatModelSlugName(model)
       : "Not reported";
-  const effort = modelEffortLabel(
-    props.childThread?.modelSelection.options,
-    providerModel?.capabilities?.optionDescriptors,
-  );
+  const effort =
+    withEffort &&
+    modelEffortLabel(
+      props.childThread?.modelSelection.options,
+      providerModel?.capabilities?.optionDescriptors,
+    );
   return effort ? `${modelName} · ${effort}` : modelName;
 }
 
@@ -135,6 +139,8 @@ export function SubagentPreviewLine({ text }: { readonly text: string }) {
  * latest progress. Lineage also shows them inline when a fork or parent row is expanded.
  */
 export function SubagentDetails(props: SubagentDetailsProps) {
+  // The effort suffix belongs to the Lineage redesign customization.
+  const withEffort = useClientSettings((settings) => settings.threadDetailsRedesign);
   const status = props.status;
   const driver = props.provider?.driver ?? props.driver;
   const working =
@@ -161,7 +167,7 @@ export function SubagentDetails(props: SubagentDetailsProps) {
           <BotIcon className="size-3 shrink-0" />
         )}
         <span className="min-w-0 truncate text-foreground/75">
-          {resolveSubagentModelLabel(props)}
+          {resolveSubagentModelLabel(props, withEffort)}
         </span>
       </div>
       {status === undefined ? null : (

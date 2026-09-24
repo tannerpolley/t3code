@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import {
@@ -27,6 +28,7 @@ import {
 } from "../../../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
 import * as ServerConfig from "../../../config.ts";
+import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
@@ -49,6 +51,23 @@ export function normalizePreviewOpenInput(
     reuseExistingTab: input.reuseExistingTab ?? true,
   };
 }
+
+/**
+ * The "Agent browser tab limits" server setting, read per call so toggling needs no restart. Without
+ * a readable settings service it stays on, the default.
+ */
+const agentBrowserTabLimitsEnabled = Effect.serviceOption(ServerSettingsService).pipe(
+  Effect.flatMap(
+    Option.match({
+      onNone: () => Effect.succeed(true),
+      onSome: (settings) =>
+        settings.getSettings.pipe(
+          Effect.map((current) => current.agentBrowserTabLimits),
+          Effect.orElseSucceed(() => true),
+        ),
+    }),
+  ),
+);
 
 export const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   operation: PreviewAutomationOperation,
@@ -89,17 +108,23 @@ export const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
         }
         // A page that never finishes loading usually recovers from a hard
         // reload. Heal the same tab once, then retry; never loop.
-        return broker
-          .invoke({
-            scope,
-            operation: "navigate",
-            input: { reload: "bypassCache", readiness: "none" },
-            tabId: stuckTabId,
-          })
-          .pipe(
-            Effect.mapError(() => error),
-            Effect.andThen(broker.invoke<A>({ ...request, tabId: stuckTabId })),
-          );
+        return agentBrowserTabLimitsEnabled.pipe(
+          Effect.flatMap((enabled) =>
+            enabled
+              ? broker
+                  .invoke({
+                    scope,
+                    operation: "navigate",
+                    input: { reload: "bypassCache", readiness: "none" },
+                    tabId: stuckTabId,
+                  })
+                  .pipe(
+                    Effect.mapError(() => error),
+                    Effect.andThen(broker.invoke<A>({ ...request, tabId: stuckTabId })),
+                  )
+              : Effect.fail(error),
+          ),
+        );
       }),
     );
   if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };

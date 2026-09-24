@@ -647,6 +647,8 @@ const PreviewPanel = lazy(() =>
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
+const selectThreadDetailsRedesign = (settings: { threadDetailsRedesign: boolean }) =>
+  settings.threadDetailsRedesign;
 const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -6780,7 +6782,8 @@ export default function ChatView(props: ChatViewProps) {
     }
   }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
   // One slim line: the details live in Lineage and Background processes; this keeps Stop reachable
-  // after the turn has settled.
+  // after the turn has settled. With the thread details redesign off, it lists the tasks again.
+  const slimBackgroundWorkBar = useClientSettings(selectThreadDetailsRedesign);
   const backgroundWorkBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (activeBackgroundTasks.length === 0 || !activeThread) {
       return null;
@@ -6797,6 +6800,13 @@ export default function ChatView(props: ChatViewProps) {
         />
       ),
       title: count === 1 ? "Waiting on background task" : `Waiting on ${count} background tasks`,
+      ...(slimBackgroundWorkBar
+        ? {}
+        : {
+            description: activeBackgroundTasks
+              .map((task) => task.description || task.taskId)
+              .join(", "),
+          }),
       actions: (
         <Button
           size="xs"
@@ -6808,7 +6818,13 @@ export default function ChatView(props: ChatViewProps) {
         </Button>
       ),
     };
-  }, [activeBackgroundTasks, activeThread, handleStopBackgroundWork, isStoppingBackgroundWork]);
+  }, [
+    activeBackgroundTasks,
+    activeThread,
+    handleStopBackgroundWork,
+    isStoppingBackgroundWork,
+    slimBackgroundWorkBar,
+  ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
   // pill); sending a message clears it as a side effect of the send path.

@@ -186,7 +186,8 @@ Show skills in slash menu**. Only skills enabled for the provider are listed.
 Skills from Claude Code and Codex plugins you have enabled appear too, marked
 **Plugin** and named `plugin:skill`. **Settings → Customizations → Plugins**
 lists each provider's enabled plugins; turn plugins on or off in the provider
-itself.
+itself. Turn off **Plugin skills in the composer** there to hide Claude Code
+plugin skills from the menus.
 
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.

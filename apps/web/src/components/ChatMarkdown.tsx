@@ -757,13 +757,23 @@ const CHAT_MARKDOWN_REHYPE_PLUGINS = [rehypeKatex] satisfies NonNullable<
   ReactMarkdownOptions["rehypePlugins"]
 >;
 
-const CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW = [
+// With the "Math in chat" customization off, markdown renders without any math plugin.
+const CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW_NO_MATH = [
   rehypeRaw,
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW = [
+  ...CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW_NO_MATH,
   rehypeKatex,
   [rehypeSanitize, CHAT_MARKDOWN_KATEX_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const notMathPlugin = (plugin: unknown) => plugin !== remarkMath && plugin !== remarkProviderMath;
+const CHAT_MARKDOWN_REMARK_PLUGINS_NO_MATH = CHAT_MARKDOWN_REMARK_PLUGINS.filter(notMathPlugin);
+const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS_NO_MATH =
+  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS.filter(notMathPlugin);
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -3555,13 +3565,16 @@ function ChatMarkdown({
     localMediaPreview,
     setLocalMediaPreview,
   } = useChatMarkdownState({ text, ...props });
+  const chatMath = useClientSettings((settings) => settings.chatMath);
   const renderedText = useMemo(
     () =>
-      normalizeProviderMathDelimiters(
-        text,
-        props.skills?.map((skill) => skill.name),
-      ),
-    [props.skills, text],
+      chatMath
+        ? normalizeProviderMathDelimiters(
+            text,
+            props.skills?.map((skill) => skill.name),
+          )
+        : text,
+    [chatMath, props.skills, text],
   );
   const incrementalParsing =
     props.isStreaming === true &&
@@ -3569,11 +3582,17 @@ function ChatMarkdown({
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
   const remarkPlugins = useMemo(
     () => [
-      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      ...(lineBreaks
+        ? chatMath
+          ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS
+          : CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS_NO_MATH
+        : chatMath
+          ? CHAT_MARKDOWN_REMARK_PLUGINS
+          : CHAT_MARKDOWN_REMARK_PLUGINS_NO_MATH),
       ...extraRemarkPlugins,
       ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
     ],
-    [extraRemarkPlugins, incrementalParsing, lineBreaks],
+    [chatMath, extraRemarkPlugins, incrementalParsing, lineBreaks],
   );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
@@ -3594,7 +3613,13 @@ function ChatMarkdown({
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
           rehypePlugins={
-            parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW : CHAT_MARKDOWN_REHYPE_PLUGINS
+            parseRawHtml
+              ? chatMath
+                ? CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW
+                : CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW_NO_MATH
+              : chatMath
+                ? CHAT_MARKDOWN_REHYPE_PLUGINS
+                : undefined
           }
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}

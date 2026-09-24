@@ -414,6 +414,50 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork lineage subagent model effort details expand"],
   },
   {
+    id: "chat-math",
+    title: "Math in chat",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork latex katex math formulas equations markdown dollar"],
+  },
+  {
+    id: "onboarding-codex-settings",
+    title: "Codex settings during onboarding",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork onboarding import codex trust runtime mode projects"],
+  },
+  {
+    id: "issues-page",
+    title: "Issues page",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork github issues page browser sidebar repositories filters pin"],
+  },
+  {
+    id: "plugin-skills",
+    title: "Plugin skills in the composer",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork plugin skills claude code dollar menu composer badge"],
+  },
+  {
+    id: "thread-details-redesign",
+    title: "Redesigned Lineage and background work",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork lineage subagent status model effort background processes bar details labels",
+    ],
+  },
+  {
+    id: "fast-shimmer",
+    title: "Faster activity shimmer",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork shimmer animation running activity speed motion"],
+  },
+  {
+    id: "agent-browser-tab-limits",
+    title: "Agent browser tab limits",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork browser preview agent tabs cap three stuck reload retry"],
+  },
+  {
     id: "top-back-button",
     title: "Back button at the top",
     to: "/settings/customizations",
