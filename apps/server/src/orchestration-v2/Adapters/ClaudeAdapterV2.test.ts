@@ -88,6 +88,7 @@ import {
   type ClaudeAgentSdkQueryOpenInput,
 } from "./ClaudeAdapterV2.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "../../provider/ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
@@ -869,6 +870,110 @@ describe("ClaudeAdapterV2 context usage", () => {
       updatedAt: "2026-08-29T00:00:00.000Z",
     });
   });
+});
+
+// A model only the fetched manifest knows, like a release newer than the app.
+const MANIFEST_ONLY_CLAUDE_CATALOG = (() => {
+  const opus5 = BUNDLED_CLAUDE_MODEL_CATALOG.models.find(
+    (entry) => entry.model.slug === "claude-opus-5",
+  )!;
+  return {
+    models: [
+      ...BUNDLED_CLAUDE_MODEL_CATALOG.models,
+      { ...opus5, model: { ...opus5.model, slug: "claude-opus-5-5", aliases: [] } },
+    ],
+  };
+})();
+const MANIFEST_ONLY_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
+  model: "claude-opus-5-5",
+} satisfies ModelSelection;
+
+describe("ClaudeAdapterV2 fetched model catalog", () => {
+  it("falls back to the selected context window for a model no catalog knows", () => {
+    const usage = (contextWindow: string) =>
+      claudeProviderTurnTokenUsage(
+        { input_tokens: 596_686, output_tokens: 0 },
+        {
+          instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
+          model: "claude-unreleased",
+          options: [{ id: "contextWindow", value: contextWindow }],
+        },
+        "2026-09-23T00:00:00.000Z",
+      ).maxTokens;
+    assert.equal(usage("1m"), 1_000_000);
+    assert.equal(usage("200k"), 200_000);
+  });
+
+  it.effect("sizes and compiles manifest-only models from the fetched catalog", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-catalog-",
+        });
+        let openedOptions: ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = makeClaudeAdapterV2({
+          instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          idAllocator,
+          modelCatalog: Effect.succeed(MANIFEST_ONLY_CLAUDE_CATALOG),
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-catalog"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-catalog");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-catalog"),
+          modelSelection: MANIFEST_ONLY_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        // The handoff budget is sized from this window; the bundled list said 200k.
+        assert.equal(runtime.getModelContextWindow?.(MANIFEST_ONLY_MODEL_SELECTION), 1_000_000);
+
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: MANIFEST_ONLY_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-catalog"),
+            text: "hello",
+            attachments: [],
+            modelSelection: {
+              ...MANIFEST_ONLY_MODEL_SELECTION,
+              options: [{ id: "effort", value: "ultracode" }],
+            },
+          }),
+        );
+        assert.equal(openedOptions?.model, "claude-opus-5-5[1m]");
+        assert.equal(openedOptions?.effort, "xhigh");
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+    ),
+  );
 });
 
 describe("ClaudeAdapterV2 session permissions", () => {

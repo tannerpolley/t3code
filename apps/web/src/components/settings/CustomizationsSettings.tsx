@@ -191,6 +191,16 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
       "A Claude question asked right as a turn ends, or while a message is steered in, reaches you instead of failing or silently dropping your answer.",
   },
   {
+    title: "Quitting doesn't fail running agents",
+    description:
+      "Agents that are mid-turn when you quit are resumed after relaunch instead of being marked failed.",
+  },
+  {
+    title: "Claude context sizes follow the latest model list",
+    description:
+      "New Claude models like Opus 5.5 get their real context window (up to 1M), so large threads can still pass child results to their parent.",
+  },
+  {
     title: "Early steers wait for the turn",
     description:
       "A steer sent while the agent is still starting its turn is held and delivered once the turn runs, instead of failing.",
