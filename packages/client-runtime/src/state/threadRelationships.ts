@@ -45,12 +45,20 @@ export function resolveMergeBackTargetThreadId(
 /**
  * A subagent's display status. The parent's subagent record settles with the run that spawned
  * it and is not reopened when the child is steered into a new run, so the child thread's own
- * live run wins while it has one.
+ * live run wins while it has one. A child blocked on a question or approval reads as needing
+ * you (`input` / `approval`), not as working: its run stays open until someone answers.
  */
 export function resolveSubagentStatus(
   subagent: Pick<OrchestrationV2Subagent, "status">,
-  childThread: Pick<OrchestrationV2ThreadShell, "activityRunStatus"> | null | undefined,
+  childThread:
+    | Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "pendingRuntimeRequest">
+    | null
+    | undefined,
 ): string {
+  const request = childThread?.pendingRuntimeRequest;
+  if (request && request.kind !== "auth_refresh") {
+    return request.kind === "user_input" ? "input" : "approval";
+  }
   return childThread?.activityRunStatus ?? subagent.status;
 }
 

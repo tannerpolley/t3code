@@ -23,6 +23,9 @@ export function lineageStatusMark(status: string | null): ThreadStatusMarkStatus
       return "failed";
     case "completed":
       return "done";
+    case "input":
+    case "approval":
+      return status;
     default:
       return "ready";
   }

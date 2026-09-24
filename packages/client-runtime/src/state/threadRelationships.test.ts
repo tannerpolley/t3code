@@ -68,6 +68,37 @@ describe("thread relationships", () => {
     ]);
   });
 
+  it("shows a child blocked on a question as needing input, not running", () => {
+    const parent = ThreadId.make("thread-parent");
+    const child = ThreadId.make("thread-child");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: child,
+          title: "Delegated task",
+          activityRunStatus: "running",
+          pendingRuntimeRequest: { kind: "user_input" },
+          status: "running",
+          forkedFrom: null,
+          lineage: {
+            rootThreadId: parent,
+            parentThreadId: parent,
+            relationshipToParent: "subagent",
+          },
+        },
+      ] as never,
+      projection: {
+        thread: { id: parent },
+        subagents: [{ childThreadId: child, status: "running" }],
+        contextTransfers: [],
+      } as never,
+    });
+
+    expect(graph.edges).toEqual([
+      expect.objectContaining({ targetThreadId: child, kind: "subagent", status: "input" }),
+    ]);
+  });
+
   it("keeps missing parents and cycles navigable without recursive traversal", () => {
     const root = ThreadId.make("thread-root");
     const child = ThreadId.make("thread-child");
