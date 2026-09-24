@@ -8,7 +8,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon, GitBranchIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -608,7 +608,11 @@ export function BranchToolbarBranchSelector({
   function selectPickerItem(itemValue: string) {
     const groupHeader = branchGroupHeaderByItem.get(itemValue);
     if (groupHeader) {
-      setBranchPickerGroupCollapsed(groupHeader.group, !groupHeader.collapsed);
+      // Read the live state: a cached row can carry a stale `collapsed`.
+      const collapsed = useUiStateStore
+        .getState()
+        .branchPickerCollapsedGroups.includes(groupHeader.group);
+      setBranchPickerGroupCollapsed(groupHeader.group, !collapsed);
     } else if (
       itemValue === checkoutPullRequestItemValue &&
       prReference &&
@@ -635,7 +639,8 @@ export function BranchToolbarBranchSelector({
           index={index}
           value={itemValue}
           aria-expanded={!groupHeader.collapsed}
-          className="gap-1 pe-1.5 text-muted-foreground text-xs sm:text-xs"
+          className="pe-1.5 text-muted-foreground text-xs sm:text-xs"
+          contentClassName="flex items-center gap-1.5"
           onClick={(event) => {
             // Toggling a group must neither select the header nor close the popup.
             event.preventBaseUIHandler();
@@ -643,15 +648,15 @@ export function BranchToolbarBranchSelector({
           }}
           onMouseUp={(event) => event.preventBaseUIHandler()}
         >
-          <ChevronRightIcon
+          <span className="min-w-0 flex-1 truncate font-medium">{groupHeader.label}</span>
+          <span className="shrink-0 text-[10px] tabular-nums">{groupHeader.count}</span>
+          <ChevronDownIcon
             aria-hidden
             className={cn(
               "size-3.5 shrink-0 transition-transform motion-reduce:transition-none",
-              !groupHeader.collapsed && "rotate-90",
+              groupHeader.collapsed && "-rotate-90",
             )}
           />
-          <span className="min-w-0 flex-1 truncate font-medium">{groupHeader.label}</span>
-          <span className="shrink-0 text-[10px] tabular-nums">{groupHeader.count}</span>
         </ComboboxItem>
       );
     }
@@ -713,6 +718,7 @@ export function BranchToolbarBranchSelector({
       open={isBranchMenuOpen}
       onOpenChange={handleOpenChange}
       onSelectItem={selectPickerItem}
+      extraData={branchPickerCollapsedGroups}
       value={resolvedActiveBranch}
       query={branchQuery}
       resultsQuery={deferredTrimmedBranchQuery}
