@@ -712,6 +712,19 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+/**
+ * The right-side mark a thread row shows, in the sidebar and in Lineage: its sidebar status, or
+ * `done` (the green dot) for a ready thread that finished since it was last opened.
+ */
+export function resolveThreadStatusMark(
+  thread: SidebarThreadStatusInput & ThreadStatusInput,
+  localLastVisitedAt: string | undefined,
+  status: SidebarThreadStatus = resolveSidebarThreadStatus(thread),
+): SidebarThreadStatus | "done" {
+  const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
+  return status === "ready" && hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "done" : status;
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);

@@ -38,6 +38,7 @@ import {
   resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
   resolveThreadRowClassName,
+  resolveThreadStatusMark,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
@@ -497,6 +498,48 @@ describe("hasUnseenCompletion", () => {
         runtime: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveThreadStatusMark", () => {
+  const thread = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestRun: makeLatestRun(),
+    runtime: null,
+  };
+
+  it("shows done until the finished thread is opened, from either visit record", () => {
+    expect(
+      resolveThreadStatusMark({ ...thread, lastVisitedAt: "2026-03-09T10:04:00.000Z" }, undefined),
+    ).toBe("done");
+    expect(
+      resolveThreadStatusMark({ ...thread, lastVisitedAt: "2026-03-09T10:06:00.000Z" }, undefined),
+    ).toBe("ready");
+    // Servers without visit tracking fall back to this browser's visit.
+    expect(resolveThreadStatusMark(thread, "2026-03-09T10:06:00.000Z")).toBe("ready");
+  });
+
+  it("keeps a thread waiting on background work amber, not done", () => {
+    expect(
+      resolveThreadStatusMark(
+        {
+          ...thread,
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          runtime: {
+            status: "idle",
+            activeRunId: null,
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            providerName: null,
+            lastError: null,
+            updatedAt: "2026-03-09T10:05:00.000Z",
+          },
+        },
+        undefined,
+      ),
+    ).toBe("waiting");
   });
 });
 

@@ -78,10 +78,9 @@ import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore"
 import { cn } from "~/lib/utils";
 import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import {
-  hasUnseenCompletion,
   resolveSidebarThreadStatus,
+  resolveThreadStatusMark,
   withChildNeeds,
-  resolveThreadLastVisitedAt,
   type SidebarThreadStatus,
 } from "../Sidebar.logic";
 import { ThreadStatusMark } from "../ThreadStatusMark";
@@ -1184,12 +1183,7 @@ function SidebarProjectThreadRow(props: {
     (state) => state.threadLastVisitedAtById[activeThreadKey],
   );
   // Finished while you were away and not opened since: a green dot where the spinner was.
-  const unseenCompletion =
-    status === "ready" &&
-    hasUnseenCompletion({
-      ...props.thread,
-      lastVisitedAt: resolveThreadLastVisitedAt(props.thread.lastVisitedAt, localLastVisitedAt),
-    });
+  const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
   const workRows = describeSidebarBackgroundWork(
     props.thread.pendingBackgroundTasks,
     props.runningSubagents,
@@ -1257,7 +1251,7 @@ function SidebarProjectThreadRow(props: {
             {compactThreadTime(props.thread)}
           </span>
         )}
-        {props.codexStyle ? <ThreadStatusMark status={unseenCompletion ? "done" : status} /> : null}
+        {props.codexStyle ? <ThreadStatusMark status={statusMark} /> : null}
       </button>
       {workRows.length > 0 ? (
         <button

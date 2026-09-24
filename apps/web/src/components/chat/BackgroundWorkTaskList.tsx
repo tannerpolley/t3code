@@ -38,6 +38,7 @@ export function BackgroundWorkTaskList(props: {
   const padding = props.columns ? "px-2" : "px-1.5";
   const providers = useServerConfigs().get(props.environmentId)?.providers;
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
+  const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   return (
     <ul
       className={
@@ -118,7 +119,7 @@ export function BackgroundWorkTaskList(props: {
           >
             {content}
           </button>
-        ) : row.kind === "process" ? (
+        ) : row.kind === "process" && processOutput ? (
           // Opens the process's live output (Claude background shells write it to a file).
           <BackgroundProcessOutputButton
             environmentId={props.environmentId}

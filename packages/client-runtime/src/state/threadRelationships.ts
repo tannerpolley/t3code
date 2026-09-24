@@ -45,13 +45,15 @@ export function resolveMergeBackTargetThreadId(
 /**
  * A subagent's display status. The parent's subagent record settles with the run that spawned
  * it and is not reopened when the child is steered into a new run, so the child thread's own
- * live run wins while it has one. A child blocked on a question or approval reads as needing
- * you (`input` / `approval`), not as working: its run stays open until someone answers.
+ * state wins: its live run, else its latest run's outcome (provider-native children report
+ * their record there). `idle` means the child has no state of its own yet. A child blocked on a
+ * question or approval reads as needing you (`input` / `approval`), not as working: its run
+ * stays open until someone answers.
  */
 export function resolveSubagentStatus(
   subagent: Pick<OrchestrationV2Subagent, "status">,
   childThread:
-    | Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "pendingRuntimeRequest">
+    | Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "pendingRuntimeRequest" | "status">
     | null
     | undefined,
 ): string {
@@ -59,7 +61,62 @@ export function resolveSubagentStatus(
   if (request && request.kind !== "auth_refresh") {
     return request.kind === "user_input" ? "input" : "approval";
   }
-  return childThread?.activityRunStatus ?? subagent.status;
+  const own = childThread?.activityRunStatus ?? childThread?.status;
+  return own && own !== "idle" ? own : subagent.status;
+}
+
+/**
+ * A subagent's current activation, from the same child state as its status: the child's live or
+ * latest run (provider-native children get their record copied there by the server), and the
+ * child's own model once it runs turns of its own. The parent's record stands in while the child
+ * shell is missing or predates these fields. `status` only tells a live timer from a frozen one.
+ */
+export function resolveSubagentActivation<Status extends string>(
+  subagent: {
+    readonly status: Status;
+    readonly startedAt: string | null;
+    readonly completedAt: string | null;
+    readonly model: string | null;
+  },
+  childThread:
+    | Pick<
+        OrchestrationV2ThreadShell,
+        | "latestRunId"
+        | "modelSelection"
+        | "activityRunStatus"
+        | "activityRunStartedAt"
+        | "latestRunRequestedAt"
+        | "latestRunStartedAt"
+        | "latestRunCompletedAt"
+      >
+    | null
+    | undefined,
+): {
+  readonly status: Status | "running" | "completed";
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly model: string | null;
+} {
+  const iso = (value: DateTime.Utc | null | undefined) =>
+    value == null ? null : DateTime.formatIso(value);
+  const model = childThread?.latestRunId ? childThread.modelSelection.model : subagent.model;
+  if (childThread?.activityRunStatus) {
+    return {
+      status: "running",
+      startedAt: iso(childThread.activityRunStartedAt ?? childThread.latestRunStartedAt),
+      completedAt: null,
+      model,
+    };
+  }
+  if (childThread?.latestRunCompletedAt) {
+    return {
+      status: "completed",
+      startedAt: iso(childThread.latestRunStartedAt ?? childThread.latestRunRequestedAt),
+      completedAt: iso(childThread.latestRunCompletedAt),
+      model,
+    };
+  }
+  return { ...subagent, model };
 }
 
 function edgeKey(edge: ThreadRelationshipEdge): string {

@@ -17,6 +17,7 @@ import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   isParentThreadRelationship,
+  resolveSubagentActivation,
   resolveSubagentStatus,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
@@ -67,6 +68,7 @@ import { AgentElapsed } from "./AgentElapsed";
 import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
 import { describeSidebarBackgroundWork } from "./BackgroundWorkTaskList.logic";
 import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
+import { resolveThreadStatusMark } from "../Sidebar.logic";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -232,6 +234,17 @@ export function ThreadRelationshipsPanel(props: {
     ];
     return deriveThreadRelationshipGraph({ threads: shells, projection });
   }, [archivedShells, projection, props.environmentId, threadShells]);
+  // Live threads as the sidebar sees them, so a row's mark follows the sidebar's rules.
+  const liveThreadsById = useMemo(
+    () =>
+      new Map(
+        threadShells
+          .filter((thread) => thread.environmentId === props.environmentId)
+          .map((thread) => [thread.id, thread]),
+      ),
+    [props.environmentId, threadShells],
+  );
+  const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
   const currentThread = projection?.thread ?? graph.nodes.get(props.threadId)?.thread;
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const navigate = useNavigate();
@@ -477,6 +490,8 @@ export function ThreadRelationshipsPanel(props: {
                   : GitForkIcon;
               const relationship = relationshipLabel(edge, props.threadId);
               const agent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
+              // Timer and model follow the same child state as the status, not the parent's record.
+              const activation = agent && resolveSubagentActivation(agent, node?.thread);
               const threadTitle = relationshipThreadTitle({
                 title: node?.thread?.title ?? agent?.title ?? threadId,
                 isSubagent,
@@ -495,10 +510,10 @@ export function ThreadRelationshipsPanel(props: {
               const relationshipTooltip = agent ? (
                 <SubagentTooltipContent
                   title={threadTitle}
-                  model={agent.model}
+                  model={activation?.model ?? null}
                   provider={provider}
                   driver={providerDriver}
-                  elapsed={<AgentElapsed agent={agent} />}
+                  elapsed={activation ? <AgentElapsed agent={activation} /> : null}
                   status={edge.status ?? agent.status}
                   result={agent.result}
                   progress={agent.progress}
@@ -510,7 +525,25 @@ export function ThreadRelationshipsPanel(props: {
               ) : (
                 relationshipHint
               );
-              const statusMark = <ThreadStatusMark status={lineageStatusMark(edge.status)} />;
+              // Threads the sidebar knows share its mark; a transfer row shows the transfer. A
+              // child you never opened counts as seen when created, so its finished run stays
+              // green until you open it (the sidebar lists no settled children to compare).
+              const liveThread =
+                edge.kind === "transfer" ? undefined : liveThreadsById.get(threadId);
+              const statusMark = (
+                <ThreadStatusMark
+                  status={
+                    liveThread
+                      ? resolveThreadStatusMark(
+                          agent && liveThread.lastVisitedAt === null
+                            ? { ...liveThread, lastVisitedAt: liveThread.createdAt }
+                            : liveThread,
+                          threadLastVisitedAtById[detailsKey(threadId)],
+                        )
+                      : lineageStatusMark(edge.status)
+                  }
+                />
+              );
               // Agents lead with what runs them; their name moves into the details.
               const relationshipContent = !redesign ? (
                 <>
@@ -526,17 +559,17 @@ export function ThreadRelationshipsPanel(props: {
                     </span>
                     {agent ? <span className="sr-only">{edge.status ?? agent.status}</span> : null}
                   </span>
-                  {agent ? (
-                    agent.startedAt ? (
+                  {activation ? (
+                    activation.startedAt ? (
                       <span className="shrink-0 text-[11px] font-normal tabular-nums text-muted-foreground">
-                        <AgentElapsed agent={agent} />
+                        <AgentElapsed agent={activation} />
                       </span>
                     ) : null
                   ) : (
                     <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                   )}
                 </>
-              ) : agent ? (
+              ) : agent && activation ? (
                 <>
                   <ThreadRelationshipIcon
                     driver={providerDriver}
@@ -545,16 +578,16 @@ export function ThreadRelationshipsPanel(props: {
                   />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-4 text-foreground/85">
                     {resolveSubagentModelLabel(
-                      { model: agent.model, provider, childThread: node?.thread ?? undefined },
+                      { model: activation.model, provider, childThread: node?.thread ?? undefined },
                       { shortName: shortModelNames },
                     )}
                     <span className="sr-only">
                       , {threadTitle}, {edge.status ?? agent.status}
                     </span>
                   </span>
-                  {agent.startedAt ? (
+                  {activation.startedAt ? (
                     <span className="shrink-0 text-[11px] font-normal tabular-nums text-muted-foreground">
-                      <AgentElapsed agent={agent} />
+                      <AgentElapsed agent={activation} />
                     </span>
                   ) : null}
                   {statusMark}

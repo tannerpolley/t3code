@@ -8,6 +8,8 @@ import {
   orderWebThreadLineageRows,
   relatedThreadIds,
   resolveMergeBackTargetThreadId,
+  resolveSubagentActivation,
+  resolveSubagentStatus,
   walkThreadRelationships,
 } from "./threadRelationships.ts";
 
@@ -334,6 +336,70 @@ function orderedLineageIds(input: {
     mergeTargetThreadId: input.mergeTargetThreadId ?? null,
   }).map(({ threadId }) => threadId);
 }
+
+describe("subagent current activation", () => {
+  const record = {
+    status: "completed" as const,
+    startedAt: "2026-09-24T10:00:00.000Z",
+    completedAt: "2026-09-24T10:02:00.000Z",
+    model: "claude-haiku-4-5",
+  };
+  const at = (iso: string) => DateTime.makeUnsafe(iso);
+  const child = {
+    latestRunId: null,
+    modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+    activityRunStatus: null,
+    activityRunStartedAt: null,
+    latestRunRequestedAt: null,
+    latestRunStartedAt: null,
+    latestRunCompletedAt: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+  } as const;
+
+  it("times, labels and reports a resumed child from its own run, not the settled record", () => {
+    const resumed = {
+      ...child,
+      latestRunId: "run-2",
+      modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5" },
+      activityRunStatus: "running",
+      activityRunStartedAt: at("2026-09-24T11:00:00.000Z"),
+      status: "running",
+    } as never;
+    expect(resolveSubagentActivation(record, resumed)).toEqual({
+      status: "running",
+      startedAt: "2026-09-24T11:00:00.000Z",
+      completedAt: null,
+      model: "claude-sonnet-5",
+    });
+
+    const failed = {
+      ...child,
+      latestRunId: "run-2",
+      latestRunStartedAt: at("2026-09-24T11:00:00.000Z"),
+      latestRunCompletedAt: at("2026-09-24T11:03:00.000Z"),
+      status: "failed",
+    } as never;
+    expect(resolveSubagentActivation(record, failed)).toMatchObject({
+      status: "completed",
+      startedAt: "2026-09-24T11:00:00.000Z",
+      completedAt: "2026-09-24T11:03:00.000Z",
+    });
+    expect(resolveSubagentStatus(record, failed)).toBe("failed");
+  });
+
+  it("keeps the record's model for a provider-native child, and the record without a child", () => {
+    const native = {
+      ...child,
+      latestRunStartedAt: at(record.startedAt),
+      latestRunCompletedAt: at(record.completedAt),
+      status: "completed",
+    } as never;
+    expect(resolveSubagentActivation(record, native).model).toBe("claude-haiku-4-5");
+    expect(resolveSubagentActivation(record, undefined)).toMatchObject(record);
+    expect(resolveSubagentStatus(record, child as never)).toBe("completed");
+  });
+});
 
 describe("web thread lineage ordering", () => {
   it("orders sibling forks newest created first", () => {
