@@ -72,6 +72,7 @@ import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import {
   hasUnseenCompletion,
   resolveSidebarThreadStatus,
+  withChildNeeds,
   resolveThreadLastVisitedAt,
   type SidebarThreadStatus,
 } from "../Sidebar.logic";
@@ -1175,7 +1176,7 @@ function SidebarProjectThreadRow(props: {
   ) => void;
   readonly runningSubagents: readonly SidebarThreadSummary[];
 }): ReactNode {
-  const status = resolveSidebarThreadStatus(props.thread);
+  const status = withChildNeeds(resolveSidebarThreadStatus(props.thread), props.runningSubagents);
   const activeThreadKey = scopedThreadKey(
     scopeThreadRef(props.thread.environmentId, props.thread.id),
   );
@@ -1196,7 +1197,8 @@ function SidebarProjectThreadRow(props: {
   );
   // Opens by itself while the thread waits on this work; a manual toggle wins for this row.
   const [manualWorkOpen, setManualWorkOpen] = useState<boolean | null>(null);
-  const workOpen = manualWorkOpen ?? status === "waiting";
+  const childWaitsOnYou = workRows.some((row) => row.needs !== undefined);
+  const workOpen = manualWorkOpen ?? (status === "waiting" || childWaitsOnYou);
   return (
     <li className="relative list-none">
       <button

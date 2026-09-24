@@ -207,6 +207,7 @@ import {
   sortSidebarV2ProjectGroups,
   sortThreadsForSidebar,
   floatNeedsYouThreads,
+  withChildNeeds,
   useThreadJumpHintVisibility,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
@@ -1052,6 +1053,8 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   ),
 };
 
+const EMPTY_CHILD_THREADS: readonly SidebarThreadSummary[] = [];
+
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
@@ -1072,6 +1075,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // the descriptor is not loaded. Pinning itself lives in the context menu.
   pinningSupported: boolean;
   isPinned: boolean;
+  /** Its subagents that are running or waiting on the user; their questions show on this row. */
+  childThreads: readonly SidebarThreadSummary[];
   // Present on rows whose server supports every drop outcome: dnd-kit
   // sortable bag applied to the row root so the whole row drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
@@ -1202,7 +1207,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Same semantics as the legacy sidebar (never-visited counts as read):
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const status = resolveSidebarThreadStatus(thread);
+  const status = withChildNeeds(resolveSidebarThreadStatus(thread), props.childThreads);
   const isInFlight =
     status === "working" || status === "waiting" || status === "approval" || status === "input";
   // A woken thread reappears at its original position (the sort is
@@ -2739,8 +2744,16 @@ export default function Sidebar() {
     // web and mobile from the same data.
     const sortedPinned = sortPinnedThreadsForSidebar(pinned);
     // Fork option: threads waiting on the user float up; otherwise upstream's stable order.
-    const sortedActive = activityNeedsYouFirst
-      ? floatNeedsYouThreads(sortThreadsForSidebar(active), resolveSidebarThreadStatus)
+    const childrenByParent = activityNeedsYouFirst ? groupRunningSubagentsByParent(threads) : null;
+    const sortedActive = childrenByParent
+      ? floatNeedsYouThreads(sortThreadsForSidebar(active), (thread) =>
+          withChildNeeds(
+            resolveSidebarThreadStatus(thread),
+            childrenByParent.get(
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            ) ?? EMPTY_CHILD_THREADS,
+          ),
+        )
       : sortThreadsForSidebar(active);
     return {
       pinnedThreads:
@@ -4989,6 +5002,9 @@ export default function Sidebar() {
                         const rowVariant = isCard ? "card" : "slim";
                         return (
                           <SidebarThreadRow
+                            childThreads={
+                              runningSubagentsByParentKey.get(threadKey) ?? EMPTY_CHILD_THREADS
+                            }
                             // Fade between card and compact rows while the outer
                             // sortable wrapper keeps its identity during a drag.
                             key={`${threadKey}:${rowVariant}`}

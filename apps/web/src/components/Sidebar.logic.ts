@@ -964,7 +964,12 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 export function groupRunningSubagentsByParent<
   TThread extends Pick<
     SidebarThreadSummary,
-    "environmentId" | "lineage" | "runtime" | "archivedAt"
+    | "environmentId"
+    | "lineage"
+    | "runtime"
+    | "archivedAt"
+    | "hasPendingUserInput"
+    | "hasPendingApprovals"
   >,
 >(threads: readonly TThread[]): ReadonlyMap<string, TThread[]> {
   const byParent = new Map<string, TThread[]>();
@@ -974,7 +979,12 @@ export function groupRunningSubagentsByParent<
       parentThreadId === null ||
       thread.lineage.relationshipToParent !== "subagent" ||
       thread.archivedAt !== null ||
-      !threadRuntimeIsActive(thread.runtime)
+      // A child waiting on the user stays listed so its question is one click away.
+      !(
+        threadRuntimeIsActive(thread.runtime) ||
+        thread.hasPendingUserInput ||
+        thread.hasPendingApprovals
+      )
     ) {
       continue;
     }
@@ -984,6 +994,24 @@ export function groupRunningSubagentsByParent<
     else byParent.set(key, [thread]);
   }
   return byParent;
+}
+
+/**
+ * A parent shows its children's questions as its own, so a subagent asking the user is visible
+ * (and sorted as needing you) without opening the parent. Its own urgent states win.
+ */
+export function withChildNeeds(
+  status: SidebarThreadStatus,
+  children: ReadonlyArray<
+    Pick<SidebarThreadSummary, "hasPendingApprovals" | "hasPendingUserInput">
+  >,
+): SidebarThreadStatus {
+  if (status === "approval" || status === "input" || status === "failed" || status === "limited") {
+    return status;
+  }
+  if (children.some((child) => child.hasPendingApprovals)) return "approval";
+  if (children.some((child) => child.hasPendingUserInput)) return "input";
+  return status;
 }
 
 export type SidebarV2TopStatusKind =

@@ -15,6 +15,8 @@ export interface BackgroundWorkTaskRow {
   readonly startedAt: string | null;
   /** The subagent's own thread, when it has one to open. */
   readonly childThreadId: ThreadId | null;
+  /** Set when the child thread is waiting on the user: a question or an approval. */
+  readonly needs?: "input" | "approval" | undefined;
 }
 
 /**
@@ -64,7 +66,10 @@ function isAgentTask(task: OrchestrationV2PendingBackgroundTask): boolean {
 export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<
-    Pick<SidebarThreadSummary, "id" | "title" | "latestRun" | "runtime">
+    Pick<
+      SidebarThreadSummary,
+      "id" | "title" | "latestRun" | "runtime" | "hasPendingApprovals" | "hasPendingUserInput"
+    >
   >,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
   const agentTasks = tasks.filter(isAgentTask);
@@ -75,6 +80,11 @@ export function describeSidebarBackgroundWork(
       kind: "subagent" as const,
       startedAt: resolveThreadWorkingStartedAt(child),
       childThreadId: child.id,
+      needs: child.hasPendingApprovals
+        ? ("approval" as const)
+        : child.hasPendingUserInput
+          ? ("input" as const)
+          : undefined,
     })),
     // ponytail: the shell has no task id on child threads, so agent tasks pair with children by
     // count; join on an id if the summary ever carries one.

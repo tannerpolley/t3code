@@ -6,6 +6,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
   floatNeedsYouThreads,
+  withChildNeeds,
   animateSidebarLayoutChanges,
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
@@ -2212,11 +2213,13 @@ describe("navigation after parking a thread", () => {
 describe("groupRunningSubagentsByParent", () => {
   const child = (
     id: string,
-    overrides: { status?: "running" | "completed" | "idle"; fork?: boolean } = {},
+    overrides: { status?: "running" | "completed" | "idle"; fork?: boolean; asking?: boolean } = {},
   ) => ({
     id,
     environmentId: localEnvironmentId,
     archivedAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: overrides.asking ?? false,
     lineage: {
       parentThreadId: ThreadId.make("parent"),
       relationshipToParent: overrides.fork ? ("fork" as const) : ("subagent" as const),
@@ -2238,11 +2241,12 @@ describe("groupRunningSubagentsByParent", () => {
       child("finished", { status: "completed" }),
       child("waiting-on-own-work", { status: "idle" }),
       child("fork", { fork: true }),
+      child("asking", { status: "completed", asking: true }),
     ]);
     expect([...grouped.keys()]).toEqual([
       scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("parent"))),
     ]);
-    expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual(["running"]);
+    expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual(["running", "asking"]);
   });
 });
 
@@ -2257,5 +2261,18 @@ describe("floatNeedsYouThreads", () => {
     } as const;
     const ordered = floatNeedsYouThreads(["a", "b", "c", "d", "e"] as const, (id) => status[id]);
     expect(ordered).toEqual(["b", "d", "e", "a", "c"]);
+  });
+});
+
+describe("withChildNeeds", () => {
+  const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
+  it("shows a child's question on a working or ready parent, but keeps the parent's own urgent state", () => {
+    const asking = { hasPendingApprovals: false, hasPendingUserInput: true };
+    expect(withChildNeeds("working", [idle, asking])).toBe("input");
+    expect(
+      withChildNeeds("ready", [{ hasPendingApprovals: true, hasPendingUserInput: false }]),
+    ).toBe("approval");
+    expect(withChildNeeds("failed", [asking])).toBe("failed");
+    expect(withChildNeeds("waiting", [idle])).toBe("waiting");
   });
 });

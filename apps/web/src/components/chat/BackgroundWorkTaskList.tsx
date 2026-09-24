@@ -6,6 +6,7 @@ import { BotIcon, TerminalIcon } from "lucide-react";
 import { useThreadProjection, useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "./AgentElapsed";
 import {
   type BackgroundWorkTaskRow,
@@ -41,7 +42,11 @@ export function BackgroundWorkTaskList(props: {
             {props.compact ? null : (
               <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
             )}
-            {row.startedAt ? (
+            {row.needs ? (
+              <span className="flex w-12 shrink-0 justify-end">
+                <ThreadStatusMark status={row.needs} />
+              </span>
+            ) : row.startedAt ? (
               <span className="w-12 shrink-0 text-right text-muted-foreground">
                 <AgentElapsed
                   agent={{ status: "running", startedAt: row.startedAt, completedAt: null }}
