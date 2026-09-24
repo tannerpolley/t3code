@@ -415,6 +415,24 @@ function waitForProjection(
   });
 }
 
+/** Waits for the parent's next delegated result transfer, the receipt of a reported child turn. */
+function waitForResultReport(orchestrator: OrchestratorV2Shape, afterSequence: number) {
+  return orchestrator.streamStoredEventsFrom({ threadId: parentThreadId, afterSequence }).pipe(
+    Stream.filter(
+      (stored) =>
+        stored.event.type === "context-transfer.created" &&
+        stored.event.payload.type === "subagent_result",
+    ),
+    Stream.runHead,
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.die("The child turn did not report back to its parent."),
+        onSome: () => Effect.void,
+      }),
+    ),
+  );
+}
+
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   protocolVersion: "2025-06-18",
@@ -1550,6 +1568,8 @@ describe("orchestrator MCP toolkit", () => {
             expect(delegatedStatus.resultContextTransferId).not.toBeNull();
             expect(delegatedStatus.latestTerminalResultContextTransferId).not.toBeNull();
 
+            const followupReportSequence =
+              yield* orchestrator.getThreadEventSequence(parentThreadId);
             const childFollowupCall = yield* invoke("t3_thread_send", {
               threadId: delegated.childThreadId,
               message: "Confirm the delegated API boundary remains inspected.",
@@ -1571,6 +1591,8 @@ describe("orchestrator MCP toolkit", () => {
               status: "completed",
               timedOut: false,
             });
+            // A turn the parent sent its own child reports back like the first result.
+            yield* waitForResultReport(orchestrator, followupReportSequence);
             const delegatedStatusAfterFollowupCall = yield* invoke("task_status", {
               taskId: delegated.taskId,
             });
@@ -1580,12 +1602,17 @@ describe("orchestrator MCP toolkit", () => {
             expect(delegatedStatusAfterFollowup).toMatchObject({
               childRunId: delegated.childRunId,
               status: "completed",
-              summary: delegatedResult,
               hasPendingChildRuns: false,
               latestTerminalRunId: childFollowup.runId,
               latestTerminalStatus: "completed",
             });
-            expect(delegatedStatusAfterFollowup.latestTerminalSummary).not.toBeNull();
+            expect(delegatedStatusAfterFollowup.summary).not.toBe(delegatedResult);
+            expect(delegatedStatusAfterFollowup.summary).toBe(
+              delegatedStatusAfterFollowup.latestTerminalSummary,
+            );
+            expect(delegatedStatusAfterFollowup.resultContextTransferId).toBe(
+              delegatedStatusAfterFollowup.latestTerminalResultContextTransferId,
+            );
 
             const activeChildFollowupCall = yield* invoke("t3_thread_send", {
               threadId: delegated.childThreadId,
@@ -1609,7 +1636,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(delegatedStatusDuringFollowup).toMatchObject({
               childRunId: delegated.childRunId,
               status: "completed",
-              summary: delegatedResult,
+              summary: delegatedStatusAfterFollowup.summary,
               hasPendingChildRuns: true,
               latestTerminalRunId: childFollowup.runId,
               latestTerminalStatus: "completed",
@@ -1654,6 +1681,8 @@ describe("orchestrator MCP toolkit", () => {
                 (run) => run.id === activeChildFollowup.runId,
               )?.status,
             ).toBe("running");
+            const cleanupReportSequence =
+              yield* orchestrator.getThreadEventSequence(parentThreadId);
             const activeChildCleanupCall = yield* invoke("t3_thread_interrupt", {
               threadId: delegated.childThreadId,
               runId: activeChildFollowup.runId,
@@ -1672,6 +1701,8 @@ describe("orchestrator MCP toolkit", () => {
                 (run) => run.id === activeChildFollowup.runId && run.status === "interrupted",
               ),
             );
+            // The interrupted turn the parent sent reports back as the task's latest result.
+            yield* waitForResultReport(orchestrator, cleanupReportSequence);
             const delegatedStatusAfterCleanupCall = yield* invoke("task_status", {
               taskId: delegated.taskId,
             });
@@ -1680,8 +1711,8 @@ describe("orchestrator MCP toolkit", () => {
             ).pipe(Effect.orDie);
             expect(delegatedStatusAfterCleanup).toMatchObject({
               childRunId: delegated.childRunId,
-              status: "completed",
-              summary: delegatedResult,
+              status: "interrupted",
+              summary: delegatedStatusAfterCleanup.latestTerminalSummary,
               hasPendingChildRuns: false,
               latestTerminalRunId: activeChildFollowup.runId,
               latestTerminalStatus: "interrupted",
@@ -3294,6 +3325,7 @@ describe("orchestrator MCP toolkit", () => {
           });
 
           const finalSequence = yield* orchestrator.getThreadEventSequence(delegated.childThreadId);
+          const finalReportSequence = yield* orchestrator.getThreadEventSequence(parentThreadId);
           const interruptCall = yield* invoke("t3_thread_interrupt", {
             threadId: delegated.childThreadId,
             runId: runningFollowup.runId,
@@ -3328,6 +3360,8 @@ describe("orchestrator MCP toolkit", () => {
               ),
             );
 
+          // The queued turn the parent sent reports back; the interrupted one it replaced does not.
+          yield* waitForResultReport(orchestrator, finalReportSequence);
           const finalProjection = yield* orchestrator.getThreadProjection(delegated.childThreadId);
           expect(finalProjection.runs.find((run) => run.id === runningFollowup.runId)?.status).toBe(
             "interrupted",
@@ -3344,14 +3378,16 @@ describe("orchestrator MCP toolkit", () => {
           expect(finalStatus).toMatchObject({
             childRunId: delegated.childRunId,
             status: "completed",
-            summary: delegatedResult,
-            resultContextTransferId: delegated.resultContextTransferId,
+            summary: queuedFollowupResult,
             hasPendingChildRuns: false,
             latestTerminalRunId: queuedFollowup.runId,
             latestTerminalStatus: "completed",
             latestTerminalSummary: queuedFollowupResult,
-            latestTerminalResultContextTransferId: null,
           });
+          expect(finalStatus.resultContextTransferId).not.toBe(delegated.resultContextTransferId);
+          expect(finalStatus.resultContextTransferId).toBe(
+            finalStatus.latestTerminalResultContextTransferId,
+          );
         }).pipe(Effect.provide(testLayer));
       }),
     ),

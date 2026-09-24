@@ -3,10 +3,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  ContextTransferId,
   EventId,
   MessageId,
   type ModelSelection,
   NodeId,
+  type OrchestrationV2Run,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -127,7 +129,7 @@ const TestLayer = Layer.mergeAll(
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
-  Layer.provide(ServerSettingsService.layerTest()),
+  Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(PlatformTestLayer),
 );
@@ -993,6 +995,346 @@ it.layer(TestLayer)("restart continuation of a delegated child", (it) => {
         [taskId],
       );
       assert.notInclude(yield* projections.getRecoveryThreadIds("subagent-results"), childThreadId);
+    }),
+  );
+});
+
+/**
+ * A parent whose idle delegated child already reported run 1. The seed is written under a
+ * reconcile command, which the live terminal-run listener ignores, so only runs a test writes
+ * afterwards are reacted to. `reported: false` leaves run 1's result undelivered.
+ */
+const seedReportedChild = (name: string, options: { readonly reported?: boolean } = {}) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const sink = yield* EventSinkV2;
+    const now = yield* DateTime.now;
+    const parentThreadId = ThreadId.make(`thread:${name}-parent`);
+    const childThreadId = ThreadId.make(`thread:${name}-child`);
+    const parentRunId = RunId.make(`run:${name}-parent`);
+    const taskId = NodeId.make(`node:${name}-task`);
+    yield* seedParentWithTerminalTask({
+      threadId: parentThreadId,
+      projectId: ProjectId.make(`project:${name}`),
+      runId: parentRunId,
+      rootNodeId: NodeId.make(`node:${name}-root`),
+      taskId,
+      deliveryState: "delivered",
+      completionWake: "always",
+      now,
+    });
+    const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+    const parentRun = parent.runs[0]!;
+    const { delegatedCompletion: _cohort, ...runFields } = parentRun;
+    const childRun: OrchestrationV2Run = {
+      ...runFields,
+      threadId: childThreadId,
+      providerThreadId: null,
+      rootNodeId: null,
+    };
+    const commandId = CommandId.make(`command:runtime-reconcile:seed:${name}`);
+    yield* sink.write({
+      commandId,
+      events: [
+        {
+          id: EventId.make(`event:${name}-parent-run`),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId: parentRunId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          // An idle parent whose cohort already spent its follow-up allowance.
+          payload: {
+            ...parentRun,
+            status: "completed",
+            completedAt: now,
+            delegatedCompletion: {
+              disposition: "open",
+              nextGeneration: 3,
+              settledDeliveryCount: 2,
+              delivery: null,
+            },
+          },
+        },
+        {
+          id: EventId.make(`event:${name}-task`),
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          runId: parentRunId,
+          nodeId: taskId,
+          occurredAt: now,
+          payload: { ...parent.subagents[0]!, childThreadId },
+        },
+        {
+          id: EventId.make(`event:${name}-child-thread`),
+          type: "thread.created",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: {
+            ...parent.thread,
+            id: childThreadId,
+            title: "Fix the parser",
+            lineage: {
+              parentThreadId,
+              relationshipToParent: "subagent",
+              rootThreadId: parentThreadId,
+            },
+            forkedFrom: { type: "node", nodeId: taskId },
+          },
+        },
+        ...childTurnEvents({
+          name,
+          childThreadId,
+          childRun,
+          ordinal: 1,
+          sender: parentThreadId,
+          now,
+        }),
+        ...(options.reported === false
+          ? []
+          : [
+              {
+                id: EventId.make(`event:${name}-reported`),
+                type: "context-transfer.created" as const,
+                threadId: parentThreadId,
+                runId: parentRunId,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: now,
+                payload: {
+                  id: ContextTransferId.make(`context-transfer:${name}-reported`),
+                  type: "subagent_result" as const,
+                  sourceThreadId: childThreadId,
+                  targetThreadId: parentThreadId,
+                  sourcePoint: {
+                    threadId: childThreadId,
+                    runId: RunId.make(`run:${name}-child-1`),
+                  },
+                  basePoint: null,
+                  sourceProviderInstanceId: modelSelection.instanceId,
+                  targetProviderInstanceId: modelSelection.instanceId,
+                  targetRunId: parentRunId,
+                  status: "consumed" as const,
+                  resolution: null,
+                  createdBy: "system" as const,
+                  error: null,
+                  createdAt: now,
+                  updatedAt: now,
+                  consumedAt: now,
+                },
+              },
+            ]),
+      ],
+    });
+    /**
+     * Writes a finished child turn; `sender` is the parent for turns the parent sent. A reconcile
+     * command stands in for a turn that ended as the server stopped, before the listener saw it.
+     */
+    const finishTurn = (
+      ordinal: number,
+      sender: ThreadId | undefined,
+      commandId = CommandId.make(`command:${name}-turn-${ordinal}`),
+    ) =>
+      sink.write({
+        commandId,
+        events: childTurnEvents({ name, childThreadId, childRun, ordinal, sender, now }),
+      });
+    return { parentThreadId, parentRun, childThreadId, parentRunId, taskId, finishTurn, commandId };
+  });
+
+function childTurnEvents(input: {
+  readonly name: string;
+  readonly childThreadId: ThreadId;
+  readonly childRun: OrchestrationV2Run;
+  readonly ordinal: number;
+  readonly sender: ThreadId | undefined;
+  readonly now: DateTime.Utc;
+}) {
+  const runId = RunId.make(`run:${input.name}-child-${input.ordinal}`);
+  const userMessageId = MessageId.make(`message:${input.name}-ask-${input.ordinal}`);
+  const message = (id: MessageId, role: "user" | "assistant", text: string) => ({
+    id: EventId.make(`event:${id}`),
+    type: "message.updated" as const,
+    threadId: input.childThreadId,
+    runId,
+    occurredAt: input.now,
+    payload: {
+      id,
+      threadId: input.childThreadId,
+      runId,
+      nodeId: null,
+      role,
+      text,
+      attachments: [],
+      streaming: false,
+      createdBy:
+        role === "user" && input.sender === undefined ? ("user" as const) : ("agent" as const),
+      creationSource:
+        role === "user" && input.sender !== undefined ? ("mcp" as const) : ("web" as const),
+      ...(role === "user" && input.sender !== undefined ? { senderThreadId: input.sender } : {}),
+      createdAt: input.now,
+      updatedAt: input.now,
+    },
+  });
+  return [
+    message(userMessageId, "user", `Turn ${input.ordinal}, please.`),
+    message(
+      MessageId.make(`message:${input.name}-result-${input.ordinal}`),
+      "assistant",
+      `Result ${input.ordinal}.`,
+    ),
+    {
+      id: EventId.make(`event:${input.name}-child-run-${input.ordinal}`),
+      type: "run.updated" as const,
+      threadId: input.childThreadId,
+      runId,
+      providerInstanceId: modelSelection.instanceId,
+      occurredAt: input.now,
+      payload: {
+        ...input.childRun,
+        id: runId,
+        ordinal: input.ordinal,
+        userMessageId,
+        status: "completed" as const,
+        completedAt: input.now,
+      },
+    },
+  ];
+}
+
+/** Waits for the parent's next result transfer, the receipt of a delivered child result. */
+const nextResultTransfer = (parentThreadId: ThreadId, afterSequence: number) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSinkV2;
+    yield* sink
+      .stream({ threadId: parentThreadId, afterSequence, eventType: "context-transfer.created" })
+      .pipe(Stream.take(1), Stream.runDrain);
+  });
+
+const reportedRuns = (parentThreadId: ThreadId, childThreadId: ThreadId) =>
+  Effect.gen(function* () {
+    const parent = yield* (yield* OrchestratorV2).getThreadProjection(parentThreadId);
+    return parent.contextTransfers
+      .filter(
+        (transfer) =>
+          transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+      )
+      .map((transfer) => transfer.sourcePoint.runId);
+  });
+
+it.layer(TestLayer)("resumed delegated child", (it) => {
+  it.effect("a turn the parent sends reports back and wakes the parent once", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const projections = yield* ProjectionStoreV2;
+      const seeded = yield* seedReportedChild("resumed-sent");
+      const before = yield* sink.latestSequence();
+      yield* seeded.finishTurn(2, seeded.parentThreadId);
+      yield* nextResultTransfer(seeded.parentThreadId, before);
+
+      assert.deepEqual(yield* reportedRuns(seeded.parentThreadId, seeded.childThreadId), [
+        RunId.make("run:resumed-sent-child-1"),
+        RunId.make("run:resumed-sent-child-2"),
+      ]);
+      const parent = yield* (yield* OrchestratorV2).getThreadProjection(seeded.parentThreadId);
+      const task = parent.subagents.find((candidate) => candidate.id === seeded.taskId);
+      assert.equal(task?.result, "Result 2.");
+      assert.equal(task?.completionDelivery?.state, "claimed");
+      // The spent cohort reopens with a fresh allowance and one wake for this task.
+      const cohort = parent.runs.find((run) => run.id === seeded.parentRunId)?.delegatedCompletion;
+      assert.equal(cohort?.settledDeliveryCount, 0);
+      assert.deepEqual(cohort?.delivery?.taskIds, [seeded.taskId]);
+      // Delivered once: a restart does not report it again.
+      assert.notInclude(
+        yield* projections.getRecoveryThreadIds("subagent-results"),
+        seeded.childThreadId,
+      );
+    }),
+  );
+
+  it.effect("a turn the user starts in the child does not report back", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const projections = yield* ProjectionStoreV2;
+      const seeded = yield* seedReportedChild("resumed-typed");
+      yield* seeded.finishTurn(2, undefined);
+      assert.notInclude(
+        yield* projections.getRecoveryThreadIds("subagent-results"),
+        seeded.childThreadId,
+      );
+      // Terminal runs are handled in order, so turn 3's report proves turn 2 was passed over.
+      const before = yield* sink.latestSequence();
+      yield* seeded.finishTurn(3, seeded.parentThreadId);
+      yield* nextResultTransfer(seeded.parentThreadId, before);
+      assert.deepEqual(yield* reportedRuns(seeded.parentThreadId, seeded.childThreadId), [
+        RunId.make("run:resumed-typed-child-1"),
+        RunId.make("run:resumed-typed-child-3"),
+      ]);
+    }),
+  );
+
+  it.effect("a restart recovers an unreported turn only while the parent has not moved on", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const projections = yield* ProjectionStoreV2;
+      const seeded = yield* seedReportedChild("resumed-restart");
+      yield* seeded.finishTurn(2, seeded.parentThreadId, seeded.commandId);
+      assert.include(
+        yield* projections.getRecoveryThreadIds("subagent-results"),
+        seeded.childThreadId,
+      );
+      const later = DateTime.add(yield* DateTime.now, { minutes: 1 });
+      const laterRunId = RunId.make("run:resumed-restart-parent-later");
+      yield* sink.write({
+        commandId: seeded.commandId,
+        events: [
+          {
+            id: EventId.make("event:resumed-restart-parent-later"),
+            type: "run.updated",
+            threadId: seeded.parentThreadId,
+            runId: laterRunId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: later,
+            payload: {
+              ...seeded.parentRun,
+              id: laterRunId,
+              ordinal: 2,
+              status: "completed",
+              requestedAt: later,
+              completedAt: later,
+              delegatedCompletion: undefined,
+            },
+          },
+        ],
+      });
+      // A stale result from before an upgrade or long outage does not wake a parent that carried on.
+      assert.notInclude(
+        yield* projections.getRecoveryThreadIds("subagent-results"),
+        seeded.childThreadId,
+      );
+    }),
+  );
+
+  it.effect("with the switch off, only the first result reports back", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const settings = yield* ServerSettingsService;
+      const resumed = yield* seedReportedChild("resumed-off");
+      const firstReport = yield* seedReportedChild("resumed-off-first", { reported: false });
+      yield* settings.updateSettings({ wakeParentOnResumedChild: false });
+      yield* Effect.gen(function* () {
+        const before = yield* sink.latestSequence();
+        yield* resumed.finishTurn(2, resumed.parentThreadId);
+        // A first result still reports; handled after turn 2, it is that turn's receipt.
+        yield* firstReport.finishTurn(2, firstReport.parentThreadId);
+        yield* nextResultTransfer(firstReport.parentThreadId, before);
+        assert.deepEqual(yield* reportedRuns(resumed.parentThreadId, resumed.childThreadId), [
+          RunId.make("run:resumed-off-child-1"),
+        ]);
+      }).pipe(
+        Effect.ensuring(
+          settings.updateSettings({ wakeParentOnResumedChild: true }).pipe(Effect.ignore),
+        ),
+      );
     }),
   );
 });

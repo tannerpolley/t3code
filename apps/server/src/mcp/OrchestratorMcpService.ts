@@ -374,7 +374,7 @@ function pageIncludesTerminalTaskResult(input: {
   >;
   readonly maxChars: number;
 }): boolean {
-  const transfer = input.parent.contextTransfers.find(
+  const transfer = input.parent.contextTransfers.findLast(
     (transfer) =>
       transfer.type === "subagent_result" &&
       transfer.sourceThreadId === input.target.thread.id &&
@@ -1138,7 +1138,8 @@ const make = Effect.gen(function* () {
               ? resultTransfers.find((transfer) => transfer.sourcePoint.runId === undefined)
               : undefined) ??
             null);
-      const resultTransfer = resultTransfers[0] ?? null;
+      // A later turn the parent sent reports again; the newest report is the task's result.
+      const resultTransfer = resultTransfers.at(-1) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
       const response = {
         taskId: task.id,
@@ -1834,7 +1835,7 @@ const make = Effect.gen(function* () {
         const messagesByThreadId = new Map(sourceMessages);
         const task = directAppOwnedChildTask(parent, target);
         if (task !== undefined && (input.textOffset ?? 0) === 0) {
-          const transfer = parent.contextTransfers.find(
+          const transfer = parent.contextTransfers.findLast(
             (transfer) =>
               transfer.type === "subagent_result" &&
               transfer.sourceThreadId === target.thread.id &&

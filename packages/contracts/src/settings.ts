@@ -513,6 +513,8 @@ export const ClientSettingsSchema = Schema.Struct({
    * Background processes block, the slim background-work bar, and larger section labels.
    */
   threadDetailsRedesign: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
+  shortModelNames: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** The quicker running-activity shimmer. */
   fastShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Usage page Limits: an estimated per-model split of each window with its history. */
@@ -1320,6 +1322,11 @@ export const ServerSettings = Schema.Struct({
    */
   wakeParentOnChildQuestion: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
+   * When a parent agent sends new work to a delegated child that already reported, the child's
+   * next result reports back and wakes the parent again. Turns the user starts in the child don't.
+   */
+  wakeParentOnResumedChild: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Agent browser tabs: a thread keeps at most 3 agent-opened tabs, and a tab stuck loading gets
    * one hard reload and a retry.
    */
@@ -1630,6 +1637,7 @@ export const ServerSettingsPatch = Schema.Struct({
   idleAgentSessionMinutes: Schema.optionalKey(NonNegativeInt),
   topLevelThreadsReadAllProjects: Schema.optionalKey(Schema.Boolean),
   wakeParentOnChildQuestion: Schema.optionalKey(Schema.Boolean),
+  wakeParentOnResumedChild: Schema.optionalKey(Schema.Boolean),
   agentBrowserTabLimits: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
@@ -1774,6 +1782,7 @@ export const ClientSettingsPatch = Schema.Struct({
   issuesPage: Schema.optionalKey(Schema.Boolean),
   pluginSkills: Schema.optionalKey(Schema.Boolean),
   threadDetailsRedesign: Schema.optionalKey(Schema.Boolean),
+  shortModelNames: Schema.optionalKey(Schema.Boolean),
   fastShimmer: Schema.optionalKey(Schema.Boolean),
   usageLimitModelBreakdown: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),

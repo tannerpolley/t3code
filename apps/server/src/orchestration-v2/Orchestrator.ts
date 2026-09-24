@@ -51,6 +51,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -92,6 +93,7 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   delegatedTaskProgress,
+  subagentResultOwed,
   subagentThreadTitle,
 } from "./SubagentProjection.ts";
 import { ThreadForkServiceV2 } from "./ThreadForkService.ts";
@@ -660,6 +662,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor;
+  // Optional so tests composing the orchestrator alone need no settings stub; production provides it.
+  const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
+  const wakeParentOnResumedChild = Option.match(serverSettings, {
+    onNone: () => Effect.succeed(true),
+    onSome: (settings) =>
+      Effect.map(settings.getSettings, (current) => current.wakeParentOnResumedChild),
+  });
 
   const mapDispatchError =
     (command: OrchestrationV2Command) =>
@@ -8199,28 +8208,55 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      const existingResultTransfer = parentProjection.contextTransfers.find(
-        (transfer) =>
-          transfer.type === "subagent_result" &&
-          transfer.sourceThreadId === childThreadId &&
-          transfer.targetThreadId === parentThreadId,
-      );
-      if (existingResultTransfer !== undefined) {
+      const reportedRunIds = parentProjection.contextTransfers
+        .filter(
+          (transfer) =>
+            transfer.type === "subagent_result" &&
+            transfer.sourceThreadId === childThreadId &&
+            transfer.targetThreadId === parentThreadId,
+        )
+        .map((transfer) => transfer.sourcePoint.runId);
+      if (
+        !subagentResultOwed({
+          runs: childControls.runs,
+          messages: childControls.messages,
+          parentThreadId,
+          reportedRunIds,
+          resultRun: childRun,
+        })
+      ) {
         return;
       }
+      const resumed = reportedRunIds.length > 0;
+      if (resumed && !(yield* wakeParentOnResumedChild)) return;
 
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, childRun);
-      const parentRun =
+      const ownerRun =
         task.runId === null
           ? undefined
           : parentProjection.runs.find((candidate) => candidate.id === task.runId);
+      // The parent asked this child for more after its last report, so the report is owed again:
+      // clear the task's settled delivery and give the owning cohort a fresh, open allowance.
+      const { completionDelivery: _settledDelivery, ...reopenedTask } = task;
+      const deliveryTask = resumed ? reopenedTask : task;
+      const parentRun =
+        resumed && ownerRun?.delegatedCompletion !== undefined
+          ? {
+              ...ownerRun,
+              delegatedCompletion: {
+                ...ownerRun.delegatedCompletion,
+                disposition: "open" as const,
+                settledDeliveryCount: 0,
+              },
+            }
+          : ownerRun;
       const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
       const updatedTask: OrchestrationV2Subagent = {
-        ...task,
+        ...deliveryTask,
         providerThreadId: childRun.providerThreadId,
         status: terminalStatus,
         result: result.text,
@@ -8230,10 +8266,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const completionPlan = yield* planDelegatedCompletionDelivery({
         parentProjection,
         parentRun,
-        task,
+        task: deliveryTask,
         updatedTask,
         now,
       });
+      // A reopened cohort persists even when this plan leaves the task pending for a later wake.
+      const parentRunUpdate =
+        completionPlan.parentRun ?? (parentRun === ownerRun ? undefined : parentRun);
       const resultTransferId = yield* idAllocator.allocate.contextTransfer({
         sourceThreadId: childThreadId,
         targetThreadId: parentThreadId,
@@ -8318,19 +8357,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: completionPlan.task,
         },
-        ...(completionPlan.parentRun === undefined
+        ...(parentRunUpdate === undefined
           ? []
           : [
               {
                 type: "run.updated" as const,
                 threadId: parentThreadId,
-                runId: completionPlan.parentRun.id,
-                ...(completionPlan.parentRun.rootNodeId === null
+                runId: parentRunUpdate.id,
+                ...(parentRunUpdate.rootNodeId === null
                   ? {}
-                  : { nodeId: completionPlan.parentRun.rootNodeId }),
-                providerInstanceId: completionPlan.parentRun.providerInstanceId,
+                  : { nodeId: parentRunUpdate.rootNodeId }),
+                providerInstanceId: parentRunUpdate.providerInstanceId,
                 occurredAt: now,
-                payload: completionPlan.parentRun,
+                payload: parentRunUpdate,
               },
             ]),
         ...(completionPlan.message === undefined

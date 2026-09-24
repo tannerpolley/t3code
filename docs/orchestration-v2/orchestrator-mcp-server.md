@@ -264,10 +264,13 @@ Reads a delegated task from the parent thread's durable projection. A task ID
 from another parent thread is rejected. `childRunId` identifies the original
 run. `workState` distinguishes active work, a finished turn waiting for children,
 and an available result. The task remains nonterminal until its known work
-finishes. Its published `summary` and result transfer then remain stable across
-later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
-`latestTerminal*` exposes later executed, non-monitor results without replacing
-the published task result.
+finishes. A later turn the parent itself sends or steers into the child (its
+user message names the parent as sender) reports again through the same result
+transfer and wake, replacing `summary` and the result transfer; turns the user
+starts in the child do not, and the `wakeParentOnResumedChild` server setting
+turns re-reporting off. `hasPendingChildRuns` reports later queued or executing
+turns; `latestTerminal*` exposes later executed, non-monitor results, including
+ones that were not reported.
 
 ### `task_cancel`
 

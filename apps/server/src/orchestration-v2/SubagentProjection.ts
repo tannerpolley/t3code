@@ -252,6 +252,38 @@ export function delegatedTaskProgress(projection: {
 }
 
 /**
+ * Whether a delegated child owes its parent the result of `resultRun`. The first result is always
+ * owed. After that, only a turn the parent itself sent or steered into the child (a user message
+ * whose sender is the parent) after the last reported run owes another; turns the user starts in
+ * the child carry no sender. The "subagent-results" recovery query in ProjectionStore mirrors this.
+ */
+export function subagentResultOwed(input: {
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal">>;
+  readonly messages: ReadonlyArray<
+    Pick<OrchestrationV2ConversationMessage, "runId" | "role" | "senderThreadId">
+  >;
+  readonly parentThreadId: ThreadId;
+  readonly reportedRunIds: ReadonlyArray<string | undefined>;
+  readonly resultRun: Pick<OrchestrationV2Run, "ordinal">;
+}): boolean {
+  if (input.reportedRunIds.length === 0) return true;
+  const ordinalOf = (runId: string | null | undefined) =>
+    input.runs.find((run) => run.id === runId)?.ordinal;
+  // A result transfer without a known run predates per-run reporting; treat it as current.
+  const reported = Math.max(...input.reportedRunIds.map((id) => ordinalOf(id) ?? Infinity));
+  return input.messages.some((message) => {
+    const ordinal = ordinalOf(message.runId);
+    return (
+      message.role === "user" &&
+      message.senderThreadId === input.parentThreadId &&
+      ordinal !== undefined &&
+      ordinal > reported &&
+      ordinal <= input.resultRun.ordinal
+    );
+  });
+}
+
+/**
  * Questions and approvals a thread is blocked on that need the user. Auth refresh and dynamic
  * tool calls resolve without the user, matching the client's pending-request rule. `summary` is
  * a short preview for parent notices and task_status.

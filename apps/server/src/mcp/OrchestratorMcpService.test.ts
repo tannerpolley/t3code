@@ -39,6 +39,7 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
+        runtimeRequests: [],
         contextTransfers: [],
         subagents: [
           {
@@ -56,6 +57,7 @@ describe("OrchestratorMcpService", () => {
       const childProjection = {
         thread: { id: childThreadId },
         runs: [{ id: childRunId, ordinal: 1, status: "completed" }],
+        runtimeRequests: [],
         contextTransfers: [],
         messages: [],
         subagents: [],
@@ -143,6 +145,7 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
+        runtimeRequests: [],
         contextTransfers: [],
         subagents: [
           {
@@ -160,6 +163,7 @@ describe("OrchestratorMcpService", () => {
       const childProjection = {
         thread: { id: childThreadId },
         runs: [],
+        runtimeRequests: [],
         contextTransfers: [],
         messages: [],
         subagents: [],
@@ -209,6 +213,7 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
+        runtimeRequests: [],
         contextTransfers: [],
         subagents: [
           {
@@ -226,6 +231,7 @@ describe("OrchestratorMcpService", () => {
       const childProjection = {
         thread: { id: childThreadId },
         runs: [{ id: childRunId, status: "running" }],
+        runtimeRequests: [],
         contextTransfers: [],
         messages: [],
         subagents: [],
@@ -278,6 +284,7 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
+        runtimeRequests: [],
         contextTransfers: [],
         subagents: [
           {
@@ -295,6 +302,7 @@ describe("OrchestratorMcpService", () => {
       const childProjection = {
         thread: { id: childThreadId },
         runs: [{ id: childRunId, status: "running" }],
+        runtimeRequests: [],
         contextTransfers: [],
         messages: [],
         subagents: [],
@@ -432,6 +440,7 @@ describe("OrchestratorMcpService provider resolution", () => {
   const childProjection = {
     thread: { id: childThreadId },
     runs: [],
+    runtimeRequests: [],
     contextTransfers: [],
     messages: [],
     subagents: [],
