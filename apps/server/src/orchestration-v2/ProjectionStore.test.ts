@@ -300,7 +300,9 @@ it.effect("memory recovery selection includes unfinished items from missing runs
 );
 
 // Provider-native subagents never get runs on their child thread, so the child's shell reads the
-// subagent record its parent owns, in the SQL list, SQL single-thread and memory shell paths.
+// subagent record its parent owns, in the SQL list, SQL single-thread and memory shell paths, and
+// in settlement candidates (a child inherits its parent's PR links, so a merge must not settle a
+// still-running child).
 const assertNativeSubagentChildShell = Effect.fn("assertNativeSubagentChildShell")(function* () {
   const store = yield* ProjectionStoreV2;
   const startedAt = yield* DateTime.now;
@@ -386,6 +388,7 @@ const assertNativeSubagentChildShell = Effect.fn("assertNativeSubagentChildShell
     return [
       yield* store.getThreadShell(childId),
       snapshot.threads.find((shell) => shell.id === childId),
+      (yield* store.getSettlementCandidates()).find((candidate) => candidate.id === childId),
     ];
   });
 

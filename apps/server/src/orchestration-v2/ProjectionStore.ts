@@ -893,6 +893,9 @@ type SettlementThreadRow = Pick<
   | "latest_run_started_at"
   | "latest_run_completed_at"
   | "latest_user_message_at"
+  | "native_subagent_status"
+  | "native_subagent_started_at"
+  | "native_subagent_completed_at"
 >;
 
 type ShellRunItemCountRow = {
@@ -1453,6 +1456,27 @@ function nativeSubagentShellFields(
   };
 }
 
+function nativeSubagentFromRow(
+  row: Pick<
+    ShellThreadRow,
+    "native_subagent_status" | "native_subagent_started_at" | "native_subagent_completed_at"
+  >,
+): NativeSubagentActivity | null {
+  return row.native_subagent_status === null
+    ? null
+    : {
+        status: row.native_subagent_status,
+        startedAt:
+          row.native_subagent_started_at === null
+            ? null
+            : DateTime.makeUnsafe(row.native_subagent_started_at),
+        completedAt:
+          row.native_subagent_completed_at === null
+            ? null
+            : DateTime.makeUnsafe(row.native_subagent_completed_at),
+      };
+}
+
 type ShellThreadState = {
   readonly thread: OrchestrationV2ThreadProjection["thread"];
   readonly latestRunId: RunId | null;
@@ -1641,6 +1665,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // A run-less child's status comes from its parent's provider-native subagent record; see
+    // nativeSubagentShellFields. Shared by the shell and settlement reads.
+    const nativeSubagentColumns = sql`
+              native_subagent.status AS native_subagent_status,
+              native_subagent.started_at AS native_subagent_started_at,
+              native_subagent.completed_at AS native_subagent_completed_at`;
+    const nativeSubagentJoin = sql`
+            LEFT JOIN orchestration_v2_projection_subagents native_subagent
+              ON native_subagent.subagent_id = (
+                SELECT s.subagent_id FROM orchestration_v2_projection_subagents s
+                WHERE s.child_thread_id = t.thread_id AND s.origin = 'provider_native'
+                ORDER BY s.updated_at DESC, s.subagent_id DESC
+                LIMIT 1
+              )`;
 
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
@@ -4866,18 +4904,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_turn_items i
                 WHERE i.thread_id = t.thread_id
                   AND i.run_id IS NULL
-              ) AS runless_item_count,
-              native_subagent.status AS native_subagent_status,
-              native_subagent.started_at AS native_subagent_started_at,
-              native_subagent.completed_at AS native_subagent_completed_at
-            FROM orchestration_v2_projection_threads t
-            LEFT JOIN orchestration_v2_projection_subagents native_subagent
-              ON native_subagent.subagent_id = (
-                SELECT s.subagent_id FROM orchestration_v2_projection_subagents s
-                WHERE s.child_thread_id = t.thread_id AND s.origin = 'provider_native'
-                ORDER BY s.updated_at DESC, s.subagent_id DESC
-                LIMIT 1
-              )
+              ) AS runless_item_count,${nativeSubagentColumns}
+            FROM orchestration_v2_projection_threads t${nativeSubagentJoin}
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
               location === "active"
                 ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
@@ -5030,8 +5058,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE message.thread_id = t.thread_id AND message.role = 'user'
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
-              ) AS latest_user_message_at
-            FROM orchestration_v2_projection_threads t
+              ) AS latest_user_message_at,${nativeSubagentColumns}
+            FROM orchestration_v2_projection_threads t${nativeSubagentJoin}
             LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
               SELECT latest.run_id FROM orchestration_v2_projection_runs latest
               WHERE latest.thread_id = t.thread_id
@@ -5091,6 +5119,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       : DateTime.makeUnsafe(row.latest_user_message_at),
                   activityRunStatus: null,
                   activityRunStartedAt: null,
+                  // A running provider-native child has no runs; its subagent record is its activity.
+                  ...nativeSubagentShellFields(latestRunId, nativeSubagentFromRow(row)),
                   pendingRuntimeRequest: null,
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:
@@ -5205,20 +5235,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           updatedAt: thread.updatedAt,
           runOrdinalById: runOrdinalsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
           itemCountByRunId: itemCountsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
-          nativeSubagent:
-            row.native_subagent_status === null
-              ? null
-              : {
-                  status: row.native_subagent_status,
-                  startedAt:
-                    row.native_subagent_started_at === null
-                      ? null
-                      : DateTime.makeUnsafe(row.native_subagent_started_at),
-                  completedAt:
-                    row.native_subagent_completed_at === null
-                      ? null
-                      : DateTime.makeUnsafe(row.native_subagent_completed_at),
-                },
+          nativeSubagent: nativeSubagentFromRow(row),
         } satisfies ShellThreadState;
       });
 
@@ -5524,7 +5541,9 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 !runs.some(isActivityRunForShell) &&
                 !runtimeRequests.some((request) => request.status === "pending"),
             )
-            .map((projection) => threadShellFromProjection(projection))
+            .map((projection) =>
+              threadShellFromProjection(projection, nativeSubagentOf(projections, projection)),
+            )
             .toSorted(
               (left, right) =>
                 DateTime.toEpochMillis(left.updatedAt) - DateTime.toEpochMillis(right.updatedAt) ||

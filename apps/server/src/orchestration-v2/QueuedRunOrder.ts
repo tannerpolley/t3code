@@ -30,3 +30,14 @@ export function queuedRunsInDeliveryOrder(
       );
     });
 }
+
+/**
+ * A user submission after reconciliation takes precedence over an automatic
+ * continuation. Runs still queued from before the restart stay held behind it.
+ */
+export function restartContinuationSuperseded(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  source: OrchestrationV2Run,
+): boolean {
+  return runs.some((run) => run.ordinal > source.ordinal && run.status !== "queued");
+}

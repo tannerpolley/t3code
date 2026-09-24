@@ -204,6 +204,83 @@ for (const [enabled, projectOverride] of [
   );
 }
 
+it.effect("continues the in-flight run ahead of queued work and a held early steer", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const queued = (id: string, ordinal: number, extra = {}) => ({
+      ...base.runs[0]!,
+      id: RunId.make(id),
+      ordinal,
+      status: "queued" as const,
+      ...extra,
+    });
+    let projection: OrchestrationV2ThreadProjection = {
+      ...base,
+      runs: [
+        base.runs[0]!,
+        queued("run:queued", 2),
+        queued("run:held-steer", 3, { steerTargetRunId: runId }),
+      ],
+    };
+    let committed: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | undefined;
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) => {
+              committed = input;
+              return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+            },
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+            runRecoveryOnce: Effect.succeed(false),
+          }),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+    yield* recovery.reconcile("startup");
+    assert.deepEqual(committed!.effects[0]?.request, {
+      type: "provider-runtime.continue",
+      sourceRunId: runId,
+    });
+    const heldRunIds = committed!.events.flatMap((event) =>
+      event.type === "run.updated" && event.payload.queueHeld === true ? [event.runId] : [],
+    );
+    assert.deepEqual(heldRunIds, [RunId.make("run:queued"), RunId.make("run:held-steer")]);
+
+    // Delivery after reconciliation: the queued runs stay held behind the continuation.
+    projection = {
+      ...projection,
+      runs: [
+        { ...base.runs[0]!, status: "cancelled" },
+        ...projection.runs.slice(1).map((run) => ({ ...run, queueHeld: true })),
+      ],
+    };
+    const commands: Parameters<ThreadManagementService["Service"]["dispatch"]>[0][] = [];
+    yield* continueRestartedRun({ threadId, sourceRunId: runId }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            dispatch: (command) => Effect.sync(() => (commands.push(command), {} as never)),
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.lengthOf(commands, 1);
+  }),
+);
+
 it.effect("does not duplicate delivery and yields to newer user work or opt-out", () =>
   Effect.gen(function* () {
     let projection = makeProjection();

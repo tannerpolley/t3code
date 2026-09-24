@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
 import { ServerSettingsService } from "../serverSettings.ts";
+import { restartContinuationSuperseded } from "./QueuedRunOrder.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 
 export function restartContinuationRun(
@@ -19,8 +20,13 @@ export function restartContinuationRun(
   >,
 ): OrchestrationV2Run | undefined {
   if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
+  // Queued runs (including held early steers) never started provider work; the
+  // in-flight run ahead of them is the one to continue.
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
-    (latest, candidate) => (!latest || candidate.ordinal > latest.ordinal ? candidate : latest),
+    (latest, candidate) =>
+      candidate.status !== "queued" && (!latest || candidate.ordinal > latest.ordinal)
+        ? candidate
+        : latest,
     undefined,
   );
   if (!run) return;
@@ -88,8 +94,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     if (!source || source.status !== "cancelled") return;
-    // A user submission after reconciliation takes precedence over an automatic prompt.
-    if (projection.runs.some((run) => run.ordinal > source.ordinal)) return;
+    if (restartContinuationSuperseded(projection.runs, source)) return;
     if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
     yield* threads.dispatch({
       type: "message.dispatch",
