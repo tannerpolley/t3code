@@ -29,6 +29,7 @@ type CustomizationSection =
   | "composer"
   | "versionControl"
   | "browser"
+  | "usage"
   | "motion";
 
 /**
@@ -152,6 +153,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     section: "browser",
     description:
       "When an agent uses the in-app browser, show it in the right side panel instead of the small floating player.",
+  },
+  {
+    key: "usageLimitModelBreakdown",
+    searchId: "usage-limit-model-breakdown",
+    section: "usage",
+    description:
+      "Under each window on the Usage page's Limits view, estimate how much of it each model used, from the usage your connected environments recorded, with a chart of the window over time. Off shows only the window bars.",
   },
   {
     key: "fastShimmer",
@@ -486,6 +494,7 @@ export function CustomizationsSettings() {
           description="Let agents in top-level threads read, but not change, threads in other projects on this environment. Subagents and delegated tasks stay limited to their own project."
         />
       </CustomizationsGroup>
+      <CustomizationsGroup title="Usage" section="usage" />
       <CustomizationsGroup title="Appearance & motion" section="motion" />
       <SettingsSection title="Always-on fixes">
         {ALWAYS_ON_FIXES.map((fix) => (

@@ -57,6 +57,12 @@ where it is signed in, and its reset time. On web, you can hover too. Codex acco
 reset credits show a ticket count and the **Use reset** action in the account details. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
 
+Under each window, a thin bar and legend estimate how much of the used share each model took, and
+**Hourly use in this window** (or **Daily**) opens a chart of it over time. Providers do not report
+this, so it is estimated from the usage your connected environments recorded, weighted by each
+model's API-equivalent price. Usage from other machines or apps on the same account is spread across
+the models shown. Turn it off in **Settings → Customizations → Models in usage limits**.
+
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 

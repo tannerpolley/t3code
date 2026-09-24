@@ -19,7 +19,7 @@ import {
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -35,6 +35,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useLimitModelUsage } from "./UsageLimitModels";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -331,5 +332,28 @@ export function UsageLimitsSection({
     selectedEnvironmentIds === null
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
-  return <UsageLimitsPooled presentations={selected} now={now} />;
+  const modelBreakdown = useClientSettings((settings) => settings.usageLimitModelBreakdown);
+  return modelBreakdown ? (
+    <UsageLimitsWithModels
+      presentations={selected}
+      selectedEnvironmentIds={selectedEnvironmentIds}
+      now={now}
+    />
+  ) : (
+    <UsageLimitsPooled presentations={selected} now={now} />
+  );
+}
+
+/** Split out so the usage scans behind the model split only run while it is switched on. */
+function UsageLimitsWithModels({
+  presentations,
+  selectedEnvironmentIds,
+  now,
+}: {
+  readonly presentations: Parameters<typeof UsageLimitsPooled>[0]["presentations"];
+  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly now: number;
+}) {
+  const modelUsage = useLimitModelUsage(presentations, selectedEnvironmentIds, now);
+  return <UsageLimitsPooled presentations={presentations} now={now} modelUsage={modelUsage} />;
 }

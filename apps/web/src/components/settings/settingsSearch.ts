@@ -452,6 +452,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork shimmer animation running activity speed motion"],
   },
   {
+    id: "usage-limit-model-breakdown",
+    title: "Models in usage limits",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork usage limits window models breakdown weekly session estimate chart",
+    ],
+  },
+  {
     id: "agent-browser-tab-limits",
     title: "Agent browser tab limits",
     to: "/settings/customizations",
