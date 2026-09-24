@@ -1634,6 +1634,19 @@ it.effect("sends monograms as fallback icons that old and nightly clients can de
   }),
 );
 
+it.effect("sends the folder icon as a fallback icon that old and nightly clients can decode", () =>
+  Effect.gen(function* () {
+    const fallback = { kind: "lucide", name: "folder", color: "teal" } as const;
+    const folder = { kind: "folder", color: "teal" } as const;
+    const wire = yield* encodeProjectIcon(folder);
+    assert.deepEqual(wire, { ...fallback, folder: true });
+    assert.deepEqual(yield* decodeOldIcon(wire), fallback);
+    assert.deepEqual(yield* decodeNightlyIcon(wire), fallback);
+    assert.deepEqual(yield* decodeProjectIcon(wire), folder);
+    assert.deepEqual(yield* decodeProjectIcon(folder), folder);
+  }),
+);
+
 const encodeProjectShell = Schema.encodeEffect(OrchestrationProjectShell);
 const encodeClientCommand = Schema.encodeEffect(ClientOrchestrationCommand);
 const decodeLegacyShell = Schema.decodeUnknownEffect(

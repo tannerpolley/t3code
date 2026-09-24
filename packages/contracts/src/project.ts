@@ -89,39 +89,59 @@ const ProjectMonogramIcon = Schema.Struct({
   text: ProjectMonogramText,
   color: ProjectIconColor,
 });
-const ProjectIcon = Schema.Union([ProjectLucideIcon, ProjectEmojiIcon, ProjectMonogramIcon]);
+// The sidebar's own folder look, picked explicitly instead of falling back to it automatically.
+const ProjectFolderIcon = Schema.Struct({
+  kind: Schema.Literal("folder"),
+  color: ProjectIconColor,
+});
+const ProjectIcon = Schema.Union([
+  ProjectLucideIcon,
+  ProjectEmojiIcon,
+  ProjectMonogramIcon,
+  ProjectFolderIcon,
+]);
 const ProjectLucideIconWire = Schema.Struct({
   ...ProjectLucideIcon.fields,
   monogramText: Schema.optional(ProjectMonogramText),
   monogram: Schema.optional(ProjectMonogramText),
+  // Older peers see a plain "folder" icon; newer ones read this flag to restore the open/closed
+  // variant and drop the name, the same trick `monogramText` plays for monograms.
+  folder: Schema.optional(Schema.Boolean),
 });
 
-// Older peers only know lucide/emoji. Keep monograms out of their validated
+// Older peers only know lucide/emoji. Keep monograms and folders out of their validated
 // `monogram` field too: old grapheme counters can reject otherwise valid text.
 export const ProjectIconOverride = Schema.Union([
   ProjectLucideIconWire,
   ProjectEmojiIcon,
   ProjectMonogramIcon,
+  ProjectFolderIcon,
 ]).pipe(
   Schema.decodeTo(
     ProjectIcon,
     SchemaTransformation.transform({
       decode: (icon): typeof ProjectIcon.Type => {
         if (icon.kind !== "lucide") return icon;
+        if (icon.folder === true) return { kind: "folder", color: icon.color };
         const text = icon.monogramText ?? icon.monogram;
         return text === undefined
           ? { kind: "lucide", name: icon.name, color: icon.color }
           : { kind: "monogram", text, color: icon.color };
       },
-      encode: (icon) =>
-        icon.kind === "monogram"
-          ? {
-              kind: "lucide" as const,
-              name: "folder-code",
-              color: icon.color,
-              monogramText: icon.text,
-            }
-          : icon,
+      encode: (icon) => {
+        if (icon.kind === "monogram") {
+          return {
+            kind: "lucide" as const,
+            name: "folder-code",
+            color: icon.color,
+            monogramText: icon.text,
+          };
+        }
+        if (icon.kind === "folder") {
+          return { kind: "lucide" as const, name: "folder", color: icon.color, folder: true };
+        }
+        return icon;
+      },
     }),
   ),
 );

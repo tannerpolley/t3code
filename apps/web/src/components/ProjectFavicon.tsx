@@ -81,6 +81,14 @@ export function ProjectFavicon(input: {
       />
     );
   }
+  if (project.projectIcon?.kind === "folder") {
+    return (
+      <ProjectFaviconFallback
+        className={cn(input.className, projectIconColorClassName(project.projectIcon.color))}
+        icon={input.fallbackIcon ?? FolderIcon}
+      />
+    );
+  }
   if (project.projectIcon?.kind === "lucide") {
     const colorClassName = projectIconColorClassName(project.projectIcon.color);
     const iconClassName = cn(

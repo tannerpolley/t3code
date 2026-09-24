@@ -2,9 +2,12 @@ import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { resolveProjectFolderAppearance } from "../../projectFolderAppearance";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
+import { useUiStateStore } from "../../uiStateStore";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
@@ -200,11 +203,27 @@ function EnvironmentScopeMenu({
 
 function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeBreadcrumbProps) {
   const selected = groups.find((group) => group.projectKey === value.project);
+  const sidebarProjectSections = useUiStateStore((store) => store.sidebarProjectSections);
+  const folderColorsEnabled = useClientSettings((settings) => settings.sectionFolderColors);
+  const selectedFolderAppearance = resolveProjectFolderAppearance(
+    selected?.projectKey ?? null,
+    sidebarProjectSections,
+    folderColorsEnabled,
+  );
   return (
     <ScopeMenu
       ariaLabel="Project scope"
       narrowed={value.project !== undefined}
-      icon={selected ? <ProjectFavicon project={selected} className="size-3.5 shrink-0" /> : null}
+      icon={
+        selected ? (
+          <ProjectFavicon
+            project={selected}
+            className="size-3.5 shrink-0"
+            folderColor={selectedFolderAppearance.folderColor}
+            forceFolder={selectedFolderAppearance.forceFolder}
+          />
+        ) : null
+      }
       label={selected?.displayName ?? (value.project ? "Unavailable project" : "All projects")}
     >
       <MenuRadioGroup
@@ -220,15 +239,27 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeBreadcrumbPr
           </span>
         </MenuRadioItem>
         <MenuSeparator />
-        {groups.map((group) => (
-          <MenuRadioItem key={group.projectKey} value={group.projectKey}>
-            <span className="flex min-w-0 items-center gap-2">
-              <ProjectFavicon project={group} className="size-3.5" />
-              <span className="min-w-0 flex-1 truncate">{group.displayName}</span>
-              <MenuRadioItemIndicator />
-            </span>
-          </MenuRadioItem>
-        ))}
+        {groups.map((group) => {
+          const { folderColor, forceFolder } = resolveProjectFolderAppearance(
+            group.projectKey,
+            sidebarProjectSections,
+            folderColorsEnabled,
+          );
+          return (
+            <MenuRadioItem key={group.projectKey} value={group.projectKey}>
+              <span className="flex min-w-0 items-center gap-2">
+                <ProjectFavicon
+                  project={group}
+                  className="size-3.5"
+                  folderColor={folderColor}
+                  forceFolder={forceFolder}
+                />
+                <span className="min-w-0 flex-1 truncate">{group.displayName}</span>
+                <MenuRadioItemIndicator />
+              </span>
+            </MenuRadioItem>
+          );
+        })}
       </MenuRadioGroup>
     </ScopeMenu>
   );

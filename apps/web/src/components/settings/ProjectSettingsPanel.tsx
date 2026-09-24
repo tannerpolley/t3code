@@ -343,7 +343,9 @@ function ProjectDetail({
                   ? `${projectIcon.text} · ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
-                    : (faviconPath ?? "Automatic")
+                    : projectIcon?.kind === "folder"
+                      ? `Folder · ${projectIcon.color}`
+                      : (faviconPath ?? "Automatic")
             }
             resetAction={
               group.memberProjects.some(

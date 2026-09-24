@@ -62,6 +62,10 @@ import {
 
 import type { ProjectIconColor } from "@t3tools/contracts";
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
+import {
+  inheritedSectionFolderAppearance,
+  useProjectFolderAppearance,
+} from "../../projectFolderAppearance";
 import { openCommandPalette } from "../../commandPaletteBus";
 import {
   resolveProjectPlacements,
@@ -320,15 +324,16 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         section.parentId === undefined
           ? undefined
           : sections.find((candidate) => candidate.id === section.parentId);
+      const { color, folderIcons } = inheritedSectionFolderAppearance(section, parent);
       next.push({
         id: section.id,
         name: section.name,
         projectKeys,
         collapsed: section.collapsed,
         custom: true,
-        color: section.color ?? parent?.color,
+        color,
         ownColor: section.color,
-        folderIcons: section.folderIcons === true || parent?.folderIcons === true,
+        folderIcons,
         ownFolderIcons: section.folderIcons === true,
         parentId: section.parentId,
       });
@@ -727,8 +732,6 @@ const ProjectSection = memo(function ProjectSection(props: {
                     onThreadContextMenu={props.onThreadContextMenu}
                     onToggleProject={props.onToggleProject}
                     project={project}
-                    folderColor={props.folderColors ? props.section.color : undefined}
-                    forceFolder={props.section.folderIcons}
                     sectionId={props.section.custom ? props.section.id : null}
                     sections={props.sections}
                     selected={props.selectedProjectKey === projectKey}
@@ -939,8 +942,6 @@ function SortableSectionHeader(props: {
 const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly project: SidebarProjectSnapshot;
   readonly codexStyle: boolean;
-  readonly folderColor: ProjectIconColor | undefined;
-  readonly forceFolder: boolean;
   readonly sectionId: string | null;
   readonly sections: readonly SidebarProjectSectionRender[];
   readonly selected: boolean;
@@ -971,6 +972,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   const otherSections = props.sections.filter(
     (section) => section.custom && section.id !== props.sectionId,
   );
+  const { folderColor, forceFolder } = useProjectFolderAppearance(project.projectKey);
 
   return (
     // Rows stay put while dragging; the drop line shows where this one lands.
@@ -1003,8 +1005,8 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           )}
           <ProjectFavicon
             className="size-4"
-            folderColor={props.folderColor}
-            forceFolder={props.forceFolder}
+            folderColor={folderColor}
+            forceFolder={forceFolder}
             project={project}
             {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
           />

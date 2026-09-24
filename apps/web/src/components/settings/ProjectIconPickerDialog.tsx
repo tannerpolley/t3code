@@ -6,6 +6,7 @@ import {
   type ProjectIconColor,
   type ProjectIconOverride,
 } from "@t3tools/contracts";
+import { FolderIcon } from "lucide-react";
 import { DynamicIcon, type IconName } from "lucide-react/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -93,7 +94,9 @@ export function ProjectIconPickerDialog({
         ? { kind: "monogram", text: monogram, color }
         : mode === "lucide"
           ? { kind: "lucide", name: iconName, color }
-          : { kind: "emoji", emoji },
+          : mode === "folder"
+            ? { kind: "folder", color }
+            : { kind: "emoji", emoji },
     );
     onOpenChange(false);
   };
@@ -103,7 +106,7 @@ export function ProjectIconPickerDialog({
       <DialogPopup className="w-full sm:w-[32rem]">
         <DialogHeader>
           <DialogTitle>Choose project icon</DialogTitle>
-          <DialogDescription>Choose an icon, emoji, or monogram.</DialogDescription>
+          <DialogDescription>Choose an icon, emoji, monogram, or folder.</DialogDescription>
         </DialogHeader>
         <DialogPanel className="flex min-h-0 flex-col gap-4">
           <ToggleGroup
@@ -112,12 +115,19 @@ export function ProjectIconPickerDialog({
             value={[mode]}
             onValueChange={(next) => {
               const value = next[0];
-              if (value === "lucide" || value === "emoji" || value === "monogram") setMode(value);
+              if (
+                value === "lucide" ||
+                value === "emoji" ||
+                value === "monogram" ||
+                value === "folder"
+              )
+                setMode(value);
             }}
           >
             <Toggle value="lucide">Icons</Toggle>
             <Toggle value="emoji">Emoji</Toggle>
             <Toggle value="monogram">Monogram</Toggle>
+            <Toggle value="folder">Folder</Toggle>
           </ToggleGroup>
 
           {mode !== "emoji" ? (
@@ -199,6 +209,14 @@ export function ProjectIconPickerDialog({
                   One or two letters or numbers.
                 </p>
               </div>
+            </div>
+          ) : mode === "folder" ? (
+            <div className="flex items-center gap-4 py-2">
+              <FolderIcon className={cn("size-12", selectedColorClassName)} />
+              <p className="flex-1 text-sm text-muted-foreground">
+                The sidebar's own folder look: open while the project is expanded, closed
+                everywhere else.
+              </p>
             </div>
           ) : (
             <>

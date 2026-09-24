@@ -54,4 +54,20 @@ describe("ProjectIconPickerDialog", () => {
     expect(markup.indexOf(">Icons<")).toBeLessThan(markup.indexOf(">Emoji<"));
     expect(markup).toContain('aria-label="Icon color"');
   });
+
+  it("opens on the folder tab and shows its color picker for a saved folder icon", () => {
+    const markup = renderToStaticMarkup(
+      <ProjectIconPickerDialog
+        current={{ kind: "folder", color: "teal" }}
+        projectName="Test"
+        open
+        onOpenChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('data-current="folder"');
+    expect(markup).toContain('data-value="folder">Folder<');
+    expect(markup).toContain('aria-label="Icon color"');
+  });
 });
