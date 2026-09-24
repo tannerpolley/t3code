@@ -3,8 +3,9 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { BotIcon, TerminalIcon } from "lucide-react";
 
-import { useThreadProjection, useThreadShell } from "../../state/entities";
+import { useServerConfigs, useThreadProjection, useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "./AgentElapsed";
@@ -13,17 +14,25 @@ import {
   describeBackgroundWorkTasks,
 } from "./BackgroundWorkTaskList.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { resolveSubagentModelLabel } from "./SubagentTooltipContent";
+import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
 
 /**
  * One row per pending background task; subagents with a thread open it like their Lineage row.
  * `compact` fits the sidebar: smaller text, and the kind moves into the row's tooltip.
+ * `columns` lays rows out like a Lineage row (icon, model · effort or label, elapsed, status mark)
+ * with the Codex-style sidebar's fixed time and status slots, so they line up with thread rows.
  */
 export function BackgroundWorkTaskList(props: {
   readonly environmentId: EnvironmentId;
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
+  readonly columns?: boolean;
 }) {
   const navigate = useNavigate();
+  // Columns match the sidebar thread row's px-2, so time and status slots share a right edge.
+  const padding = props.columns ? "px-2" : "px-1.5";
+  const providers = useServerConfigs().get(props.environmentId)?.providers;
   return (
     <ul
       className={
@@ -35,16 +44,45 @@ export function BackgroundWorkTaskList(props: {
       {props.rows.map((row) => {
         const Icon = row.kind === "subagent" ? BotIcon : TerminalIcon;
         const kindLabel = row.kind === "subagent" ? "Subagent" : "Background process";
-        const content = (
+        const provider = row.child
+          ? providers?.find((entry) => entry.instanceId === row.child?.providerInstanceId)
+          : undefined;
+        const content = props.columns ? (
+          <>
+            {row.child ? (
+              <ThreadRelationshipIcon driver={provider?.driver} provider={provider} />
+            ) : (
+              <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-foreground/85">
+              {row.child ? (
+                <>
+                  {resolveSubagentModelLabel({ model: null, provider, childThread: row.child })}
+                  <span className="sr-only">, {row.label}</span>
+                </>
+              ) : (
+                row.label
+              )}
+            </span>
+            <span className="w-12 shrink-0 text-right text-muted-foreground tabular-nums">
+              {row.startedAt ? (
+                <AgentElapsed
+                  agent={{ status: "running", startedAt: row.startedAt, completedAt: null }}
+                />
+              ) : null}
+            </span>
+            <ThreadStatusMark status={row.status ?? "working"} />
+          </>
+        ) : (
           <>
             <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
             {props.compact ? null : (
               <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
             )}
-            {row.needs ? (
+            {row.status === "approval" || row.status === "input" ? (
               <span className="flex w-12 shrink-0 justify-end">
-                <ThreadStatusMark status={row.needs} />
+                <ThreadStatusMark status={row.status} />
               </span>
             ) : row.startedAt ? (
               <span className="w-12 shrink-0 text-right text-muted-foreground">
@@ -59,7 +97,10 @@ export function BackgroundWorkTaskList(props: {
         const element = childThreadId ? (
           <button
             type="button"
-            className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-accent"
+            className={cn(
+              "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left hover:bg-accent",
+              padding,
+            )}
             onClick={() =>
               void navigate({
                 to: "/$environmentId/$threadId",
@@ -70,7 +111,7 @@ export function BackgroundWorkTaskList(props: {
             {content}
           </button>
         ) : (
-          <div className="flex min-w-0 items-center gap-2 px-1.5 py-1">{content}</div>
+          <div className={cn("flex min-w-0 items-center gap-2 py-1", padding)}>{content}</div>
         );
         return (
           <li key={row.taskId}>

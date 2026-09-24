@@ -43,6 +43,9 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { BackgroundWorkTaskList } from "../chat/BackgroundWorkTaskList";
+import { useServerConfigs } from "../../state/entities";
+import { resolveSubagentModelLabel } from "../chat/SubagentTooltipContent";
+import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import { describeSidebarBackgroundWork } from "../chat/BackgroundWorkTaskList.logic";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
@@ -1202,7 +1205,12 @@ function SidebarProjectThreadRow(props: {
     threads: [scopeThreadRef(props.thread.environmentId, props.thread.id)],
     title: props.thread.title,
   }));
-  const childWaitsOnYou = workRows.some((row) => row.needs !== undefined);
+  const childWaitsOnYou = workRows.some(
+    (row) => row.status === "approval" || row.status === "input",
+  );
+  const provider = useServerConfigs()
+    .get(props.thread.environmentId)
+    ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
   const workOpen = manualWorkOpen ?? (status === "waiting" || childWaitsOnYou);
   return (
     <li className="relative list-none">
@@ -1211,7 +1219,7 @@ function SidebarProjectThreadRow(props: {
         aria-current={active ? "page" : undefined}
         aria-label={`${props.thread.title}, ${status}`}
         className={cn(
-          "group/project-thread flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors",
+          "group/project-thread @container/thread-row flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors",
           active
             ? "bg-sidebar-row-active text-sidebar-foreground"
             : "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
@@ -1225,18 +1233,32 @@ function SidebarProjectThreadRow(props: {
           props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });
         }}
       >
-        {props.codexStyle ? null : (
+        {props.codexStyle ? (
+          <ThreadRelationshipIcon driver={provider?.driver} provider={provider} />
+        ) : (
           <span
             aria-hidden
             className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
           />
         )}
         <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
+        {props.codexStyle ? (
+          // The title comes first: the model label only shows once the row has room for both.
+          <span className="hidden max-w-[6.5rem] shrink-0 truncate text-[11px] text-sidebar-muted-foreground/55 @min-[20rem]/thread-row:block">
+            {resolveSubagentModelLabel({ model: null, provider, childThread: props.thread })}
+          </span>
+        ) : null}
         {workRows.length > 0 ? (
           // Room for the work toggle, which sits over this spot because buttons cannot nest.
-          <span aria-hidden className="w-8 shrink-0" />
+          <span aria-hidden className={cn("shrink-0", props.codexStyle ? "w-12" : "w-8")} />
         ) : (
-          <span className="shrink-0 text-[11px] text-sidebar-muted-foreground/55">
+          <span
+            className={cn(
+              "shrink-0 text-[11px] text-sidebar-muted-foreground/55",
+              // A fixed, right-aligned slot so times line up with the elapsed times of the work rows.
+              props.codexStyle && "w-12 text-right tabular-nums",
+            )}
+          >
             {compactThreadTime(props.thread)}
           </span>
         )}
@@ -1248,9 +1270,9 @@ function SidebarProjectThreadRow(props: {
           aria-expanded={workOpen}
           aria-label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
           className={cn(
-            "absolute top-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+            "absolute top-2 flex h-5 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
             // Left of the 14px status mark and its 8px gap in Codex style; flush with the padding otherwise.
-            props.codexStyle ? "right-[30px]" : "right-2",
+            props.codexStyle ? "right-[30px] w-12" : "right-2 w-8",
           )}
           onClick={() => setManualWorkOpen(!workOpen)}
         >
@@ -1266,6 +1288,7 @@ function SidebarProjectThreadRow(props: {
         <div className="ms-3 border-s border-sidebar-border/60 ps-1">
           <BackgroundWorkTaskList
             compact
+            columns={props.codexStyle}
             environmentId={props.thread.environmentId}
             rows={workRows}
           />

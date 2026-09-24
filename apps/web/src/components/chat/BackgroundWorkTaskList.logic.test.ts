@@ -61,7 +61,13 @@ describe("describeSidebarBackgroundWork", () => {
     id: "child-thread",
     title: "Review the diff",
     latestRun: null,
-    runtime: { activeRunId: null, activityStartedAt: "2026-09-23T10:00:00.000Z" },
+    hasPendingApprovals: false,
+    hasPendingUserInput: true,
+    runtime: {
+      status: "running",
+      activeRunId: null,
+      activityStartedAt: "2026-09-23T10:00:00.000Z",
+    },
   } as never;
 
   it("links running children, and lists processes and agents no child accounts for", () => {
@@ -80,6 +86,9 @@ describe("describeSidebarBackgroundWork", () => {
         kind: "subagent",
         startedAt: "2026-09-23T10:00:00.000Z",
         childThreadId: "child-thread",
+        // A question outranks the running spinner, so the parent row can open the list.
+        status: "input",
+        child: runningChild,
       },
       {
         taskId: "agent-2",

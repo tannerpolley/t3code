@@ -52,7 +52,9 @@ export function SubagentTooltipContent(props: SubagentDetailsProps & { title: st
 
 /** "Model · Effort" for a subagent or related thread, from its run record or its thread shell. */
 export function resolveSubagentModelLabel(
-  props: Pick<SubagentDetailsProps, "model" | "provider" | "childThread">,
+  props: Pick<SubagentDetailsProps, "model" | "provider"> & {
+    childThread?: Pick<OrchestrationV2ThreadShell, "modelSelection"> | undefined;
+  },
   withEffort = true,
 ): string {
   const model = props.model?.trim() || props.childThread?.modelSelection.model.trim();

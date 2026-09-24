@@ -7,6 +7,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import * as DateTime from "effect/DateTime";
 
 import type { SidebarThreadSummary } from "../../types";
+import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 
 export interface BackgroundWorkTaskRow {
   readonly taskId: string;
@@ -15,8 +16,10 @@ export interface BackgroundWorkTaskRow {
   readonly startedAt: string | null;
   /** The subagent's own thread, when it has one to open. */
   readonly childThreadId: ThreadId | null;
-  /** Set when the child thread is waiting on the user: a question or an approval. */
-  readonly needs?: "input" | "approval" | undefined;
+  /** The running child thread's sidebar status, when the row is one. */
+  readonly status?: SidebarThreadStatus | undefined;
+  /** The running child thread, for its provider and model · effort label. */
+  readonly child?: Pick<SidebarThreadSummary, "providerInstanceId" | "modelSelection"> | undefined;
 }
 
 /**
@@ -68,7 +71,14 @@ export function describeSidebarBackgroundWork(
   runningChildren: ReadonlyArray<
     Pick<
       SidebarThreadSummary,
-      "id" | "title" | "latestRun" | "runtime" | "hasPendingApprovals" | "hasPendingUserInput"
+      | "id"
+      | "title"
+      | "latestRun"
+      | "runtime"
+      | "hasPendingApprovals"
+      | "hasPendingUserInput"
+      | "providerInstanceId"
+      | "modelSelection"
     >
   >,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
@@ -80,11 +90,8 @@ export function describeSidebarBackgroundWork(
       kind: "subagent" as const,
       startedAt: resolveThreadWorkingStartedAt(child),
       childThreadId: child.id,
-      needs: child.hasPendingApprovals
-        ? ("approval" as const)
-        : child.hasPendingUserInput
-          ? ("input" as const)
-          : undefined,
+      status: resolveSidebarThreadStatus(child),
+      child,
     })),
     // ponytail: the shell has no task id on child threads, so agent tasks pair with children by
     // count; join on an id if the summary ever carries one.
