@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import { BackgroundWorkTaskList } from "../chat/BackgroundWorkTaskList";
 import { describeSidebarBackgroundWork } from "../chat/BackgroundWorkTaskList.logic";
+import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
   Fragment,
   memo,
@@ -1197,6 +1198,10 @@ function SidebarProjectThreadRow(props: {
   );
   // Opens by itself while the thread waits on this work; a manual toggle wins for this row.
   const [manualWorkOpen, setManualWorkOpen] = useState<boolean | null>(null);
+  const contextDrag = useThreadContextPointerDrag(() => ({
+    threads: [scopeThreadRef(props.thread.environmentId, props.thread.id)],
+    title: props.thread.title,
+  }));
   const childWaitsOnYou = workRows.some((row) => row.needs !== undefined);
   const workOpen = manualWorkOpen ?? (status === "waiting" || childWaitsOnYou);
   return (
@@ -1212,6 +1217,9 @@ function SidebarProjectThreadRow(props: {
             : "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
         )}
         onClick={(event) => props.onClick(event, props.thread)}
+        // Drag the row onto a chat composer to add the thread as context.
+        onPointerDown={contextDrag.onPointerDown}
+        onClickCapture={contextDrag.onClickCapture}
         onContextMenu={(event) => {
           event.preventDefault();
           props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });

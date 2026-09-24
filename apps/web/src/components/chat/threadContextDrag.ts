@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore, type MouseEvent, type PointerEvent } from "react";
 
 /**
  * Dragging a sidebar thread past the list edge turns the sort gesture into a context drop.
@@ -83,4 +83,52 @@ export function dropThreadContext(
 
 export function threadContextDropTargetProps() {
   return { [DROP_TARGET_ATTRIBUTE]: "true" } as const;
+}
+
+/**
+ * Context drag for rows that have no sort gesture of their own (the Projects view): once the
+ * pointer moves a few pixels the row follows it as a ghost, and releasing over a composer adds
+ * the thread. The click that ends a drag is swallowed so the row doesn't also open.
+ */
+export function useThreadContextPointerDrag(
+  getDrag: () => { readonly threads: ReadonlyArray<ScopedThreadRef>; readonly title: string },
+) {
+  const dragged = useRef(false);
+  const onPointerDown = (event: PointerEvent) => {
+    if (event.button !== 0 || event.pointerType === "touch") return;
+    const start = { x: event.clientX, y: event.clientY };
+    dragged.current = false;
+    const move = (next: globalThis.PointerEvent) => {
+      const point = { x: next.clientX, y: next.clientY };
+      if (!dragged.current && Math.hypot(point.x - start.x, point.y - start.y) < 6) return;
+      dragged.current = true;
+      const { threads, title } = getDrag();
+      moveThreadContextDrag(point, { title, count: threads.length });
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      endThreadContextDrag();
+    };
+    const up = (next: globalThis.PointerEvent) => {
+      if (dragged.current)
+        dropThreadContext({ x: next.clientX, y: next.clientY }, getDrag().threads);
+      stop();
+    };
+    const cancel = () => {
+      dragged.current = false;
+      stop();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+  };
+  const onClickCapture = (event: MouseEvent) => {
+    if (!dragged.current) return;
+    dragged.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  return { onPointerDown, onClickCapture };
 }
