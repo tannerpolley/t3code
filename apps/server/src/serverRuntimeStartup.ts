@@ -426,6 +426,24 @@ const make = (options?: StartupOptions) =>
     const httpListening = yield* Deferred.make<void>();
     const effectWorkerFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
 
+    // Provider CLIs share the server's process group (and a service's cgroup), so a
+    // desktop quit, Ctrl+C, or service stop signals them together with the server.
+    // Their exits are shutdown fallout, not turn failures, and arrive long before the
+    // finalizer below runs (desktop force-kills after a short grace).
+    const runSync = Effect.runSyncWith(yield* Effect.context<never>());
+    const beginProviderShutdown = () => runSync(providerSessions.beginShutdown);
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        process.on("SIGTERM", beginProviderShutdown);
+        process.on("SIGINT", beginProviderShutdown);
+      }),
+      () =>
+        Effect.sync(() => {
+          process.off("SIGTERM", beginProviderShutdown);
+          process.off("SIGINT", beginProviderShutdown);
+        }),
+    );
+
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         yield* commandGate.failCommandReady(

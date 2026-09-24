@@ -141,6 +141,12 @@ export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error
 
 export interface ProviderSessionManagerV2Shape {
   readonly shutdown: Effect.Effect<void>;
+  /**
+   * Marks the server as stopping before `shutdown` runs. From then on provider
+   * events and stream exits are dropped instead of settling turns, so runs stay
+   * running for shutdown/startup recovery to cancel and continue.
+   */
+  readonly beginShutdown: Effect.Effect<void>;
   readonly open: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -368,6 +374,7 @@ export const layerWithOptions = (
       );
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      const shuttingDown = yield* Ref.make(false);
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
@@ -1423,6 +1430,7 @@ export const layerWithOptions = (
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
         return entry.runtime.events.pipe(
+          Stream.filterEffect(() => Effect.map(Ref.get(shuttingDown), (stopping) => !stopping)),
           Stream.runForEach((event) => {
             if (
               event.type === "provider_session.updated" &&
@@ -1485,7 +1493,7 @@ export const layerWithOptions = (
               const current = (yield* Ref.get(sessions)).get(
                 sessionKey(entry.runtime.providerSessionId),
               );
-              if (current?.runtime !== entry.runtime) {
+              if (current?.runtime !== entry.runtime || (yield* Ref.get(shuttingDown))) {
                 return;
               }
               if (stoppedByProvider && Exit.isSuccess(exit)) {
@@ -1544,6 +1552,7 @@ export const layerWithOptions = (
 
       return ProviderSessionManagerV2.of({
         shutdown,
+        beginShutdown: Ref.set(shuttingDown, true),
         open: (input) =>
           sessionOpen.withLock(
             input.providerSessionId,
