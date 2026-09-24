@@ -96,7 +96,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "thread-details-redesign",
     section: "lineage",
     description:
-      "Lineage rows lead with model and effort, end in a status mark (spinner, green done dot, failure icon) and open into details; a Background processes block lists running shells; the bar above the composer shrinks to one Stop line; thread-details labels are larger. Off restores the original Lineage rows, the task list in the bar and the smaller labels.",
+      "Lineage rows lead with model and effort, end in a status mark (spinner, green done dot, failure icon) and open into details; a Background processes block lists running shells; Clear hides finished agents under Previous agents; the bar above the composer shrinks to one Stop line; thread-details labels are larger. Off restores the original Lineage rows, the task list in the bar and the smaller labels.",
   },
   {
     key: "lineageDetailsExpanded",
@@ -131,7 +131,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "version-control-issues",
     section: "versionControl",
     description:
-      "List the repository's open issues under Version Control in thread details, and open them beside the thread.",
+      "List the repository's open issues in their own Issues section of thread details, grouped by collapsible milestones, and open them beside the thread.",
   },
   {
     key: "issuesPage",
@@ -194,6 +194,21 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
     title: "Quitting doesn't fail running agents",
     description:
       "Agents that are mid-turn when you quit are resumed after relaunch instead of being marked failed.",
+  },
+  {
+    title: "Claude background agents stay in their own thread",
+    description:
+      "A Claude background agent that keeps working after its parent's turn ends no longer shows its messages and tool calls as the parent's, or starts a fake parent turn.",
+  },
+  {
+    title: "Lineage counts match what's listed",
+    description:
+      "The Previous agents count, its failed notice and the expand-all button all follow the agents actually listed; older agents are no longer hidden behind Show more.",
+  },
+  {
+    title: "Project icons match everywhere",
+    description:
+      "A project's section folder color and folder icon show the same in the chat header and settings as in the sidebar.",
   },
   {
     title: "Claude context sizes follow the latest model list",
