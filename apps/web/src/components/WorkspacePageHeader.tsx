@@ -2,12 +2,14 @@ import type { ComponentPropsWithoutRef } from "react";
 
 import { cn } from "../lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
+import { PageBackButton } from "./PageBackButton";
 
-/** Shared workspace top-bar geometry. */
+/** Shared workspace top-bar geometry. Leads with Back on the pages it leaves, when switched on. */
 export function WorkspacePageHeader({
   electron = false,
   reserveNativeControls = electron,
   className,
+  children,
   ...props
 }: ComponentPropsWithoutRef<"header"> & {
   readonly electron?: boolean;
@@ -23,6 +25,9 @@ export function WorkspacePageHeader({
         className,
       )}
       {...props}
-    />
+    >
+      <PageBackButton />
+      {children}
+    </header>
   );
 }

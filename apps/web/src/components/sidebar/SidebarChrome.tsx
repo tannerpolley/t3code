@@ -1,11 +1,12 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, CircleDotIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
-import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 
 import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
+import { usePageBack } from "../PageBackButton";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -30,39 +31,6 @@ import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
-/**
- * The page a sidebar Back leaves: Settings, a project's settings, Usage, Pull Requests or Issues.
- * Null on thread pages, which have nothing to go back from.
- */
-function useSidebarBack() {
-  const navigate = useNavigate();
-  const canGoBack = useCanGoBack();
-  const { isMobile, setOpenMobile } = useSidebar();
-  const page = useLocation({
-    select: (location) =>
-      /^\/settings(?:\/|$)/.test(location.pathname)
-        ? "settings"
-        : /^\/projects\/[^/]+\/?$/.test(location.pathname)
-          ? "project-settings"
-          : location.pathname === "/usage"
-            ? "usage"
-            : location.pathname === "/pull-requests"
-              ? "pull-requests"
-              : location.pathname === "/issues"
-                ? "issues"
-                : null,
-  });
-  const goBack = useCallback(() => {
-    if (isMobile) setOpenMobile(false);
-    if (canGoBack) {
-      window.history.back();
-      return;
-    }
-    void navigate({ to: "/" });
-  }, [canGoBack, isMobile, navigate, setOpenMobile]);
-  return { page, goBack };
-}
-
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
 }: {
@@ -78,10 +46,8 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
       : null;
-  const topBackButton = useClientSettings((settings) => settings.topBackButton);
   // With the toggle at the right edge, the header's left needs no room for it.
   const toggleOnRight = useClientSettings((settings) => settings.sidebarTogglePosition === "right");
-  const back = useSidebarBack();
 
   return (
     <SidebarHeader
@@ -107,26 +73,6 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
             : "md:ml-[var(--workspace-titlebar-content-left)]",
         )}
       >
-        {topBackButton && back.page ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <SidebarMenuButton
-                  aria-label="Back"
-                  className={cn(
-                    "size-7 shrink-0",
-                    backdropVariant && "text-white [&_svg]:text-white/90 hover:bg-white/15",
-                  )}
-                  onClick={back.goBack}
-                  size="icon"
-                >
-                  <ArrowLeftIcon />
-                </SidebarMenuButton>
-              }
-            />
-            <TooltipPopup side="bottom">Back</TooltipPopup>
-          </Tooltip>
-        ) : null}
         <SidebarBrand onBackdrop={backdropVariant !== null} />
       </div>
       {pillLabel ? (
@@ -197,10 +143,9 @@ function SidebarUtilityItem({
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  const back = useSidebarBack();
-  const topBackButton = useClientSettings((settings) => settings.topBackButton);
-  // Back sits at the top unless switched off in Customizations; then it replaces this row.
-  const showFooterBack = back.page !== null && !topBackButton;
+  const back = usePageBack();
+  // Back replaces this row on the pages it leaves, also when a page header shows one up top.
+  const showFooterBack = back.page !== null;
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
   const closeMobileSidebar = useCallback(() => {

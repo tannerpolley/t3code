@@ -43,6 +43,7 @@ import {
   repositoryShown,
   type IssueRepositoryTarget,
 } from "../components/issues/issueWorkspace.logic";
+import { PageBackButton } from "../components/PageBackButton";
 import { RightPanelTabs } from "../components/RightPanelTabs";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
@@ -65,6 +66,7 @@ import { useAllEnvironmentShellsBootstrapped, useThreadShell } from "../state/en
 import { useEnvironments } from "../state/environments";
 import { useIssueLists, useIssueRepositories, type IssueListTarget } from "../state/issues";
 import { cn } from "~/lib/utils";
+import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 
 export interface IssuesSearch {
   readonly environmentId?: EnvironmentId;
@@ -1040,8 +1042,14 @@ function IssuesRouteView() {
 
   const listColumn = (
     <section className={cn("flex min-w-0 flex-1 flex-col", showNarrowDetail && "hidden md:flex")}>
-      <header className="shrink-0 border-b border-border/60 px-4 py-3">
+      <header
+        className={cn(
+          "shrink-0 border-b border-border/60 px-4 py-3",
+          COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+        )}
+      >
         <div className="flex items-center gap-2">
+          <PageBackButton />
           <CircleDotIcon aria-hidden className="size-4 text-emerald-500" />
           <h1
             ref={listHeadingRef}
