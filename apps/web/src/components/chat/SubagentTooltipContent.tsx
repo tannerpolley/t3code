@@ -8,7 +8,7 @@ import { fileBasename } from "@t3tools/client-runtime/markdown-links";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { modelEffortLabel } from "./modelEffortLabel";
 import { useClientSettings } from "~/hooks/useSettings";
-import { getTriggerDisplayModelName } from "./providerIconUtils";
+import { getTriggerDisplayModelName, shortModelName } from "./providerIconUtils";
 import type { ReactNode } from "react";
 import {
   BotIcon,
@@ -50,23 +50,27 @@ export function SubagentTooltipContent(props: SubagentDetailsProps & { title: st
   );
 }
 
-/** "Model · Effort" for a subagent or related thread, from its run record or its thread shell. */
+/**
+ * "Model · Effort" for a subagent or related thread, from its run record or its thread shell.
+ * `shortName` follows the `shortModelNames` client setting.
+ */
 export function resolveSubagentModelLabel(
   props: Pick<SubagentDetailsProps, "model" | "provider"> & {
     childThread?: Pick<OrchestrationV2ThreadShell, "modelSelection"> | undefined;
   },
-  withEffort = true,
+  { withEffort = true, shortName = false }: { withEffort?: boolean; shortName?: boolean } = {},
 ): string {
   const model = props.model?.trim() || props.childThread?.modelSelection.model.trim();
   const modelSlug = props.provider
     ? resolveSelectableModel(props.provider.driver, model, props.provider.models)
     : model;
   const providerModel = props.provider?.models.find((candidate) => candidate.slug === modelSlug);
-  const modelName = providerModel
+  const fullName = providerModel
     ? getTriggerDisplayModelName(providerModel)
     : model
       ? formatModelSlugName(model)
       : "Not reported";
+  const modelName = shortName ? shortModelName(fullName) : fullName;
   const effort =
     withEffort &&
     modelEffortLabel(
@@ -143,6 +147,7 @@ export function SubagentPreviewLine({ text }: { readonly text: string }) {
 export function SubagentDetails(props: SubagentDetailsProps) {
   // The effort suffix belongs to the Lineage redesign customization.
   const withEffort = useClientSettings((settings) => settings.threadDetailsRedesign);
+  const shortName = useClientSettings((settings) => settings.shortModelNames);
   const status = props.status;
   const driver = props.provider?.driver ?? props.driver;
   const working =
@@ -169,7 +174,7 @@ export function SubagentDetails(props: SubagentDetailsProps) {
           <BotIcon className="size-3 shrink-0" />
         )}
         <span className="min-w-0 truncate text-foreground/75">
-          {resolveSubagentModelLabel(props, withEffort)}
+          {resolveSubagentModelLabel(props, { withEffort, shortName })}
         </span>
       </div>
       {status === undefined ? null : (

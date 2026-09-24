@@ -395,10 +395,10 @@ it("shows readable models and only differing workspace details in agent tooltips
     ["codex", "gpt-5.3-codex-spark", "GPT-5.3-Codex-Spark"],
     ["codex", "custom/model-v2", "custom/model-v2"],
     ["claudeAgent", "gpt-5.4", "GPT-5.4"],
-    ["claudeAgent", "claude-opus-4-6", "Claude Opus 4.6"],
+    ["claudeAgent", "claude-opus-4-6", "Opus 4.6"],
     ["cursor", "composer-2", "Composer 2"],
     ["grok", "grok-4-fast", "Grok 4 Fast"],
-    ["antigravity", "gemini-3.8-flash-high", "Gemini 3.8 Flash High"],
+    ["antigravity", "gemini-3.8-flash-high", "Flash 3.8 High"],
     ["opencode", "anthropic/claude-sonnet-4-6", "anthropic/Claude Sonnet 4.6"],
     ["codex", null, "Not reported"],
   ] as const) {

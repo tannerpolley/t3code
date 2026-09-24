@@ -249,6 +249,7 @@ export function ThreadRelationshipsPanel(props: {
   const expandDetailsByDefault = useClientSettings((settings) => settings.lineageDetailsExpanded);
   // Off restores the original rows: title, corner status badge, no details.
   const redesign = useClientSettings((settings) => settings.threadDetailsRedesign);
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const isRunning = (status: string | null) =>
     redesign ? lineageStatusMark(status) === "working" : status === "running";
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
@@ -543,11 +544,10 @@ export function ThreadRelationshipsPanel(props: {
                     fallbackIcon={RelationshipIcon}
                   />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-4 text-foreground/85">
-                    {resolveSubagentModelLabel({
-                      model: agent.model,
-                      provider,
-                      childThread: node?.thread ?? undefined,
-                    })}
+                    {resolveSubagentModelLabel(
+                      { model: agent.model, provider, childThread: node?.thread ?? undefined },
+                      { shortName: shortModelNames },
+                    )}
                     <span className="sr-only">
                       , {threadTitle}, {edge.status ?? agent.status}
                     </span>
