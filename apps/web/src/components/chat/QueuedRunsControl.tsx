@@ -149,6 +149,7 @@ export function QueuedRunsControl({
           url: queuedImageUrlById.get(attachment.id) ?? null,
         })),
       pending: false,
+      heldSteer: run.steerTargetRunId !== undefined,
     })),
     ...optimisticQueued.map((message) => ({
       key: message.id,
@@ -165,6 +166,7 @@ export function QueuedRunsControl({
           url: attachment.previewUrl ?? null,
         })),
       pending: true,
+      heldSteer: false,
     })),
   ];
 
@@ -399,6 +401,21 @@ export function QueuedRunsControl({
                         aria-label="Saving queued message"
                         className="size-3 shrink-0 text-muted-foreground/60"
                       />
+                    ) : null}
+                    {item.heldSteer ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground" />
+                          }
+                        >
+                          <CornerUpRightIcon aria-hidden="true" className="size-3" />
+                          Steer
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">
+                          Steers the current turn as soon as the agent starts it
+                        </TooltipPopup>
+                      </Tooltip>
                     ) : null}
                     {item.thumbnails.length > 0 ? (
                       <span className="flex shrink-0 items-center gap-0.5">

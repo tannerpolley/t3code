@@ -181,6 +181,11 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
     description: "A subagent you send new work to shows as running in Lineage, not finished.",
   },
   {
+    title: "Early steers wait for the turn",
+    description:
+      "A steer sent while the agent is still starting its turn is held and delivered once the turn runs, instead of failing.",
+  },
+  {
     title: "Failed turns show as failed",
     description: "A turn that failed shows as failed even while background work is still running.",
   },

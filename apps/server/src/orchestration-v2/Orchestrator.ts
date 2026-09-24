@@ -371,6 +371,19 @@ function isBlockingRun(run: OrchestrationV2Run): boolean {
   );
 }
 
+/** The run's current attempt has a provider turn that can accept a steer. */
+function hasRunningProviderTurn(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns">,
+  run: OrchestrationV2Run,
+): boolean {
+  return (
+    run.activeAttemptId !== null &&
+    projection.providerTurns.some(
+      (turn) => turn.runAttemptId === run.activeAttemptId && turn.status === "running",
+    )
+  );
+}
+
 /**
  * A parent thread is "live" for wake purposes while a run is still producing
  * agent output. A run parked at "waiting" is post-terminal drain, so its agent
@@ -3311,6 +3324,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
+    /** A held early steer reads as the steer the user sent, not a promoted queue item. */
+    readonly heldSteer?: boolean;
   }) =>
     Effect.gen(function* () {
       const targetRun = input.projection.runs.find(
@@ -3491,7 +3506,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             type: "user_message",
             messageId: input.messageId,
             inputIntent:
-              input.command.type === "queued-message.promote-to-steer"
+              input.command.type === "queued-message.promote-to-steer" && !input.heldSteer
                 ? "promoted_queued_to_steer"
                 : "steer",
             text: input.text,
@@ -4151,6 +4166,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           dispatchMode = { type: "start_immediately" };
         }
       }
+      // A steer that arrives before the target's provider turn is live (session
+      // still starting) is held as a queued run and promoted once the turn runs.
+      let steerTargetRunId: OrchestrationV2Run["id"] | undefined;
+      if (
+        dispatchMode.type === "steer_active" &&
+        command.notification === undefined &&
+        command.delegatedCompletion === undefined &&
+        !isNativeMaintenanceCommand(command)
+      ) {
+        const targetRunId = dispatchMode.targetRunId;
+        const target = projection.runs.find((run) => run.id === targetRunId);
+        const targetMessage = projection.messages.find(
+          (message) => message.id === target?.userMessageId,
+        );
+        if (
+          target !== undefined &&
+          (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
+          (target.status === "preparing" ||
+            target.status === "starting" ||
+            target.status === "running") &&
+          !hasRunningProviderTurn(projection, target)
+        ) {
+          steerTargetRunId = target.id;
+          dispatchMode = { type: "queue_after_active" };
+        }
+      }
       if (
         command.notification !== undefined &&
         (command.createdBy !== "agent" ||
@@ -4445,6 +4486,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
             ? { queueHeld: true }
             : {}),
+          ...(steerTargetRunId === undefined ? {} : { steerTargetRunId }),
           queuePosition:
             Math.max(
               0,
@@ -6840,6 +6882,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { senderThreadId: queuedMessage.senderThreadId }),
         forceRestart: false,
+        heldSteer: queuedRun.steerTargetRunId !== undefined,
       });
     });
 
@@ -9004,6 +9047,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (command.type === "delegated_task.wake-policy") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.parentThreadId));
     }
+    // The target turn may have gone live while this hold was being written.
+    if (
+      command.type === "message.dispatch" &&
+      committed.storedEvents.some(
+        (stored) =>
+          stored.event.type === "run.created" &&
+          stored.event.payload.steerTargetRunId !== undefined,
+      )
+    ) {
+      yield* deliverHeldSteers(command.threadId);
+    }
 
     return {
       sequence: committed.receipt.resultSequence,
@@ -9013,6 +9067,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchWithReceipt = (command: OrchestrationV2Command) =>
     threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+
+  /**
+   * Promote held early steers into their target run once its provider turn is
+   * running. Caller holds the thread lock. The command id is keyed on the
+   * queued run, so each hold is delivered (or rejected) at most once; a
+   * rejected or never-delivered hold simply stays an ordinary queued run.
+   */
+  const deliverHeldSteers = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const { runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+      const held = runs
+        .filter((run) => run.status === "queued" && run.steerTargetRunId !== undefined)
+        .toSorted(
+          (left, right) =>
+            (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal),
+        );
+      if (held.length === 0) return;
+      const { providerTurns } = yield* projectionStore.getThreadRecords(threadId, [
+        "providerTurns",
+      ]);
+      for (const run of held) {
+        const target = runs.find((candidate) => candidate.id === run.steerTargetRunId);
+        if (target?.status !== "running" || !hasRunningProviderTurn({ providerTurns }, target)) {
+          continue;
+        }
+        yield* dispatchWithReceiptEffect({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make(`command:system:held-steer:${run.id}`),
+          threadId,
+          queuedRunId: run.id,
+          targetRunId: target.id,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Held steer stays queued; it was not delivered", {
+              threadId,
+              runId: run.id,
+              cause,
+            }),
+          ),
+        );
+      }
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to deliver held steers", { threadId, cause }),
+      ),
+    );
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
@@ -9064,6 +9164,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             stored.event.payload.status === "rolled_back"),
       ),
       Stream.runForEach(handleTerminalRun),
+      Effect.forkDetach,
+    );
+  // A provider turn going live is the moment a held early steer can land.
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "provider-turn.updated" })
+    .pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "provider-turn.updated" &&
+          stored.event.payload.status === "running",
+      ),
+      Stream.runForEach((stored) =>
+        threadDispatch.withLock(stored.event.threadId, deliverHeldSteers(stored.event.threadId)),
+      ),
       Effect.forkDetach,
     );
 

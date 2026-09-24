@@ -488,6 +488,12 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
+  /**
+   * A steer sent before this run's target had a live provider turn. The server
+   * promotes it into that run once the turn is running; if the turn ends first,
+   * it stays an ordinary queued run.
+   */
+  steerTargetRunId: Schema.optional(RunId),
   sourcePlanRef: Schema.optional(
     Schema.Struct({
       threadId: ThreadId,
