@@ -840,6 +840,10 @@ function SortableSectionHeader(props: {
           {section.projectKeys.length}
         </span>
       </button>
+      {codexStyle && !section.custom ? (
+        // The actions menu's slot, so this count lines up with the project rows' counts.
+        <span aria-hidden className="size-6 shrink-0" />
+      ) : null}
       {section.custom ? (
         <>
           {codexStyle || !draggable ? null : (
@@ -982,11 +986,9 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
         <SidebarMenuButton
           {...(codexStyle ? { ...attributes, ...listeners } : {})}
           aria-expanded={props.isProjectExpanded}
-          className={
-            codexStyle
-              ? "h-8 text-sm group-hover/project-row:pe-14 group-focus-within/project-row:pe-14 pointer-coarse:pe-14"
-              : "h-8 pe-12 text-sm"
-          }
+          // Codex style keeps the actions menu's slot, so the count never moves on hover and
+          // lines up with the section header's count.
+          className={codexStyle ? "h-8 pe-8 text-sm" : "h-8 pe-12 text-sm"}
           isActive={props.selected}
           onClick={() => {
             props.onToggleProject(project.projectKey, !props.isProjectExpanded);
@@ -1022,16 +1024,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           ) : null}
         </SidebarMenuButton>
         <div className="pointer-events-none absolute inset-y-0 end-1 flex items-center gap-px">
-          {codexStyle ? (
-            <button
-              aria-label={`New thread in ${project.displayName}`}
-              className="pointer-events-auto inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:opacity-100 group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
-              onClick={() => props.onNewThreadInProject(project)}
-              type="button"
-            >
-              <SquarePenIcon aria-hidden className="size-3.5" />
-            </button>
-          ) : (
+          {codexStyle ? null : (
             <button
               aria-label={`Reorder ${project.displayName}`}
               className="pointer-events-auto inline-flex size-6 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
@@ -1201,19 +1194,16 @@ function SidebarProjectThreadRow(props: {
     props.thread.pendingBackgroundTasks,
     props.runningSubagents,
   );
-  // Opens by itself while the thread waits on this work; a manual toggle wins for this row.
-  const [manualWorkOpen, setManualWorkOpen] = useState<boolean | null>(null);
+  // Running work shows by default, even while the thread itself works; a collapse wins for this row.
+  const [workOpen, setWorkOpen] = useState(true);
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const contextDrag = useThreadContextPointerDrag(() => ({
     threads: [scopeThreadRef(props.thread.environmentId, props.thread.id)],
     title: props.thread.title,
   }));
-  const childWaitsOnYou = workRows.some(
-    (row) => row.status === "approval" || row.status === "input",
-  );
   const provider = useServerConfigs()
     .get(props.thread.environmentId)
     ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
-  const workOpen = manualWorkOpen ?? (status === "waiting" || childWaitsOnYou);
   return (
     <li className="relative list-none">
       <button
@@ -1243,13 +1233,16 @@ function SidebarProjectThreadRow(props: {
             className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
           />
         )}
-        <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
         {props.codexStyle ? (
-          // The title comes first: the model label only shows once the row has room for both.
-          <span className="hidden max-w-[6.5rem] shrink-0 truncate text-[11px] text-sidebar-muted-foreground/55 @min-[20rem]/thread-row:block">
-            {resolveSubagentModelLabel({ model: null, provider, childThread: props.thread })}
+          // The model sits right after the provider icon, as in Lineage; the title takes the rest.
+          <span className="max-w-[6.5rem] shrink-0 truncate text-[11px] text-sidebar-muted-foreground/55">
+            {resolveSubagentModelLabel(
+              { model: null, provider, childThread: props.thread },
+              { shortName: shortModelNames },
+            )}
           </span>
         ) : null}
+        <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
         {workRows.length > 0 ? (
           // Room for the work toggle, which sits over this spot because buttons cannot nest.
           <span aria-hidden className={cn("shrink-0", props.codexStyle ? "w-12" : "w-8")} />
@@ -1276,7 +1269,7 @@ function SidebarProjectThreadRow(props: {
             // Left of the 14px status mark and its 8px gap in Codex style; flush with the padding otherwise.
             props.codexStyle ? "right-[30px] w-12" : "right-2 w-8",
           )}
-          onClick={() => setManualWorkOpen(!workOpen)}
+          onClick={() => setWorkOpen(!workOpen)}
         >
           {workRows.length}
           {workOpen ? (

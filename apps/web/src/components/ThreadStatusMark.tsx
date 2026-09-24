@@ -32,7 +32,7 @@ export function lineageStatusMark(status: string | null): ThreadStatusMarkStatus
 }
 
 /**
- * The right-side status mark shared by sidebar thread rows and Lineage rows: a spinner while
+ * The right-side status mark shared by sidebar thread rows and Lineage rows: a blue spinner while
  * working, a green dot when done, an icon when it needs you or failed, a gray dot when settled.
  */
 export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMarkStatus }) {
@@ -40,7 +40,10 @@ export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMark
   switch (status) {
     case "working":
       return (
-        <Spinner aria-label="Working" className={cn(iconClass, "text-sidebar-muted-foreground")} />
+        <Spinner
+          aria-label="Working"
+          className={cn(iconClass, "text-blue-600 dark:text-blue-400")}
+        />
       );
     case "waiting":
       // Its own turn is done but subagents or background tasks still run: same spinner, amber, half speed.

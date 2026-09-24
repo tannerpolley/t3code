@@ -3,6 +3,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { BotIcon, TerminalIcon } from "lucide-react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { useServerConfigs, useThreadProjection, useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { cn } from "../../lib/utils";
@@ -36,6 +37,7 @@ export function BackgroundWorkTaskList(props: {
   // Columns match the sidebar thread row's px-2, so time and status slots share a right edge.
   const padding = props.columns ? "px-2" : "px-1.5";
   const providers = useServerConfigs().get(props.environmentId)?.providers;
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   return (
     <ul
       className={
@@ -60,7 +62,10 @@ export function BackgroundWorkTaskList(props: {
             <span className="min-w-0 flex-1 truncate text-foreground/85">
               {row.child ? (
                 <>
-                  {resolveSubagentModelLabel({ model: null, provider, childThread: row.child })}
+                  {resolveSubagentModelLabel(
+                    { model: null, provider, childThread: row.child },
+                    { shortName: shortModelNames },
+                  )}
                   <span className="sr-only">, {row.label}</span>
                 </>
               ) : (
