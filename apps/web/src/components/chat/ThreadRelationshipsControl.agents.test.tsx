@@ -162,15 +162,35 @@ it("shows the matching child agent details and refreshes them when the agent set
     })),
   };
   await act(async () => renderer.update(cloneElement(panel)));
+  // The header summarizes exactly the listed rows: the failed agent is listed, none are paged away.
   expect(text()).toContain("1 failed");
-  expect(text()).not.toContain("Old agent 7");
-  await act(async () =>
-    renderer.root
-      .findAllByType("button")
-      .find((button) => button.children.includes("Show "))!
-      .props.onClick(),
-  );
   expect(text()).toContain("Old agent 7");
+  const clickLabel = (label: string) =>
+    act(async () => renderer.root.findByProps({ "aria-label": label }).props.onClick());
+  await clickLabel("Clear previous agents");
+  expect(text()).toContain("8 cleared");
+  expect(text()).not.toContain("Old agent");
+  expect(text()).not.toContain("failed");
+  state.projection = {
+    ...projection,
+    subagents: [
+      ...(state.projection as typeof projection).subagents,
+      {
+        ...agent,
+        id: "later-agent",
+        childThreadId: "later-child",
+        status: "completed",
+        title: "Later agent",
+        completedAt: DateTime.makeUnsafe(Date.now() + 60_000),
+      },
+    ],
+  };
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("Later agent");
+  expect(text()).toContain("8 cleared");
+  await clickLabel("Show cleared agents");
+  expect(text()).toContain("Old agent 7");
+  expect(text()).not.toContain("cleared");
 
   state.projection = {
     ...projection,
@@ -178,6 +198,29 @@ it("shows the matching child agent details and refreshes them when the agent set
   };
   await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).toContain("Lineage · 1 running");
+
+  // Expand all follows the rows on screen, not the collapsed agent inside closed Previous agents.
+  state.projection = {
+    ...projection,
+    subagents: [agent, { ...agent, id: "done", childThreadId: "done-child", status: "completed" }],
+  };
+  // Only rows with a loaded thread offer details.
+  state.shells = ["child-1", "done-child"].map((id) => ({
+    environmentId: "test",
+    source: {
+      id,
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+    },
+  }));
+  await act(async () => renderer.update(cloneElement(panel)));
+  await act(async () =>
+    renderer.root.findByProps({ type: "button", "aria-expanded": true }).props.onClick(),
+  );
+  const labelled = (label: string) => renderer.root.findAllByProps({ "aria-label": label });
+  await act(async () => labelled("Show details for Checker")[0]!.props.onClick());
+  expect(labelled("Collapse all details")).not.toHaveLength(0);
+  expect(labelled("Expand all details")).toHaveLength(0);
 });
 
 it("shows readable models and only differing workspace details in agent tooltips", async () => {

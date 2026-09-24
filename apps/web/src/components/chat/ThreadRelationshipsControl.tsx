@@ -34,6 +34,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { groupBy } from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
@@ -45,7 +46,6 @@ import {
   GitForkIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
-  PlusIcon,
   UnplugIcon,
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
@@ -81,91 +81,83 @@ import {
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
 
-// Lineage paging: a busy thread can accumulate dozens of forks and subagents,
-// and the panel it lives in already scrolls. Show a workable window, keep the
-// rest behind Show more, and bound what is shown so the sections below Lineage
-// stay reachable.
-const THREAD_LINEAGE_INITIAL_COUNT = 6;
-const THREAD_LINEAGE_PAGE_COUNT = 12;
+const FINISHED_AGENT_STATUSES = new Set([
+  "completed",
+  "failed",
+  "error",
+  "cancelled",
+  "interrupted",
+  "idle",
+]);
 
-export function resolveThreadLineageWindow<Row>(
-  rows: ReadonlyArray<Row>,
-  visibleCount: number,
-): { readonly visibleRows: ReadonlyArray<Row>; readonly hiddenCount: number } {
-  const visibleRows = rows.slice(0, visibleCount);
-  return { visibleRows, hiddenCount: rows.length - visibleRows.length };
-}
-
-export function ThreadLineageRowList(props: {
-  readonly hiddenCount: number;
-  readonly onShowMore: () => void;
-  readonly children: ReactNode;
+/**
+ * Splits Lineage rows into related threads (parent, forks, transfers), live agents, and finished
+ * agents. Finished agents that settled by `clearedAt` are only counted, so each group lists exactly
+ * the rows its header summarizes. Live agents are never cleared.
+ */
+export function groupThreadLineageRows(input: {
+  readonly rows: ReadonlyArray<ThreadRelationshipWalkRow>;
+  readonly currentThreadId: ThreadId;
+  readonly clearedAt: number | null;
+  readonly finishedAt: (threadId: ThreadId) => number | null;
 }) {
-  return (
-    <>
-      {/*
-        Bounded rather than free-growing so Lineage cannot push the rest of the
-        thread details panel out of view. Plain overflow, not a ScrollArea
-        component: this sits inside an already scrolling panel, where a
-        max-height-only virtual viewport measures badly. Every row is a focusable
-        button, so keyboard users reach and scroll the region through the rows
-        themselves and the container needs no extra tab stop of its own.
-      */}
-      <ul
-        aria-label="Related threads"
-        className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0"
-      >
-        {props.children}
-      </ul>
-      {props.hiddenCount > 0 ? (
-        <button
-          type="button"
-          onClick={props.onShowMore}
-          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium text-muted-foreground/70 hover:bg-black/[0.055] hover:text-foreground/80 dark:hover:bg-white/[0.075]"
-        >
-          <PlusIcon aria-hidden className="-mx-0.5 size-4 shrink-0" />
-          Show {Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT)} more
-        </button>
-      ) : null}
-    </>
-  );
+  const {
+    related = [],
+    active = [],
+    finished = [],
+  } = groupBy(input.rows, ({ edge }) => {
+    if (edge.kind !== "subagent" || isParentThreadRelationship(edge, input.currentThreadId))
+      return "related";
+    return FINISHED_AGENT_STATUSES.has(edge.status ?? "") ? "finished" : "active";
+  });
+  const { clearedAt } = input;
+  // An agent with no known finish time was listed before the clear, so it stays cleared.
+  const previous =
+    clearedAt === null
+      ? finished
+      : finished.filter(({ threadId }) => (input.finishedAt(threadId) ?? clearedAt) > clearedAt);
+  return { related, active, previous, clearedCount: finished.length - previous.length };
 }
 
 function ThreadLineageGroup(props: {
   readonly label: string | null;
   readonly rows: ReadonlyArray<ThreadRelationshipWalkRow>;
   readonly expanded: boolean;
+  readonly onToggle?: () => void;
+  readonly footer?: ReactNode;
   readonly children: (rows: ReadonlyArray<ThreadRelationshipWalkRow>) => ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(props.expanded);
-  const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
-  const { visibleRows, hiddenCount } = resolveThreadLineageWindow(props.rows, visibleCount);
   const failedCount = props.rows.filter(
     ({ edge }) => edge.status === "failed" || edge.status === "error",
   ).length;
-  if (props.rows.length === 0) return null;
+  if (props.rows.length === 0 && !props.footer) return null;
   return (
     <div>
-      {props.label ? (
+      {props.label && props.rows.length > 0 ? (
         <CollapsibleSectionHeader
-          expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
+          expanded={props.expanded}
+          onClick={props.onToggle}
           accessory={
             failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null
           }
         >
           {props.label}
-          {!expanded && ` (${props.rows.length})`}
+          {!props.expanded && ` (${props.rows.length})`}
         </CollapsibleSectionHeader>
       ) : null}
-      {expanded ? (
-        <ThreadLineageRowList
-          hiddenCount={hiddenCount}
-          onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
+      {props.expanded && props.rows.length > 0 ? (
+        // Bounded rather than free-growing so Lineage cannot push the rest of the thread details
+        // panel out of view. Plain overflow, not a ScrollArea: this sits inside an already
+        // scrolling panel, where a max-height-only virtual viewport measures badly. Every row is
+        // a focusable button, so keyboard users reach and scroll the region through the rows.
+        <ul
+          aria-label="Related threads"
+          className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0"
         >
-          {props.children(visibleRows)}
-        </ThreadLineageRowList>
+          {props.children(props.rows)}
+        </ul>
       ) : null}
+      {props.footer}
     </div>
   );
 }
@@ -249,6 +241,11 @@ export function ThreadRelationshipsPanel(props: {
   // Rows opened or closed by hand are remembered; the rest follow the Customizations default.
   const lineageDetailsExpandedById = useUiStateStore((store) => store.lineageDetailsExpandedById);
   const setLineageDetailsExpanded = useUiStateStore((store) => store.setLineageDetailsExpanded);
+  const threadKey = scopedThreadKey(ref);
+  const clearedAtIso = useUiStateStore((store) => store.lineageAgentsClearedAtById[threadKey]);
+  const setLineageAgentsClearedAt = useUiStateStore((store) => store.setLineageAgentsClearedAt);
+  const [previousOpenFor, setPreviousOpenFor] = useState<string | null>(null);
+  const previousExpanded = previousOpenFor === threadKey;
   const expandDetailsByDefault = useClientSettings((settings) => settings.lineageDetailsExpanded);
   // Off restores the original rows: title, corner status badge, no details.
   const redesign = useClientSettings((settings) => settings.threadDetailsRedesign);
@@ -269,24 +266,23 @@ export function ThreadRelationshipsPanel(props: {
   const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
 
-  const {
-    related = [],
-    active = [],
-    previous = [],
-  } = groupBy(relationshipRows, ({ edge }) => {
-    if (edge.kind !== "subagent" || isParentThreadRelationship(edge, props.threadId))
-      return "related";
-    return ["completed", "failed", "error", "cancelled", "interrupted", "idle"].includes(
-      edge.status ?? "",
-    )
-      ? "previous"
-      : "active";
+  // When an agent last settled: its own record, or its child thread's latest run once steered again.
+  const finishedAt = (threadId: ThreadId): number | null => {
+    const agent = subagentsByThreadId.get(threadId);
+    const runCompletedAt = graph.nodes.get(threadId)?.thread?.latestRunCompletedAt;
+    const times = [
+      Date.parse(agent?.completedAt ?? agent?.updatedAt ?? ""),
+      DateTime.isDateTime(runCompletedAt) ? DateTime.toEpochMillis(runCompletedAt) : NaN,
+    ].filter(Number.isFinite);
+    return times.length > 0 ? Math.max(...times) : null;
+  };
+  const { related, active, previous, clearedCount } = groupThreadLineageRows({
+    rows: relationshipRows,
+    currentThreadId: props.threadId,
+    // Clearing is part of the fork's Lineage redesign; off shows every agent.
+    clearedAt: !redesign || clearedAtIso === undefined ? null : Date.parse(clearedAtIso),
+    finishedAt,
   });
-  const groups = [
-    { id: "related", label: null, rows: related, expanded: true },
-    { id: "active", label: null, rows: active, expanded: true },
-    { id: "previous", label: "Previous agents", rows: previous, expanded: false },
-  ];
   const runningCount =
     projection?.subagents.filter((agent) =>
       isRunning(
@@ -337,12 +333,71 @@ export function ThreadRelationshipsPanel(props: {
     scopedThreadKey(scopeThreadRef(props.environmentId, threadId));
   const detailsExpanded = (threadId: ThreadId) =>
     redesign && (lineageDetailsExpandedById[detailsKey(threadId)] ?? expandDetailsByDefault);
-  const anyDetailsCollapsed = relationshipRows.some(({ threadId }) => !detailsExpanded(threadId));
+  // Expand/collapse all reads and sets only the rows on screen, so it always matches them.
+  const shownRows = [...related, ...active, ...(previousExpanded ? previous : [])].filter(
+    ({ threadId }) => !graph.nodes.get(threadId)?.missing,
+  );
+  const anyDetailsCollapsed = shownRows.some(({ threadId }) => !detailsExpanded(threadId));
   const toggleAllDetails = () =>
     setLineageDetailsExpanded(
-      relationshipRows.map(({ threadId }) => detailsKey(threadId)),
+      shownRows.map(({ threadId }) => detailsKey(threadId)),
       anyDetailsCollapsed,
     );
+
+  // Clearing hides the finished agents listed now; the stamp covers the newest of them even if
+  // the server's clock runs ahead of this one.
+  const clearPrevious = () =>
+    setLineageAgentsClearedAt(
+      threadKey,
+      new Date(
+        Math.max(Date.now(), ...previous.map(({ threadId }) => finishedAt(threadId) ?? 0)),
+      ).toISOString(),
+    );
+  const showCleared = () => {
+    setLineageAgentsClearedAt(threadKey, null);
+    setPreviousOpenFor(threadKey);
+  };
+  const groups = [
+    { id: "related", label: null, rows: related, expanded: true },
+    { id: "active", label: null, rows: active, expanded: true },
+    {
+      id: "previous",
+      label: "Previous agents",
+      rows: previous,
+      expanded: previousExpanded,
+      onToggle: () => setPreviousOpenFor(previousExpanded ? null : threadKey),
+      footer:
+        redesign &&
+        ((previousExpanded && previous.length > 0) ||
+          (previous.length === 0 && clearedCount > 0)) ? (
+          <div className="flex h-7 items-center gap-1 px-2 text-[11px] text-muted-foreground/70">
+            {clearedCount > 0 ? (
+              <>
+                {clearedCount} cleared ·
+                <button
+                  type="button"
+                  aria-label="Show cleared agents"
+                  className="cursor-pointer hover:text-foreground/80"
+                  onClick={showCleared}
+                >
+                  Show
+                </button>
+              </>
+            ) : null}
+            {previousExpanded && previous.length > 0 ? (
+              <button
+                type="button"
+                aria-label="Clear previous agents"
+                className="ms-auto cursor-pointer hover:text-foreground/80"
+                onClick={clearPrevious}
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+        ) : null,
+    },
+  ];
 
   const parentTitle =
     mergeTargetThreadId === null
@@ -356,7 +411,7 @@ export function ThreadRelationshipsPanel(props: {
       data-thread-relationships-panel
       actions={
         <>
-          {redesign ? (
+          {redesign && shownRows.length > 0 ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -407,7 +462,7 @@ export function ThreadRelationshipsPanel(props: {
       }
     >
       {groups.map((group) => (
-        <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
+        <ThreadLineageGroup key={group.id} {...group}>
           {(visibleRows) =>
             visibleRows.map(({ threadId, edge }) => {
               const node = graph.nodes.get(threadId);

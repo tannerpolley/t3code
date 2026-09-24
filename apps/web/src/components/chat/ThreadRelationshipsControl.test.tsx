@@ -1,54 +1,51 @@
+import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { renderToStaticMarkup } from "react-dom/server";
 
-import {
-  resolveSubagentProgressText,
-  resolveThreadLineageWindow,
-  ThreadLineageRowList,
-} from "./ThreadRelationshipsControl";
+import { groupThreadLineageRows, resolveSubagentProgressText } from "./ThreadRelationshipsControl";
 
-const rows = Array.from({ length: 20 }, (_, index) => `row-${index}`);
+describe("thread lineage groups", () => {
+  const parent = ThreadId.make("parent");
+  const row = (id: string, kind: "fork" | "subagent", status: string) => ({
+    threadId: ThreadId.make(id),
+    fromThreadId: parent,
+    depth: 1,
+    edge: { sourceThreadId: parent, targetThreadId: ThreadId.make(id), kind, status },
+  });
+  const rows = [
+    row("fork", "fork", "completed"),
+    row("running", "subagent", "running"),
+    row("done-before", "subagent", "completed"),
+    row("failed-unknown-time", "subagent", "failed"),
+    row("done-after", "subagent", "completed"),
+  ];
+  const finishedAt = (threadId: ThreadId) =>
+    ({ running: 50, "done-before": 90, "done-after": 200 })[threadId as string] ?? null;
+  const ids = (list: ReadonlyArray<{ readonly threadId: ThreadId }>) =>
+    list.map(({ threadId }) => threadId);
 
-function renderRowList(visibleCount: number) {
-  const { visibleRows, hiddenCount } = resolveThreadLineageWindow(rows, visibleCount);
-  return renderToStaticMarkup(
-    <ThreadLineageRowList hiddenCount={hiddenCount} onShowMore={() => {}}>
-      {visibleRows.map((row) => (
-        <li key={row}>{row}</li>
-      ))}
-    </ThreadLineageRowList>,
-  );
-}
-
-describe("thread lineage row list", () => {
-  it("shows six rows before the first expansion", () => {
-    const { visibleRows, hiddenCount } = resolveThreadLineageWindow(rows, 6);
-
-    expect(visibleRows).toEqual(rows.slice(0, 6));
-    expect(hiddenCount).toBe(14);
+  it("lists every finished agent until cleared", () => {
+    const groups = groupThreadLineageRows({
+      rows,
+      currentThreadId: parent,
+      clearedAt: null,
+      finishedAt,
+    });
+    expect(ids(groups.related)).toEqual(["fork"]);
+    expect(ids(groups.active)).toEqual(["running"]);
+    expect(ids(groups.previous)).toEqual(["done-before", "failed-unknown-time", "done-after"]);
+    expect(groups.clearedCount).toBe(0);
   });
 
-  it("offers one page at a time", () => {
-    expect(renderRowList(6)).toContain("Show 12 more");
-    expect(renderRowList(6 + 12)).toContain("Show 2 more");
-  });
-
-  it("omits the expansion affordance when everything fits", () => {
-    const markup = renderRowList(rows.length);
-
-    expect(markup).not.toContain("more");
-    expect(resolveThreadLineageWindow(rows.slice(0, 6), 6).hiddenCount).toBe(0);
-  });
-
-  it("keeps the rows in a bounded, labelled scroll region and the button outside it", () => {
-    const markup = renderRowList(6);
-    const list = /<ul([^>]*)>/.exec(markup)?.[1] ?? "";
-
-    expect(list).toContain('aria-label="Related threads"');
-    expect(list).toContain("max-h-[13.5rem]");
-    expect(list).toContain("overflow-y-auto");
-    expect(list).toContain("overscroll-contain");
-    expect(markup.indexOf("</ul>")).toBeLessThan(markup.indexOf("<button"));
+  it("clears only agents that settled by the clear, never live ones", () => {
+    const groups = groupThreadLineageRows({
+      rows,
+      currentThreadId: parent,
+      clearedAt: 100,
+      finishedAt,
+    });
+    expect(ids(groups.active)).toEqual(["running"]);
+    expect(ids(groups.previous)).toEqual(["done-after"]);
+    expect(groups.clearedCount).toBe(2);
   });
 });
 
