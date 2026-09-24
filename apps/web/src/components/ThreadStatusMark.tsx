@@ -33,7 +33,7 @@ export function lineageStatusMark(status: string | null): ThreadStatusMarkStatus
 
 /**
  * The right-side status mark shared by sidebar thread rows and Lineage rows: a spinner while
- * working, a green dot when done, an icon when it needs you or failed, nothing when settled.
+ * working, a green dot when done, an icon when it needs you or failed, a gray dot when settled.
  */
 export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMarkStatus }) {
   const iconClass = "size-3.5 shrink-0";
@@ -65,6 +65,11 @@ export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMark
     case "limited":
       return <ClockIcon aria-hidden className={cn(iconClass, "text-amber-500")} />;
     case "ready":
-      return null;
+      // A settled thread still fills the slot, so the time beside it never shifts.
+      return (
+        <span aria-label="Idle" role="img" className={cn(iconClass, "grid place-items-center")}>
+          <span className="size-2 rounded-full bg-sidebar-muted-foreground/35" />
+        </span>
+      );
   }
 }
