@@ -43,7 +43,7 @@ export interface ThreadDetailsPanelProps {
   threadId: ThreadId;
   draftId?: DraftId;
   activeProjectName: string | undefined;
-  /** Where the project's issues live; the Version Control section lists them. */
+  /** Where the project's issues live; the Issues section lists them. */
   activeProjectRepositoryIdentity: RepositoryIdentity | null | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -212,15 +212,16 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
                 />
               ) : null}
-              {!props.draftId ? (
-                <ThreadDetailsIssueRows
-                  environmentId={props.environmentId}
-                  threadId={props.threadId}
-                  repositoryIdentity={props.activeProjectRepositoryIdentity}
-                />
-              ) : null}
             </div>
           </ThreadDetailsSection>
+        ) : null}
+
+        {!props.draftId ? (
+          <ThreadDetailsIssueRows
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+            repositoryIdentity={props.activeProjectRepositoryIdentity}
+          />
         ) : null}
 
         {!props.draftId ? (

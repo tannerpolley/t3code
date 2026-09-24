@@ -9,14 +9,7 @@ import { pullRequestHostOf } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { useNavigate } from "@tanstack/react-router";
-import {
-  CheckCircle2Icon,
-  ChevronRightIcon,
-  CircleDotIcon,
-  ListIcon,
-  MinusIcon,
-  PlusIcon,
-} from "lucide-react";
+import { CheckCircle2Icon, CircleDotIcon, ListIcon, MinusIcon, PlusIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -28,6 +21,7 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironment } from "~/state/environments";
 import { issueEnvironment } from "~/state/issues";
+import { useUiStateStore } from "~/uiStateStore";
 
 import { IssueFilterMenu, useIssueFilterPreferences } from "../issues/IssueFilterMenu";
 import { groupIssuesByMilestone, type IssueGroup } from "../issues/issueTree.logic";
@@ -39,6 +33,8 @@ import {
   type IssueFilterPreferences,
 } from "../issues/issueWorkspace.logic";
 import { Button } from "../ui/button";
+import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
+import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { THREAD_DETAILS_PANEL_ROW_CLASS } from "./threadDetailsPanelStyles";
 
 /** Issue rows shown before "Show N more", matching the pull request rows. */
@@ -88,9 +84,10 @@ export function threadIssueGroups(
 }
 
 /**
- * The thread repository's issues, collapsed by default and remembered per repository. The Filter
- * menu shares the Issues page's saved choices. A row opens the issue beside the thread; the list
- * stays live while agents work on it.
+ * The fork's own sibling section for the thread repository's issues, a fork feature kept out of
+ * the vanilla Version Control section. Collapsed by default and remembered per repository. The
+ * Filter menu shares the Issues page's saved choices. A row opens the issue beside the thread;
+ * the list stays live while agents work on it.
  */
 export function ThreadDetailsIssueRows({
   environmentId,
@@ -145,30 +142,10 @@ function IssueRows({
   const more = list?.nextCursor == null ? "" : "+";
 
   return (
-    <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">
-      <div className="flex items-center gap-1 pe-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-expanded={open}
-          onClick={() => setExpandedBlocks((current) => ({ ...current, [key]: !open }))}
-          className={cn(
-            THREAD_DETAILS_PANEL_ROW_CLASS,
-            "min-w-0 flex-1 text-muted-foreground/80 active:scale-100",
-          )}
-        >
-          <ChevronRightIcon
-            aria-hidden
-            className={cn("-mx-0.5 size-4 shrink-0 transition-transform", open && "rotate-90")}
-          />
-          <span className="flex-1 text-left">Issues</span>
-          {view === null ? null : (
-            <span className="text-xs tabular-nums text-muted-foreground/70">
-              {view.total}
-              {more}
-            </span>
-          )}
-        </Button>
+    <ThreadDetailsSection
+      headingId="thread-details-issues-heading"
+      title="Issues"
+      actions={
         <IssueFilterMenu
           host=""
           hosts={[]}
@@ -177,21 +154,38 @@ function IssueRows({
           preferences={preferences}
           singleRepository
         />
+      }
+    >
+      <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">
+        <CollapsibleSectionHeader
+          expanded={open}
+          onClick={() => setExpandedBlocks((current) => ({ ...current, [key]: !open }))}
+          accessory={
+            view === null ? null : (
+              <span className="text-xs tabular-nums text-muted-foreground/70">
+                {view.total}
+                {more}
+              </span>
+            )
+          }
+        >
+          {repository}
+        </CollapsibleSectionHeader>
+        {open ? (
+          <IssueRowsBody
+            environmentId={environmentId}
+            threadId={threadId}
+            host={host}
+            repository={repository}
+            view={view}
+            failed={result._tag === "Failure"}
+            more={more}
+            showAll={showAll}
+            onShowAllChange={setShowAll}
+          />
+        ) : null}
       </div>
-      {open ? (
-        <IssueRowsBody
-          environmentId={environmentId}
-          threadId={threadId}
-          host={host}
-          repository={repository}
-          view={view}
-          failed={result._tag === "Failure"}
-          more={more}
-          showAll={showAll}
-          onShowAllChange={setShowAll}
-        />
-      ) : null}
-    </div>
+    </ThreadDetailsSection>
   );
 }
 
@@ -223,45 +217,20 @@ function IssueRowsBody({
     ) : null;
   }
   const { groups, total, hidden } = view;
+  const repoKey = repositoryKey(host, repository);
 
   return (
     <>
       {groups.map((group) => (
-        <div key={group.id} className="flex flex-col">
-          <p className="truncate px-2.5 pt-1.5 pb-0.5 text-[11px] font-medium text-muted-foreground/60">
-            {group.title}
-          </p>
-          {group.issues.map((issue) => (
-            <Button
-              key={issue.number}
-              variant="ghost"
-              size="sm"
-              className={cn(THREAD_DETAILS_PANEL_ROW_CLASS, "active:scale-100")}
-              onClick={() =>
-                useRightPanelStore.getState().openIssue(scopeThreadRef(environmentId, threadId), {
-                  environmentId,
-                  host,
-                  repository,
-                  number: issue.number,
-                  url: issue.url,
-                })
-              }
-            >
-              {issue.state === "closed" ? (
-                <CheckCircle2Icon
-                  aria-hidden
-                  className="-mx-0.5 size-4 shrink-0 text-muted-foreground"
-                />
-              ) : (
-                <CircleDotIcon aria-hidden className="-mx-0.5 size-4 shrink-0 text-emerald-500" />
-              )}
-              <span className="min-w-0 flex-1 truncate text-left">
-                <span className="me-1 text-muted-foreground">#{issue.number}</span>
-                {issue.title || "Untitled issue"}
-              </span>
-            </Button>
-          ))}
-        </div>
+        <IssueMilestoneGroup
+          key={group.id}
+          groupKey={`${repoKey}:${group.id}`}
+          group={group}
+          environmentId={environmentId}
+          threadId={threadId}
+          host={host}
+          repository={repository}
+        />
       ))}
       {total === 0 ? (
         <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">No matching issues</p>
@@ -302,5 +271,73 @@ function IssueRowsBody({
         Browse all issues
       </Button>
     </>
+  );
+}
+
+/**
+ * One milestone's issues, collapsed by hand and remembered per repository and milestone (default
+ * expanded), matching how Lineage's groups collapse.
+ */
+function IssueMilestoneGroup({
+  groupKey,
+  group,
+  environmentId,
+  threadId,
+  host,
+  repository,
+}: {
+  groupKey: string;
+  group: IssueGroup;
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  host: string;
+  repository: string;
+}) {
+  const collapsed = useUiStateStore(
+    (state) => state.issueMilestoneCollapsedById[groupKey] ?? false,
+  );
+  const setIssueMilestoneCollapsed = useUiStateStore((state) => state.setIssueMilestoneCollapsed);
+  return (
+    <div className="flex flex-col">
+      <CollapsibleSectionHeader
+        expanded={!collapsed}
+        onClick={() => setIssueMilestoneCollapsed(groupKey, !collapsed)}
+      >
+        {group.title}
+        {collapsed && ` (${group.issues.length})`}
+      </CollapsibleSectionHeader>
+      {!collapsed
+        ? group.issues.map((issue) => (
+            <Button
+              key={issue.number}
+              variant="ghost"
+              size="sm"
+              className={cn(THREAD_DETAILS_PANEL_ROW_CLASS, "active:scale-100")}
+              onClick={() =>
+                useRightPanelStore.getState().openIssue(scopeThreadRef(environmentId, threadId), {
+                  environmentId,
+                  host,
+                  repository,
+                  number: issue.number,
+                  url: issue.url,
+                })
+              }
+            >
+              {issue.state === "closed" ? (
+                <CheckCircle2Icon
+                  aria-hidden
+                  className="-mx-0.5 size-4 shrink-0 text-muted-foreground"
+                />
+              ) : (
+                <CircleDotIcon aria-hidden className="-mx-0.5 size-4 shrink-0 text-emerald-500" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-left">
+                <span className="me-1 text-muted-foreground">#{issue.number}</span>
+                {issue.title || "Untitled issue"}
+              </span>
+            </Button>
+          ))
+        : null}
+    </div>
   );
 }
