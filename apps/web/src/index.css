@@ -456,7 +456,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       100% 100%;
     background-repeat: no-repeat;
     background-clip: text;
-    animation: live-tool-shine 2.2s steps(30) infinite;
+    animation: live-tool-shine 1.4s steps(42) infinite;
     animation-play-state: var(--visible-animation-state, paused);
   }
 }
@@ -515,7 +515,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     transparent 100%
   );
   mask-repeat: no-repeat;
-  animation: live-activity-focus 2.2s linear infinite;
+  animation: live-activity-focus 1.4s linear infinite;
   animation-play-state: var(--visible-animation-state, paused);
   will-change: var(--visible-animation-will-change, auto);
 
@@ -528,7 +528,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @utility live-activity-focus-counter {
   width: 100%;
-  animation: live-activity-focus-counter 2.2s linear infinite;
+  animation: live-activity-focus-counter 1.4s linear infinite;
   animation-play-state: var(--visible-animation-state, paused);
   will-change: var(--visible-animation-will-change, auto);
 
