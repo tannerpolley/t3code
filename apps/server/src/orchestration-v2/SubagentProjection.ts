@@ -250,3 +250,41 @@ export function delegatedTaskProgress(projection: {
     resultRun,
   };
 }
+
+/**
+ * Questions and approvals a thread is blocked on that need the user. Auth refresh and dynamic
+ * tool calls resolve without the user, matching the client's pending-request rule. `summary` is
+ * a short preview for parent notices and task_status.
+ */
+export function pendingUserRequests(
+  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,
+) {
+  return projection.runtimeRequests.flatMap((request) => {
+    if (
+      request.status !== "pending" ||
+      request.kind === "auth_refresh" ||
+      request.kind === "dynamic_tool_call"
+    ) {
+      return [];
+    }
+    const kind = request.kind === "user_input" ? ("input" as const) : ("approval" as const);
+    const item = projection.turnItems.findLast(
+      (candidate) =>
+        (candidate.type === "user_input_request" || candidate.type === "approval_request") &&
+        candidate.requestId === request.id,
+    );
+    const summary =
+      (item?.type === "user_input_request"
+        ? trimmed(item.questions.map((question) => question.question).join(" / "))
+        : item?.type === "approval_request"
+          ? trimmed(item.prompt)
+          : undefined) ?? (kind === "input" ? "a question" : `${request.kind} approval`);
+    return [
+      {
+        id: request.id,
+        kind,
+        summary: summary.length > 200 ? `${summary.slice(0, 197)}...` : summary,
+      },
+    ];
+  });
+}

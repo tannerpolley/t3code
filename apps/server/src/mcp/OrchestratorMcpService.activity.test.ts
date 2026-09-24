@@ -325,6 +325,139 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
+it("taskStatus reports a child waiting on the user, but not an auth refresh", async () => {
+  const parentProjection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    visibleTurnItems: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [
+      {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: activeRunId,
+        parentNodeId: NodeId.make("node-parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: codexDriver,
+        providerInstanceId: customCodexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Inspect the custom instance.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      },
+    ],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+
+  const childProjection = {
+    thread: {
+      ...baseThread({
+        threadId: childThreadId,
+        title: "Child",
+        instanceId: customCodexInstanceId,
+        model: "gpt-5.4",
+      }),
+      lineage: {
+        parentThreadId,
+        relationshipToParent: "subagent",
+        rootThreadId: parentThreadId,
+      },
+      createdBy: "agent",
+    },
+    runs: [
+      makeRun({
+        id: childRunId,
+        ordinal: 1,
+        status: "running",
+        instanceId: customCodexInstanceId,
+      }),
+    ],
+    visibleTurnItems: [],
+    runtimeRequests: [
+      {
+        id: "request-mcp-question",
+        kind: "user_input",
+        status: "pending",
+      },
+      {
+        id: "request-mcp-auth",
+        kind: "auth_refresh",
+        status: "pending",
+      },
+    ],
+    turnItems: [
+      {
+        type: "user_input_request",
+        requestId: "request-mcp-question",
+        questions: [{ id: "q1", header: "Scope", question: "Fix the lexer too?", options: [] }],
+      },
+    ],
+    messages: [],
+    contextTransfers: [
+      {
+        type: "subagent_spawn",
+        sourceThreadId: parentThreadId,
+        targetThreadId: childThreadId,
+        targetRunId: childRunId,
+      },
+    ],
+    subagents: [],
+    providerThreads: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+
+  const layer = orchestratorMcpServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService)({
+          getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          getThreadRecords: (threadId) => {
+            if (threadId === parentThreadId) return Effect.succeed(parentProjection);
+            if (threadId === childThreadId) return Effect.succeed(childProjection);
+            return Effect.die(`unexpected thread ${threadId}`);
+          },
+        } satisfies Partial<ThreadManagementService["Service"]>),
+        Layer.mock(ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry["Service"]>),
+        Layer.mock(ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService;
+    const result = yield* service.taskStatus(makeScope(), taskId);
+    expect(result.status).toBe("running");
+    expect(result.waitingOnUser).toEqual({
+      kind: "input",
+      requestIds: ["request-mcp-question"],
+      preview: "Fix the lexer too?",
+    });
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
 it("readThread reaches a thread the user attached as context, but not one an agent attached", async () => {
   const foreignProjectId = ProjectId.make("project-mcp-orchestrator-foreign");
   const foreignThreadId = ThreadId.make("thread-mcp-orchestrator-foreign");

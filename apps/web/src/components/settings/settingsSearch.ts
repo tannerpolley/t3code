@@ -360,6 +360,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["cross project read threads agents mcp access subagents delegated"],
   },
   {
+    id: "wake-parent-on-child-question",
+    title: "Wake the parent when a delegated task asks you something",
+    to: "/settings/customizations",
+    searchTerms: [
+      "delegated task subagent child question approval waiting input notify parent wake",
+    ],
+  },
+  {
     id: "codex-style-sidebar",
     title: "Codex-style project sidebar",
     to: "/settings/customizations",

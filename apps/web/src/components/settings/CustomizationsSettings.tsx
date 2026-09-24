@@ -493,6 +493,11 @@ export function CustomizationsSettings() {
           searchId="top-level-threads-read-all-projects"
           description="Let agents in top-level threads read, but not change, threads in other projects on this environment. Subagents and delegated tasks stay limited to their own project."
         />
+        <ServerSwitchRow
+          settingKey="wakeParentOnChildQuestion"
+          searchId="wake-parent-on-child-question"
+          description="When a delegated task asks you a question or waits on an approval, tell its parent thread once so it can relay or answer it."
+        />
       </CustomizationsGroup>
       <CustomizationsGroup title="Usage" section="usage" />
       <CustomizationsGroup title="Appearance & motion" section="motion" />

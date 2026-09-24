@@ -11,6 +11,7 @@ import {
   PositiveInt,
   ProjectId,
   RunId,
+  RuntimeRequestId,
   ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -207,6 +208,16 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   waitTimedOut: Schema.Boolean.annotate({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
+  }),
+  waitingOnUser: Schema.optional(
+    Schema.Struct({
+      kind: Schema.Literals(["input", "approval"]),
+      requestIds: Schema.Array(RuntimeRequestId),
+      preview: Schema.String,
+    }),
+  ).annotate({
+    description:
+      "Present while the child is blocked on a question or approval for the user. Relay it to the user; a question (kind input) can also be answered with t3_pending_request_respond on childThreadId, an approval only by the user.",
   }),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;

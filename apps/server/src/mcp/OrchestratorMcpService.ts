@@ -65,6 +65,7 @@ import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRe
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  pendingUserRequests,
 } from "../orchestration-v2/SubagentProjection.ts";
 import {
   isActiveRun,
@@ -1055,10 +1056,31 @@ const make = Effect.gen(function* () {
       const childControls = yield* threadManagement
         .getThreadRecords(
           task.childThreadId,
-          ["runs", "messages", "contextTransfers", "subagents", "providerThreads"],
+          [
+            "runs",
+            "messages",
+            "contextTransfers",
+            "subagents",
+            "providerThreads",
+            "runtimeRequests",
+          ],
           { messageRoles: ["user"] },
         )
         .pipe(Effect.mapError(threadManagementFailure));
+      // Only a child with an open request pays for reading the request items.
+      const requestItems = childControls.runtimeRequests.some(
+        (request) => request.status === "pending",
+      )
+        ? (yield* threadManagement
+            .getThreadRecords(task.childThreadId, ["turnItems"], {
+              turnItemTypes: ["user_input_request", "approval_request"],
+            })
+            .pipe(Effect.mapError(threadManagementFailure))).turnItems
+        : [];
+      const waitingRequests = pendingUserRequests({
+        runtimeRequests: childControls.runtimeRequests,
+        turnItems: requestItems,
+      });
       const childRun = delegatedTaskRun(childControls, task);
       const terminalRun = latestTerminalResultRun(childControls, childRun);
       const progress = delegatedTaskProgress(childControls);
@@ -1140,6 +1162,15 @@ const make = Effect.gen(function* () {
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
         waitTimedOut,
+        ...(waitingRequests[0] === undefined
+          ? {}
+          : {
+              waitingOnUser: {
+                kind: waitingRequests[0].kind,
+                requestIds: waitingRequests.map((request) => request.id),
+                preview: waitingRequests[0].summary,
+              },
+            }),
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (
         acknowledgeTerminal &&

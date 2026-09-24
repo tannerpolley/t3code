@@ -12,7 +12,9 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -32,6 +34,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { makeNotifyParent } from "./ChildQuestionWake.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
@@ -648,5 +651,172 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
           },
         );
       }),
+  );
+});
+
+const seedChildWaitingOnUser = (input: {
+  readonly name: string;
+  readonly requestKind: "user_input" | "auth_refresh";
+}) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const sink = yield* EventSinkV2;
+    const now = yield* DateTime.now;
+    const parentThreadId = ThreadId.make(`thread:child-question-${input.name}-parent`);
+    const childThreadId = ThreadId.make(`thread:child-question-${input.name}-child`);
+    const runId = RunId.make(`run:child-question-${input.name}`);
+    const taskId = NodeId.make(`node:child-question-${input.name}-task`);
+    const requestNodeId = NodeId.make(`node:child-question-${input.name}-request`);
+    const requestId = RuntimeRequestId.make(`request:child-question-${input.name}`);
+    yield* seedParentWithTerminalTask({
+      threadId: parentThreadId,
+      projectId: ProjectId.make(`project:child-question-${input.name}`),
+      runId,
+      rootNodeId: NodeId.make(`node:child-question-${input.name}-root`),
+      taskId,
+      deliveryState: "claimed",
+      now,
+    });
+    const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+    const { completionDelivery: _completionDelivery, ...task } = parent.subagents[0]!;
+    yield* sink.write({
+      commandId: CommandId.make(`command:seed-child-question:${input.name}`),
+      events: [
+        {
+          id: EventId.make(`event:child-question-${input.name}-task`),
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          runId,
+          nodeId: taskId,
+          occurredAt: now,
+          payload: {
+            ...task,
+            childThreadId,
+            status: "running",
+            result: null,
+            completedAt: null,
+          },
+        },
+        {
+          id: EventId.make(`event:child-question-${input.name}-thread`),
+          type: "thread.created",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: {
+            ...parent.thread,
+            id: childThreadId,
+            title: "Review the parser",
+            lineage: {
+              parentThreadId,
+              relationshipToParent: "subagent",
+              rootThreadId: parentThreadId,
+            },
+            forkedFrom: { type: "node", nodeId: taskId },
+          },
+        },
+        {
+          id: EventId.make(`event:child-question-${input.name}-request`),
+          type: "runtime-request.updated",
+          threadId: childThreadId,
+          nodeId: requestNodeId,
+          occurredAt: now,
+          payload: {
+            id: requestId,
+            nodeId: requestNodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: input.requestKind,
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        },
+        {
+          id: EventId.make(`event:child-question-${input.name}-item`),
+          type: "turn-item.updated",
+          threadId: childThreadId,
+          nodeId: requestNodeId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`item:child-question-${input.name}`),
+            threadId: childThreadId,
+            runId: null,
+            nodeId: requestNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "waiting",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type: "user_input_request",
+            requestId,
+            questions: [
+              {
+                id: "q1",
+                header: "Scope",
+                question: "Should I also fix the lexer?",
+                options: [],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    return { parentThreadId, childThreadId, requestId };
+  });
+
+const childQuestionNotices = (parentThreadId: ThreadId) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+    return parent.messages.filter((message) =>
+      String(message.id).startsWith("message:child-question:"),
+    );
+  });
+
+it.layer(TestLayer)("child question wake", (it) => {
+  it.effect("tells the parent once per request, even when notified again after a restart", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedChildWaitingOnUser({ name: "on", requestKind: "user_input" });
+      const settings = ServerSettingsService.layerTest();
+      const notify = yield* makeNotifyParent.pipe(Effect.provide(settings));
+      yield* notify(seeded.childThreadId, seeded.requestId);
+      // A fresh notifier stands in for a restarted server re-seeing the same request.
+      const restarted = yield* makeNotifyParent.pipe(Effect.provide(settings));
+      yield* restarted(seeded.childThreadId, seeded.requestId);
+
+      const notices = yield* childQuestionNotices(seeded.parentThreadId);
+      assert.equal(notices.length, 1);
+      assert.include(notices[0]!.text, "Review the parser is waiting on the user");
+      assert.include(notices[0]!.text, "Should I also fix the lexer?");
+      assert.equal(notices[0]!.notification?.summary, "Review the parser has a question for you");
+    }),
+  );
+
+  it.effect("stays quiet when the switch is off", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedChildWaitingOnUser({ name: "off", requestKind: "user_input" });
+      const notify = yield* makeNotifyParent.pipe(
+        Effect.provide(ServerSettingsService.layerTest({ wakeParentOnChildQuestion: false })),
+      );
+      yield* notify(seeded.childThreadId, seeded.requestId);
+      assert.equal((yield* childQuestionNotices(seeded.parentThreadId)).length, 0);
+    }),
+  );
+
+  it.effect("ignores auth refresh requests", () =>
+    Effect.gen(function* () {
+      const seeded = yield* seedChildWaitingOnUser({ name: "auth", requestKind: "auth_refresh" });
+      const notify = yield* makeNotifyParent.pipe(
+        Effect.provide(ServerSettingsService.layerTest()),
+      );
+      yield* notify(seeded.childThreadId, seeded.requestId);
+      assert.equal((yield* childQuestionNotices(seeded.parentThreadId)).length, 0);
+    }),
   );
 });

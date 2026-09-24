@@ -1315,6 +1315,11 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   /**
+   * Wake a delegated task's parent thread once when the child asks the user a question or waits
+   * on an approval, so the parent can relay or answer it.
+   */
+  wakeParentOnChildQuestion: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Agent browser tabs: a thread keeps at most 3 agent-opened tabs, and a tab stuck loading gets
    * one hard reload and a retry.
    */
@@ -1624,6 +1629,7 @@ export const ServerSettingsPatch = Schema.Struct({
   projectFolderRoot: Schema.optionalKey(TrimmedString),
   idleAgentSessionMinutes: Schema.optionalKey(NonNegativeInt),
   topLevelThreadsReadAllProjects: Schema.optionalKey(Schema.Boolean),
+  wakeParentOnChildQuestion: Schema.optionalKey(Schema.Boolean),
   agentBrowserTabLimits: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
