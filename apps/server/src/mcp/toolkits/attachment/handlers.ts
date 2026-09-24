@@ -62,6 +62,8 @@ export const AttachmentHandlersLive = AttachmentToolkit.toLayer({
       const result = yield* ThreadMessageIntake.sendToThread({
         projectId: caller.projectId,
         threadId: projection.thread.id,
+        // Like t3_thread_send: a parent's send to its own delegated child reports back.
+        senderThreadId: caller.id,
         commandId,
         messageId,
         text: input.message ?? "",
