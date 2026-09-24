@@ -113,6 +113,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Model labels drop the company name the provider icon already shows and lead with the model's own name, then its version: Opus 5.5, Sonnet 5, Sol 6. Applies to the sidebar, Lineage, agent details and the composer's model button, always right after the icon; the model list keeps full names. Off restores the full names.",
   },
   {
+    key: "backgroundProcessOutput",
+    searchId: "background-process-output",
+    section: "lineage",
+    description:
+      "Click a Claude background process to watch its live output. Off shows process rows as plain text.",
+  },
+  {
     key: "composerCodeFormatting",
     searchId: "composer-code-formatting",
     section: "composer",
@@ -186,6 +193,41 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
   {
     title: "Steered subagents show as running",
     description: "A subagent you send new work to shows as running in Lineage, not finished.",
+  },
+  {
+    title: "Resumed subagents show their current run",
+    description:
+      "A subagent you send new work to shows that run's time, status and model in Lineage, not its first run's.",
+  },
+  {
+    title: "Queued threads resume after a restart",
+    description:
+      "A thread with messages queued, or a steer sent before the agent started, picks up its running turn after a restart instead of being cancelled.",
+  },
+  {
+    title: "Merges don't settle running subagents",
+    description:
+      "Merging a pull request no longer auto-settles a Claude or Codex subagent that is still running.",
+  },
+  {
+    title: "Resumed tasks show as running",
+    description:
+      "A delegated task its parent sent more work to reads as running until that work reports back, instead of showing the old result as completed.",
+  },
+  {
+    title: "Waiting parents see child questions",
+    description:
+      "A parent waiting on a delegated child gets the child's question right away instead of after the wait times out, and a question still pending at restart reaches the parent afterwards.",
+  },
+  {
+    title: "Subagents show their real model",
+    description:
+      "Codex and Claude subagents show the model and effort they actually run on, in Lineage and the sidebar, instead of the parent's.",
+  },
+  {
+    title: "Lineage marks match the sidebar",
+    description:
+      "A thread's Lineage mark matches its sidebar mark: amber while it waits on background work, and a finished agent's green dot turns gray once you open it.",
   },
   {
     title: "Resumed child tasks report their real result",

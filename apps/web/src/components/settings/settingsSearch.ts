@@ -436,6 +436,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork model name label short opus sonnet sol claude gpt icon"],
   },
   {
+    id: "background-process-output",
+    title: "Background process output",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork background process shell output log live claude terminal"],
+  },
+  {
     id: "chat-math",
     title: "Math in chat",
     to: "/settings/customizations",
@@ -475,7 +481,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "usage-limit-model-breakdown",
-    title: "Models in usage limits",
+    title: "Usage limit model breakdown",
     to: "/settings/customizations",
     searchTerms: [
       "customization fork usage limits window models breakdown weekly session estimate chart",
