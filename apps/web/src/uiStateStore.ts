@@ -60,6 +60,8 @@ export interface PersistedUiState {
   pullRequestMergeMethod?: string;
   branchPickerCollapsedGroups?: string[];
   lineageDetailsExpandedById?: Record<string, boolean>;
+  lineageAgentsClearedAtById?: Record<string, string>;
+  issueMilestoneCollapsedById?: Record<string, boolean>;
 }
 
 export interface UiProjectState {
@@ -95,6 +97,16 @@ export interface UiBranchPickerState {
    * ponytail: never pruned; entries are tiny. Drop ones for deleted threads if this ever grows.
    */
   lineageDetailsExpandedById: Record<string, boolean>;
+  /**
+   * When finished agents were last cleared from a thread's Lineage, keyed by that thread's scoped
+   * key. Agents that settle later still show; removing the entry shows the cleared ones again.
+   */
+  lineageAgentsClearedAtById: Record<string, string>;
+  /**
+   * Issue milestone groups collapsed by hand in the thread details panel, keyed by repository and
+   * milestone. Groups without an entry default expanded.
+   */
+  issueMilestoneCollapsedById: Record<string, boolean>;
 }
 
 export interface UiState
@@ -113,6 +125,8 @@ const initialState: UiState = {
   pullRequestMergeMethod: "merge",
   branchPickerCollapsedGroups: [],
   lineageDetailsExpandedById: {},
+  lineageAgentsClearedAtById: {},
+  issueMilestoneCollapsedById: {},
 };
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
@@ -272,6 +286,8 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
     lineageDetailsExpandedById: sanitizeBooleanRecord(parsed.lineageDetailsExpandedById),
+    lineageAgentsClearedAtById: sanitizeTimestampRecord(parsed.lineageAgentsClearedAtById),
+    issueMilestoneCollapsedById: sanitizeBooleanRecord(parsed.issueMilestoneCollapsedById),
     branchPickerCollapsedGroups: sanitizeBranchPickerCollapsedGroups(
       parsed.branchPickerCollapsedGroups,
     ),
@@ -354,6 +370,8 @@ export function persistState(state: UiState): void {
         pullRequestMergeMethod: state.pullRequestMergeMethod,
         branchPickerCollapsedGroups: state.branchPickerCollapsedGroups,
         lineageDetailsExpandedById: state.lineageDetailsExpandedById,
+        lineageAgentsClearedAtById: state.lineageAgentsClearedAtById,
+        issueMilestoneCollapsedById: state.issueMilestoneCollapsedById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -493,6 +511,31 @@ export function setLineageDetailsExpanded(
   const lineageDetailsExpandedById = { ...state.lineageDetailsExpandedById };
   for (const key of changed) lineageDetailsExpandedById[key] = expanded;
   return { ...state, lineageDetailsExpandedById };
+}
+
+/** Clears a thread's finished Lineage agents as of `clearedAt`, or shows them again with null. */
+export function setLineageAgentsClearedAt(
+  state: UiState,
+  key: string,
+  clearedAt: string | null,
+): UiState {
+  if ((state.lineageAgentsClearedAtById[key] ?? null) === clearedAt) return state;
+  const { [key]: _previous, ...lineageAgentsClearedAtById } = state.lineageAgentsClearedAtById;
+  if (clearedAt !== null) lineageAgentsClearedAtById[key] = clearedAt;
+  return { ...state, lineageAgentsClearedAtById };
+}
+
+/** Collapses or expands one issue milestone group by hand; other groups keep their default. */
+export function setIssueMilestoneCollapsed(
+  state: UiState,
+  key: string,
+  collapsed: boolean,
+): UiState {
+  if ((state.issueMilestoneCollapsedById[key] ?? false) === collapsed) return state;
+  return {
+    ...state,
+    issueMilestoneCollapsedById: { ...state.issueMilestoneCollapsedById, [key]: collapsed },
+  };
 }
 
 export function setSidebarMode(state: UiState, mode: SidebarMode): UiState {
@@ -777,6 +820,8 @@ interface UiStateStore extends UiState {
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setBranchPickerGroupCollapsed: (group: BranchPickerGroup, collapsed: boolean) => void;
   setLineageDetailsExpanded: (keys: readonly string[], expanded: boolean) => void;
+  setLineageAgentsClearedAt: (key: string, clearedAt: string | null) => void;
+  setIssueMilestoneCollapsed: (key: string, collapsed: boolean) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -840,6 +885,10 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setBranchPickerGroupCollapsed(state, group, collapsed)),
   setLineageDetailsExpanded: (keys, expanded) =>
     set((state) => setLineageDetailsExpanded(state, keys, expanded)),
+  setLineageAgentsClearedAt: (key, clearedAt) =>
+    set((state) => setLineageAgentsClearedAt(state, key, clearedAt)),
+  setIssueMilestoneCollapsed: (key, collapsed) =>
+    set((state) => setIssueMilestoneCollapsed(state, key, collapsed)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

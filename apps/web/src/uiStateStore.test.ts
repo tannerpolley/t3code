@@ -34,6 +34,8 @@ import {
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     lineageDetailsExpandedById: {},
+    lineageAgentsClearedAtById: {},
+    issueMilestoneCollapsedById: {},
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectSections: [],
@@ -376,6 +378,8 @@ describe("parsePersistedState", () => {
       pullRequestMergeMethod: "merge",
       branchPickerCollapsedGroups: [],
       lineageDetailsExpandedById: {},
+      lineageAgentsClearedAtById: {},
+      issueMilestoneCollapsedById: {},
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -510,6 +514,8 @@ describe("uiStateStore persistence", () => {
       pullRequestMergeMethod: "merge",
       branchPickerCollapsedGroups: [],
       lineageDetailsExpandedById: {},
+      lineageAgentsClearedAtById: {},
+      issueMilestoneCollapsedById: {},
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
