@@ -31,11 +31,19 @@ it.effect("starts without scanning or rebuilding projection history", () =>
     const result = yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
       importLegacyShells: record("import"),
       recover: record("recover").pipe(Effect.as({ closedRequests: 2 })),
+      // Result wakes offered before recover would be cancelled or held by it.
+      recoverDelegatedResults: record("results"),
       startEffectWorker: record("worker"),
       autoBootstrap: record("bootstrap").pipe(Effect.as({ projectId: "project-1" })),
     });
 
-    assert.deepEqual(yield* Ref.get(calls), ["import", "recover", "worker", "bootstrap"]);
+    assert.deepEqual(yield* Ref.get(calls), [
+      "import",
+      "recover",
+      "results",
+      "worker",
+      "bootstrap",
+    ]);
     assert.deepEqual(result, {
       recovery: { closedRequests: 2 },
       bootstrap: { projectId: "project-1" },

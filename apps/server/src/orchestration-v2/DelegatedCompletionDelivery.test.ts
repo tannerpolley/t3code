@@ -1376,3 +1376,125 @@ it.layer(TestLayer)("resumed delegated child", (it) => {
     }),
   );
 });
+
+it.layer(TestLayer)("wake cancelled by a restart", (it) => {
+  /**
+   * A parent whose cohort already spent one delivery and whose follow-up wake for a finished task
+   * ended cancelled, written under a reconcile command as a restart leaves it.
+   */
+  const seedCancelledWake = (name: string, wakeStarted: boolean) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const sink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:${name}`);
+      const runId = RunId.make(`run:${name}`);
+      const taskId = NodeId.make(`node:${name}-task`);
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make(`project:${name}`),
+        runId,
+        rootNodeId: NodeId.make(`node:${name}-root`),
+        taskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [taskId],
+        now,
+      });
+      const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const wakeRunId = RunId.make(`run:${name}-wake`);
+      const wakeMessageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+      yield* sink.write({
+        commandId: CommandId.make(`command:runtime-reconcile:startup:${name}`),
+        events: [
+          {
+            id: EventId.make(`event:${name}-parent-done`),
+            type: "run.updated",
+            threadId,
+            runId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: { ...parentRun, status: "completed", completedAt: now },
+          },
+          {
+            id: EventId.make(`event:${name}-wake-message`),
+            type: "message.updated",
+            threadId,
+            runId: wakeRunId,
+            occurredAt: now,
+            payload: {
+              id: wakeMessageId,
+              threadId,
+              runId: wakeRunId,
+              nodeId: null,
+              role: "user",
+              text: "Delegated task finished.",
+              attachments: [],
+              streaming: false,
+              createdBy: "agent",
+              creationSource: "server",
+              delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make(`event:${name}-wake-run`),
+            type: "run.updated",
+            threadId,
+            runId: wakeRunId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              ...parentRun,
+              id: wakeRunId,
+              ordinal: 2,
+              userMessageId: wakeMessageId,
+              rootNodeId: null,
+              status: "cancelled",
+              startedAt: wakeStarted ? now : null,
+              completedAt: now,
+              delegatedCompletion: undefined,
+            },
+          },
+        ],
+      });
+      return { threadId, runId, taskId };
+    });
+
+  it.effect("re-delivers a result whose wake never started, but not one whose wake ran", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const unstarted = yield* seedCancelledWake("restart-wake-unstarted", false);
+      const started = yield* seedCancelledWake("restart-wake-started", true);
+      yield* orchestrator.recoverDelegatedResults;
+
+      const unstartedParent = yield* orchestrator.getThreadProjection(unstarted.threadId);
+      const unstartedCohort = unstartedParent.runs.find(
+        (run) => run.id === unstarted.runId,
+      )?.delegatedCompletion;
+      // Owed again under a fresh delivery; the unseen wake did not spend the allowance.
+      assert.equal(unstartedCohort?.settledDeliveryCount, 1);
+      assert.deepEqual(unstartedCohort?.delivery?.taskIds, [unstarted.taskId]);
+      assert.equal(unstartedCohort?.delivery?.generation, 2);
+      assert.equal(
+        unstartedParent.subagents.find((task) => task.id === unstarted.taskId)?.completionDelivery
+          ?.state,
+        "claimed",
+      );
+
+      // A wake the provider saw spends the allowance, so a cancelled one is not re-offered.
+      const startedParent = yield* orchestrator.getThreadProjection(started.threadId);
+      const startedCohort = startedParent.runs.find(
+        (run) => run.id === started.runId,
+      )?.delegatedCompletion;
+      assert.equal(startedCohort?.settledDeliveryCount, 2);
+      assert.isNull(startedCohort?.delivery);
+      assert.equal(
+        startedParent.subagents.find((task) => task.id === started.taskId)?.completionDelivery
+          ?.state,
+        "pending",
+      );
+    }),
+  );
+});

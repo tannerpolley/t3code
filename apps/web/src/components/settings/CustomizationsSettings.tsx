@@ -306,6 +306,11 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
     title: "Disconnected Codex sessions stop their MCP servers",
     description: "Disconnecting a Codex session unloads it, so the MCP servers it started stop.",
   },
+  {
+    title: "Results found at startup reach their parent",
+    description:
+      "A delegated task that finished before a restart wakes its parent afterwards instead of the wake being cancelled or left in a paused queue.",
+  },
 ];
 
 function CustomizationSwitchRows({ section }: { readonly section: CustomizationSection }) {
