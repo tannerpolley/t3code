@@ -5,18 +5,14 @@ import { TerminalIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
-import { useServerConfigs, useThreadProjection, useThreadShell } from "../../state/entities";
+import { useServerConfigs, useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "./AgentElapsed";
 import { BackgroundProcessOutputButton } from "./BackgroundProcessOutput";
-import {
-  type BackgroundWorkTaskRow,
-  describeBackgroundWorkTasks,
-} from "./BackgroundWorkTaskList.logic";
-import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import type { BackgroundWorkTaskRow } from "./BackgroundWorkTaskList.logic";
 import { resolveSubagentModelLabel } from "./SubagentTooltipContent";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
 
@@ -184,36 +180,5 @@ export function BackgroundWorkTaskList(props: {
         );
       })}
     </ul>
-  );
-}
-
-/**
- * Thread details block for the thread's pending non-agent background work (Claude background
- * shells and monitors, Codex background terminals), which Lineage leaves out. Hidden when empty.
- */
-export function ThreadBackgroundProcessesPanel(props: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-}) {
-  const ref = scopeThreadRef(props.environmentId, props.threadId);
-  const tasks = useThreadShell(ref)?.pendingBackgroundTasks ?? [];
-  const projection = useThreadProjection(ref)?.projection ?? null;
-  const rows =
-    tasks.length === 0 || projection === null
-      ? []
-      : describeBackgroundWorkTasks(tasks, projection).filter((row) => row.kind === "process");
-  if (rows.length === 0) return null;
-  return (
-    <ThreadDetailsSection
-      headingId="thread-details-background-processes-heading"
-      title="Background processes"
-    >
-      <BackgroundWorkTaskList
-        compact
-        environmentId={props.environmentId}
-        threadId={props.threadId}
-        rows={rows}
-      />
-    </ThreadDetailsSection>
   );
 }

@@ -96,7 +96,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "thread-details-redesign",
     section: "lineage",
     description:
-      "Lineage rows lead with model and effort, end in a status mark (spinner, green done dot, failure icon) and open into details; a Background processes block lists running shells; Clear hides finished agents under Previous agents; the bar above the composer shrinks to one Stop line; thread-details labels are larger. Off restores the original Lineage rows, the task list in the bar and the smaller labels.",
+      "Lineage rows lead with model and effort, end in a status mark (spinner, green done dot, failure icon) and open into details; running shells list in Lineage as terminal rows, beside the agents; Clear hides finished agents under Previous agents; the bar above the composer shrinks to one Stop line; thread-details labels are larger. Off restores the original Lineage rows, the task list in the bar and the smaller labels.",
   },
   {
     key: "lineageDetailsExpanded",

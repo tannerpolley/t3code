@@ -6781,7 +6781,7 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
   }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
-  // One slim line: the details live in Lineage and Background processes; this keeps Stop reachable
+  // One slim line: the details live in Lineage; this keeps Stop reachable
   // after the turn has settled. With the thread details redesign off, it lists the tasks again.
   const slimBackgroundWorkBar = useClientSettings(selectThreadDetailsRedesign);
   const backgroundWorkBannerItem = useMemo<ComposerBannerStackItem | null>(() => {

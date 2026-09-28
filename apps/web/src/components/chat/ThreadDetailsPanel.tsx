@@ -9,7 +9,6 @@ import type {
 import { AlertTriangleIcon, XIcon } from "lucide-react";
 
 import type { DraftId } from "../../composerDraftStore";
-import { useClientSettings } from "../../hooks/useSettings";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import type { EnvMode, EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
@@ -26,7 +25,6 @@ import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
-import { ThreadBackgroundProcessesPanel } from "./BackgroundWorkTaskList";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
 interface VersionMismatchIssue {
@@ -78,7 +76,6 @@ export interface ThreadDetailsPanelProps {
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
-  const threadDetailsRedesign = useClientSettings((settings) => settings.threadDetailsRedesign);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
@@ -230,13 +227,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
         {!props.draftId ? (
           <ThreadRelationshipsPanel environmentId={props.environmentId} threadId={props.threadId} />
-        ) : null}
-
-        {!props.draftId && threadDetailsRedesign ? (
-          <ThreadBackgroundProcessesPanel
-            environmentId={props.environmentId}
-            threadId={props.threadId}
-          />
         ) : null}
       </ScrollArea>
     </div>
