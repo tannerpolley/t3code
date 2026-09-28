@@ -47,6 +47,7 @@ import { useServerConfigs } from "../../state/entities";
 import { resolveSubagentModelLabel } from "../chat/SubagentTooltipContent";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import { describeSidebarBackgroundWork } from "../chat/BackgroundWorkTaskList.logic";
+import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
   Fragment,
@@ -1278,6 +1279,7 @@ function SidebarProjectThreadRow(props: {
           <SidebarSubagentTree
             environmentId={props.thread.environmentId}
             threadId={props.thread.id}
+            tasks={props.thread.pendingBackgroundTasks}
             rows={workRows}
             runningChildren={runningSubagents}
             runningSubagentsByParentKey={props.runningSubagentsByParentKey}
@@ -1302,6 +1304,8 @@ function SidebarProjectThreadRow(props: {
 function SidebarSubagentTree(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  /** The pending tasks `rows` came from, which also carry the shells this level's children started. */
+  readonly tasks: SidebarThreadSummary["pendingBackgroundTasks"];
   readonly rows: ReturnType<typeof describeSidebarBackgroundWork>;
   /** The threads behind this level's subagent rows. */
   readonly runningChildren: readonly SidebarThreadSummary[];
@@ -1323,7 +1327,12 @@ function SidebarSubagentTree(props: {
           props.runningSubagentsByParentKey.get(
             scopedThreadKey(scopeThreadRef(props.environmentId, child.id)),
           ) ?? NO_THREADS;
-        const rows = describeSidebarBackgroundWork(child.pendingBackgroundTasks, grandchildren);
+        const tasks = pendingBackgroundWorkOfThread(
+          child.id,
+          child.pendingBackgroundTasks,
+          props.tasks,
+        );
+        const rows = describeSidebarBackgroundWork(tasks, grandchildren);
         if (rows.length === 0) return null;
         return (
           // Under the row's icon: past the row's 8px padding and half its 16px icon.
@@ -1332,6 +1341,7 @@ function SidebarSubagentTree(props: {
               nested
               environmentId={props.environmentId}
               threadId={child.id}
+              tasks={tasks}
               rows={rows}
               runningChildren={grandchildren}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}

@@ -4854,6 +4854,95 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("tags a subagent's background shell with its thread across roster snapshots", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const AGENT_TOOL_USE_ID = "toolu-shell-owner-agent";
+        const BASH_TOOL_USE_ID = "toolu-shell-owner-bash";
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-subagent-shell-owner"),
+            text: "Have a subagent start the dev server.",
+            attachments: [],
+          }),
+        );
+        const shellTask = { task_id: WAKE_TASK_ID, description: "npm run dev" };
+        yield* Queue.offerAll(harness.sdkMessages, [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-shell-owner-agent",
+            tool_use_id: AGENT_TOOL_USE_ID,
+            description: "Start the dev server",
+            task_type: "local_agent",
+            prompt: "Start the dev server.",
+            uuid: "00000000-0000-4000-8000-000000000921",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: BASH_TOOL_USE_ID,
+                  name: "Bash",
+                  input: { command: "npm run dev", run_in_background: true },
+                },
+              ],
+            },
+            parent_tool_use_id: AGENT_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000922",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            ...shellTask,
+            tool_use_id: BASH_TOOL_USE_ID,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000923",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          // Snapshots carry ids only; the tag must survive the replacement.
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [{ ...shellTask, task_type: "local_bash" }],
+            uuid: "00000000-0000-4000-8000-000000000924",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        ]);
+        const rosters = () =>
+          providerThreadRosterEvents(harness.events).flatMap((event) =>
+            (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0
+              ? [event.providerThread.pendingBackgroundTasks]
+              : [],
+          );
+        yield* awaitUntil(() => rosters().length >= 2, "roster after snapshot");
+
+        const childThreadId =
+          harness.events.find((event) => event.type === "subagent.updated")?.subagent
+            .childThreadId ?? undefined;
+        assert.isString(childThreadId);
+        // The parent's session owns the shell, so it stays on the parent's roster.
+        assert.deepEqual(rosters().at(-1), [
+          {
+            taskId: WAKE_TASK_ID,
+            description: "npm run dev",
+            taskType: "local_bash",
+            childThreadId,
+          },
+        ]);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect.each(["requested", "observed-before", "observed-after", "inherit"] as const)(
     "records the subagent model from %s without inheriting the parent override",
     (source) =>

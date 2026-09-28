@@ -34,6 +34,7 @@ import type {
   OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
+import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { groupBy } from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import { useNavigate } from "@tanstack/react-router";
@@ -378,8 +379,15 @@ export function ThreadRelationshipsPanel(props: {
       : null,
     finishedAt,
   });
-  // Shells the thread started run beside its agents, so they list and count like children.
-  const ownTasks = liveThreadsById.get(props.threadId)?.pendingBackgroundTasks ?? [];
+  // Shells the thread started run beside its agents, so they list and count like children. The
+  // roster may carry shells its own subagents started, and its parent's shells it started.
+  const rosterTasks = liveThreadsById.get(props.threadId)?.pendingBackgroundTasks ?? [];
+  const parentThreadId = currentThread?.lineage.parentThreadId;
+  const ownTasks = pendingBackgroundWorkOfThread(
+    props.threadId,
+    rosterTasks,
+    parentThreadId ? liveThreadsById.get(parentThreadId)?.pendingBackgroundTasks : [],
+  );
   const ownProcessRows =
     redesign && projection !== null && ownTasks.length > 0
       ? describeBackgroundWorkTasks(ownTasks, projection).filter((row) => row.kind === "process")
@@ -390,6 +398,7 @@ export function ThreadRelationshipsPanel(props: {
         resolveSubagentStatus(
           agent,
           agent.childThreadId === null ? null : graph.nodes.get(agent.childThreadId)?.thread,
+          rosterTasks,
         ),
       ),
     ).length ?? active.filter(({ edge }) => isRunning(edge.status)).length;
@@ -713,7 +722,14 @@ export function ThreadRelationshipsPanel(props: {
                 // The child's own pending background work, read from its shell rather than its projection.
                 const processRows =
                   agent && rowExpanded
-                    ? describeSidebarBackgroundWork(node?.thread?.pendingBackgroundTasks ?? [], [])
+                    ? describeSidebarBackgroundWork(
+                        pendingBackgroundWorkOfThread(
+                          threadId,
+                          node?.thread?.pendingBackgroundTasks ?? [],
+                          rosterTasks,
+                        ),
+                        [],
+                      )
                     : [];
                 const detailsToggle =
                   node?.missing || !redesign ? null : (

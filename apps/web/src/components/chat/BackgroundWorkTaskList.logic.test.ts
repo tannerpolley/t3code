@@ -1,4 +1,5 @@
 import * as DateTime from "effect/DateTime";
+import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -131,5 +132,45 @@ describe("describeSidebarBackgroundWork", () => {
       ["Review the diff", "child-thread"],
       ["Recalibrate", "waiting-thread"],
     ]);
+  });
+
+  it("nests a shell a subagent started on its parent's roster under that subagent", () => {
+    // The child's turn ended; only the shell it started, which runs in the parent's session, remains.
+    const finishedChild = {
+      id: "child-thread",
+      title: "Start the dev server",
+      latestRun: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      runtime: null,
+      pendingBackgroundTasks: [],
+    };
+    const parentRoster = [
+      { taskId: "bash-own", description: "vp test", taskType: "local_bash" },
+      {
+        taskId: "bash-child",
+        description: "npm run dev",
+        taskType: "local_bash",
+        childThreadId: "child-thread",
+      },
+    ] as never;
+    const parentRows = describeSidebarBackgroundWork(parentRoster, [finishedChild as never]);
+    expect(parentRows.map((row) => [row.label, row.status])).toEqual([
+      ["Start the dev server", "waiting"],
+      ["vp test", undefined],
+    ]);
+    const childRows = describeSidebarBackgroundWork(
+      pendingBackgroundWorkOfThread(
+        "child-thread",
+        finishedChild.pendingBackgroundTasks,
+        parentRoster,
+      ),
+      [],
+    );
+    expect(childRows.map((row) => [row.label, row.kind])).toEqual([["npm run dev", "process"]]);
+    // Lineage's own rows for the parent leave the child's shell to the child.
+    expect(
+      pendingBackgroundWorkOfThread("parent-thread", parentRoster).map((task) => task.taskId),
+    ).toEqual(["bash-own"]);
   });
 });

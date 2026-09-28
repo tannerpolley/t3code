@@ -4,6 +4,10 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  isAgentBackgroundTask as isAgentTask,
+  pendingBackgroundWorkOfThread,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 import type { SidebarThreadSummary } from "../../types";
@@ -56,16 +60,12 @@ export function describeBackgroundWorkTasks(
   });
 }
 
-/** `subagent` turn items and Claude's `local_agent` / `remote_agent` roster entries are agents. */
-function isAgentTask(task: OrchestrationV2PendingBackgroundTask): boolean {
-  return /agent/.test(task.taskType ?? "");
-}
-
 /**
  * Sidebar rows without loading the thread projection. Running subagent child threads carry the
  * link and start time; the pending roster (empty while the parent's own turn runs) adds
  * processes, plus agent tasks that no running child thread accounts for: a task naming its child
- * thread matches by id, the rest by count.
+ * thread matches by id, the rest by count. A shell a listed child started nests under that child
+ * (see `pendingBackgroundWorkOfThread`) and keeps a finished child waiting.
  */
 export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
@@ -91,16 +91,21 @@ export function describeSidebarBackgroundWork(
   const unmatchedChildren = runningChildren.filter(
     (child) => !linked.some((task) => task.childThreadId === child.id),
   ).length;
+  const hasShells = (childId: string) =>
+    pendingBackgroundWorkOfThread(childId, [], tasks).length > 0;
   return [
-    ...runningChildren.map((child) => ({
-      taskId: child.id,
-      label: child.title,
-      kind: "subagent" as const,
-      startedAt: resolveThreadWorkingStartedAt(child),
-      childThreadId: child.id,
-      status: resolveSidebarThreadStatus(child),
-      child,
-    })),
+    ...runningChildren.map((child) => {
+      const status = resolveSidebarThreadStatus(child);
+      return {
+        taskId: child.id,
+        label: child.title,
+        kind: "subagent" as const,
+        startedAt: resolveThreadWorkingStartedAt(child),
+        childThreadId: child.id,
+        status: status === "ready" && hasShells(child.id) ? ("waiting" as const) : status,
+        child,
+      };
+    }),
     ...[
       ...linked.filter((task) => !listed.has(task.childThreadId ?? "")),
       ...unlinked.slice(unmatchedChildren),
@@ -112,7 +117,7 @@ export function describeSidebarBackgroundWork(
       childThreadId: task.childThreadId ?? null,
     })),
     ...tasks
-      .filter((task) => !isAgentTask(task))
+      .filter((task) => !isAgentTask(task) && !listed.has(task.childThreadId ?? ""))
       .map((task) => ({
         taskId: task.taskId,
         label: task.description ?? task.taskId,

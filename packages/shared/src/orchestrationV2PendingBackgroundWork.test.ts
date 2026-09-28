@@ -123,6 +123,8 @@ describe("derivePendingBackgroundWork", () => {
           id: "pt-1" as never,
           pendingBackgroundTasks: [
             { taskId: "bg-1", description: "Run Codex review", taskType: "local_bash" },
+            // A shell a Claude subagent started keeps the subagent's thread.
+            { taskId: "bg-2", taskType: "local_bash", childThreadId: "child-1" as never },
           ],
         },
       ],
@@ -131,6 +133,7 @@ describe("derivePendingBackgroundWork", () => {
     });
     expect(tasks).toEqual([
       { taskId: "bg-1", description: "Run Codex review", taskType: "local_bash" },
+      { taskId: "bg-2", taskType: "local_bash", childThreadId: "child-1" },
     ]);
   });
 

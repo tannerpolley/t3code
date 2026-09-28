@@ -175,6 +175,7 @@ export function derivePendingBackgroundWork(input: {
         taskId: task.taskId,
         ...(description === undefined || description.length === 0 ? {} : { description }),
         ...(task.taskType === undefined ? {} : { taskType: task.taskType }),
+        ...(task.childThreadId === undefined ? {} : { childThreadId: task.childThreadId }),
       });
     }
   }
@@ -210,6 +211,30 @@ export function derivePendingBackgroundWork(input: {
   }
 
   return Array.from(byTaskId.values());
+}
+
+/** `subagent` turn items and Claude's `local_agent` / `remote_agent` roster entries are agents. */
+export function isAgentBackgroundTask(task: Pick<PendingBackgroundWorkTask, "taskType">): boolean {
+  return /agent/.test(task.taskType ?? "");
+}
+
+/**
+ * The pending work that is `threadId`'s own, from its roster and its parent's. A Claude
+ * subagent's shells run in the parent's session, so they sit on the parent's roster tagged with
+ * the subagent's thread: they count for the subagent, not the parent. An agent task's
+ * `childThreadId` names the agent itself, which stays with the thread that launched it.
+ */
+export function pendingBackgroundWorkOfThread(
+  threadId: string,
+  own: ReadonlyArray<PendingBackgroundWorkTask>,
+  parent: ReadonlyArray<PendingBackgroundWorkTask> = [],
+): ReadonlyArray<PendingBackgroundWorkTask> {
+  const shellOwner = (task: PendingBackgroundWorkTask) =>
+    isAgentBackgroundTask(task) ? undefined : task.childThreadId;
+  return [
+    ...own.filter((task) => (shellOwner(task) ?? threadId) === threadId),
+    ...parent.filter((task) => shellOwner(task) === threadId),
+  ];
 }
 
 export function formatPendingBackgroundWorkLabel(

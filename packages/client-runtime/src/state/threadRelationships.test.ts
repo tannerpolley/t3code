@@ -410,6 +410,17 @@ describe("subagent current activation", () => {
       pendingBackgroundTasks: [{ taskId: "bash-1", taskType: "local_bash" }],
     } as never;
     expect(resolveSubagentStatus(record, shell)).toBe("waiting");
+    // So does a shell it started that runs on its parent's roster.
+    const finished = {
+      ...child,
+      id: "thread-child",
+      status: "completed",
+      pendingBackgroundTasks: [],
+    } as never;
+    const parentRoster = [
+      { taskId: "bash-2", taskType: "local_bash", childThreadId: "thread-child" },
+    ] as never;
+    expect(resolveSubagentStatus(record, finished, parentRoster)).toBe("waiting");
     // A child the parent resumed reads from its live run.
     const resumed = { ...child, activityRunStatus: "running", status: "running" } as never;
     expect(resolveSubagentStatus(record, resumed)).toBe("running");

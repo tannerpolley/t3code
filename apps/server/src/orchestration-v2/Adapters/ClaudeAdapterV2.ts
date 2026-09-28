@@ -2966,9 +2966,19 @@ export function makeClaudeAdapterV2(
               if (tasks.length === 0) {
                 updated.delete(nativeThreadId);
               } else {
+                // Snapshots carry ids only: keep the subagent thread that task_started tagged.
+                const previous = rosterForNativeThread(current, nativeThreadId);
                 updated.set(
                   nativeThreadId,
-                  new Map(tasks.map((task) => [task.taskId, task] as const)),
+                  new Map(
+                    tasks.map((task) => {
+                      const childThreadId = previous.get(task.taskId)?.childThreadId;
+                      return [
+                        task.taskId,
+                        childThreadId === undefined ? task : { ...task, childThreadId },
+                      ] as const;
+                    }),
+                  ),
                 );
               }
               return updated;
@@ -4666,10 +4676,22 @@ export function makeClaudeAdapterV2(
                 ? message.description
                 : undefined;
             const taskType = claudeTaskTypeFromSdkMessage(message) ?? undefined;
+            // A shell a native subagent started runs in this (the parent's) session, so it stays
+            // on this roster, where settlement and wake read it, tagged with the subagent's
+            // thread for display. The spawning Bash call is still open when its task starts.
+            const toolUseId = message.tool_use_id;
+            const spawningCall =
+              toolUseId === undefined
+                ? undefined
+                : [...(yield* Ref.get(subagentTurnContextsByToolUseId)).values()]
+                    .map((context) => context.toolCalls.get(toolUseId))
+                    .find((toolCall) => toolCall !== undefined);
             yield* upsertPendingBackgroundTask(input.nativeThreadId, {
               taskId: message.task_id,
               ...(description === undefined ? {} : { description }),
               ...(taskType === undefined ? {} : { taskType }),
+              // Only a child-thread call has no run of its own.
+              ...(spawningCall?.runId === null ? { childThreadId: spawningCall.threadId } : {}),
             });
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_notification") {

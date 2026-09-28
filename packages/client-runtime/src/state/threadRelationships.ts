@@ -5,6 +5,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 const FINISHED_STATUSES = new Set([
@@ -58,24 +59,34 @@ export function resolveMergeBackTargetThreadId(
  * their record there). `idle` means the child has no state of its own yet. A child blocked on a
  * question or approval reads as needing you (`input` / `approval`), not as working: its run
  * stays open until someone answers. A child whose turn ended while its own background shells run
- * reads as `waiting`.
+ * reads as `waiting`, including shells it started on its parent's roster (`parentTasks`).
  */
 export function resolveSubagentStatus(
   subagent: Pick<OrchestrationV2Subagent, "status">,
   childThread:
     | Pick<
         OrchestrationV2ThreadShell,
-        "activityRunStatus" | "pendingRuntimeRequest" | "status" | "pendingBackgroundTasks"
+        "id" | "activityRunStatus" | "pendingRuntimeRequest" | "status" | "pendingBackgroundTasks"
       >
     | null
     | undefined,
+  parentTasks?: OrchestrationV2ThreadShell["pendingBackgroundTasks"],
 ): string {
   const request = childThread?.pendingRuntimeRequest;
   if (request && request.kind !== "auth_refresh") {
     return request.kind === "user_input" ? "input" : "approval";
   }
   const own = childThread?.activityRunStatus ?? childThread?.status;
-  if (own && FINISHED_STATUSES.has(own) && (childThread?.pendingBackgroundTasks?.length ?? 0) > 0) {
+  if (
+    childThread &&
+    own &&
+    FINISHED_STATUSES.has(own) &&
+    pendingBackgroundWorkOfThread(
+      childThread.id,
+      childThread.pendingBackgroundTasks ?? [],
+      parentTasks,
+    ).length > 0
+  ) {
     return "waiting";
   }
   if (!own || own === "idle") return subagent.status;
@@ -195,7 +206,11 @@ export function deriveThreadRelationshipGraph(input: {
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
-        status: resolveSubagentStatus(subagent, threadsById.get(subagent.childThreadId)),
+        status: resolveSubagentStatus(
+          subagent,
+          threadsById.get(subagent.childThreadId),
+          threadsById.get(ownerThreadId)?.pendingBackgroundTasks,
+        ),
       });
     }
     for (const transfer of input.projection.contextTransfers) {
