@@ -1981,6 +1981,109 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("a held queued run leaves the shell on the thread's last real run", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:projection-shell-held-queue");
+      const doneRunId = RunId.make("run:projection-shell-held-queue:done");
+      const heldRunId = RunId.make("run:projection-shell-held-queue:held");
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shell-held-queue:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:projection-shell-held-queue"),
+          title: "Held queue shell",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const done = {
+        id: doneRunId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:projection-shell-held-queue:done"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "completed" as const,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: now,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const held = {
+        ...done,
+        id: heldRunId,
+        ordinal: 2,
+        userMessageId: MessageId.make("message:projection-shell-held-queue:held"),
+        status: "queued" as const,
+        startedAt: null,
+        completedAt: null,
+        queuePosition: 1,
+        queueHeld: true,
+      };
+      for (const run of [done, held]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${run.id}`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: run,
+        });
+      }
+      const shells = Effect.gen(function* () {
+        const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        )!;
+        const memoryShell = threadShellFromProjection(
+          yield* projectionStore.getThreadProjection(threadId),
+        );
+        return [sqlShell, memoryShell].map((shell) => [shell.status, shell.latestRunId]);
+      });
+      // Nothing runs until the user resumes the queue, so the thread is not shown as working.
+      assert.deepEqual(yield* shells, [
+        ["completed", doneRunId],
+        ["completed", doneRunId],
+      ]);
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shell-held-queue:resumed"),
+        type: "run.updated",
+        threadId,
+        runId: heldRunId,
+        occurredAt: now,
+        payload: { ...held, queueHeld: false },
+      });
+      assert.deepEqual(yield* shells, [
+        ["queued", heldRunId],
+        ["queued", heldRunId],
+      ]);
+    }),
+  );
+
   it.effect("selects only threads with runtime state that needs recovery", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;

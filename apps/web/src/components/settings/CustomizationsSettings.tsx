@@ -311,6 +311,11 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
     description:
       "A delegated task that finished before a restart wakes its parent afterwards instead of the wake being cancelled or left in a paused queue.",
   },
+  {
+    title: "A paused queue doesn't show as running",
+    description:
+      "A thread whose queue is paused after a restart shows its last real state in the sidebar and header until you resume the queue.",
+  },
 ];
 
 function CustomizationSwitchRows({ section }: { readonly section: CustomizationSection }) {

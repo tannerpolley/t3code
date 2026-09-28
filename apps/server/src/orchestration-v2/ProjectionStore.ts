@@ -1253,12 +1253,20 @@ function buildVisibleTurnItems(input: {
   ]);
 }
 
+/**
+ * The run a thread shell reports, skipping a held queued run: nothing runs until the user resumes
+ * that queue. Mirrored by shellLatestRunJoin.
+ */
+function shellLatestRun(runs: OrchestrationV2ThreadProjection["runs"]) {
+  return runs.findLast((run) => run.status !== "queued" || run.queueHeld !== true) ?? null;
+}
+
 /** `nativeSubagent` is the parent's provider-native subagent record for this child thread, if any. */
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
   nativeSubagent: NativeSubagentActivity | null = null,
 ): OrchestrationV2ThreadShell {
-  const latestRun = projection.runs.at(-1) ?? null;
+  const latestRun = shellLatestRun(projection.runs);
   const activeRun =
     projection.runs
       .filter(isInterruptibleRunForShell)
@@ -1671,6 +1679,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               native_subagent.status AS native_subagent_status,
               native_subagent.started_at AS native_subagent_started_at,
               native_subagent.completed_at AS native_subagent_completed_at`;
+    // The shell's latest run skips a held queued run, mirroring shellLatestRun: nothing runs
+    // until the user resumes that queue, so the thread keeps showing its last real state.
+    const shellLatestRunJoin = sql`
+            LEFT JOIN orchestration_v2_projection_runs latest_run
+              ON latest_run.run_id = (
+                SELECT r.run_id FROM orchestration_v2_projection_runs r
+                WHERE r.thread_id = t.thread_id
+                  AND NOT (r.status = 'queued' AND json_extract(r.payload_json, '$.queueHeld') IS 1)
+                ORDER BY r.ordinal DESC, r.run_id DESC
+                LIMIT 1
+              )`;
     const nativeSubagentJoin = sql`
             LEFT JOIN orchestration_v2_projection_subagents native_subagent
               ON native_subagent.subagent_id = (
@@ -4784,41 +4803,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
                 ELSE NULL
               END AS forked_from_run_source_thread_id,
-              (
-                SELECT r.run_id
-                FROM orchestration_v2_projection_runs r
-                WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
-                LIMIT 1
-              ) AS latest_run_id,
-              (
-                SELECT r.status
-                FROM orchestration_v2_projection_runs r
-                WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
-                LIMIT 1
-              ) AS latest_run_status,
-              (
-                SELECT r.requested_at
-                FROM orchestration_v2_projection_runs r
-                WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
-                LIMIT 1
-              ) AS latest_run_requested_at,
-              (
-                SELECT json_extract(r.payload_json, '$.startedAt')
-                FROM orchestration_v2_projection_runs r
-                WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
-                LIMIT 1
-              ) AS latest_run_started_at,
-              (
-                SELECT r.completed_at
-                FROM orchestration_v2_projection_runs r
-                WHERE r.thread_id = t.thread_id
-                ORDER BY r.ordinal DESC, r.run_id DESC
-                LIMIT 1
-              ) AS latest_run_completed_at,
+              latest_run.run_id AS latest_run_id,
+              latest_run.status AS latest_run_status,
+              latest_run.requested_at AS latest_run_requested_at,
+              json_extract(latest_run.payload_json, '$.startedAt') AS latest_run_started_at,
+              latest_run.completed_at AS latest_run_completed_at,
               (
                 SELECT r.run_id
                 FROM orchestration_v2_projection_runs r
@@ -4857,11 +4846,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT item.payload_json
                 FROM orchestration_v2_projection_turn_items item
                 INNER JOIN orchestration_v2_projection_runs r ON r.run_id = item.run_id
-                WHERE r.run_id = (
-                  SELECT latest.run_id FROM orchestration_v2_projection_runs latest
-                  WHERE latest.thread_id = t.thread_id
-                  ORDER BY latest.ordinal DESC, latest.run_id DESC LIMIT 1
-                )
+                WHERE r.run_id = latest_run.run_id
                   AND r.status = 'failed'
                   AND item.type = 'error' AND item.status = 'failed'
                   AND item.node_id IS json_extract(r.payload_json, '$.rootNodeId')
@@ -4905,7 +4890,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE i.thread_id = t.thread_id
                   AND i.run_id IS NULL
               ) AS runless_item_count,${nativeSubagentColumns}
-            FROM orchestration_v2_projection_threads t${nativeSubagentJoin}
+            FROM orchestration_v2_projection_threads t${nativeSubagentJoin}${shellLatestRunJoin}
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
               location === "active"
                 ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
@@ -5047,11 +5032,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             // threads before loading the remaining candidates' background work.
             const rows = yield* sql<SettlementThreadRow>`
             SELECT t.thread_id, t.payload_json,
-              r.run_id AS latest_run_id,
-              r.status AS latest_run_status,
-              r.requested_at AS latest_run_requested_at,
-              json_extract(r.payload_json, '$.startedAt') AS latest_run_started_at,
-              r.completed_at AS latest_run_completed_at,
+              latest_run.run_id AS latest_run_id,
+              latest_run.status AS latest_run_status,
+              latest_run.requested_at AS latest_run_requested_at,
+              json_extract(latest_run.payload_json, '$.startedAt') AS latest_run_started_at,
+              latest_run.completed_at AS latest_run_completed_at,
               (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
@@ -5059,13 +5044,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_message_at,${nativeSubagentColumns}
-            FROM orchestration_v2_projection_threads t${nativeSubagentJoin}
-            LEFT JOIN orchestration_v2_projection_runs r ON r.run_id = (
-              SELECT latest.run_id FROM orchestration_v2_projection_runs latest
-              WHERE latest.thread_id = t.thread_id
-              ORDER BY latest.ordinal DESC, latest.run_id DESC
-              LIMIT 1
-            )
+            FROM orchestration_v2_projection_threads t${nativeSubagentJoin}${shellLatestRunJoin}
             WHERE t.deleted_at IS NULL
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
               AND json_extract(t.payload_json, '$.settledOverride') IS NULL
