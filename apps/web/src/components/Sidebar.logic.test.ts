@@ -2340,4 +2340,9 @@ describe("withChildNeeds", () => {
     expect(withChildNeeds("failed", [asking])).toBe("failed");
     expect(withChildNeeds("waiting", [idle])).toBe("waiting");
   });
+
+  it("keeps a settled parent waiting while a listed child still works", () => {
+    expect(withChildNeeds("ready", [idle])).toBe("waiting");
+    expect(withChildNeeds("ready", [])).toBe("ready");
+  });
 });

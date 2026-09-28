@@ -1020,7 +1020,8 @@ export function groupRunningSubagentsByParent<
 
 /**
  * A parent shows its children's questions as its own, so a subagent asking the user is visible
- * (and sorted as needing you) without opening the parent. Its own urgent states win.
+ * (and sorted as needing you) without opening the parent. Its own urgent states win. A settled
+ * parent with children still at work reads as waiting on them, like its own background work.
  */
 export function withChildNeeds(
   status: SidebarThreadStatus,
@@ -1033,7 +1034,7 @@ export function withChildNeeds(
   }
   if (children.some((child) => child.hasPendingApprovals)) return "approval";
   if (children.some((child) => child.hasPendingUserInput)) return "input";
-  return status;
+  return status === "ready" && children.length > 0 ? "waiting" : status;
 }
 
 export type SidebarV2TopStatusKind =

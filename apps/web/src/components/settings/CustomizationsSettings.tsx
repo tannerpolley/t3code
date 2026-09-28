@@ -255,6 +255,11 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
       "Agents show their provider's icon, background shells a terminal, and an agent whose provider is unknown an arrow into its parent. A delegated task still waiting to report back stays listed as a full subagent row. Build mode and the Providers settings page use a hammer and a chip.",
   },
   {
+    title: "Parents wait on children still at work",
+    description:
+      "A subagent whose turn ended while its own background shell still runs shows as waiting in Lineage and counts as running, even after it reported back. Its parent shows the amber waiting mark in the sidebar instead of done while any listed child is still at work.",
+  },
+  {
     title: "Subagents waiting on their own work stay running",
     description:
       "A delegated task whose turn ended while its own background work still runs stays with the running agents in Lineage and counts as running, instead of moving under Previous agents.",

@@ -403,6 +403,13 @@ describe("subagent current activation", () => {
   it("keeps a task running while its finished child still waits on its own work", () => {
     const waiting = { ...child, status: "completed" } as never;
     expect(resolveSubagentStatus({ status: "running" }, waiting)).toBe("running");
+    // A reported task whose child left a shell running is still at work.
+    const shell = {
+      ...child,
+      status: "completed",
+      pendingBackgroundTasks: [{ taskId: "bash-1", taskType: "local_bash" }],
+    } as never;
+    expect(resolveSubagentStatus(record, shell)).toBe("waiting");
     // A child the parent resumed reads from its live run.
     const resumed = { ...child, activityRunStatus: "running", status: "running" } as never;
     expect(resolveSubagentStatus(record, resumed)).toBe("running");

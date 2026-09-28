@@ -57,12 +57,16 @@ export function resolveMergeBackTargetThreadId(
  * state wins: its live run, else its latest run's outcome (provider-native children report
  * their record there). `idle` means the child has no state of its own yet. A child blocked on a
  * question or approval reads as needing you (`input` / `approval`), not as working: its run
- * stays open until someone answers.
+ * stays open until someone answers. A child whose turn ended while its own background shells run
+ * reads as `waiting`.
  */
 export function resolveSubagentStatus(
   subagent: Pick<OrchestrationV2Subagent, "status">,
   childThread:
-    | Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "pendingRuntimeRequest" | "status">
+    | Pick<
+        OrchestrationV2ThreadShell,
+        "activityRunStatus" | "pendingRuntimeRequest" | "status" | "pendingBackgroundTasks"
+      >
     | null
     | undefined,
 ): string {
@@ -71,6 +75,9 @@ export function resolveSubagentStatus(
     return request.kind === "user_input" ? "input" : "approval";
   }
   const own = childThread?.activityRunStatus ?? childThread?.status;
+  if (own && FINISHED_STATUSES.has(own) && (childThread?.pendingBackgroundTasks?.length ?? 0) > 0) {
+    return "waiting";
+  }
   if (!own || own === "idle") return subagent.status;
   // A task still open outlasts its child's finished turn: it waits on the child's own background
   // work or its report back. A resumed child's live run wins as before.
