@@ -663,6 +663,8 @@ export const OrchestrationV2PendingBackgroundTask = Schema.Struct({
   taskId: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   taskType: Schema.optional(TrimmedNonEmptyString),
+  /** The subagent's own thread, when the task is a subagent turn item that has one. */
+  childThreadId: Schema.optional(ThreadId),
 });
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 

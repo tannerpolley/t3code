@@ -1279,6 +1279,7 @@ function SidebarProjectThreadRow(props: {
             environmentId={props.thread.environmentId}
             threadId={props.thread.id}
             rows={workRows}
+            runningChildren={runningSubagents}
             runningSubagentsByParentKey={props.runningSubagentsByParentKey}
           />
         </div>
@@ -1297,11 +1298,13 @@ function SidebarProjectThreadRow(props: {
   );
 }
 
-/** A thread's work rows, each running subagent followed by its own running subagents. */
+/** A thread's work rows, each running subagent followed by its own subagents and processes. */
 function SidebarSubagentTree(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly rows: ReturnType<typeof describeSidebarBackgroundWork>;
+  /** The threads behind this level's subagent rows. */
+  readonly runningChildren: readonly SidebarThreadSummary[];
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   readonly nested?: boolean;
 }) {
@@ -1314,22 +1317,23 @@ function SidebarSubagentTree(props: {
       threadId={props.threadId}
       rows={props.rows}
       renderNested={(row) => {
-        if (row.childThreadId === null) return null;
-        // ponytail: only running children are grouped, so a grandchild still running under a
-        // finished child is not shown here; it stays in the child's Lineage.
+        const child = props.runningChildren.find((thread) => thread.id === row.childThreadId);
+        if (child === undefined) return null;
         const grandchildren =
           props.runningSubagentsByParentKey.get(
-            scopedThreadKey(scopeThreadRef(props.environmentId, row.childThreadId)),
+            scopedThreadKey(scopeThreadRef(props.environmentId, child.id)),
           ) ?? NO_THREADS;
-        if (grandchildren.length === 0) return null;
+        const rows = describeSidebarBackgroundWork(child.pendingBackgroundTasks, grandchildren);
+        if (rows.length === 0) return null;
         return (
           // Under the row's icon: past the row's 8px padding and half its 16px icon.
           <div className="ms-4">
             <SidebarSubagentTree
               nested
               environmentId={props.environmentId}
-              threadId={row.childThreadId}
-              rows={describeSidebarBackgroundWork([], grandchildren)}
+              threadId={child.id}
+              rows={rows}
+              runningChildren={grandchildren}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
             />
           </div>

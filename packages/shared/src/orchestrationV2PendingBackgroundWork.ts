@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
+  ThreadId,
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
@@ -66,6 +67,7 @@ type PendingBackgroundWorkTurnItem = {
   } | null;
   readonly input?: unknown;
   readonly prompt?: string | undefined;
+  readonly childThreadId?: ThreadId | null;
 };
 
 function isLatestRunSettledForBackgroundWait(
@@ -203,6 +205,7 @@ export function derivePendingBackgroundWork(input: {
       taskId,
       ...(description === undefined ? {} : { description }),
       taskType: item.type,
+      ...(item.childThreadId ? { childThreadId: item.childThreadId } : {}),
     });
   }
 

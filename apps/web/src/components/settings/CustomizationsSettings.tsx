@@ -250,6 +250,11 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
       "Claude's and Codex's own subagents show as running under their thread in the sidebar, with the right timer, even while the thread itself is still working.",
   },
   {
+    title: "Each subagent is listed once",
+    description:
+      "The sidebar matches delegated tasks to their own threads, so a running task isn't listed twice while another goes missing. A subagent whose turn ended but whose own background work still runs stays listed, with that work beneath it.",
+  },
+  {
     title: "Usage-limit recovery finds its threads",
     description:
       "The check for threads to resume or snooze after a usage limit resets no longer fails on a database error.",

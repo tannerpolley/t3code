@@ -2256,10 +2256,16 @@ describe("navigation after parking a thread", () => {
 describe("groupRunningSubagentsByParent", () => {
   const child = (
     id: string,
-    overrides: { status?: "running" | "completed" | "idle"; fork?: boolean; asking?: boolean } = {},
+    overrides: {
+      status?: "running" | "completed" | "idle";
+      fork?: boolean;
+      asking?: boolean;
+      backgroundWork?: boolean;
+    } = {},
   ) => ({
     id,
     environmentId: localEnvironmentId,
+    pendingBackgroundTasks: overrides.backgroundWork ? [{ taskId: "bash-1" }] : [],
     archivedAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: overrides.asking ?? false,
@@ -2282,14 +2288,19 @@ describe("groupRunningSubagentsByParent", () => {
     const grouped = groupRunningSubagentsByParent([
       child("running"),
       child("finished", { status: "completed" }),
-      child("waiting-on-own-work", { status: "idle" }),
+      child("idle", { status: "idle" }),
+      child("waiting-on-own-work", { status: "idle", backgroundWork: true }),
       child("fork", { fork: true }),
       child("asking", { status: "completed", asking: true }),
     ]);
     expect([...grouped.keys()]).toEqual([
       scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("parent"))),
     ]);
-    expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual(["running", "asking"]);
+    expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual([
+      "running",
+      "waiting-on-own-work",
+      "asking",
+    ]);
   });
 });
 

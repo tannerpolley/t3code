@@ -64,7 +64,8 @@ function isAgentTask(task: OrchestrationV2PendingBackgroundTask): boolean {
 /**
  * Sidebar rows without loading the thread projection. Running subagent child threads carry the
  * link and start time; the pending roster (empty while the parent's own turn runs) adds
- * processes, plus agent tasks that no running child thread accounts for.
+ * processes, plus agent tasks that no running child thread accounts for: a task naming its child
+ * thread matches by id, the rest by count.
  */
 export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
@@ -82,7 +83,14 @@ export function describeSidebarBackgroundWork(
     >
   >,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
-  const agentTasks = tasks.filter(isAgentTask);
+  const listed = new Set<string>(runningChildren.map((child) => child.id));
+  const linked = tasks.filter(isAgentTask).filter((task) => task.childThreadId !== undefined);
+  const unlinked = tasks.filter(isAgentTask).filter((task) => task.childThreadId === undefined);
+  // ponytail: roster-only tasks (Claude SDK background agents) carry no child thread id, so they
+  // pair with the running children no linked task accounts for by count.
+  const unmatchedChildren = runningChildren.filter(
+    (child) => !linked.some((task) => task.childThreadId === child.id),
+  ).length;
   return [
     ...runningChildren.map((child) => ({
       taskId: child.id,
@@ -93,14 +101,15 @@ export function describeSidebarBackgroundWork(
       status: resolveSidebarThreadStatus(child),
       child,
     })),
-    // ponytail: the shell has no task id on child threads, so agent tasks pair with children by
-    // count; join on an id if the summary ever carries one.
-    ...agentTasks.slice(runningChildren.length).map((task) => ({
+    ...[
+      ...linked.filter((task) => !listed.has(task.childThreadId ?? "")),
+      ...unlinked.slice(unmatchedChildren),
+    ].map((task) => ({
       taskId: task.taskId,
       label: task.description ?? task.taskId,
       kind: "subagent" as const,
       startedAt: null,
-      childThreadId: null,
+      childThreadId: task.childThreadId ?? null,
     })),
     ...tasks
       .filter((task) => !isAgentTask(task))

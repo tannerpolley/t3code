@@ -106,4 +106,30 @@ describe("describeSidebarBackgroundWork", () => {
       },
     ]);
   });
+
+  it("matches tasks that name their child by id, not by position", () => {
+    // The first task's child finished its turn but still waits on its own work, so only the
+    // second task's child is running.
+    const rows = describeSidebarBackgroundWork(
+      [
+        {
+          taskId: "item-waiting",
+          description: "Recalibrate",
+          taskType: "subagent",
+          childThreadId: "waiting-thread",
+        },
+        {
+          taskId: "item-running",
+          description: "Review the diff",
+          taskType: "subagent",
+          childThreadId: "child-thread",
+        },
+      ] as never,
+      [runningChild],
+    );
+    expect(rows.map((row) => [row.label, row.childThreadId])).toEqual([
+      ["Review the diff", "child-thread"],
+      ["Recalibrate", "waiting-thread"],
+    ]);
+  });
 });
