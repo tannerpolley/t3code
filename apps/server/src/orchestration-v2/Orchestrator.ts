@@ -6095,6 +6095,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
+        // A child with its own worktree has no checkout until its deferred run's
+        // preparation binds one; it never borrows the parent's.
+        ...(command.worktreeBranch === undefined
+          ? {}
+          : { branch: command.worktreeBranch, worktreePath: null }),
       };
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,
@@ -6212,7 +6217,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         text: command.task,
         attachments: [],
         modelSelection: command.modelSelection,
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode:
+          command.worktreeBranch === undefined
+            ? { type: "start_immediately" }
+            : { type: "defer_start" },
       } satisfies Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
       yield* dispatchMessage(childMessageCommand, events, effects);
 

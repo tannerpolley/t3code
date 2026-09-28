@@ -89,6 +89,12 @@ export interface ThreadLaunchInput {
   readonly creationSource: OrchestrationV2CreationSource;
 }
 
+/** What workspace preparation reads from a launch; delegated children supply it directly. */
+export type ThreadWorkspacePreparationInput = Pick<
+  ThreadLaunchInput,
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+>;
+
 export interface ThreadLaunchResult {
   readonly threadId: ThreadId;
   readonly projection: OrchestrationV2ThreadProjection;
@@ -127,6 +133,17 @@ export class ThreadLaunchService extends Context.Service<
     readonly launch: (
       input: ThreadLaunchInput,
     ) => Effect.Effect<ThreadLaunchResult, ThreadLaunchError>;
+    /**
+     * Prepares the workspace of a run its caller already created with `defer_start`, then
+     * releases the run, exactly as `launch` does. A run that is no longer preparing, or whose
+     * preparation is already in flight, is left alone, so retries are safe.
+     */
+    readonly prepareDeferredRun: (
+      input: ThreadWorkspacePreparationInput & {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+      },
+    ) => Effect.Effect<void, ThreadLaunchError>;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
@@ -159,7 +176,11 @@ const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
 
   const mapError =
-    (input: ThreadLaunchInput, operation: ThreadLaunchError["operation"], threadId?: ThreadId) =>
+    (
+      input: ThreadWorkspacePreparationInput,
+      operation: ThreadLaunchError["operation"],
+      threadId?: ThreadId,
+    ) =>
     (cause: unknown) =>
       new ThreadLaunchError({
         operation,
@@ -199,7 +220,7 @@ const make = Effect.gen(function* () {
   });
 
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
-    input: ThreadLaunchInput,
+    input: ThreadWorkspacePreparationInput,
     threadId: ThreadId,
     runId: RunId | null,
   ) {
@@ -523,7 +544,7 @@ const make = Effect.gen(function* () {
   });
 
   const failPreparedRun = (
-    input: ThreadLaunchInput,
+    input: ThreadWorkspacePreparationInput,
     threadId: ThreadId,
     runId: RunId | null,
     cause: unknown,
@@ -575,7 +596,7 @@ const make = Effect.gen(function* () {
     });
 
   const schedulePreparation = Effect.fn("ThreadLaunchService.schedulePreparation")(function* (
-    input: ThreadLaunchInput,
+    input: ThreadWorkspacePreparationInput,
     threadId: ThreadId,
     runId: RunId | null,
   ) {
@@ -592,6 +613,31 @@ const make = Effect.gen(function* () {
       Effect.ensuring(releasePreparation(input.commandId)),
       Effect.forkIn(preparationScope),
     );
+  });
+
+  const ensurePreparation = Effect.fn("ThreadLaunchService.ensurePreparation")(function* (
+    input: ThreadWorkspacePreparationInput,
+    threadId: ThreadId,
+    runId: RunId | null,
+  ) {
+    const ownsPreparation = yield* reservePreparation(input.commandId);
+    if (!ownsPreparation) return;
+    yield* Effect.gen(function* () {
+      const preparationStillRequired =
+        runId === null
+          ? true
+          : yield* threads.getThreadRecords(threadId, ["runs"], { runIds: [runId] }).pipe(
+              Effect.map((current) =>
+                current.runs.some((run) => run.id === runId && run.status === "preparing"),
+              ),
+              Effect.mapError(mapError(input, "update-thread", threadId)),
+            );
+      if (preparationStillRequired) {
+        yield* schedulePreparation(input, threadId, runId);
+      } else {
+        yield* releasePreparation(input.commandId);
+      }
+    }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
   });
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
@@ -755,27 +801,7 @@ const make = Effect.gen(function* () {
           runId !== null &&
           projection.runs.some((run) => run.id === runId && run.status === "preparing");
         const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
-        if (shouldSchedule) {
-          const ownsPreparation = yield* reservePreparation(input.commandId);
-          if (ownsPreparation) {
-            yield* Effect.gen(function* () {
-              const preparationStillRequired =
-                runId === null
-                  ? true
-                  : yield* threads.getThreadRecords(threadId, ["runs"], { runIds: [runId] }).pipe(
-                      Effect.map((current) =>
-                        current.runs.some((run) => run.id === runId && run.status === "preparing"),
-                      ),
-                      Effect.mapError(mapError(input, "update-thread", threadId)),
-                    );
-              if (preparationStillRequired) {
-                yield* schedulePreparation(input, threadId, runId);
-              } else {
-                yield* releasePreparation(input.commandId);
-              }
-            }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
-          }
-        }
+        if (shouldSchedule) yield* ensurePreparation(input, threadId, runId);
 
         return {
           threadId,
@@ -786,7 +812,10 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return ThreadLaunchService.of({ launch });
+  return ThreadLaunchService.of({
+    launch,
+    prepareDeferredRun: (input) => ensurePreparation(input, input.threadId, input.runId),
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

@@ -18,6 +18,7 @@ import { expect, it } from "vite-plus/test";
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   type ThreadManagementSendResult,
@@ -140,6 +141,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
         Layer.mock(ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry["Service"]>),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService["Service"]>),
@@ -193,6 +195,7 @@ it("readThread prefers waiting activity status over a newer cancelled queued run
         Layer.mock(ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry["Service"]>),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService["Service"]>),
@@ -304,6 +307,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
         Layer.mock(ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry["Service"]>),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService["Service"]>),
@@ -436,6 +440,7 @@ it("taskStatus reports a child waiting on the user, but not an auth refresh", as
         Layer.mock(ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry["Service"]>),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService["Service"]>),
@@ -570,6 +575,7 @@ it("readThread reaches a thread the user attached as context, but not one an age
         Layer.mock(ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry["Service"]>),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService["Service"]>),
@@ -666,6 +672,7 @@ it("other projects are readable, and promptable, only from a top-level thread wi
             }),
           }),
           Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ThreadLaunchService)({}),
           Layer.mock(ScheduledTaskService)({}),
           Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
           NodeCrypto.layer,

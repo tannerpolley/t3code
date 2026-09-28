@@ -94,28 +94,25 @@ export function subagentDetailPreview(
   return compactDetail.length > 280 ? `${compactDetail.slice(0, 280).trimEnd()}…` : compactDetail;
 }
 
-/** Project and branch/worktree lines, only where the child works somewhere else than the parent. */
+/** Project, branch, and worktree lines, only where the child works somewhere else than the parent. */
 export function SubagentWorkspaceLines(props: SubagentDetailsProps) {
   const currentWorkspace = props.parentThread?.worktreePath ?? props.parentProject?.workspaceRoot;
   const childWorkspace = props.childThread?.worktreePath ?? props.childProject?.workspaceRoot;
+  const elsewhere = currentWorkspace && childWorkspace && currentWorkspace !== childWorkspace;
+  const branch = props.childThread?.branch;
+  const worktreePath = props.childThread?.worktreePath;
   const metadata = [
     ...(props.parentThread &&
     props.childProject &&
     props.childProject.id !== props.parentThread.projectId
       ? [{ label: "Project", value: props.childProject.title }]
       : []),
-    ...(currentWorkspace && childWorkspace && currentWorkspace !== childWorkspace
-      ? [
-          {
-            label: props.childThread?.branch
-              ? "Branch"
-              : props.childThread?.worktreePath
-                ? "Worktree"
-                : "Workspace",
-            value: props.childThread?.branch ?? fileBasename(childWorkspace),
-          },
-        ]
-      : []),
+    ...(elsewhere && branch ? [{ label: "Branch", value: branch }] : []),
+    ...(elsewhere && worktreePath
+      ? [{ label: "Worktree", value: `Own worktree · ${fileBasename(worktreePath)}` }]
+      : elsewhere && !branch
+        ? [{ label: "Workspace", value: fileBasename(childWorkspace) }]
+        : []),
   ];
   return metadata.map(({ label, value }) => {
     const Icon = label === "Branch" ? GitBranchIcon : FolderIcon;

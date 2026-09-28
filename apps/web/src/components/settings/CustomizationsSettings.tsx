@@ -671,6 +671,10 @@ export function CustomizationsSettings() {
           searchId="wake-parent-on-resumed-child"
           description="When an agent sends new work to a child it already delegated, the child's result reports back and wakes the agent again, like the first result. Turns you start in the child yourself don't."
         />
+        <SettingsRow
+          title="Delegated tasks in their own worktree"
+          description="An agent can give a delegated task its own worktree on a new branch from the parent's, set up before the task starts, so children editing code in parallel don't collide. Lineage shows the child's branch and worktree. Nothing merges or removes it automatically. Agents choose this per task; no switch."
+        />
       </CustomizationsGroup>
       <CustomizationsGroup title="Usage" section="usage" />
       <CustomizationsGroup title="Appearance & motion" section="motion" />

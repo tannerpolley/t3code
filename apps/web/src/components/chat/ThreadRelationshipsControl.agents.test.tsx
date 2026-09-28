@@ -368,7 +368,7 @@ it("shows readable models and only differing workspace details in agent tooltips
   await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).toContain("Branch");
   expect(text()).toContain("fix/checker");
-  expect(text()).not.toContain("Worktree");
+  expect(text()).toContain("Own worktree · checker");
   expect(text()).not.toContain("/main/worktrees");
 
   child.projectId = "other";

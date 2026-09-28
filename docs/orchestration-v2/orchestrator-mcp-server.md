@@ -218,15 +218,31 @@ type DelegateTaskInput = {
   clientRequestId?: string;
   runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
   interactionMode?: "inherit" | "plan" | "default";
+  workspace?: "inherit" | "worktree";
 };
 ```
 
-Provider, model, runtime mode, and interaction mode inherit from the parent
-when omitted. A driver-only target inherits the parent's provider instance
+Provider, model, runtime mode, interaction mode, and workspace inherit from the
+parent when omitted. A driver-only target inherits the parent's provider instance
 when it can run child tasks, and otherwise selects an available instance of
 that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
+
+An inheriting child works in the parent's checkout. `workspace: "worktree"`
+gives the child its own worktree instead, for children that edit code in
+parallel with the parent or siblings: the child's first run starts in
+`preparing`, and the same preparation `t3_thread_launch` uses for a new
+worktree creates a branch from the parent's branch (local commits, never
+origin), binds the child to it, runs the project's setup script, and then
+releases the run. The branch name derives from the title and the delegate
+command id, so a retry with the same `clientRequestId` reuses the child and its
+worktree. A parent without a branch is rejected up front; a failure while
+creating the worktree or running a blocking setup script fails the child's run,
+which settles the task as `failed` with the preparation error as its result.
+Nothing merges the child's branch back or removes its worktree automatically;
+the parent merges or cherry-picks the commits, and storage cleanup or a manual
+worktree deletion removes the checkout.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command
@@ -248,6 +264,8 @@ type DelegateTaskResult = {
   hasPendingChildRuns: boolean;
   providerInstanceId: string;
   model: string | null;
+  branch: string | null;
+  worktreePath: string | null; // null for the project root, or before a worktree child is bound
   summary: string | null;
   resultContextTransferId: string | null;
   latestTerminalRunId: string | null;

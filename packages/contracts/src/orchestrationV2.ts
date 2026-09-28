@@ -2617,6 +2617,9 @@ export const OrchestrationV2Command = Schema.Union([
     // Omitted behaves as "settled_only" (no wake while the parent has a live
     // run); producers that want fire-and-forget wakes must set "always".
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    // Set when the child gets its own worktree: the child starts on this branch
+    // with a deferred run that the caller releases once the worktree is bound.
+    worktreeBranch: Schema.optional(TrimmedNonEmptyString),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({

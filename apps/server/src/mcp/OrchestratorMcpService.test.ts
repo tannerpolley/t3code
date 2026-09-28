@@ -24,6 +24,7 @@ import { ThreadManagementService } from "../orchestration-v2/ThreadManagementSer
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
@@ -104,6 +105,7 @@ describe("OrchestratorMcpService", () => {
         }),
         Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -181,6 +183,7 @@ describe("OrchestratorMcpService", () => {
         }),
         Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -249,6 +252,7 @@ describe("OrchestratorMcpService", () => {
         }),
         Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -324,6 +328,7 @@ describe("OrchestratorMcpService", () => {
         }),
         Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
@@ -513,6 +518,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             antigravityInstanceId,
             disabledAntigravityInstanceId,
           ]),
+          Layer.mock(ThreadLaunchService)({}),
           Layer.mock(ScheduledTaskService)({}),
         );
 
@@ -628,6 +634,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             ]),
           }),
           adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
+          Layer.mock(ThreadLaunchService)({}),
           Layer.mock(ScheduledTaskService)({}),
         );
 
@@ -721,6 +728,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           ]),
         }),
         adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({}),
       );
 
@@ -769,6 +777,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           ]),
         }),
         adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ThreadLaunchService)({}),
         Layer.mock(ScheduledTaskService)({}),
       );
 
@@ -932,6 +941,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               ]),
             }),
             adapterRegistryLayer([codexInstanceId, codexAltInstanceId]),
+            Layer.mock(ThreadLaunchService)({}),
             Layer.mock(ScheduledTaskService)({}),
           );
 

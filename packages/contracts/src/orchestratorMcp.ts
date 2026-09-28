@@ -186,6 +186,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  workspace: Schema.optional(
+    Schema.Literals(["inherit", "worktree"]).annotate({
+      description:
+        "Defaults to inherit: the child works in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's branch (local commits; uncommitted changes are not copied), with the project's setup script run there before the child starts.",
+    }),
+  ),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
@@ -203,6 +209,11 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   latestTerminalResultContextTransferId: Schema.NullOr(ContextTransferId),
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
+  branch: Schema.NullOr(Schema.String),
+  worktreePath: Schema.NullOr(Schema.String).annotate({
+    description:
+      "The child's checkout; null means the project root. A workspace=worktree child reports null until its worktree is ready.",
+  }),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
   waitTimedOut: Schema.Boolean.annotate({
