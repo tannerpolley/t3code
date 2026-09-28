@@ -493,6 +493,8 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   topBackButton: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   lineageDetailsExpanded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Clear Lineage's finished agents this many minutes after they last finished; 0 is off. */
+  lineageAutoClearMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** Place unsorted projects under the Organize by folder root into their folder's section. */
   autoOrganizeByFolder: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Show a browser tab an agent uses in the right panel instead of the floating mini player. */
@@ -1787,6 +1789,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarTogglePosition: Schema.optionalKey(SidebarTogglePosition),
   topBackButton: Schema.optionalKey(Schema.Boolean),
   lineageDetailsExpanded: Schema.optionalKey(Schema.Boolean),
+  lineageAutoClearMinutes: Schema.optionalKey(NonNegativeInt),
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
   agentBrowserInPanel: Schema.optionalKey(Schema.Boolean),
   activityNeedsYouFirst: Schema.optionalKey(Schema.Boolean),

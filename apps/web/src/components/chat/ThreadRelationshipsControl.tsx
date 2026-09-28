@@ -56,6 +56,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { cn } from "../../lib/utils";
 import { useUiStateStore } from "../../uiStateStore";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
@@ -125,6 +126,25 @@ export function groupThreadLineageRows(input: {
       ? finished
       : finished.filter(({ threadId }) => (input.finishedAt(threadId) ?? clearedAt) > clearedAt);
   return { related, active, previous, clearedCount: finished.length - previous.length };
+}
+
+/** Stored by Show: list every finished agent, including ones auto-clear would hide. */
+export const SHOW_ALL_CLEARED = "show-all";
+
+/**
+ * When Lineage's finished agents count as cleared: the later of Clear's stamp and the auto-clear
+ * window's start. Show stores SHOW_ALL_CLEARED, which lists everything until Clear is pressed.
+ */
+export function resolveLineageClearedAt(input: {
+  readonly stored: string | undefined;
+  readonly autoClearMinutes: number;
+  readonly now: number;
+}): number | null {
+  if (input.stored === SHOW_ALL_CLEARED) return null;
+  const manual = input.stored === undefined ? null : Date.parse(input.stored);
+  const auto = input.autoClearMinutes > 0 ? input.now - input.autoClearMinutes * 60_000 : null;
+  if (manual === null) return auto;
+  return auto === null ? manual : Math.max(manual, auto);
 }
 
 function ThreadLineageGroup(props: {
@@ -315,6 +335,9 @@ export function ThreadRelationshipsPanel(props: {
   // Off restores the original rows: title, corner status badge, no details.
   const redesign = useClientSettings((settings) => settings.threadDetailsRedesign);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
+  const autoClearMinutes = useClientSettings((settings) => settings.lineageAutoClearMinutes);
+  // Minute resolution is plenty for a 30-minute window, and shares the app's one clock.
+  const nowMinute = useNowMinute();
   const isRunning = (status: string | null) =>
     redesign ? lineageStatusMark(status) === "working" : status === "running";
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
@@ -346,7 +369,13 @@ export function ThreadRelationshipsPanel(props: {
     rows: relationshipRows,
     currentThreadId: props.threadId,
     // Clearing is part of the fork's Lineage redesign; off shows every agent.
-    clearedAt: !redesign || clearedAtIso === undefined ? null : Date.parse(clearedAtIso),
+    clearedAt: redesign
+      ? resolveLineageClearedAt({
+          stored: clearedAtIso,
+          autoClearMinutes,
+          now: Date.parse(`${nowMinute}:00.000Z`),
+        })
+      : null,
     finishedAt,
   });
   // Shells the thread started run beside its agents, so they list and count like children.
@@ -427,7 +456,7 @@ export function ThreadRelationshipsPanel(props: {
       ).toISOString(),
     );
   const showCleared = () => {
-    setLineageAgentsClearedAt(threadKey, null);
+    setLineageAgentsClearedAt(threadKey, SHOW_ALL_CLEARED);
     setPreviousOpenFor(threadKey);
   };
   const groups = [

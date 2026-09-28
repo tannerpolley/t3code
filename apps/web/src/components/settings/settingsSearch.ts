@@ -430,6 +430,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork composer code block fenced backticks inline code monospace"],
   },
   {
+    id: "lineage-auto-clear",
+    title: "Clear finished agents automatically",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork lineage previous agents clear hide auto minutes hour"],
+  },
+  {
     id: "lineage-details-expanded",
     title: "Expand agent details by default",
     to: "/settings/customizations",

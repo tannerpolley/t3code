@@ -78,7 +78,7 @@ export function BackgroundWorkTaskList(props: {
             {icon}
             {row.child ? (
               // Model then title, as on the thread rows above.
-              <span className="max-w-[6.5rem] shrink-0 truncate text-muted-foreground">
+              <span className="max-w-[6.5rem] shrink-0 truncate text-foreground/85">
                 {resolveSubagentModelLabel(
                   { model: null, provider, childThread: row.child },
                   { shortName: shortModelNames },

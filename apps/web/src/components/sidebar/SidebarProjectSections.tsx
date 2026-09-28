@@ -1226,7 +1226,7 @@ function SidebarProjectThreadRow(props: {
         )}
         {props.codexStyle ? (
           // The model sits right after the provider icon, as in Lineage; the title takes the rest.
-          <span className="max-w-[6.5rem] shrink-0 truncate text-[11px] text-sidebar-muted-foreground/55">
+          <span className="max-w-[6.5rem] shrink-0 truncate text-[11px] text-foreground/85">
             {resolveSubagentModelLabel(
               { model: null, provider, childThread: props.thread },
               { shortName: shortModelNames },

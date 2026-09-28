@@ -1,7 +1,12 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupThreadLineageRows, resolveSubagentProgressText } from "./ThreadRelationshipsControl";
+import {
+  groupThreadLineageRows,
+  resolveLineageClearedAt,
+  resolveSubagentProgressText,
+  SHOW_ALL_CLEARED,
+} from "./ThreadRelationshipsControl";
 
 describe("thread lineage groups", () => {
   const parent = ThreadId.make("parent");
@@ -82,5 +87,24 @@ describe("subagent progress line", () => {
         latestMessage: { role: "user", text: "Check the change" },
       }),
     ).toBe("");
+  });
+});
+
+describe("resolveLineageClearedAt", () => {
+  const now = Date.parse("2026-09-28T12:00:00.000Z");
+  it("takes the later of Clear and the auto-clear window, and Show lists everything", () => {
+    const hourAgo = now - 60 * 60_000;
+    expect(resolveLineageClearedAt({ stored: undefined, autoClearMinutes: 0, now })).toBeNull();
+    expect(resolveLineageClearedAt({ stored: undefined, autoClearMinutes: 60, now })).toBe(hourAgo);
+    const recentClear = "2026-09-28T11:50:00.000Z";
+    expect(resolveLineageClearedAt({ stored: recentClear, autoClearMinutes: 60, now })).toBe(
+      Date.parse(recentClear),
+    );
+    expect(
+      resolveLineageClearedAt({ stored: "2026-09-28T09:00:00.000Z", autoClearMinutes: 60, now }),
+    ).toBe(hourAgo);
+    expect(
+      resolveLineageClearedAt({ stored: SHOW_ALL_CLEARED, autoClearMinutes: 60, now }),
+    ).toBeNull();
   });
 });

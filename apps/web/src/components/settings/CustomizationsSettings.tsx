@@ -430,6 +430,9 @@ function ProviderPluginsSection() {
 const PROJECT_ICON_FALLBACK_LABELS = { folder: "Folder", initials: "Initials" } as const;
 const SIDEBAR_TOGGLE_POSITION_LABELS = { left: "Left", right: "Right" } as const;
 const IDLE_AGENT_SESSION_MINUTES = [0, 15, 30, 60, 120] as const;
+const LINEAGE_AUTO_CLEAR_MINUTES = [0, 30, 60] as const;
+const lineageAutoClearLabel = (minutes: number) =>
+  minutes === 0 ? "Off" : minutes === 60 ? "1 hour" : `${minutes} minutes`;
 const idleAgentSessionLabel = (minutes: number) => (minutes === 0 ? "Off" : `${minutes} minutes`);
 
 export function CustomizationsSettings() {
@@ -573,7 +576,33 @@ export function CustomizationsSettings() {
           }
         />
       </CustomizationsGroup>
-      <CustomizationsGroup title="Lineage & background work" section="lineage" />
+      <CustomizationsGroup title="Lineage & background work" section="lineage">
+        <SettingsRow
+          {...searchableSetting("lineage-auto-clear")}
+          description="Hide finished agents from Lineage's Previous agents once they have sat unused this long, as if you pressed Clear. An agent you resume shows again. Show brings cleared ones back. Needs the Lineage redesign."
+          control={
+            <Select
+              value={String(settings.lineageAutoClearMinutes)}
+              onValueChange={(value) => updateSettings({ lineageAutoClearMinutes: Number(value) })}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="Clear finished agents after"
+              >
+                <SelectValue>{lineageAutoClearLabel(settings.lineageAutoClearMinutes)}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {LINEAGE_AUTO_CLEAR_MINUTES.map((minutes) => (
+                  <SelectItem hideIndicator key={minutes} value={String(minutes)}>
+                    {lineageAutoClearLabel(minutes)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      </CustomizationsGroup>
       <CustomizationsGroup title="Composer & chat" section="composer" />
       <CustomizationsGroup title="Version control & issues" section="versionControl" />
       <CustomizationsGroup title="Browser & preview" section="browser">
