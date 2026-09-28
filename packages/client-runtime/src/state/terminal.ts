@@ -91,6 +91,12 @@ export function createTerminalEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    followBackgroundTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:terminal:follow-background-task",
+      tag: WS_METHODS.terminalFollowBackgroundTask,
+      scheduler: lifecycleScheduler,
+      concurrency: lifecycleConcurrency,
+    }),
   };
 }
 

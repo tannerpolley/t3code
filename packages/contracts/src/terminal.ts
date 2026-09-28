@@ -48,6 +48,17 @@ export const TerminalOpenInput = Schema.Struct({
 });
 export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 
+/**
+ * Opens a terminal that follows one of the thread's background shells. The server finds that
+ * shell's output itself, so a client names a task, never a host path.
+ */
+export const TerminalFollowBackgroundTaskInput = Schema.Struct({
+  ...TerminalOpenInput.fields,
+  /** Provider task id from the thread's pending background tasks. */
+  taskId: TrimmedNonEmptyStringSchema,
+});
+export type TerminalFollowBackgroundTaskInput = typeof TerminalFollowBackgroundTaskInput.Type;
+
 export const TerminalAttachInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),

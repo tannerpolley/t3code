@@ -517,7 +517,7 @@ export const ClientSettingsSchema = Schema.Struct({
   threadDetailsRedesign: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
   shortModelNames: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** Clicking a Claude background process row opens its live output. */
+  /** Clicking a Claude or Codex background process row opens a terminal tab following its output. */
   backgroundProcessOutput: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** The quicker running-activity shimmer. */
   fastShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),

@@ -186,7 +186,10 @@ import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
-import { subscribeBackgroundTaskOutput } from "./orchestration/backgroundTaskOutput.ts";
+import {
+  followBackgroundTaskInTerminal,
+  subscribeBackgroundTaskOutput,
+} from "./orchestration/backgroundTaskOutput.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
@@ -3228,6 +3231,12 @@ const makeWsRpcLayer = (
                 (unsubscribe) => Effect.sync(unsubscribe),
               ),
             ),
+            { "rpc.aggregate": "terminal" },
+          ),
+        [WS_METHODS.terminalFollowBackgroundTask]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.terminalFollowBackgroundTask,
+            followBackgroundTaskInTerminal(input),
             { "rpc.aggregate": "terminal" },
           ),
         [WS_METHODS.terminalWrite]: (input) =>

@@ -133,7 +133,7 @@ export function BackgroundWorkTaskList(props: {
             {content}
           </button>
         ) : row.kind === "process" && processOutput ? (
-          // Opens the process's live output (Claude background shells write it to a file).
+          // Opens the process in a terminal tab that follows its output.
           <BackgroundProcessOutputButton
             environmentId={props.environmentId}
             threadId={props.threadId}

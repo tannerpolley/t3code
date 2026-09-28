@@ -81,6 +81,7 @@ import {
   toMcpElicitationResponse,
 } from "../../provider/Layers/CodexSessionRuntime.ts";
 import { ServerConfig } from "../../config.ts";
+import { makeBackgroundTaskLogWriter } from "../../orchestration/backgroundTaskOutput.ts";
 import { buildCodexDeveloperInstructions } from "../../provider/CodexDeveloperInstructions.ts";
 import {
   materializeCodexShadowHome,
@@ -3898,6 +3899,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           });
         });
 
+        // Command output goes to a per-command log that background shell rows follow; it never
+        // enters the event stream.
+        const commandOutputLogs = yield* makeBackgroundTaskLogWriter(serverConfig.logsDir);
+        yield* client.handleServerNotification("item/commandExecution/outputDelta", (payload) =>
+          Effect.gen(function* () {
+            const resolved = yield* resolveItemEventContext(payload.turnId);
+            if (resolved === undefined) return;
+            yield* commandOutputLogs.append(
+              resolved.context.projectionThreadId,
+              payload.itemId,
+              payload.delta,
+            );
+          }),
+        );
+
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
@@ -4047,6 +4063,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             if (payload.item.type === "commandExecution") {
+              yield* commandOutputLogs.remove(context.projectionThreadId, payload.item.id);
               const turnDrained = yield* clearRunningCommandItem(payload.turnId, payload.item.id);
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
               yield* emitProviderEvent({
