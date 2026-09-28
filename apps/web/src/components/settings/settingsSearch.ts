@@ -487,7 +487,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "usage-limit-model-breakdown",
-    title: "Usage limit model breakdown",
+    title: "Limits page like Cost and Tokens",
     to: "/settings/customizations",
     searchTerms: [
       "customization fork usage limits window models breakdown weekly session estimate chart",

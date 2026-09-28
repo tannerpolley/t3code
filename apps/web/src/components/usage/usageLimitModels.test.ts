@@ -1,7 +1,15 @@
 import { UsageDay, type UsageBucket } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { attributeWindow, dayStartMs, OTHER_MODELS } from "./usageLimitModels";
+import type { LimitPool } from "@t3tools/shared/usageLimits";
+
+import {
+  attributeWindow,
+  dayStartMs,
+  limitChartColumns,
+  limitWindowOptions,
+  OTHER_MODELS,
+} from "./usageLimitModels";
 
 const NOW = Date.parse("2026-09-23T12:00:00.000Z");
 const HOUR = 60 * 60 * 1000;
@@ -46,9 +54,10 @@ describe("attributeWindow", () => {
         bucket({ model: "gpt-old", costUsd: 100, hoursAgo: 9 }),
       ],
     });
+    // Tokens count only the window's provider and span, like the percent.
     expect(result?.models).toEqual([
-      { model: "gpt-a", percent: 30 },
-      { model: "gpt-b", percent: 10 },
+      { model: "gpt-a", percent: 30, tokens: 1_000 },
+      { model: "gpt-b", percent: 10, tokens: 1_000 },
     ]);
   });
 
@@ -74,8 +83,8 @@ describe("attributeWindow", () => {
       ],
     });
     expect(result?.models).toEqual([
-      { model: "gpt-a", percent: 20 },
-      { model: "gpt-new", percent: 20 },
+      { model: "gpt-a", percent: 20, tokens: 1_000 },
+      { model: "gpt-new", percent: 20, tokens: 1_000 },
     ]);
   });
 
@@ -133,5 +142,59 @@ describe("attributeWindow", () => {
 
   it("returns null when the provider did nothing in the window", () => {
     expect(attributeWindow({ ...window, provider: "claude", buckets: [bucket({})] })).toBeNull();
+  });
+});
+
+describe("limitWindowOptions", () => {
+  it("offers each reported kind once, shortest first, with other windows by their label", () => {
+    const pool = (kinds: readonly [string, string][]) =>
+      ({ windows: kinds.map(([kind, label]) => ({ kind, label })) }) as unknown as LimitPool;
+    expect(
+      limitWindowOptions([
+        pool([
+          ["other", "Credits"],
+          ["weekly", "Weekly"],
+        ]),
+        pool([
+          ["weekly", "Weekly (Opus)"],
+          ["session", "Session"],
+        ]),
+      ]),
+    ).toEqual([
+      { value: "session", label: "5 hours" },
+      { value: "weekly", label: "Weekly" },
+      { value: "other", label: "Credits" },
+    ]);
+  });
+});
+
+describe("limitChartColumns", () => {
+  it("draws each provider as the sum of its model bands, per period", () => {
+    const attributions = [
+      attributeWindow({
+        ...window,
+        provider: "codex",
+        buckets: [
+          bucket({ model: "gpt-a", costUsd: 3, hoursAgo: 1 }),
+          bucket({ model: "gpt-b", costUsd: 1, hoursAgo: 1 }),
+          bucket({ model: "gpt-a", costUsd: 4, hoursAgo: 2 }),
+        ],
+      }),
+      null,
+    ];
+    const periods = [1, 2, 3].map((hoursAgo) => new Date(NOW - hoursAgo * HOUR).toISOString());
+    const byProvider = limitChartColumns(attributions, periods, "provider");
+    const byModel = limitChartColumns(attributions, periods, "model");
+
+    expect(byProvider.bands).toEqual([{ row: 0, model: null }]);
+    expect(byModel.bands).toEqual([
+      { row: 0, model: 0 },
+      { row: 0, model: 1 },
+    ]);
+    byProvider.columns.forEach((column, period) => {
+      const models = byModel.columns[period] ?? [];
+      expect(column[0]).toBeCloseTo(models.reduce((sum, value) => sum + value, 0));
+    });
+    expect(byProvider.columns.map((column) => column[0])).toEqual([20, 20, 0]);
   });
 });

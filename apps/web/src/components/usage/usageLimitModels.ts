@@ -1,4 +1,5 @@
 import type { UsageBucket, UsageProviderKind } from "@t3tools/contracts";
+import type { LimitPool, LimitPoolWindow } from "@t3tools/shared/usageLimits";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -10,6 +11,8 @@ export interface WindowModelShare {
   readonly model: string;
   /** Estimated points of the limit this model used, 0..usedPercent. */
   readonly percent: number;
+  /** Tokens the model processed inside the window. */
+  readonly tokens: number;
 }
 
 export interface WindowAttribution {
@@ -131,17 +134,75 @@ export function attributeWindow(input: {
   const toPercent = (weight: number) => (weight / total) * input.usedPercent;
 
   const percents = names.map(() => 0);
+  const tokens = names.map(() => 0);
   const periods = new Map<string, number[]>();
   for (const entry of entries) {
     const index = indexOf(entry.model);
     const points = toPercent(weightOf(entry));
     percents[index] = (percents[index] ?? 0) + points;
+    tokens[index] = (tokens[index] ?? 0) + entry.tokens;
     const row = periods.get(entry.period) ?? names.map(() => 0);
     row[index] = (row[index] ?? 0) + points;
     periods.set(entry.period, row);
   }
   return {
-    models: names.map((model, index) => ({ model, percent: percents[index] ?? 0 })),
+    models: names.map((model, index) => ({
+      model,
+      percent: percents[index] ?? 0,
+      tokens: tokens[index] ?? 0,
+    })),
     periods,
   };
+}
+
+const WINDOW_KIND_LABELS = {
+  session: "5 hours",
+  weekly: "Weekly",
+  monthly: "Monthly",
+  other: null,
+} satisfies Record<LimitPoolWindow["kind"], string | null>;
+
+/**
+ * The limit windows the Limits page can switch between: one per kind any
+ * provider reports, shortest first. `other` has no fixed length, so it takes
+ * the first such window's own label.
+ */
+export function limitWindowOptions(
+  pools: readonly LimitPool[],
+): readonly { readonly value: LimitPoolWindow["kind"]; readonly label: string }[] {
+  const windows = pools.flatMap((pool) => pool.windows);
+  return (Object.keys(WINDOW_KIND_LABELS) as LimitPoolWindow["kind"][]).flatMap((kind) => {
+    const first = windows.find((window) => window.kind === kind);
+    return first ? [{ value: kind, label: WINDOW_KIND_LABELS[kind] ?? first.label }] : [];
+  });
+}
+
+/**
+ * Chart bands over a set of window attributions: one per window (the sum of
+ * its models), or one per model within each window. `columns` holds each
+ * period's value per band, aligned to `bands`. Windows with nothing
+ * attributed get no band.
+ */
+export function limitChartColumns(
+  attributions: readonly (WindowAttribution | null)[],
+  periods: readonly string[],
+  by: "provider" | "model",
+): {
+  readonly bands: readonly { readonly row: number; readonly model: number | null }[];
+  readonly columns: readonly (readonly number[])[];
+} {
+  const bands = attributions.flatMap((attribution, row): { row: number; model: number | null }[] =>
+    attribution === null
+      ? []
+      : by === "provider"
+        ? [{ row, model: null }]
+        : attribution.models.map((_, model) => ({ row, model })),
+  );
+  const columns = periods.map((period) =>
+    bands.map(({ row, model }) => {
+      const values = attributions[row]?.periods.get(period) ?? [];
+      return model === null ? values.reduce((sum, value) => sum + value, 0) : (values[model] ?? 0);
+    }),
+  );
+  return { bands, columns };
 }

@@ -173,7 +173,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "usage-limit-model-breakdown",
     section: "usage",
     description:
-      "Under each window on the Usage page's Limits view, estimate how much of it each model used, from the usage your connected environments recorded, with a chart of the window over time. Off shows only the window bars.",
+      "Lay out the Usage page's Limits view like Cost and Tokens: pick a window (5 hours, weekly, monthly), see what is left per provider, and chart its estimated use by provider or model, from the usage your connected environments recorded. Off shows the per-provider window cards.",
   },
   {
     key: "fastShimmer",

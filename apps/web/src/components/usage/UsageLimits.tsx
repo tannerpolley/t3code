@@ -17,9 +17,9 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 
-import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -35,7 +35,6 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useLimitModelUsage } from "./UsageLimitModels";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -289,17 +288,23 @@ export function ResetCredits({
   input,
   credits,
   now,
+  compact = false,
+  leading,
 }: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
+  readonly compact?: boolean;
+  /** Shown before the summary, such as which account the credits belong to. */
+  readonly leading?: ReactNode;
 }) {
   const { confirming, setConfirming, busy, status, redeem } = useResetCredit(environmentId, input);
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
+      {leading}
+      <span className="tabular-nums">{resetCreditsSummary(credits, now, compact)}</span>
       {credits.availableCount > 0 ? (
         <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
           {busy ? "Using…" : "Use reset"}
@@ -332,28 +337,5 @@ export function UsageLimitsSection({
     selectedEnvironmentIds === null
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
-  const modelBreakdown = useClientSettings((settings) => settings.usageLimitModelBreakdown);
-  return modelBreakdown ? (
-    <UsageLimitsWithModels
-      presentations={selected}
-      selectedEnvironmentIds={selectedEnvironmentIds}
-      now={now}
-    />
-  ) : (
-    <UsageLimitsPooled presentations={selected} now={now} />
-  );
-}
-
-/** Split out so the usage scans behind the model split only run while it is switched on. */
-function UsageLimitsWithModels({
-  presentations,
-  selectedEnvironmentIds,
-  now,
-}: {
-  readonly presentations: Parameters<typeof UsageLimitsPooled>[0]["presentations"];
-  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
-  readonly now: number;
-}) {
-  const modelUsage = useLimitModelUsage(presentations, selectedEnvironmentIds, now);
-  return <UsageLimitsPooled presentations={presentations} now={now} modelUsage={modelUsage} />;
+  return <UsageLimitsPooled presentations={selected} now={now} />;
 }

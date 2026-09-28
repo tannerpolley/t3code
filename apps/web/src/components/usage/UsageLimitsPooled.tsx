@@ -29,7 +29,6 @@ import {
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
-import { type LimitModelUsage, WindowModelBreakdown } from "./UsageLimitModels";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 function accountInitials(email: string): string {
@@ -65,7 +64,7 @@ function AccountChip({ email }: { readonly email: string }) {
  * The same mark the model picker uses for a native instance (provider glyph,
  * initials badge, accent); hub accounts have no instance, so they get the chip.
  */
-function AccountAvatar({
+export function AccountAvatar({
   account,
   className,
 }: {
@@ -477,16 +476,12 @@ function PoolBar({
  */
 function PoolWindowCard({
   pool,
-  driver,
   color,
   now,
-  modelUsage,
 }: {
   readonly pool: LimitPoolWindow;
-  readonly driver: LimitPool["driver"];
   readonly color: string;
   readonly now: number;
-  readonly modelUsage: LimitModelUsage | undefined;
 }) {
   // The soonest reset that hands anything back; an untouched account resets to no effect.
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
@@ -509,28 +504,11 @@ function PoolWindowCard({
         ) : null}
       </div>
       <PoolBar pool={pool} color={color} now={now} />
-      {modelUsage ? (
-        <WindowModelBreakdown
-          pool={pool}
-          driver={driver}
-          color={color}
-          usage={modelUsage}
-          now={now}
-        />
-      ) : null}
     </div>
   );
 }
 
-function PoolSection({
-  pool,
-  now,
-  modelUsage,
-}: {
-  readonly pool: LimitPool;
-  readonly now: number;
-  readonly modelUsage: LimitModelUsage | undefined;
-}) {
+function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
   const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
   return (
@@ -546,14 +524,7 @@ function PoolSection({
         {label}
       </h2>
       {pool.windows.map((window) => (
-        <PoolWindowCard
-          key={`${window.kind}:${window.id}`}
-          pool={window}
-          driver={pool.driver}
-          color={color}
-          now={now}
-          modelUsage={modelUsage}
-        />
+        <PoolWindowCard key={`${window.kind}:${window.id}`} pool={window} color={color} now={now} />
       ))}
     </section>
   );
@@ -567,12 +538,9 @@ function PoolSection({
 export function UsageLimitsPooled({
   presentations,
   now,
-  modelUsage,
 }: {
   readonly presentations: Parameters<typeof collectLimitAccounts>[0];
   readonly now: number;
-  /** Present when windows should carry their estimated split by model. */
-  readonly modelUsage?: LimitModelUsage;
 }) {
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
@@ -584,7 +552,7 @@ export function UsageLimitsPooled({
         </p>
       ) : null}
       {pools.map((pool) => (
-        <PoolSection key={pool.driver} pool={pool} now={now} modelUsage={modelUsage} />
+        <PoolSection key={pool.driver} pool={pool} now={now} />
       ))}
       <LimitNotices notices={notices} />
     </div>
@@ -592,7 +560,7 @@ export function UsageLimitsPooled({
 }
 
 /** Sources and providers that could not be read, so a missing bar is not mistaken for a full one. */
-function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
+export function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (
     <Alert variant="warning" controlAlignment="first-line">

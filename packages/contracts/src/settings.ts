@@ -519,7 +519,11 @@ export const ClientSettingsSchema = Schema.Struct({
   backgroundProcessOutput: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** The quicker running-activity shimmer. */
   fastShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** Usage page Limits: an estimated per-model split of each window with its history. */
+  /**
+   * Usage page Limits laid out like Cost and Tokens (one window kind at a time,
+   * provider rows, an estimated by-provider or by-model chart); off shows the
+   * per-provider window cards.
+   */
   usageLimitModelBreakdown: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
