@@ -20,6 +20,7 @@ import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
+  type ThreadManagementSendResult,
   ThreadManagementService,
   ThreadManagementThreadNotFoundError,
 } from "../orchestration-v2/ThreadManagementService.ts";
@@ -598,7 +599,7 @@ it("readThread reaches a thread the user attached as context, but not one an age
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
-it("readThread reaches other projects only from a top-level thread with the setting on", async () => {
+it("other projects are readable, and promptable, only from a top-level thread with the setting on", async () => {
   const otherThreadId = ThreadId.make("thread-mcp-orchestrator-other-project");
   const projection = (thread: object) =>
     ({
@@ -627,8 +628,10 @@ it("readThread reaches other projects only from a top-level thread with the sett
   });
   const run = (input: {
     readonly readAllProjects: boolean;
+    readonly promptAllProjects?: boolean;
     readonly relationshipToParent: "subagent" | null;
   }) => {
+    const sentToProjects: string[] = [];
     const caller = projection({
       ...parent,
       lineage: { ...parent.lineage, relationshipToParent: input.relationshipToParent },
@@ -647,11 +650,19 @@ it("readThread reaches other projects only from a top-level thread with the sett
                   threadId: input.threadId,
                 }),
               ),
+            sendToThread: (send) => {
+              sentToProjects.push(send.projectId);
+              return Effect.succeed({
+                run: { id: RunId.make("run-other-project"), status: "running" },
+                delivery: "started",
+              } as unknown as ThreadManagementSendResult);
+            },
           } satisfies Partial<ThreadManagementService["Service"]>),
           Layer.mock(ServerSettingsService)({
             getSettings: Effect.succeed({
               ...DEFAULT_SERVER_SETTINGS,
               topLevelThreadsReadAllProjects: input.readAllProjects,
+              topLevelThreadsPromptAllProjects: input.promptAllProjects ?? false,
             }),
           }),
           Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -668,8 +679,8 @@ it("readThread reaches other projects only from a top-level thread with the sett
         .pipe(Effect.result);
       const send = yield* service
         .sendToThread(makeScope(), { threadId: otherThreadId, message: "hi" })
-        .pipe(Effect.flip);
-      return { read, send };
+        .pipe(Effect.result);
+      return { read, send, sentToProjects };
     }).pipe(Effect.provide(layer), Effect.runPromise);
   };
 
@@ -682,8 +693,23 @@ it("readThread reaches other projects only from a top-level thread with the sett
 
   const on = await run({ readAllProjects: true, relationshipToParent: null });
   expect(on.read._tag === "Success" && on.read.success.thread.threadId).toBe(otherThreadId);
-  expect(on.send.code).toBe("thread_not_found");
+  expect(on.send._tag === "Failure" && on.send.failure.code).toBe("thread_not_found");
 
-  const subagent = await run({ readAllProjects: true, relationshipToParent: "subagent" });
+  // Prompting implies reading, and the message lands in the target's project.
+  const prompt = await run({
+    readAllProjects: false,
+    promptAllProjects: true,
+    relationshipToParent: null,
+  });
+  expect(prompt.read._tag).toBe("Success");
+  expect(prompt.send._tag).toBe("Success");
+  expect(prompt.sentToProjects).toEqual(["project-mcp-orchestrator-other"]);
+
+  const subagent = await run({
+    readAllProjects: true,
+    promptAllProjects: true,
+    relationshipToParent: "subagent",
+  });
   expect(subagent.read._tag).toBe("Failure");
+  expect(subagent.send._tag).toBe("Failure");
 });

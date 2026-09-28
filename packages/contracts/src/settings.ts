@@ -1319,6 +1319,13 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   /**
+   * Let top-level agent threads send messages to threads in other projects, which implies reading
+   * them. Subagents and delegated tasks stay limited to their own project.
+   */
+  topLevelThreadsPromptAllProjects: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  /**
    * Wake a delegated task's parent thread once when the child asks the user a question or waits
    * on an approval, so the parent can relay or answer it.
    */
@@ -1638,6 +1645,7 @@ export const ServerSettingsPatch = Schema.Struct({
   projectFolderRoot: Schema.optionalKey(TrimmedString),
   idleAgentSessionMinutes: Schema.optionalKey(NonNegativeInt),
   topLevelThreadsReadAllProjects: Schema.optionalKey(Schema.Boolean),
+  topLevelThreadsPromptAllProjects: Schema.optionalKey(Schema.Boolean),
   wakeParentOnChildQuestion: Schema.optionalKey(Schema.Boolean),
   wakeParentOnResumedChild: Schema.optionalKey(Schema.Boolean),
   agentBrowserTabLimits: Schema.optionalKey(Schema.Boolean),

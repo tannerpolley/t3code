@@ -360,6 +360,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["cross project read threads agents mcp access subagents delegated"],
   },
   {
+    id: "top-level-threads-prompt-all-projects",
+    title: "Top-level threads can prompt other projects",
+    to: "/settings/customizations",
+    searchTerms: ["cross project send message prompt threads agents mcp access"],
+  },
+  {
     id: "wake-parent-on-child-question",
     title: "Wake the parent when a delegated task asks you something",
     to: "/settings/customizations",

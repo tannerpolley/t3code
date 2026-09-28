@@ -156,7 +156,7 @@ export const CreateThreadsTool = Tool.make("create_threads", {
 
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
-    "List T3 threads in the calling thread's project, newest first. Filter by durable run status or title and paginate with the returned cursor. Other projects are never listed; when the user allows top-level threads to read other projects, find their threads with t3_thread_search.",
+    "List T3 threads in the calling thread's project, newest first. Filter by durable run status or title and paginate with the returned cursor. Other projects are never listed; when the user allows top-level threads to read or prompt other projects, find their threads with t3_thread_search.",
   parameters: OrchestratorMcpThreadListInput,
   success: OrchestratorMcpThreadListResult,
   failure: OrchestratorMcpFailure,
@@ -197,7 +197,7 @@ export const ThreadUpdateTool = Tool.make("t3_thread_update", {
 
 const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
-    "Send a message to a T3 thread in the calling project. mode='auto' starts an idle thread, steers a fully active turn, or queues behind a turn that is not yet steerable. Use queue for a separate follow-up turn, steer for an in-flight update, or restart to interrupt-and-restart the active turn. clientRequestId makes retries idempotent. A turn this starts in your own delegated child reports its result back and wakes this thread like the first result, unless the environment turned that off (then read task_status latestTerminal*). A turn in any other thread does not report back; use t3_thread_wait or t3_thread_read.",
+    "Send a message to a T3 thread in the calling project, or from a top-level thread to another project's thread when the user allows it (find those with t3_thread_search). mode='auto' starts an idle thread, steers a fully active turn, or queues behind a turn that is not yet steerable. Use queue for a separate follow-up turn, steer for an in-flight update, or restart to interrupt-and-restart the active turn. clientRequestId makes retries idempotent. A turn this starts in your own delegated child reports its result back and wakes this thread like the first result, unless the environment turned that off (then read task_status latestTerminal*). A turn in any other thread does not report back; use t3_thread_wait or t3_thread_read.",
   parameters: OrchestratorMcpThreadSendInput,
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,

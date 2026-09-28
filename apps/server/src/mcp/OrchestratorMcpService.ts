@@ -51,6 +51,7 @@ import {
   type ScheduledTaskUpsertInput,
   type ServerProvider,
   ThreadId,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -749,24 +750,45 @@ function timelineItem(input: {
 }
 
 /**
- * Whether `caller` may read (never change) threads outside its own project: only when the
- * user turned on `topLevelThreadsReadAllProjects` and the caller is a top-level thread.
- * Subagents and delegated tasks stay inside their parent's project. Settings are read per
- * call so toggling needs no restart; a missing or unreadable settings service means off.
+ * Whether a top-level `caller` has a cross-project allowance the user turned on. Subagents and
+ * delegated tasks stay inside their parent's project. Settings are read per call so toggling
+ * needs no restart; a missing or unreadable settings service means off.
  */
-export const readsOtherProjects = (
+const topLevelAllows = (
   settings: Option.Option<ServerSettingsService["Service"]>,
   caller: Pick<OrchestrationV2ThreadShell, "lineage">,
+  allowed: (current: ServerSettings) => boolean,
 ): Effect.Effect<boolean> =>
   Option.isNone(settings) || caller.lineage.relationshipToParent === "subagent"
     ? Effect.succeed(false)
     : settings.value.getSettings.pipe(
-        Effect.map((current) => current.topLevelThreadsReadAllProjects),
+        Effect.map(allowed),
         Effect.orElseSucceed(() => false),
       );
 
+/** Reading threads outside the caller's project; the prompt allowance includes it. */
+export const readsOtherProjects = (
+  settings: Option.Option<ServerSettingsService["Service"]>,
+  caller: Pick<OrchestrationV2ThreadShell, "lineage">,
+): Effect.Effect<boolean> =>
+  topLevelAllows(
+    settings,
+    caller,
+    (current) => current.topLevelThreadsReadAllProjects || current.topLevelThreadsPromptAllProjects,
+  );
+
+/** Sending messages (`t3_thread_send`) to threads outside the caller's project. */
+export const promptsOtherProjects = (
+  settings: Option.Option<ServerSettingsService["Service"]>,
+  caller: Pick<OrchestrationV2ThreadShell, "lineage">,
+): Effect.Effect<boolean> =>
+  topLevelAllows(settings, caller, (current) => current.topLevelThreadsPromptAllProjects);
+
 export const OTHER_PROJECT_READ_HINT =
   "Threads in other projects are readable only from top-level threads, when the user allows it in Settings → Customizations.";
+
+const OTHER_PROJECT_PROMPT_HINT =
+  "Threads in other projects accept messages only from top-level threads, when the user allows it in Settings → Customizations.";
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -1900,7 +1922,31 @@ const make = Effect.gen(function* () {
       }),
     sendToThread: (scope, input) =>
       Effect.gen(function* () {
-        const { parent, target } = yield* loadScopedThread(scope, input.threadId);
+        const { parent, target } = yield* loadScopedThread(scope, input.threadId).pipe(
+          Effect.catchIf(
+            (error) => error.code === "thread_not_found",
+            (error) =>
+              Effect.gen(function* () {
+                const parent = yield* loadProjection(scope.threadId);
+                if (!(yield* promptsOtherProjects(serverSettings, parent.thread))) {
+                  return yield* failure(
+                    error.code,
+                    `${error.message} ${OTHER_PROJECT_PROMPT_HINT}`,
+                  );
+                }
+                const target = yield* threadManagement
+                  .getThreadRecords(input.threadId, [])
+                  .pipe(Effect.mapError(threadManagementFailure));
+                if (target.thread.deletedAt !== null) {
+                  return yield* failure(
+                    "thread_not_found",
+                    `Thread ${input.threadId} is no longer available.`,
+                  );
+                }
+                return { parent, target } as const;
+              }),
+          ),
+        );
         yield* resolveRuntimeMode(parent.thread.runtimeMode, target.thread.runtimeMode);
         yield* resolveInteractionMode(parent.thread.interactionMode, target.thread.interactionMode);
 
@@ -1913,7 +1959,7 @@ const make = Effect.gen(function* () {
         });
         const result = yield* threadManagement
           .sendToThread({
-            projectId: parent.thread.projectId,
+            projectId: target.thread.projectId,
             commandId: stableCommandId({
               scope,
               requestKey: key,

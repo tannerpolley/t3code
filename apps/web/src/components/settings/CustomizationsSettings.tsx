@@ -593,6 +593,11 @@ export function CustomizationsSettings() {
           description="Let agents in top-level threads read, but not change, threads in other projects on this environment. Subagents and delegated tasks stay limited to their own project."
         />
         <ServerSwitchRow
+          settingKey="topLevelThreadsPromptAllProjects"
+          searchId="top-level-threads-prompt-all-projects"
+          description="Let agents in top-level threads send messages to threads in other projects on this environment, and read them. They can't escalate a thread's access or plan mode. Subagents and delegated tasks stay limited to their own project."
+        />
+        <ServerSwitchRow
           settingKey="wakeParentOnChildQuestion"
           searchId="wake-parent-on-child-question"
           description="When a delegated task asks you a question or waits on an approval, tell its parent thread once so it can relay or answer it."
