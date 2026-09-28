@@ -4,7 +4,16 @@ import type {
   OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+
+const FINISHED_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "rolled_back",
+]);
 
 export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
 
@@ -62,7 +71,12 @@ export function resolveSubagentStatus(
     return request.kind === "user_input" ? "input" : "approval";
   }
   const own = childThread?.activityRunStatus ?? childThread?.status;
-  return own && own !== "idle" ? own : subagent.status;
+  if (!own || own === "idle") return subagent.status;
+  // A task still open outlasts its child's finished turn: it waits on the child's own background
+  // work or its report back. A resumed child's live run wins as before.
+  return FINISHED_STATUSES.has(own) && isOrchestrationV2WorkActive(subagent.status)
+    ? subagent.status
+    : own;
 }
 
 /**

@@ -399,6 +399,14 @@ describe("subagent current activation", () => {
     expect(resolveSubagentActivation(record, undefined)).toMatchObject(record);
     expect(resolveSubagentStatus(record, child as never)).toBe("completed");
   });
+
+  it("keeps a task running while its finished child still waits on its own work", () => {
+    const waiting = { ...child, status: "completed" } as never;
+    expect(resolveSubagentStatus({ status: "running" }, waiting)).toBe("running");
+    // A child the parent resumed reads from its live run.
+    const resumed = { ...child, activityRunStatus: "running", status: "running" } as never;
+    expect(resolveSubagentStatus(record, resumed)).toBe("running");
+  });
 });
 
 describe("web thread lineage ordering", () => {
