@@ -54,7 +54,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "codex-style-sidebar",
     section: "sidebar",
     description:
-      "Projects view like the Codex app: hover chevrons, rows that toggle and drag, a blue spinner on running threads, running subagents listed under their thread like Lineage rows, and New thread in the project menu instead of a hover button. Off restores chevrons, grip handles, status dots and the All projects row.",
+      "Projects view like the Codex app: hover chevrons, rows that toggle and drag, a blue spinner on running threads, smaller thread titles, running subagents and their own subagents in a tree under their thread with model and title, and New thread in the project menu instead of a hover button. Off restores chevrons, grip handles, status dots and the All projects row.",
   },
   {
     key: "sectionFolderColors",

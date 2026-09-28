@@ -60,7 +60,7 @@ import {
   type ReactNode,
 } from "react";
 
-import type { ProjectIconColor } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectIconColor, ThreadId } from "@t3tools/contracts";
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 import {
   inheritedSectionFolderAppearance,
@@ -1109,11 +1109,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               onClick={props.onThreadClick}
               onContextMenu={props.onThreadContextMenu}
               thread={thread}
-              runningSubagents={
-                props.runningSubagentsByParentKey.get(
-                  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                ) ?? NO_THREADS
-              }
+              runningSubagentsByParentKey={props.runningSubagentsByParentKey}
             />
           ))}
           {props.threads.length === 0 ? (
@@ -1172,12 +1168,13 @@ function SidebarProjectThreadRow(props: {
     thread: SidebarThreadSummary,
     position: { x: number; y: number },
   ) => void;
-  readonly runningSubagents: readonly SidebarThreadSummary[];
+  readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
 }): ReactNode {
-  const status = withChildNeeds(resolveSidebarThreadStatus(props.thread), props.runningSubagents);
   const activeThreadKey = scopedThreadKey(
     scopeThreadRef(props.thread.environmentId, props.thread.id),
   );
+  const runningSubagents = props.runningSubagentsByParentKey.get(activeThreadKey) ?? NO_THREADS;
+  const status = withChildNeeds(resolveSidebarThreadStatus(props.thread), runningSubagents);
   const active = props.activeThreadKey === activeThreadKey;
   const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[activeThreadKey],
@@ -1186,7 +1183,7 @@ function SidebarProjectThreadRow(props: {
   const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
   const workRows = describeSidebarBackgroundWork(
     props.thread.pendingBackgroundTasks,
-    props.runningSubagents,
+    runningSubagents,
   );
   // Running work shows by default, even while the thread itself works; a collapse wins for this row.
   const [workOpen, setWorkOpen] = useState(true);
@@ -1236,7 +1233,9 @@ function SidebarProjectThreadRow(props: {
             )}
           </span>
         ) : null}
-        <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
+        <span className={cn("min-w-0 flex-1 truncate", props.codexStyle && "text-xs")}>
+          {props.thread.title}
+        </span>
         {workRows.length > 0 ? (
           // Room for the work toggle, which sits over this spot because buttons cannot nest.
           <span aria-hidden className={cn("shrink-0", props.codexStyle ? "w-12" : "w-8")} />
@@ -1273,7 +1272,17 @@ function SidebarProjectThreadRow(props: {
           )}
         </button>
       ) : null}
-      {workRows.length > 0 && workOpen ? (
+      {workRows.length > 0 && workOpen && props.codexStyle ? (
+        // Under the row's provider icon, where the tree lines begin.
+        <div className="ms-4">
+          <SidebarSubagentTree
+            environmentId={props.thread.environmentId}
+            threadId={props.thread.id}
+            rows={workRows}
+            runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+          />
+        </div>
+      ) : workRows.length > 0 && workOpen ? (
         <div className="ms-3 border-s border-sidebar-border/60 ps-1">
           <BackgroundWorkTaskList
             compact
@@ -1285,6 +1294,48 @@ function SidebarProjectThreadRow(props: {
         </div>
       ) : null}
     </li>
+  );
+}
+
+/** A thread's work rows, each running subagent followed by its own running subagents. */
+function SidebarSubagentTree(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly rows: ReturnType<typeof describeSidebarBackgroundWork>;
+  readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  readonly nested?: boolean;
+}) {
+  return (
+    <BackgroundWorkTaskList
+      compact
+      columns
+      nested={props.nested ?? false}
+      environmentId={props.environmentId}
+      threadId={props.threadId}
+      rows={props.rows}
+      renderNested={(row) => {
+        if (row.childThreadId === null) return null;
+        // ponytail: only running children are grouped, so a grandchild still running under a
+        // finished child is not shown here; it stays in the child's Lineage.
+        const grandchildren =
+          props.runningSubagentsByParentKey.get(
+            scopedThreadKey(scopeThreadRef(props.environmentId, row.childThreadId)),
+          ) ?? NO_THREADS;
+        if (grandchildren.length === 0) return null;
+        return (
+          // Under the row's icon: past the row's 8px padding and half its 16px icon.
+          <div className="ms-4">
+            <SidebarSubagentTree
+              nested
+              environmentId={props.environmentId}
+              threadId={row.childThreadId}
+              rows={describeSidebarBackgroundWork([], grandchildren)}
+              runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+            />
+          </div>
+        );
+      }}
+    />
   );
 }
 

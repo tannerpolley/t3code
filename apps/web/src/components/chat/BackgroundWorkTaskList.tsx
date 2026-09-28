@@ -2,6 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { BotIcon, TerminalIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { useServerConfigs, useThreadProjection, useThreadShell } from "../../state/entities";
@@ -23,7 +24,8 @@ import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
  * One row per pending background task; subagents with a thread open it like their Lineage row.
  * `compact` fits the sidebar: smaller text, and the kind moves into the row's tooltip.
  * `columns` lays rows out like a Lineage row (icon, model · effort or label, elapsed, status mark)
- * with the Codex-style sidebar's fixed time and status slots, so they line up with thread rows.
+ * with the Codex-style sidebar's fixed time and status slots, so they line up with thread rows,
+ * and draws tree lines from the owner's icon; `renderNested` adds a row's own subagents beneath it.
  */
 export function BackgroundWorkTaskList(props: {
   readonly environmentId: EnvironmentId;
@@ -32,6 +34,9 @@ export function BackgroundWorkTaskList(props: {
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
   readonly columns?: boolean;
+  /** Columns rows under another columns row, whose icon sits lower in a shorter row. */
+  readonly nested?: boolean;
+  readonly renderNested?: (row: BackgroundWorkTaskRow) => ReactNode;
 }) {
   const navigate = useNavigate();
   // Columns match the sidebar thread row's px-2, so time and status slots share a right edge.
@@ -42,9 +47,12 @@ export function BackgroundWorkTaskList(props: {
   return (
     <ul
       className={
-        props.compact
-          ? "max-h-40 overflow-y-auto text-[11px]"
-          : "max-h-48 space-y-0.5 overflow-y-auto pb-1 text-xs"
+        props.columns
+          ? // No scroll box: it would clip the tree lines reaching up to the owner's icon.
+            "text-[11px]"
+          : props.compact
+            ? "max-h-40 overflow-y-auto text-[11px]"
+            : "max-h-48 space-y-0.5 overflow-y-auto pb-1 text-xs"
       }
     >
       {props.rows.map((row) => {
@@ -60,19 +68,16 @@ export function BackgroundWorkTaskList(props: {
             ) : (
               <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
             )}
-            <span className="min-w-0 flex-1 truncate text-foreground/85">
-              {row.child ? (
-                <>
-                  {resolveSubagentModelLabel(
-                    { model: null, provider, childThread: row.child },
-                    { shortName: shortModelNames },
-                  )}
-                  <span className="sr-only">, {row.label}</span>
-                </>
-              ) : (
-                row.label
-              )}
-            </span>
+            {row.child ? (
+              // Model then title, as on the thread rows above.
+              <span className="max-w-[6.5rem] shrink-0 truncate text-muted-foreground">
+                {resolveSubagentModelLabel(
+                  { model: null, provider, childThread: row.child },
+                  { shortName: shortModelNames },
+                )}
+              </span>
+            ) : null}
+            <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
             <span className="w-12 shrink-0 text-right text-muted-foreground tabular-nums">
               {row.startedAt ? (
                 <AgentElapsed
@@ -137,7 +142,21 @@ export function BackgroundWorkTaskList(props: {
           <div className={cn("flex min-w-0 items-center gap-2 py-1", padding)}>{content}</div>
         );
         return (
-          <li key={row.taskId}>
+          <li
+            key={row.taskId}
+            className={
+              props.columns
+                ? cn(
+                    // Straight tree lines: a trunk from the owner's icon, an elbow to each row's
+                    // middle; the last row's trunk stops at its elbow.
+                    "relative ps-1.5 before:absolute before:start-0 before:bottom-0 before:border-s before:border-sidebar-border after:absolute after:start-0 after:top-3 after:w-3 after:border-t after:border-sidebar-border last:before:bottom-auto",
+                    props.nested
+                      ? "before:-top-1 last:before:h-4"
+                      : "before:-top-2 last:before:h-5",
+                  )
+                : undefined
+            }
+          >
             {props.compact ? (
               <Tooltip>
                 <TooltipTrigger render={element} />
@@ -148,6 +167,7 @@ export function BackgroundWorkTaskList(props: {
             ) : (
               element
             )}
+            {props.renderNested?.(row)}
           </li>
         );
       })}
