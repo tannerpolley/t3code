@@ -1055,7 +1055,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
   FileIcon,
-  BotIcon,
+  HammerIcon,
   CircleAlertIcon,
   PaperclipIcon,
   PencilRulerIcon,
@@ -1259,7 +1259,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             />
           ) : (
             <ComposerControlIcon
-              icon={BotIcon}
+              icon={HammerIcon}
               size={size}
               opticalSize={size === "xs" ? "default" : "large"}
             />

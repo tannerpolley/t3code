@@ -973,11 +973,13 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
 /**
  * Running subagent child threads keyed by their parent's scoped thread key. The Projects view
  * hides subagent threads, so this is how a parent row lists the ones still working, including
- * ones whose turn ended but whose own background work still runs.
+ * ones whose turn ended while their own background work, or their parent's task for them, is
+ * still pending.
  */
 export function groupRunningSubagentsByParent<
   TThread extends Pick<
     SidebarThreadSummary,
+    | "id"
     | "environmentId"
     | "lineage"
     | "runtime"
@@ -987,6 +989,9 @@ export function groupRunningSubagentsByParent<
     | "pendingBackgroundTasks"
   >,
 >(threads: readonly TThread[]): ReadonlyMap<string, TThread[]> {
+  const pendingTaskChildIds = new Set(
+    threads.flatMap((thread) => thread.pendingBackgroundTasks.map((task) => task.childThreadId)),
+  );
   const byParent = new Map<string, TThread[]>();
   for (const thread of threads) {
     const parentThreadId = thread.lineage.parentThreadId;
@@ -998,6 +1003,7 @@ export function groupRunningSubagentsByParent<
       !(
         threadRuntimeIsActive(thread.runtime) ||
         thread.pendingBackgroundTasks.length > 0 ||
+        pendingTaskChildIds.has(thread.id) ||
         thread.hasPendingUserInput ||
         thread.hasPendingApprovals
       )

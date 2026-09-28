@@ -25,7 +25,7 @@ import {
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
-  BotIcon,
+  CornerDownRightIcon,
   ChevronRightIcon,
   ArrowRightLeftIcon,
   ArrowRightIcon,
@@ -314,7 +314,7 @@ export function SubagentAvatar({
           iconClassName="size-3.5"
         />
       ) : (
-        <BotIcon className="size-3.5 text-muted-foreground" />
+        <CornerDownRightIcon className="size-3.5 text-muted-foreground" />
       )}
       {status ? (
         <span

@@ -1,7 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { BotIcon, TerminalIcon } from "lucide-react";
+import { TerminalIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -44,6 +44,11 @@ export function BackgroundWorkTaskList(props: {
   const providers = useServerConfigs().get(props.environmentId)?.providers;
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
+  // An agent task without its own thread runs on the owner's provider, so it shows that icon.
+  const ownerInstanceId = useThreadShell(
+    scopeThreadRef(props.environmentId, props.threadId),
+  )?.providerInstanceId;
+  const ownerProvider = providers?.find((entry) => entry.instanceId === ownerInstanceId);
   return (
     <ul
       className={
@@ -56,18 +61,25 @@ export function BackgroundWorkTaskList(props: {
       }
     >
       {props.rows.map((row) => {
-        const Icon = row.kind === "subagent" ? BotIcon : TerminalIcon;
         const kindLabel = row.kind === "subagent" ? "Subagent" : "Background process";
         const provider = row.child
           ? providers?.find((entry) => entry.instanceId === row.child?.providerInstanceId)
-          : undefined;
+          : ownerProvider;
+        const icon =
+          row.kind === "process" ? (
+            <TerminalIcon
+              aria-hidden
+              className={cn(
+                "shrink-0 text-muted-foreground",
+                props.columns ? "size-4" : "size-3.5",
+              )}
+            />
+          ) : (
+            <ThreadRelationshipIcon driver={provider?.driver} provider={provider} />
+          );
         const content = props.columns ? (
           <>
-            {row.child ? (
-              <ThreadRelationshipIcon driver={provider?.driver} provider={provider} />
-            ) : (
-              <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-            )}
+            {icon}
             {row.child ? (
               // Model then title, as on the thread rows above.
               <span className="max-w-[6.5rem] shrink-0 truncate text-muted-foreground">
@@ -89,7 +101,7 @@ export function BackgroundWorkTaskList(props: {
           </>
         ) : (
           <>
-            <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+            {icon}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
             {props.compact ? null : (
               <span className="shrink-0 text-muted-foreground">{kindLabel}</span>

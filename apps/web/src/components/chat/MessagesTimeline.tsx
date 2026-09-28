@@ -108,7 +108,8 @@ import type { Root, RootContent } from "mdast";
 import { T3Wordmark } from "../T3Wordmark";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
-  BotIcon,
+  CornerDownRightIcon,
+  CornerLeftUpIcon,
   BrainIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -1222,7 +1223,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             <TimelineSystemDivider
               label="Subagent of"
               detail={parentThreadLink.title}
-              icon={BotIcon}
+              icon={CornerLeftUpIcon}
               actionLabel="Open parent thread"
               onAction={() => onOpenThread(parentThreadLink.threadId)}
             />
@@ -4766,7 +4767,7 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "pull-request":
       return <PullRequestGlyph.pullRequest className={className} aria-hidden />;
     case "bot":
-      return <BotIcon className={className} aria-hidden />;
+      return <CornerDownRightIcon className={className} aria-hidden />;
     case "brain":
       return <BrainIcon className={className} aria-hidden />;
     case "browser":

@@ -39,7 +39,7 @@ import * as DateTime from "effect/DateTime";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
-  BotIcon,
+  CornerDownRightIcon,
   ChevronDownIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
@@ -486,7 +486,7 @@ export function ThreadRelationshipsPanel(props: {
               const RelationshipIcon = isParent
                 ? CornerLeftUpIcon
                 : isSubagent
-                  ? BotIcon
+                  ? CornerDownRightIcon
                   : GitForkIcon;
               const relationship = relationshipLabel(edge, props.threadId);
               const agent = isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;

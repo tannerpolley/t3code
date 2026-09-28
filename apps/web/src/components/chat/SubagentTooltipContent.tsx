@@ -11,7 +11,7 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { getTriggerDisplayModelName, shortModelName } from "./providerIconUtils";
 import type { ReactNode } from "react";
 import {
-  BotIcon,
+  CornerDownRightIcon,
   CheckIcon,
   CircleDashedIcon,
   CircleXIcon,
@@ -171,7 +171,7 @@ export function SubagentDetails(props: SubagentDetailsProps) {
             iconClassName="size-3 shrink-0 grayscale opacity-60"
           />
         ) : (
-          <BotIcon className="size-3 shrink-0" />
+          <CornerDownRightIcon className="size-3 shrink-0" />
         )}
         <span className="min-w-0 truncate text-foreground/75">
           {resolveSubagentModelLabel(props, { withEffort, shortName })}

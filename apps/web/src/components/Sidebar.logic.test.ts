@@ -2261,11 +2261,17 @@ describe("groupRunningSubagentsByParent", () => {
       fork?: boolean;
       asking?: boolean;
       backgroundWork?: boolean;
+      pendingTaskFor?: string;
     } = {},
   ) => ({
-    id,
+    id: ThreadId.make(id),
     environmentId: localEnvironmentId,
-    pendingBackgroundTasks: overrides.backgroundWork ? [{ taskId: "bash-1" }] : [],
+    pendingBackgroundTasks: [
+      ...(overrides.backgroundWork ? [{ taskId: "bash-1" }] : []),
+      ...(overrides.pendingTaskFor
+        ? [{ taskId: "item-1", childThreadId: ThreadId.make(overrides.pendingTaskFor) }]
+        : []),
+    ],
     archivedAt: null,
     hasPendingApprovals: false,
     hasPendingUserInput: overrides.asking ?? false,
@@ -2290,6 +2296,9 @@ describe("groupRunningSubagentsByParent", () => {
       child("finished", { status: "completed" }),
       child("idle", { status: "idle" }),
       child("waiting-on-own-work", { status: "idle", backgroundWork: true }),
+      // Its turn ended, but a pending task still names it.
+      child("result-pending", { status: "completed" }),
+      child("sibling-holding-the-task", { pendingTaskFor: "result-pending" }),
       child("fork", { fork: true }),
       child("asking", { status: "completed", asking: true }),
     ]);
@@ -2299,6 +2308,8 @@ describe("groupRunningSubagentsByParent", () => {
     expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual([
       "running",
       "waiting-on-own-work",
+      "result-pending",
+      "sibling-holding-the-task",
       "asking",
     ]);
   });
