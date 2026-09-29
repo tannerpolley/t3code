@@ -24,6 +24,7 @@ import { ThreadManagementService } from "../orchestration-v2/ThreadManagementSer
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import {
+  aggregateBackgroundTaskProcessUsage,
   backgroundTaskOutputPath,
   codexBackgroundTaskLogPath,
   followBackgroundTaskInTerminal,
@@ -53,6 +54,86 @@ describe("backgroundTaskOutputPath", () => {
       backgroundTaskOutputPath(notice("x", "/tmp/tasks/../../etc/tasks/x.output"), "x"),
     );
     assert.isNull(backgroundTaskOutputPath(notice("../x", "/tmp/tasks/../x.output"), "../x"));
+  });
+});
+
+describe("aggregateBackgroundTaskProcessUsage", () => {
+  const process = (
+    pid: number,
+    ppid: number,
+    cpuPercent: number,
+    residentBytes: number,
+    command = `process-${pid}`,
+  ) => ({
+    identity: { pid, startTimeMs: 1 },
+    ppid,
+    command,
+    cpuPercent,
+    residentBytes,
+  });
+  const taskTree = (command: string) => [
+    process(1, 0, 99, 999, "server"),
+    process(10, 1, 10, 200, "provider"),
+    process(20, 10, 1, 10, command),
+    process(21, 20, 17.5, 90, "task child"),
+    process(11, 10, 2, 300, "other child"),
+    process(30, 1, 3, 400, "unrelated process"),
+  ];
+
+  it("sums only the unique process tree matching the task command", () => {
+    assert.deepEqual(
+      aggregateBackgroundTaskProcessUsage({
+        processes: taskTree("python fit.py"),
+        serverPid: 1,
+        command: "python fit.py",
+      }),
+      { cpuPercent: 18.5, residentBytes: 100 },
+    );
+  });
+
+  it("counts a wait target only when the sampled process belongs to that task tree", () => {
+    assert.deepEqual(
+      aggregateBackgroundTaskProcessUsage({
+        processes: taskTree("while kill -0 21; do sleep 5; done"),
+        serverPid: 1,
+        command: "while kill -0 21; do sleep 5; done",
+        commandKind: "watcher",
+      }),
+      { cpuPercent: 18.5, residentBytes: 100 },
+    );
+    assert.isNull(
+      aggregateBackgroundTaskProcessUsage({
+        processes: taskTree("tail --pid=30 -f /dev/null"),
+        serverPid: 1,
+        command: "tail --pid=30 -f /dev/null",
+        commandKind: "watcher",
+      }),
+    );
+    assert.isNull(
+      aggregateBackgroundTaskProcessUsage({
+        processes: taskTree("while kill -0 $PID; do sleep 5; done"),
+        serverPid: 1,
+        command: "while kill -0 $PID; do sleep 5; done",
+        commandKind: "watcher",
+      }),
+    );
+  });
+
+  it("returns no usage without a unique command match", () => {
+    assert.isNull(
+      aggregateBackgroundTaskProcessUsage({
+        processes: taskTree("python fit.py"),
+        serverPid: 1,
+        command: "npm test",
+      }),
+    );
+    assert.isNull(
+      aggregateBackgroundTaskProcessUsage({
+        processes: [...taskTree("python fit.py"), process(40, 1, 7, 80, "python fit.py")],
+        serverPid: 1,
+        command: "python fit.py",
+      }),
+    );
   });
 });
 

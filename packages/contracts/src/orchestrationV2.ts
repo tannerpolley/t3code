@@ -670,8 +670,23 @@ export const OrchestrationV2PendingBackgroundTask = Schema.Struct({
   childThreadId: Schema.optional(ThreadId),
   /** When the task entered the roster (or its turn item started); absent from older servers. */
   startedAt: Schema.optional(Schema.DateTimeUtc),
+  /**
+   * What a shell's command mostly runs (`ShellCommandKind` in `@t3tools/shared/shellCommand`:
+   * `python`, `watcher`, …). A string, so a client that predates a kind shows a plain shell.
+   */
+  commandKind: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
+
+export const OrchestrationV2BackgroundTaskResourceUsage = Schema.Struct({
+  threadId: ThreadId,
+  taskId: TrimmedNonEmptyString,
+  /** Null when the host cannot attribute a live process to this task. */
+  cpuPercent: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+  residentBytes: Schema.NullOr(NonNegativeInt),
+});
+export type OrchestrationV2BackgroundTaskResourceUsage =
+  typeof OrchestrationV2BackgroundTaskResourceUsage.Type;
 
 /** Provider and adapter metadata that should not overwrite the app thread's title. */
 export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({

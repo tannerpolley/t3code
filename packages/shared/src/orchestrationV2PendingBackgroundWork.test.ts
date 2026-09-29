@@ -57,7 +57,12 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([
-      { taskId: "cmd-1", description: "npm test", taskType: "command_execution" },
+      {
+        taskId: "cmd-1",
+        description: "npm test",
+        taskType: "command_execution",
+        commandKind: "node",
+      },
     ]);
   });
 
@@ -114,7 +119,12 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([
-      { taskId: "cmd-new", description: "still pending", taskType: "command_execution" },
+      {
+        taskId: "cmd-new",
+        description: "still pending",
+        taskType: "command_execution",
+        commandKind: "node",
+      },
     ]);
   });
 
@@ -126,12 +136,13 @@ describe("derivePendingBackgroundWork", () => {
           id: "pt-1" as never,
           pendingBackgroundTasks: [
             { taskId: "bg-1", description: "Run Codex review", taskType: "local_bash" },
-            // A shell a Claude subagent started keeps the subagent's thread and start time.
+            // A shell a Claude subagent started keeps the subagent's thread, start time and kind.
             {
               taskId: "bg-2",
               taskType: "local_bash",
               childThreadId: "child-1" as never,
               startedAt: SHELL_STARTED_AT,
+              commandKind: "python",
             },
           ],
         },
@@ -146,6 +157,7 @@ describe("derivePendingBackgroundWork", () => {
         taskType: "local_bash",
         childThreadId: "child-1",
         startedAt: SHELL_STARTED_AT,
+        commandKind: "python",
       },
     ]);
   });
@@ -180,6 +192,7 @@ describe("derivePendingBackgroundWork", () => {
         description: "npm test",
         taskType: "command_execution",
         startedAt: SHELL_STARTED_AT,
+        commandKind: "node",
       },
     ]);
   });
@@ -285,7 +298,12 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([
-      { taskId: "mon-2", description: "finite monitor", taskType: "dynamic_tool" },
+      {
+        taskId: "mon-2",
+        description: "finite monitor",
+        taskType: "dynamic_tool",
+        commandKind: "watcher",
+      },
     ]);
   });
 
@@ -389,7 +407,12 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([
-      { taskId: "cmd-new", description: "still pending", taskType: "command_execution" },
+      {
+        taskId: "cmd-new",
+        description: "still pending",
+        taskType: "command_execution",
+        commandKind: "node",
+      },
     ]);
   });
 
@@ -440,7 +463,12 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([
-      { taskId: "cmd-null", description: "orphan item", taskType: "command_execution" },
+      {
+        taskId: "cmd-null",
+        description: "orphan item",
+        taskType: "command_execution",
+        commandKind: "shell",
+      },
     ]);
   });
 });

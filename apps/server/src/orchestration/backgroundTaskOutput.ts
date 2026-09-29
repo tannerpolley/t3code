@@ -27,12 +27,17 @@ import * as NodePath from "node:path";
 import * as NodeStringDecoder from "node:string_decoder";
 
 import {
+  type OrchestrationV2BackgroundTaskResourceUsage,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2BackgroundTaskOutputChunk,
   OrchestrationV2BackgroundTaskOutputError,
+  type ResourceTelemetryProcess,
   type TerminalFollowBackgroundTaskInput,
   ThreadId,
 } from "@t3tools/contracts";
 import { isHostWindows } from "@t3tools/shared/hostProcess";
+import { classifyShellCommand, shellCommandWaitPids } from "@t3tools/shared/shellCommand";
+import { isAgentBackgroundTask } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -45,6 +50,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerConfig } from "../config.ts";
 import { findBackgroundTaskSession } from "../orchestration-v2/BackgroundTaskStop.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
+import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 import { watchedLogPaths } from "./watchedLogPaths.ts";
 
 /** Largest tail sent at once; the client keeps a buffer of the same size. */
@@ -382,6 +388,138 @@ export const findBackgroundTaskCommand = Effect.fn("orchestration.findBackground
     return null;
   },
 );
+
+type BackgroundTaskUsageProcess = Pick<
+  ResourceTelemetryProcess,
+  "identity" | "ppid" | "command" | "cpuPercent" | "residentBytes"
+>;
+
+/** Usage from one process matching the task command and its sampled descendants. */
+export function aggregateBackgroundTaskProcessUsage(input: {
+  readonly processes: ReadonlyArray<BackgroundTaskUsageProcess>;
+  readonly serverPid: number;
+  readonly command: string | null;
+  readonly commandKind?: string;
+}): { readonly cpuPercent: number; readonly residentBytes: number } | null {
+  const command = input.command?.trim();
+  if (!command) return null;
+  const processes = new Map(
+    input.processes
+      .filter((process) => process.identity.pid !== input.serverPid)
+      .map((process) => [process.identity.pid, process]),
+  );
+  const matchingPids = new Set(
+    [...processes.values()]
+      .filter((process) => process.command.includes(command))
+      .map((process) => process.identity.pid),
+  );
+  if (matchingPids.size === 0) return null;
+
+  const childrenByParent = new Map<number, number[]>();
+  for (const process of processes.values()) {
+    const children = childrenByParent.get(process.ppid) ?? [];
+    children.push(process.identity.pid);
+    childrenByParent.set(process.ppid, children);
+  }
+
+  const roots = [...matchingPids].filter((pid) => {
+    const seen = new Set<number>();
+    let current = processes.get(pid)?.ppid;
+    while (current !== undefined && processes.has(current) && !seen.has(current)) {
+      if (matchingPids.has(current)) return false;
+      seen.add(current);
+      current = processes.get(current)?.ppid;
+    }
+    return true;
+  });
+  // Identical commands in separate process trees cannot be attributed to one background task.
+  if (roots.length !== 1) return null;
+  const attributed = new Set<number>();
+  const pending = [...roots];
+  while (pending.length > 0) {
+    const pid = pending.pop()!;
+    if (attributed.has(pid)) continue;
+    attributed.add(pid);
+    pending.push(...(childrenByParent.get(pid) ?? []));
+  }
+
+  const isWatcherCommand =
+    input.commandKind === "watcher" || classifyShellCommand(command) === "watcher";
+  if (isWatcherCommand) {
+    const waitPids = shellCommandWaitPids(command);
+    if (waitPids === null || waitPids.some((pid) => !attributed.has(pid))) return null;
+  }
+
+  let cpuPercent = 0;
+  let residentBytes = 0;
+  for (const pid of attributed) {
+    const process = processes.get(pid)!;
+    cpuPercent += process.cpuPercent;
+    residentBytes += process.residentBytes;
+  }
+  return { cpuPercent, residentBytes };
+}
+
+/** One read and one sampled process tree for the pending tasks a thread currently shows. */
+export const readBackgroundTaskResourceUsage = Effect.fn(
+  "orchestration.readBackgroundTaskResourceUsage",
+)(function* (input: {
+  readonly threads: ReadonlyArray<{
+    readonly threadId: string;
+    readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
+  }>;
+}) {
+  const tasks = input.threads.flatMap(({ threadId, tasks }) =>
+    tasks.filter((task) => !isAgentBackgroundTask(task)).map((task) => ({ threadId, task })),
+  );
+  const unavailable = (): ReadonlyArray<OrchestrationV2BackgroundTaskResourceUsage> =>
+    tasks.map(({ threadId, task }) => ({
+      threadId,
+      taskId: task.taskId,
+      cpuPercent: null,
+      residentBytes: null,
+    }));
+  if (tasks.length === 0) return [];
+
+  const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+  const current = yield* Effect.option(telemetry.refresh);
+  if (Option.isNone(current) || current.value.health.native.status !== "healthy") {
+    return unavailable();
+  }
+
+  const details = yield* Effect.forEach(
+    tasks,
+    ({ threadId, task }) =>
+      Effect.gen(function* () {
+        const command = yield* Effect.option(
+          findBackgroundTaskCommand({
+            threadId,
+            taskId: task.taskId,
+          }),
+        );
+        return {
+          threadId,
+          task,
+          command: Option.getOrNull(command),
+        };
+      }),
+    { concurrency: 4 },
+  );
+  return details.map(({ threadId, task, command }) => {
+    const usage = aggregateBackgroundTaskProcessUsage({
+      processes: current.value.processes,
+      serverPid: process.pid,
+      command,
+      ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
+    });
+    return {
+      threadId,
+      taskId: task.taskId,
+      cpuPercent: usage?.cpuPercent ?? null,
+      residentBytes: usage?.residentBytes ?? null,
+    };
+  });
+});
 
 /** Most log files a follow terminal adds beside the task's own output. */
 const MAX_WATCHED_LOGS = 4;

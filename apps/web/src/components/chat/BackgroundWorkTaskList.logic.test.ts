@@ -30,7 +30,7 @@ describe("describeBackgroundWorkTasks", () => {
       describeBackgroundWorkTasks(
         [
           { taskId: "native-1", description: "Review the diff", taskType: "subagent" },
-          { taskId: "item-2", taskType: "command_execution" },
+          { taskId: "item-2", taskType: "command_execution", commandKind: "python" },
         ] as never,
         projection,
       ),
@@ -42,7 +42,15 @@ describe("describeBackgroundWorkTasks", () => {
         startedAt: "2026-09-23T10:00:00.000Z",
         childThreadId: "child-thread",
       },
-      { taskId: "item-2", label: "item-2", kind: "process", startedAt: null, childThreadId: null },
+      {
+        taskId: "item-2",
+        label: "item-2",
+        kind: "process",
+        startedAt: null,
+        childThreadId: null,
+        taskType: "command_execution",
+        commandKind: "python",
+      },
     ]);
   });
 
@@ -77,7 +85,13 @@ describe("describeSidebarBackgroundWork", () => {
       [
         { taskId: "agent-1", description: "Review the diff", taskType: "subagent" },
         { taskId: "agent-2", description: "Explore", taskType: "local_agent" },
-        { taskId: "bash-1", description: "sleep 20", taskType: "local_bash", startedAt },
+        {
+          taskId: "bash-1",
+          description: "sleep 20",
+          taskType: "local_bash",
+          commandKind: "watcher",
+          startedAt,
+        },
       ] as never,
       [runningChild],
     );
@@ -106,6 +120,8 @@ describe("describeSidebarBackgroundWork", () => {
         // The roster's start time gives the shell its age.
         startedAt: "2026-09-23T10:00:00.000Z",
         childThreadId: null,
+        taskType: "local_bash",
+        commandKind: "watcher",
       },
     ]);
   });

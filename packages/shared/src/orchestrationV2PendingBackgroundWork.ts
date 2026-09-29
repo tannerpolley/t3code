@@ -7,6 +7,8 @@ import type {
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
+import { classifyShellCommand } from "./shellCommand.ts";
+
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "command_execution",
   "dynamic_tool",
@@ -108,6 +110,16 @@ function descriptionFromTurnItem(item: PendingBackgroundWorkTurnItem): string | 
   return undefined;
 }
 
+/** A shell's command, or a Claude Monitor's (its `dynamic_tool` input). */
+function commandFromTurnItem(item: PendingBackgroundWorkTurnItem): string | null {
+  if (item.type === "command_execution" && typeof item.input === "string") return item.input;
+  const command =
+    item.type === "dynamic_tool" && item.input !== null && typeof item.input === "object"
+      ? Reflect.get(item.input, "command")
+      : undefined;
+  return typeof command === "string" ? command : null;
+}
+
 function nativeTaskIdFromTurnItem(item: PendingBackgroundWorkTurnItem): string {
   const nativeId = item.nativeItemRef?.nativeId;
   if (typeof nativeId === "string" && nativeId.length > 0) {
@@ -178,6 +190,7 @@ export function derivePendingBackgroundWork(input: {
         ...(task.taskType === undefined ? {} : { taskType: task.taskType }),
         ...(task.childThreadId === undefined ? {} : { childThreadId: task.childThreadId }),
         ...(task.startedAt === undefined ? {} : { startedAt: task.startedAt }),
+        ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
       });
     }
   }
@@ -204,12 +217,14 @@ export function derivePendingBackgroundWork(input: {
     }
 
     const description = descriptionFromTurnItem(item);
+    const command = commandFromTurnItem(item);
     byTaskId.set(taskId, {
       taskId,
       ...(description === undefined ? {} : { description }),
       taskType: item.type,
       ...(item.childThreadId ? { childThreadId: item.childThreadId } : {}),
       ...(item.startedAt ? { startedAt: item.startedAt } : {}),
+      ...(command === null ? {} : { commandKind: classifyShellCommand(command) }),
     });
   }
 

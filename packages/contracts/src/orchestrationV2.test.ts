@@ -942,7 +942,7 @@ describe("orchestration V2 contracts", () => {
     expect(runtimeThread.nativeMetadata).toBeNull();
   });
 
-  it("round-trips a pending background task's startedAt through stored provider-thread JSON", () => {
+  it("round-trips a pending background task's startedAt and command kind through stored provider-thread JSON", () => {
     const codec = Schema.fromJsonString(OrchestrationV2ProviderThreadJson);
     const stored = Schema.encodeSync(codec)(
       decodeOrchestrationV2ProviderThread({
@@ -959,7 +959,7 @@ describe("orchestration V2 contracts", () => {
         lastRunOrdinal: null,
         handoffIds: [],
         forkedFrom: null,
-        pendingBackgroundTasks: [{ taskId: "task-1", startedAt: now }],
+        pendingBackgroundTasks: [{ taskId: "task-1", startedAt: now, commandKind: "python" }],
         createdAt: now,
         updatedAt: now,
       }),
@@ -967,6 +967,7 @@ describe("orchestration V2 contracts", () => {
 
     const task = Schema.decodeUnknownSync(codec)(stored).pendingBackgroundTasks?.[0];
     expect(task?.startedAt && DateTime.formatIso(task.startedAt)).toBe(DateTime.formatIso(now));
+    expect(task?.commandKind).toBe("python");
   });
 
   it("decodes historical thread shell JSON without pendingBackgroundTasks as empty roster", () => {

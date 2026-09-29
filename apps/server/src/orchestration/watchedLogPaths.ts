@@ -4,165 +4,15 @@
  * detached launch is really watching. `watchedLogPaths("cd /w && until grep -q DONE run.log; do
  * sleep 20; done", cwd, home)` is `["/w/run.log"]`.
  *
- * A small tokenizer, not a shell: quotes, escapes, separators, redirects, heredocs and simple
- * `NAME=value` assignments. Any word it cannot know statically (an unknown `$VAR`, `$(…)`, a
- * glob, `~user`) is skipped rather than guessed.
+ * Words come from the shared shell tokenizer (`tokenizeShell`); simple `NAME=value` assignments
+ * are tracked here. Any word it cannot know statically (an unknown `$VAR`, `$(…)`, a glob,
+ * `~user`) is skipped rather than guessed.
  */
 import * as NodePath from "node:path";
 
-type Token = { readonly word: string; readonly dynamic: boolean } | { readonly op: string };
+import { type ShellToken, tokenizeShell } from "@t3tools/shared/shellCommand";
 
-// A `$NAME` in a word, resolved later against the assignments seen so far.
-const VAR = "\0";
-const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
-
-function tokenize(command: string): Array<Token> {
-  const tokens: Array<Token> = [];
-  const heredocs: Array<string> = [];
-  let word = "";
-  let inWord = false;
-  let quoted = false;
-  let dynamic = false;
-  let i = 0;
-  const endWord = () => {
-    if (inWord) tokens.push({ word, dynamic });
-    word = "";
-    inWord = quoted = dynamic = false;
-  };
-  // Reads the `$…` or backtick expansion at `i`; returns the index after it.
-  const expansion = (at: number): number => {
-    inWord = true;
-    if (command[at] === "`") {
-      dynamic = true;
-      const end = command.indexOf("`", at + 1);
-      return end < 0 ? command.length : end + 1;
-    }
-    const rest = command.slice(at + 1);
-    const braced = /^\{([A-Za-z_][A-Za-z0-9_]*)\}/.exec(rest);
-    const name = braced?.[1] ?? NAME.exec(rest)?.[0];
-    if (name !== undefined) {
-      word += `${VAR}${name}${VAR}`;
-      return at + 1 + (braced?.[0] ?? name).length;
-    }
-    if (rest.startsWith("(")) {
-      dynamic = true;
-      let depth = 0;
-      for (let k = at + 1; k < command.length; k++) {
-        if (command[k] === "(") depth++;
-        else if (command[k] === ")" && --depth === 0) return k + 1;
-      }
-      return command.length;
-    }
-    if (rest === "" || /^[\s"]/.test(rest)) {
-      word += "$";
-      return at + 1;
-    }
-    dynamic = true;
-    if (rest.startsWith("{")) {
-      const end = command.indexOf("}", at);
-      return end < 0 ? command.length : end + 1;
-    }
-    return at + 2;
-  };
-
-  while (i < command.length) {
-    const c = command[i]!;
-    if (c === "\\") {
-      if (command[i + 1] !== "\n") word += command[i + 1] ?? "";
-      inWord ||= command[i + 1] !== "\n";
-      i += 2;
-    } else if (c === "'") {
-      const end = command.indexOf("'", i + 1);
-      word += command.slice(i + 1, end < 0 ? command.length : end);
-      inWord = quoted = true;
-      i = end < 0 ? command.length : end + 1;
-    } else if (c === '"') {
-      inWord = quoted = true;
-      i++;
-      while (i < command.length && command[i] !== '"') {
-        if (command[i] === "\\" && '"\\$`'.includes(command[i + 1] ?? "")) {
-          word += command[i + 1];
-          i += 2;
-        } else if (command[i] === "$" || command[i] === "`") {
-          i = expansion(i);
-        } else {
-          word += command[i++];
-        }
-      }
-      i++;
-    } else if (c === "$" || c === "`") {
-      i = expansion(i);
-    } else if (c === "#" && !inWord) {
-      const end = command.indexOf("\n", i);
-      i = end < 0 ? command.length : end;
-    } else if (c === " " || c === "\t") {
-      endWord();
-      i++;
-    } else if (c === "\n") {
-      endWord();
-      tokens.push({ op: ";" });
-      i++;
-      // Skip each pending heredoc's body, through its delimiter line.
-      for (const delimiter of heredocs.splice(0)) {
-        while (i < command.length) {
-          const end = command.indexOf("\n", i);
-          const line = command.slice(i, end < 0 ? command.length : end);
-          i = end < 0 ? command.length : end + 1;
-          if (line.replace(/^\t+/, "") === delimiter) break;
-        }
-      }
-    } else if (c === ">" || c === "<" || (c === "&" && command[i + 1] === ">")) {
-      // A bare number before the operator is its file descriptor, not a word.
-      if (!quoted && !dynamic && /^\d+$/.test(word)) inWord = false;
-      endWord();
-      if (c === "&") i++;
-      const direction = command[i]!;
-      i++;
-      if (direction === "<" && command[i] === "<") {
-        i++;
-        if (command[i] === "<") {
-          i++;
-          tokens.push({ op: "<" });
-          continue;
-        }
-        if (command[i] === "-") i++;
-        const delimiter = /^\s*(\S+)/.exec(command.slice(i));
-        if (delimiter) {
-          heredocs.push(delimiter[1]!.replace(/["'\\]/g, ""));
-          i += delimiter[0].length;
-        }
-        continue;
-      }
-      if (command[i] === direction || command[i] === "|") i++;
-      if (command[i] === "&") {
-        i++;
-        tokens.push({ op: "<" }); // 2>&1: its operand is a descriptor, not a file.
-      } else {
-        tokens.push({ op: direction });
-      }
-    } else if (";&|()".includes(c)) {
-      endWord();
-      const pair = command.slice(i, i + 2);
-      const op = pair === "&&" || pair === "||" || pair === ";;" ? pair : c;
-      tokens.push({ op });
-      i += op.length;
-    } else {
-      if (c === "~" && !inWord && /^(\/|\s|$)/.test(command.slice(i + 1, i + 2))) {
-        word += `${VAR}HOME${VAR}`;
-      } else {
-        if ("*?[".includes(c)) dynamic = true;
-        if (c === "~" && !inWord) dynamic = true;
-        word += c;
-      }
-      inWord = true;
-      i++;
-    }
-  }
-  endWord();
-  return tokens;
-}
-
-type Word = Extract<Token, { word: string }>;
+type Word = Extract<ShellToken, { word: string }>;
 
 const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{", "time"]);
 const WRAPPERS = new Set(["nohup", "setsid", "exec", "command", "builtin", "stdbuf"]);
@@ -297,7 +147,7 @@ export function watchedLogPaths(command: string, cwd: string, home: string): Arr
   };
 
   const scan = (source: string) => {
-    const tokens = tokenize(source);
+    const tokens = tokenizeShell(source);
     let words: Array<Word> = [];
     for (let k = 0; k < tokens.length; k++) {
       const token = tokens[k]!;

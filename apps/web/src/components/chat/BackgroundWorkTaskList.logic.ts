@@ -32,6 +32,11 @@ export interface BackgroundWorkTaskRow {
   readonly startedAt: string | null;
   /** The subagent's own thread, when it has one to open. */
   readonly childThreadId: ThreadId | null;
+  /** Thread whose provider session owns a background process. */
+  readonly ownerThreadId?: ThreadId;
+  /** Provider task kind and the program a background shell mostly runs. */
+  readonly taskType?: string;
+  readonly commandKind?: string;
   /** The running child thread's sidebar status, when the row is one. */
   readonly status?: SidebarThreadStatus | undefined;
   /** The running child thread, for its provider and model · effort label. */
@@ -58,16 +63,23 @@ export function describeBackgroundWorkTasks(
         candidate.id === subagentId || candidate.nativeTaskRef?.nativeId === task.taskId,
     );
     const startedAt = item?.startedAt ?? subagent?.startedAt ?? task.startedAt;
+    const kind =
+      item?.type === "subagent" || subagent !== undefined || isAgentTask(task)
+        ? "subagent"
+        : "process";
     return {
       taskId: task.taskId,
       label: task.description ?? task.taskId,
-      kind:
-        item?.type === "subagent" || subagent !== undefined || isAgentTask(task)
-          ? "subagent"
-          : "process",
+      kind,
       startedAt: isoOrNull(startedAt),
       childThreadId:
         (item?.type === "subagent" ? item.childThreadId : null) ?? subagent?.childThreadId ?? null,
+      ...(kind === "process"
+        ? {
+            ...(task.taskType === undefined ? {} : { taskType: task.taskType }),
+            ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
+          }
+        : {}),
     };
   });
 }
@@ -94,6 +106,7 @@ export function describeSidebarBackgroundWork(
       | "modelSelection"
     >
   >,
+  taskOwnerThreadIdById?: ReadonlyMap<string, ThreadId>,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
   const listed = new Set<string>(runningChildren.map((child) => child.id));
   const linked = tasks.filter(isAgentTask).filter((task) => task.childThreadId !== undefined);
@@ -138,6 +151,11 @@ export function describeSidebarBackgroundWork(
         kind: "process" as const,
         startedAt: isoOrNull(task.startedAt),
         childThreadId: null,
+        ...(task.taskType === undefined ? {} : { taskType: task.taskType }),
+        ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
+        ...(taskOwnerThreadIdById?.get(task.taskId) === undefined
+          ? {}
+          : { ownerThreadId: taskOwnerThreadIdById.get(task.taskId)! }),
       })),
   ];
 }
