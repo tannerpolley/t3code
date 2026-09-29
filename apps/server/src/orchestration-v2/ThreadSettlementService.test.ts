@@ -123,6 +123,13 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(false);
+    // A monitor is a watcher, not work, so it never keeps a thread from settling.
+    expect(
+      isAutoSettlementCandidate(
+        shell({ pendingBackgroundTasks: [{ taskId: "watch", taskType: "monitor" }] }),
+        NOW_MS,
+      ),
+    ).toBe(true);
   });
 
   it("keeps snoozed threads parked until they wake early on error or completion", () => {

@@ -1377,6 +1377,95 @@ it.layer(TestLayer)("resumed delegated child", (it) => {
   );
 });
 
+/** The child's own provider thread, listing the background work its finished turn left running. */
+const childRoster = (
+  seeded: { readonly childThreadId: ThreadId },
+  name: string,
+  tasks: ReadonlyArray<{ readonly taskId: string; readonly taskType: string }>,
+) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    return {
+      id: EventId.make(`event:${name}-roster-${tasks.length}`),
+      type: "provider-thread.updated" as const,
+      threadId: seeded.childThreadId,
+      driver,
+      providerInstanceId: modelSelection.instanceId,
+      occurredAt: now,
+      payload: {
+        id: ProviderThreadId.make(`provider-thread:${name}-child`),
+        driver,
+        providerInstanceId: modelSelection.instanceId,
+        providerSessionId: null,
+        appThreadId: seeded.childThreadId,
+        ownerNodeId: null,
+        nativeThreadRef: { driver, nativeId: `native:${name}-child`, strength: "strong" as const },
+        nativeConversationHeadRef: null,
+        status: "idle" as const,
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 2,
+        handoffIds: [],
+        forkedFrom: null,
+        pendingBackgroundTasks: tasks,
+        createdAt: now,
+        updatedAt: now,
+      },
+    };
+  });
+
+it.layer(TestLayer)("delegated child with background work", (it) => {
+  it.effect("reports a turn that left only a monitor running at once", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const seeded = yield* seedReportedChild("monitor-only", { reported: false });
+      yield* sink.write({
+        commandId: CommandId.make("command:monitor-only-roster"),
+        events: [
+          yield* childRoster(seeded, "monitor-only", [
+            { taskId: "bfscpwrr6", taskType: "monitor" },
+          ]),
+        ],
+      });
+      const before = yield* sink.latestSequence();
+      yield* seeded.finishTurn(2, seeded.parentThreadId);
+      yield* nextResultTransfer(seeded.parentThreadId, before);
+      assert.deepEqual(yield* reportedRuns(seeded.parentThreadId, seeded.childThreadId), [
+        RunId.make("run:monitor-only-child-2"),
+      ]);
+    }),
+  );
+
+  it.effect("reports once the background work ends and the child's wake turn completes", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const seeded = yield* seedReportedChild("shell-wait", { reported: false });
+      yield* sink.write({
+        commandId: CommandId.make("command:shell-wait-roster"),
+        events: [
+          yield* childRoster(seeded, "shell-wait", [
+            { taskId: "b2vqhgpgg", taskType: "local_bash" },
+          ]),
+        ],
+      });
+      // Turn 2 ends while the shell still runs: its "still waiting" text is not the result.
+      yield* seeded.finishTurn(2, seeded.parentThreadId, seeded.commandId);
+      yield* (yield* OrchestratorV2).recoverDelegatedResults;
+      assert.deepEqual(yield* reportedRuns(seeded.parentThreadId, seeded.childThreadId), []);
+      const before = yield* sink.latestSequence();
+      // The shell finishes and the wake turn it started completes.
+      yield* sink.write({
+        commandId: CommandId.make("command:shell-wait-wake"),
+        events: [yield* childRoster(seeded, "shell-wait", [])],
+      });
+      yield* seeded.finishTurn(3, undefined);
+      yield* nextResultTransfer(seeded.parentThreadId, before);
+      assert.deepEqual(yield* reportedRuns(seeded.parentThreadId, seeded.childThreadId), [
+        RunId.make("run:shell-wait-child-3"),
+      ]);
+    }),
+  );
+});
+
 it.layer(TestLayer)("wake cancelled by a restart", (it) => {
   /**
    * A parent whose cohort already spent one delivery and whose follow-up wake for a finished task

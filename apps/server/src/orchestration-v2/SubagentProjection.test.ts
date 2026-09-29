@@ -205,6 +205,14 @@ it("waits for nested work and retains the report across monitor acknowledgements
     }).state,
     "waiting_for_children",
   );
+  // A Claude Monitor (tail -f) runs until its timeout; the result never waits on it.
+  assert.equal(
+    delegatedTaskProgress({
+      ...projection,
+      providerThreads: [{ pendingBackgroundTasks: [{ taskId: "bfscpwrr6", taskType: "monitor" }] }],
+    }).state,
+    "result_available",
+  );
   const pending = {
     ...run,
     id: RunId.make("followup"),

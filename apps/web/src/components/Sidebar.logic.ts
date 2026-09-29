@@ -4,6 +4,7 @@ import {
   threadRuntimeIsActive,
 } from "@t3tools/client-runtime/state/models";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import { heldBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as React from "react";
 import {
   isAtomCommandInterrupted,
@@ -1246,7 +1247,8 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if ((thread.pendingBackgroundTasks?.length ?? 0) > 0) {
+  // A monitor alone is a watcher, not work the thread waits on.
+  if (heldBackgroundWork(thread.pendingBackgroundTasks).length > 0) {
     return {
       label: "Waiting",
       colorClass: "text-sidebar-muted-foreground",

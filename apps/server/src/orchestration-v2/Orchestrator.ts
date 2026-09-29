@@ -3031,7 +3031,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // Decided under the thread lock, so a message that re-engaged the
         // thread after the idle sweep read it always wins.
         const activity = yield* projectionStore
-          .getThreadRecords(command.threadId, ["runs", "runtimeRequests", "subagents"])
+          .getThreadRecords(command.threadId, [
+            "runs",
+            "runtimeRequests",
+            "subagents",
+            "providerThreads",
+          ])
           .pipe(
             Effect.mapError(
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),

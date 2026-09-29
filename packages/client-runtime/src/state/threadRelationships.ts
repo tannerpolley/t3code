@@ -5,7 +5,10 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
-import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  heldBackgroundWork,
+  pendingBackgroundWorkOfThread,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 const FINISHED_STATUSES = new Set([
@@ -63,10 +66,13 @@ function waitsOnOwnBackgroundWork(
   const own = childThread.activityRunStatus ?? childThread.status;
   return (
     FINISHED_STATUSES.has(own) &&
-    pendingBackgroundWorkOfThread(
-      childThread.id,
-      childThread.pendingBackgroundTasks ?? [],
-      parentTasks,
+    // A monitor alone is a watcher, not work the child waits on.
+    heldBackgroundWork(
+      pendingBackgroundWorkOfThread(
+        childThread.id,
+        childThread.pendingBackgroundTasks ?? [],
+        parentTasks,
+      ),
     ).length > 0
   );
 }

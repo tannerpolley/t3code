@@ -222,6 +222,24 @@ export function isAgentBackgroundTask(task: Pick<PendingBackgroundWorkTask, "tas
 }
 
 /**
+ * A monitor watches something and wakes its agent on each event; the agent's result never waits
+ * on it. It stays listed (with its age and Stop) but does not hold the agent or its parent as
+ * waiting, block settlement, or keep an idle session connected.
+ */
+export function isMonitorBackgroundTask(
+  task: Pick<PendingBackgroundWorkTask, "taskType">,
+): boolean {
+  return task.taskType === "monitor";
+}
+
+/** The pending tasks that are work in progress: everything but monitors. */
+export function heldBackgroundWork<Task extends Pick<PendingBackgroundWorkTask, "taskType">>(
+  tasks: ReadonlyArray<Task> | undefined,
+): ReadonlyArray<Task> {
+  return (tasks ?? []).filter((task) => !isMonitorBackgroundTask(task));
+}
+
+/**
  * The pending work that is `threadId`'s own, from its roster and its parent's. A Claude
  * subagent's shells run in the parent's session, so they sit on the parent's roster tagged with
  * the subagent's thread: they count for the subagent, not the parent. An agent task's

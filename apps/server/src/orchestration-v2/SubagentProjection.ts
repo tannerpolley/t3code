@@ -18,6 +18,7 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { heldBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -236,7 +237,10 @@ export function delegatedTaskProgress(projection: {
         task.completionDelivery?.state === "pending" ||
         task.completionDelivery?.state === "claimed",
     ) ||
-    projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
+    // Monitors are watchers: the result never waits on them.
+    projection.providerThreads.some(
+      (thread) => heldBackgroundWork(thread.pendingBackgroundTasks).length > 0,
+    );
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
     .toSorted((a, b) => b.ordinal - a.ordinal)[0];

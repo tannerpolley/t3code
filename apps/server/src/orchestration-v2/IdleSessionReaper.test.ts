@@ -69,11 +69,18 @@ describe("threadIdleSinceMs", () => {
         runs: [finishedRun(90), finishedRun(50)],
         runtimeRequests: [{ status: "resolved", createdAt: minutesAgo(80), resolvedAt: null }],
         subagents: [{ status: "completed", updatedAt: minutesAgo(40) }],
+        providerThreads: [],
       }),
       NOW_MS - 40 * MINUTE_MS,
     );
     assert.equal(
-      threadIdleSinceMs({ thread, runs: [], runtimeRequests: [], subagents: [] }),
+      threadIdleSinceMs({
+        thread,
+        runs: [],
+        runtimeRequests: [],
+        subagents: [],
+        providerThreads: [],
+      }),
       NOW_MS - 600 * MINUTE_MS,
     );
   });
@@ -81,7 +88,13 @@ describe("threadIdleSinceMs", () => {
   it("holds any thread that is working or waiting on the user", () => {
     for (const status of ["preparing", "queued", "starting", "running", "waiting"] as const) {
       assert.isNull(
-        threadIdleSinceMs({ thread, runs: [liveRun(status)], runtimeRequests: [], subagents: [] }),
+        threadIdleSinceMs({
+          thread,
+          runs: [liveRun(status)],
+          runtimeRequests: [],
+          subagents: [],
+          providerThreads: [],
+        }),
         status,
       );
     }
@@ -91,6 +104,7 @@ describe("threadIdleSinceMs", () => {
         runs: [finishedRun(120)],
         runtimeRequests: [{ status: "pending", createdAt: minutesAgo(119), resolvedAt: null }],
         subagents: [],
+        providerThreads: [],
       }),
     );
     for (const status of ["pending", "running", "waiting"] as const) {
@@ -100,10 +114,38 @@ describe("threadIdleSinceMs", () => {
           runs: [finishedRun(120)],
           runtimeRequests: [],
           subagents: [{ status, updatedAt: minutesAgo(119) }],
+          providerThreads: [],
         }),
         status,
       );
     }
+  });
+});
+
+describe("threadIdleSinceMs with provider background work", () => {
+  const thread = { createdAt: minutesAgo(600) };
+  const rootThread = (updatedMinutesAgo: number, taskTypes: ReadonlyArray<string> = []) => ({
+    ownerNodeId: null,
+    updatedAt: minutesAgo(updatedMinutesAgo),
+    pendingBackgroundTasks: taskTypes.map((taskType, index) => ({
+      taskId: `task-${index}`,
+      taskType,
+    })),
+  });
+
+  it("holds background work and counts its end as activity; a monitor holds nothing", () => {
+    const records = (providerThreads: ReadonlyArray<ReturnType<typeof rootThread>>) =>
+      threadIdleSinceMs({
+        thread,
+        runs: [finishedRun(16)],
+        runtimeRequests: [],
+        subagents: [],
+        providerThreads,
+      });
+    assert.isNull(records([rootThread(16, ["local_bash"])]));
+    // The roster emptied 3 seconds ago: the clock restarts there, not at the run's end.
+    assert.equal(records([rootThread(0.05)]), NOW_MS - 0.05 * MINUTE_MS);
+    assert.equal(records([rootThread(16, ["monitor"])]), NOW_MS - 16 * MINUTE_MS);
   });
 });
 
@@ -115,6 +157,10 @@ interface ThreadFixture {
   /** Native subagents: status and minutes since they last did anything. */
   readonly nativeSubagents?: ReadonlyArray<readonly [Subagent["status"], number]>;
   readonly pendingBackgroundTasks?: number;
+  /** Claude monitors on the shell's pending list. */
+  readonly pendingMonitors?: number;
+  /** Minutes since the root provider thread last changed (its roster emptying, for example). */
+  readonly rootProviderThreadUpdated?: number;
 }
 
 const nativeThreadId = (threadId: string, index: number) =>
@@ -158,16 +204,36 @@ const makeHarness = Effect.fn("makeIdleSessionReaperHarness")(function* (
               providerThreadId: nativeThreadId(threadId, index),
             })),
           ],
-          providerThreads: (fixture(threadId).nativeSubagents ?? []).map((_, index) => ({
-            id: nativeThreadId(threadId, index),
-          })),
+          providerThreads: [
+            ...(fixture(threadId).nativeSubagents ?? []).map((_, index) => ({
+              id: nativeThreadId(threadId, index),
+            })),
+            ...(fixture(threadId).rootProviderThreadUpdated === undefined
+              ? []
+              : [
+                  {
+                    id: ProviderThreadId.make(`provider-thread:${threadId}:root`),
+                    ownerNodeId: null,
+                    updatedAt: minutesAgo(fixture(threadId).rootProviderThreadUpdated!),
+                    pendingBackgroundTasks: [],
+                  },
+                ]),
+          ],
         })) as unknown as ProjectionStoreV2["Service"]["getThreadRecords"],
       getThreadShell: (threadId) =>
         Effect.succeed({
-          pendingBackgroundTasks: Array.from(
-            { length: fixture(threadId).pendingBackgroundTasks ?? 0 },
-            (_, index) => ({ taskId: `task-${index}` }),
-          ),
+          pendingBackgroundTasks: [
+            ...Array.from(
+              { length: fixture(threadId).pendingBackgroundTasks ?? 0 },
+              (_, index) => ({
+                taskId: `task-${index}`,
+              }),
+            ),
+            ...Array.from({ length: fixture(threadId).pendingMonitors ?? 0 }, (_, index) => ({
+              taskId: `monitor-${index}`,
+              taskType: "monitor",
+            })),
+          ],
         } as never),
     }),
     Layer.mock(ThreadManagementService)({
@@ -294,6 +360,33 @@ describe("IdleSessionReaper sweep", () => {
       ]);
       assert.deepEqual(yield* Ref.get(harness.commands), []);
     }),
+  );
+
+  it.effect(
+    "keeps a session whose background work just finished; a monitor alone never holds it",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const harness = yield* makeHarness(
+          {
+            // 2026-09-29: the turn ended 16 minutes ago; both background tasks finished just now
+            // and Claude was starting the wake turn when the idle disconnect closed the session.
+            "background-just-finished": {
+              runs: [finishedRun(16)],
+              rootProviderThreadUpdated: 0.05,
+            },
+            "monitor-only": { runs: [finishedRun(16)], pendingMonitors: 1 },
+          },
+          { ...DEFAULT_SERVER_SETTINGS, idleAgentSessionMinutes: 15 },
+        );
+
+        yield* harness.sweep();
+
+        assert.deepEqual(
+          (yield* Ref.get(harness.commands)).map((command) => command.threadId),
+          [ThreadId.make("monitor-only")],
+        );
+      }),
   );
 
   it.effect("stays off at 0 and follows a live setting change", () =>

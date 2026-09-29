@@ -112,7 +112,10 @@ import {
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  derivePendingBackgroundWork,
+  heldBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { truncate } from "@t3tools/shared/String";
@@ -6789,6 +6792,8 @@ export default function ChatView(props: ChatViewProps) {
       return null;
     }
     const count = activeBackgroundTasks.length;
+    // Monitors stay listed with Stop, but the thread is not waiting on them.
+    const held = heldBackgroundWork(activeBackgroundTasks).length;
     return {
       id: `background-work:${activeThread.id}`,
       variant: "default",
@@ -6799,7 +6804,14 @@ export default function ChatView(props: ChatViewProps) {
           aria-hidden="true"
         />
       ),
-      title: count === 1 ? "Waiting on background task" : `Waiting on ${count} background tasks`,
+      title:
+        held === 0
+          ? count === 1
+            ? "Monitor running"
+            : `${count} monitors running`
+          : held === 1
+            ? "Waiting on background task"
+            : `Waiting on ${held} background tasks`,
       ...(slimBackgroundWorkBar
         ? {}
         : {

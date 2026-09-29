@@ -27,6 +27,10 @@ import type {
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
+  heldBackgroundWork,
+  isMonitorBackgroundTask,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
   applyClaudePromptEffortPrefix,
   getModelSelectionStringOptionValue,
 } from "@t3tools/shared/model";
@@ -3021,8 +3025,8 @@ export function makeClaudeAdapterV2(
               if (tasks.length === 0) {
                 updated.delete(nativeThreadId);
               } else {
-                // Snapshots carry ids only: keep the subagent thread that task_started tagged,
-                // and the time the task first entered the roster.
+                // Snapshots carry ids only: keep the subagent thread and monitor kind that
+                // task_started tagged, and the time the task first entered the roster.
                 const previous = rosterForNativeThread(current, nativeThreadId);
                 updated.set(
                   nativeThreadId,
@@ -3036,6 +3040,9 @@ export function makeClaudeAdapterV2(
                           ...(kept?.childThreadId === undefined
                             ? {}
                             : { childThreadId: kept.childThreadId }),
+                          ...(kept !== undefined && isMonitorBackgroundTask(kept)
+                            ? { taskType: kept.taskType }
+                            : {}),
                           startedAt: kept?.startedAt ?? now,
                         },
                       ] as const;
@@ -4742,17 +4749,24 @@ export function makeClaudeAdapterV2(
               typeof message.description === "string" && message.description.trim().length > 0
                 ? message.description
                 : undefined;
-            const taskType = claudeTaskTypeFromSdkMessage(message) ?? undefined;
             // A shell a native subagent started runs in this (the parent's) session, so it stays
             // on this roster, where settlement and wake read it, tagged with the subagent's
-            // thread for display. The spawning Bash call is still open when its task starts.
+            // thread for display. The spawning call is still open when its task starts.
             const toolUseId = message.tool_use_id;
             const spawningCall =
               toolUseId === undefined
                 ? undefined
-                : [...(yield* Ref.get(subagentTurnContextsByToolUseId)).values()]
+                : [
+                    ...(input.activeContext === null ? [] : [input.activeContext]),
+                    ...(yield* Ref.get(subagentTurnContextsByToolUseId)).values(),
+                  ]
                     .map((context) => context.toolCalls.get(toolUseId))
                     .find((toolCall) => toolCall !== undefined);
+            // Claude reports a Monitor watcher as local_bash; only its spawning call tells them apart.
+            const taskType =
+              spawningCall?.toolName === "Monitor"
+                ? "monitor"
+                : (claudeTaskTypeFromSdkMessage(message) ?? undefined);
             yield* upsertPendingBackgroundTask(input.nativeThreadId, {
               taskId: message.task_id,
               ...(description === undefined ? {} : { description }),
@@ -6279,9 +6293,10 @@ export function makeClaudeAdapterV2(
           getModelContextWindow: (selection) => claudeContextWindow(modelCatalog, selection),
           events: Stream.fromEffectRepeat(Queue.take(events)),
           hasPendingBackgroundWork: Effect.gen(function* () {
-            // Session capability: any native thread with pending work pins idle.
+            // Session capability: any native thread with pending work pins idle. A monitor alone
+            // is a watcher, not work, so it does not keep an idle session loaded.
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {
-              if (roster.size > 0) {
+              if (heldBackgroundWork([...roster.values()]).length > 0) {
                 return true;
               }
             }

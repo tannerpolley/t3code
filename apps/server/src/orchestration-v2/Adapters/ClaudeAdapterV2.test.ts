@@ -4989,6 +4989,234 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("tags a Monitor watcher so it never pins the idle session as work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const MONITOR_TOOL_USE_ID = "toolu-monitor";
+        const MONITOR_TASK_ID = "task-monitor";
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-monitor"),
+            text: "Watch the replay log.",
+            attachments: [],
+          }),
+        );
+        const monitorEntry = {
+          task_id: MONITOR_TASK_ID,
+          task_type: "local_bash",
+          description: "replay runner steps",
+        };
+        // Frame order from the 2026-09-29 #64 child: the snapshot lands before task_started.
+        yield* Queue.offerAll(harness.sdkMessages, [
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: MONITOR_TOOL_USE_ID,
+                  name: "Monitor",
+                  input: {
+                    description: "replay runner steps",
+                    command: "tail -n +1 -f /tmp/replay.log",
+                    timeout_ms: 1_800_000,
+                  },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000951",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [monitorEntry],
+            uuid: "00000000-0000-4000-8000-000000000952",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            ...monitorEntry,
+            tool_use_id: MONITOR_TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000953",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [monitorEntry],
+            uuid: "00000000-0000-4000-8000-000000000954",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000955",
+            result: "Watching the replay.",
+          }),
+        ]);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+        // Still listed (with Stop), but as a monitor, even after a later snapshot.
+        const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+          .pendingBackgroundTasks;
+        assert.deepEqual(
+          roster?.map((task) => [task.taskId, task.taskType]),
+          [[MONITOR_TASK_ID, "monitor"]],
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect(
+    "replays the 2026-09-29 burst: two tasks finishing 5 s apart while idle wake once",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const frame = (uuid: number, fields: Record<string, unknown>) =>
+            claudeSdkFrame({
+              ...fields,
+              uuid: `00000000-0000-4000-8000-${String(uuid).padStart(12, "0")}`,
+              session_id: WAKE_NATIVE_SESSION,
+            });
+          const compare = {
+            task_id: "b2vqhgpgg",
+            task_type: "local_bash",
+            description: "Wait for compare reruns",
+          };
+          const calibrated = {
+            task_id: "bggh8r4aa",
+            task_type: "local_bash",
+            description: "Wait for calibrated rerun then start chloride.py",
+          };
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-burst-4"),
+              text: "Background command completed.",
+              attachments: [],
+            }),
+          );
+          // Run #4 (17:23:39-17:25:13): the turn ends with both tasks pending.
+          yield* Queue.offerAll(harness.sdkMessages, [
+            frame(961, { type: "system", subtype: "background_tasks_changed", tasks: [compare] }),
+            frame(962, { type: "system", subtype: "task_started", ...compare }),
+            frame(963, {
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: [compare, calibrated],
+            }),
+            frame(964, { type: "system", subtype: "task_started", ...calibrated }),
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000965",
+              result: "Waiting on the calibrated rerun.",
+            }),
+          ]);
+          yield* awaitUntil(() => harness.terminalEvents().length === 1, "run #4 terminal");
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          // 16 minutes later (17:41:07 and 17:41:12), both finish while the session is idle.
+          yield* TestClock.adjust("16 minutes");
+          yield* Queue.offerAll(harness.sdkMessages, [
+            frame(966, {
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: [calibrated],
+            }),
+            frame(967, {
+              type: "system",
+              subtype: "task_notification",
+              task_id: compare.task_id,
+              status: "completed",
+              output_file: "/tmp/b2vqhgpgg.output",
+              summary: 'Background command "Wait for compare reruns" completed (exit code 0)',
+            }),
+            frame(968, { type: "system", subtype: "task_updated", task_id: compare.task_id }),
+            frame(969, { type: "system", subtype: "init" }),
+            frame(970, { type: "system", subtype: "status", status: "requesting" }),
+          ]);
+          yield* TestClock.adjust("5 seconds");
+          yield* Queue.offerAll(harness.sdkMessages, [
+            frame(971, { type: "system", subtype: "background_tasks_changed", tasks: [] }),
+            frame(972, {
+              type: "system",
+              subtype: "task_notification",
+              task_id: calibrated.task_id,
+              status: "completed",
+              output_file: "/tmp/bggh8r4aa.output",
+              summary:
+                'Background command "Wait for calibrated rerun then start chloride.py" completed (exit code 0)',
+            }),
+            frame(973, { type: "system", subtype: "task_updated", task_id: calibrated.task_id }),
+          ]);
+          yield* awaitUntil(
+            () =>
+              (providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+                .pendingBackgroundTasks?.length ?? -1) === 0,
+            "roster emptied",
+          );
+          // Notifications alone are not yet a wake: Claude has not produced the turn.
+          assert.lengthOf(harness.continuationRequests, 0);
+
+          // Claude's wake turn (what the idle disconnect cut off at 17:41:15).
+          yield* Queue.offerAll(harness.sdkMessages, [
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000974",
+              text: "Both reruns finished; reading the logs.",
+            }),
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000975",
+              result: "Both reruns finished.",
+              origin: { kind: "task-notification" },
+            }),
+          ]);
+          yield* awaitUntil(() => harness.continuationRequests.length === 1, "one wake");
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-burst-5"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 2, "wake run terminal");
+          assert.equal(harness.terminalEvents()[1]?.status, "completed");
+          // One wake run carried both completions; nothing is left to wake for.
+          assert.lengthOf(harness.continuationRequests, 1);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.text === "Both reruns finished; reading the logs.",
+            ),
+          );
+          // Neither shell ever renders as a subagent.
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type !== "provider_thread.updated" &&
+                (JSON.stringify(event).includes(compare.task_id) ||
+                  JSON.stringify(event).includes(calibrated.task_id)),
+            ),
+          );
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+  );
+
   it.effect("learns where the session writes task output from what Claude reports", () =>
     Effect.scoped(
       Effect.gen(function* () {

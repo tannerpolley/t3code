@@ -1,4 +1,5 @@
 import { CommandId, type ProviderThreadId, type ThreadId } from "@t3tools/contracts";
+import { heldBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -50,9 +51,9 @@ export const makeSweep = Effect.gen(function* () {
     // A working thread is never touched, not even its settled subagents.
     const idleSinceMs = threadIdleSinceMs(records);
     if (idleSinceMs === null) return;
-    // Provider background tasks (for example a Claude background Bash) outlive the run.
+    // Provider background work (for example a Claude background Bash) outlives the run.
     const shell = yield* projections.getThreadShell(threadId);
-    if ((shell?.pendingBackgroundTasks?.length ?? 0) > 0) return;
+    if (heldBackgroundWork(shell?.pendingBackgroundTasks).length > 0) return;
     if (nowMs - idleSinceMs < thresholdMinutes * MINUTE_MS) {
       // The thread stays connected, but a shared runtime (Codex) keeps each
       // settled native subagent loaded, MCP servers included, until unloaded.

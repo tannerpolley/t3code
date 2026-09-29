@@ -1,5 +1,6 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import { heldBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   CommandId,
   type ThreadId,
@@ -139,7 +140,7 @@ export function isAutoSettlementCandidate(
   if (thread.pendingRuntimeRequest !== null) return false;
   // A live run — or post-settlement background work — is not staleness.
   if (thread.activityRunStatus != null) return false;
-  if ((thread.pendingBackgroundTasks?.length ?? 0) > 0) return false;
+  if (heldBackgroundWork(thread.pendingBackgroundTasks).length > 0) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return true;

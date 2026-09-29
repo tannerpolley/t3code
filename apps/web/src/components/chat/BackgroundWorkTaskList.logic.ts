@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
+  heldBackgroundWork,
   isAgentBackgroundTask as isAgentTask,
   pendingBackgroundWorkOfThread,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -103,7 +104,7 @@ export function describeSidebarBackgroundWork(
     (child) => !linked.some((task) => task.childThreadId === child.id),
   ).length;
   const hasShells = (childId: string) =>
-    pendingBackgroundWorkOfThread(childId, [], tasks).length > 0;
+    heldBackgroundWork(pendingBackgroundWorkOfThread(childId, [], tasks)).length > 0;
   return [
     ...runningChildren.map((child) => {
       const ownStatus = resolveSidebarThreadStatus(child);
