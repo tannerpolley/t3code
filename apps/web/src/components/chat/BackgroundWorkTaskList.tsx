@@ -1,7 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronDownIcon, ChevronRightIcon, TerminalIcon } from "lucide-react";
+import { TerminalIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -9,6 +9,11 @@ import { useServerConfigs, useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  SidebarCaretSlot,
+  SidebarCaretToggle,
+  SidebarTrailingColumns,
+} from "../sidebar/SidebarColumns";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "./AgentElapsed";
 import {
@@ -34,8 +39,9 @@ function elapsed(kind: BackgroundWorkTaskRow["kind"], startedAt: string) {
  * One row per pending background task; subagents with a thread open it like their Lineage row.
  * `compact` fits the sidebar: smaller text, and the kind moves into the row's tooltip.
  * `columns` lays rows out like a Lineage row (icon, model · effort or label, elapsed, status mark)
- * with the Codex-style sidebar's fixed time and status slots, so they line up with thread rows,
- * and draws tree lines from the owner's icon; `renderNested` adds a row's own subagents beneath it.
+ * in the Codex-style sidebar's shared columns (see `SidebarColumns`), so they line up with thread
+ * rows, and draws tree lines from the owner's caret; `renderNested` adds a row's own subagents
+ * beneath it.
  */
 export function BackgroundWorkTaskList(props: {
   readonly environmentId: EnvironmentId;
@@ -44,10 +50,10 @@ export function BackgroundWorkTaskList(props: {
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
   readonly columns?: boolean;
-  /** Columns rows under another columns row, whose icon sits lower in a shorter row. */
+  /** Columns rows under another columns row, whose caret sits lower in a shorter row. */
   readonly nested?: boolean;
   readonly renderNested?: (row: BackgroundWorkTaskRow) => ReactNode;
-  /** A columns row's own collapsible work (its subagents and shells), shown as a count toggle. */
+  /** A columns row's own collapsible work (its subagents and shells): a count and a left caret. */
   readonly nestedToggle?: (
     row: BackgroundWorkTaskRow,
   ) => { readonly count: number; readonly open: boolean; readonly onToggle: () => void } | null;
@@ -94,6 +100,7 @@ export function BackgroundWorkTaskList(props: {
           );
         const content = props.columns ? (
           <>
+            <SidebarCaretSlot />
             {icon}
             {row.child ? (
               // Model then title, as on the thread rows above.
@@ -105,14 +112,11 @@ export function BackgroundWorkTaskList(props: {
               </span>
             ) : null}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
-            {toggle ? (
-              // Room for the toggle, which sits over this spot because buttons cannot nest.
-              <span aria-hidden className="w-8 shrink-0" />
-            ) : null}
-            <span className="w-12 shrink-0 text-right text-muted-foreground tabular-nums">
-              {row.startedAt ? elapsed(row.kind, row.startedAt) : null}
-            </span>
-            <ThreadStatusMark status={row.status ?? "working"} />
+            <SidebarTrailingColumns
+              count={toggle?.count}
+              time={row.startedAt ? elapsed(row.kind, row.startedAt) : null}
+              status={<ThreadStatusMark status={row.status ?? "working"} />}
+            />
           </>
         ) : (
           <>
@@ -174,9 +178,10 @@ export function BackgroundWorkTaskList(props: {
                 ? cn(
                     // Only a shell row is a hover group, so its stop button shows on its own hover.
                     row.kind === "process" && "group/shell",
-                    // Straight tree lines: a trunk from the owner's icon, an elbow to each row's
-                    // middle; the last row's trunk stops at its elbow.
-                    "relative ps-1.5 before:absolute before:start-0 before:bottom-0 before:border-s before:border-sidebar-border after:absolute after:start-0 after:top-3 after:w-3 after:border-t after:border-sidebar-border last:before:bottom-auto",
+                    // Straight tree lines: a trunk from the owner's caret, an elbow to each row's
+                    // middle; the last row's trunk stops at its elbow. A margin, not padding, makes
+                    // room for them, so the caret toggle's containing block starts at the row.
+                    "relative ms-1.5 before:absolute before:-start-1.5 before:bottom-0 before:border-s before:border-sidebar-border after:absolute after:-start-1.5 after:top-3 after:w-3 after:border-t after:border-sidebar-border last:before:bottom-auto",
                     props.nested
                       ? "before:-top-1 last:before:h-4"
                       : "before:-top-2 last:before:h-5",
@@ -204,24 +209,12 @@ export function BackgroundWorkTaskList(props: {
               />
             ) : null}
             {toggle ? (
-              <button
-                type="button"
-                aria-expanded={toggle.open}
-                aria-label={`${toggle.open ? "Hide" : "Show"} ${toggle.count} running ${toggle.count === 1 ? "task" : "tasks"} under ${row.label}`}
-                className={cn(
-                  "absolute top-0.5 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-                  // Left of the time slot: 8px padding, 14px status mark, 48px time, two 8px gaps.
-                  "end-[86px]",
-                )}
-                onClick={toggle.onToggle}
-              >
-                {toggle.count}
-                {toggle.open ? (
-                  <ChevronDownIcon aria-hidden className="size-3" />
-                ) : (
-                  <ChevronRightIcon aria-hidden className="size-3" />
-                )}
-              </button>
+              <SidebarCaretToggle
+                open={toggle.open}
+                label={`${toggle.open ? "Hide" : "Show"} ${toggle.count} running ${toggle.count === 1 ? "task" : "tasks"} under ${row.label}`}
+                onToggle={toggle.onToggle}
+                className="top-0.5 h-5"
+              />
             ) : null}
             {toggle === null || toggle.open ? props.renderNested?.(row) : null}
           </li>

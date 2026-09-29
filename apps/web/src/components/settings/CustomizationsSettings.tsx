@@ -71,6 +71,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Put projects that are in no section yet into their folder's section automatically, using the Organize by folder root. Projects you move by hand stay where you put them.",
   },
   {
+    key: "revealOpenThreadInSidebar",
+    searchId: "reveal-open-thread-in-sidebar",
+    section: "sidebar",
+    description:
+      "When you open a thread by any route (a link, Lineage, search, a notification, a shortcut, Back or Forward), open the sections and project that hold it and scroll its row into view. A subagent reveals its parent's row. It runs when you open a thread, so a project you collapse afterwards stays collapsed.",
+  },
+  {
     key: "activityNeedsYouFirst",
     searchId: "activity-needs-you-first",
     section: "sidebar",

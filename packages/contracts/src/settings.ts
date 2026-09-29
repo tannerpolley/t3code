@@ -497,6 +497,8 @@ export const ClientSettingsSchema = Schema.Struct({
   lineageAutoClearMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** Place unsorted projects under the Organize by folder root into their folder's section. */
   autoOrganizeByFolder: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Open the sections and project holding the thread you navigate to, and scroll to its row. */
+  revealOpenThreadInSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Show a browser tab an agent uses in the right panel instead of the floating mini player. */
   agentBrowserInPanel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   activityNeedsYouFirst: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1797,6 +1799,7 @@ export const ClientSettingsPatch = Schema.Struct({
   lineageDetailsExpanded: Schema.optionalKey(Schema.Boolean),
   lineageAutoClearMinutes: Schema.optionalKey(NonNegativeInt),
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
+  revealOpenThreadInSidebar: Schema.optionalKey(Schema.Boolean),
   agentBrowserInPanel: Schema.optionalKey(Schema.Boolean),
   activityNeedsYouFirst: Schema.optionalKey(Schema.Boolean),
   composerCodeFormatting: Schema.optionalKey(Schema.Boolean),

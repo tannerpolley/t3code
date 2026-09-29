@@ -45,6 +45,7 @@ import {
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { AgentElapsed } from "../chat/AgentElapsed";
 import { BackgroundWorkTaskList } from "../chat/BackgroundWorkTaskList";
+import { SidebarCaretSlot, SidebarCaretToggle, SidebarTrailingColumns } from "./SidebarColumns";
 import { useServerConfigs } from "../../state/entities";
 import { resolveSubagentModelLabel } from "../chat/SubagentTooltipContent";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
@@ -796,23 +797,12 @@ function SortableSectionHeader(props: {
   const { codexStyle } = props;
   const draggable = section.custom && section.parentId === undefined;
   const expanded = !section.collapsed;
-  const chevron = (
-    <ChevronDownIcon
-      aria-hidden
-      className={cn(
-        "size-3 shrink-0 transition-transform",
-        codexStyle &&
-          "opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100",
-        !expanded && "-rotate-90",
-      )}
-    />
-  );
 
   return (
     <div
       ref={setNodeRef}
       className={cn(
-        "group/project-section flex h-7 items-center rounded-md px-1",
+        "group/project-section relative flex h-7 items-center rounded-md px-1",
         isDragging && "z-10 opacity-70",
       )}
       data-testid={`sidebar-project-section-${section.id}`}
@@ -821,31 +811,40 @@ function SortableSectionHeader(props: {
         transition,
       }}
     >
-      {/* Codex style drags a custom section by its whole header and shows the chevron on hover;
+      {/* Codex style drags a custom section by its whole header and shows the caret on hover;
           otherwise a grip button drags it. */}
       <button
         {...(draggable && codexStyle ? { ...attributes, ...listeners } : {})}
         aria-expanded={expanded}
         className={cn(
           "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left text-[13px] font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
-          codexStyle ? "gap-1" : "gap-1.5",
+          codexStyle ? "gap-2" : "gap-1.5",
         )}
         onClick={() => {
           props.onSetExpanded(section.id, !expanded);
         }}
         type="button"
       >
-        {codexStyle ? null : chevron}
+        {codexStyle ? (
+          <SidebarCaretSlot
+            open={expanded}
+            className="opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100"
+          />
+        ) : (
+          <ChevronDownIcon
+            aria-hidden
+            className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")}
+          />
+        )}
         <span className="truncate">{projectSectionName(section)}</span>
-        {codexStyle ? chevron : null}
-        <span className="ms-auto shrink-0 text-[11px] text-sidebar-muted-foreground/55">
-          {section.projectKeys.length}
-        </span>
+        {codexStyle ? (
+          <SidebarTrailingColumns count={section.projectKeys.length} />
+        ) : (
+          <span className="ms-auto shrink-0 text-[11px] text-sidebar-muted-foreground/55">
+            {section.projectKeys.length}
+          </span>
+        )}
       </button>
-      {codexStyle && !section.custom ? (
-        // The actions menu's slot, so this count lines up with the project rows' counts.
-        <span aria-hidden className="size-6 shrink-0" />
-      ) : null}
       {section.custom ? (
         <>
           {codexStyle || !draggable ? null : (
@@ -865,7 +864,11 @@ function SortableSectionHeader(props: {
               render={
                 <button
                   aria-label={`Actions for ${section.name}`}
-                  className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
+                  className={cn(
+                    "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100",
+                    // Codex style overlays the empty time and status slots, as on project rows.
+                    codexStyle && "absolute end-1 top-0.5",
+                  )}
                   type="button"
                 />
               }
@@ -988,9 +991,9 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
         <SidebarMenuButton
           {...(codexStyle ? { ...attributes, ...listeners } : {})}
           aria-expanded={props.isProjectExpanded}
-          // Codex style keeps the actions menu's slot, so the count never moves on hover and
-          // lines up with the section header's count.
-          className={codexStyle ? "h-8 pe-8 text-sm" : "h-8 pe-12 text-sm"}
+          // Codex style keeps the shared columns' end padding; the actions menu overlays the empty
+          // time and status slots.
+          className={codexStyle ? "h-8 text-sm" : "h-8 pe-12 text-sm"}
           isActive={props.selected}
           onClick={() => {
             props.onToggleProject(project.projectKey, !props.isProjectExpanded);
@@ -998,7 +1001,9 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           size="sm"
           title={project.displayName}
         >
-          {codexStyle ? null : (
+          {codexStyle ? (
+            <SidebarCaretSlot open={props.isProjectExpanded} className="text-icon-muted" />
+          ) : (
             <ChevronRightIcon
               aria-hidden
               className={cn(
@@ -1015,7 +1020,17 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
           />
           <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
-          {props.threads.length > 0 ? (
+          {codexStyle ? (
+            <SidebarTrailingColumns
+              count={
+                props.threads.length > 0
+                  ? props.threads.length
+                  : project.groupedProjectCount > 1
+                    ? project.groupedProjectCount
+                    : undefined
+              }
+            />
+          ) : props.threads.length > 0 ? (
             <span className="shrink-0 text-[11px] text-sidebar-muted-foreground/55">
               {props.threads.length}
             </span>
@@ -1204,7 +1219,7 @@ function SidebarProjectThreadRow(props: {
     .get(props.thread.environmentId)
     ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
   return (
-    <li className="relative list-none">
+    <li className="relative list-none" data-sidebar-thread-key={activeThreadKey}>
       <button
         type="button"
         aria-current={active ? "page" : undefined}
@@ -1229,7 +1244,11 @@ function SidebarProjectThreadRow(props: {
         }}
       >
         {props.codexStyle ? (
-          <ThreadRelationshipIcon driver={provider?.driver} provider={provider} />
+          <>
+            {/* The work toggle sits over this slot because buttons cannot nest. */}
+            <SidebarCaretSlot />
+            <ThreadRelationshipIcon driver={provider?.driver} provider={provider} />
+          </>
         ) : (
           <span
             aria-hidden
@@ -1248,40 +1267,42 @@ function SidebarProjectThreadRow(props: {
         <span className={cn("min-w-0 flex-1 truncate", props.codexStyle && "text-xs")}>
           {props.thread.title}
         </span>
-        {workRows.length > 0 ? (
+        {props.codexStyle ? (
+          <SidebarTrailingColumns
+            count={workRows.length > 0 ? workRows.length : undefined}
+            time={
+              activityStartedAt ? (
+                <AgentElapsed
+                  agent={{ status: "running", startedAt: activityStartedAt, completedAt: null }}
+                />
+              ) : (
+                compactThreadTime(props.thread)
+              )
+            }
+            status={<ThreadStatusMark status={statusMark} />}
+          />
+        ) : workRows.length > 0 ? (
           // Room for the work toggle, which sits over this spot because buttons cannot nest.
           <span aria-hidden className="w-8 shrink-0" />
-        ) : null}
-        {workRows.length === 0 || props.codexStyle ? (
-          <span
-            className={cn(
-              "shrink-0 text-[11px] text-sidebar-muted-foreground/55",
-              // A fixed, right-aligned slot so times line up with the elapsed times of the work rows.
-              props.codexStyle && "w-12 text-right tabular-nums",
-            )}
-          >
-            {activityStartedAt ? (
-              <AgentElapsed
-                agent={{ status: "running", startedAt: activityStartedAt, completedAt: null }}
-              />
-            ) : (
-              compactThreadTime(props.thread)
-            )}
+        ) : (
+          <span className="shrink-0 text-[11px] text-sidebar-muted-foreground/55">
+            {compactThreadTime(props.thread)}
           </span>
-        ) : null}
-        {props.codexStyle ? <ThreadStatusMark status={statusMark} /> : null}
+        )}
       </button>
-      {workRows.length > 0 ? (
+      {workRows.length > 0 && props.codexStyle ? (
+        <SidebarCaretToggle
+          open={workOpen}
+          label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
+          onToggle={() => setWorkOpen(!workOpen)}
+          className="top-2 h-5"
+        />
+      ) : workRows.length > 0 ? (
         <button
           type="button"
           aria-expanded={workOpen}
           aria-label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
-          className={cn(
-            "absolute top-2 flex h-5 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-            // Codex style: left of the time slot (8px padding, 14px status mark, 48px time, two 8px
-            // gaps); flush with the padding otherwise.
-            props.codexStyle ? "right-[86px] w-8" : "right-2 w-8",
-          )}
+          className="absolute top-2 right-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
           onClick={() => setWorkOpen(!workOpen)}
         >
           {workRows.length}
@@ -1293,7 +1314,7 @@ function SidebarProjectThreadRow(props: {
         </button>
       ) : null}
       {workRows.length > 0 && workOpen && props.codexStyle ? (
-        // Under the row's provider icon, where the tree lines begin.
+        // Under the row's caret, where the tree lines begin: past its 8px padding and half the slot.
         <div className="ms-4">
           <SidebarSubagentTree
             environmentId={props.thread.environmentId}
@@ -1377,7 +1398,7 @@ function SidebarSubagentTree(props: {
         if (work === null) return null;
         const { child, grandchildren, tasks, rows } = work;
         return (
-          // Under the row's icon: past the row's 8px padding and half its 16px icon.
+          // Under the row's caret: past the row's 8px padding and half its 16px caret slot.
           <div className="ms-4">
             <SidebarSubagentTree
               nested

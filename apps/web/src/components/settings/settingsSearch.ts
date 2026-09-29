@@ -412,6 +412,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork sections folders automatic organize sort new projects"],
   },
   {
+    id: "reveal-open-thread-in-sidebar",
+    title: "Reveal the open thread in the sidebar",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork sidebar scroll expand collapsed project section follow active thread link navigate",
+    ],
+  },
+  {
     id: "activity-needs-you-first",
     title: "Threads that need you go first",
     to: "/settings/customizations",

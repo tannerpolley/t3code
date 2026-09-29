@@ -263,6 +263,7 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { resolveSidebarReveal } from "./sidebar/SidebarReveal.logic";
 import {
   SidebarHeaderIconButton,
   SidebarHeaderLabeledButton,
@@ -1684,6 +1685,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-sidebar-thread-key={threadKey}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
@@ -1837,6 +1839,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   return (
     <li
       data-thread-item
+      data-sidebar-thread-key={threadKey}
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
@@ -3113,6 +3116,83 @@ export default function Sidebar() {
     setThreadSearchQuery("");
     setActiveSearchResultIndex(0);
   }, []);
+  // Reveals the thread the route moved to, whichever way it got there (link, search, palette,
+  // notification, shortcut, Back). Runs once per change of the open thread, so a project the user
+  // collapses afterwards stays collapsed until they open a thread again. The thread may not have
+  // loaded yet, in which case the effect tries again when the thread list changes.
+  const revealOpenThread = useClientSettings((s) => s.revealOpenThreadInSidebar);
+  const revealedThreadKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (routeThreadKey === null || !revealOpenThread) {
+      // Turning the switch on later must not reveal a thread that was opened while it was off.
+      revealedThreadKeyRef.current = routeThreadKey;
+      return;
+    }
+    if (revealedThreadKeyRef.current === routeThreadKey) return;
+    const threadByKey = new Map(
+      threads.map((thread) => [
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        thread,
+      ]),
+    );
+    const uiState = useUiStateStore.getState();
+    const reveal = resolveSidebarReveal({
+      threadKey: routeThreadKey,
+      getThread: (key) => {
+        const thread = threadByKey.get(key);
+        if (thread === undefined) return undefined;
+        const { parentThreadId, relationshipToParent } = thread.lineage;
+        return {
+          parentKey:
+            relationshipToParent === "subagent" && parentThreadId !== null
+              ? scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId))
+              : null,
+          projectKey:
+            logicalProjectKeyByScopedProjectRef.get(
+              `${thread.environmentId}:${thread.projectId}`,
+            ) ?? null,
+          archived: thread.archivedAt !== null,
+        };
+      },
+      sections: uiState.sidebarProjectSections,
+      otherProjectsExpanded: uiState.sidebarOtherProjectsExpanded,
+      isProjectExpanded: (projectKey) =>
+        resolveProjectExpanded(uiState.projectExpandedById, [projectKey]),
+    });
+    if (reveal === null) return;
+    revealedThreadKeyRef.current = routeThreadKey;
+    if (sidebarMode === "projects") {
+      for (const sectionId of reveal.expandSectionIds) {
+        uiState.setSidebarProjectSectionExpanded(sectionId, true);
+      }
+      if (reveal.expandOtherProjects) uiState.setSidebarOtherProjectsExpanded(true);
+      if (reveal.expandProject) toggleProjectExpanded(reveal.projectKey, true);
+    } else if (projectScopeKey !== null && projectScopeKey !== reveal.projectKey) {
+      // The Activity list only shows the scoped project; a search result list only its matches.
+      setProjectScopeKey(null);
+    }
+    clearThreadSearch();
+    // The rows render after the expansions above; nearest keeps a visible row still.
+    let tries = 0;
+    const scrollToRow = () => {
+      const row = document.querySelector(
+        `[data-sidebar-thread-key="${globalThis.CSS.escape(reveal.rowKey)}"]`,
+      );
+      if (row !== null) row.scrollIntoView({ block: "nearest" });
+      else if (++tries < 5) requestAnimationFrame(scrollToRow);
+    };
+    requestAnimationFrame(scrollToRow);
+  }, [
+    clearThreadSearch,
+    logicalProjectKeyByScopedProjectRef,
+    projectScopeKey,
+    revealOpenThread,
+    routeThreadKey,
+    setProjectScopeKey,
+    sidebarMode,
+    threads,
+    toggleProjectExpanded,
+  ]);
   const selectThreadSearchResult = useCallback(
     (thread: EnvironmentThreadShell) => {
       clearThreadSearch();
