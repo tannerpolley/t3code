@@ -5,6 +5,7 @@ import type { LimitPool } from "@t3tools/shared/usageLimits";
 
 import {
   attributeWindow,
+  dailyPaceBudget,
   dayStartMs,
   limitChartColumns,
   limitWindowOptions,
@@ -196,5 +197,60 @@ describe("limitChartColumns", () => {
       expect(column[0]).toBeCloseTo(models.reduce((sum, value) => sum + value, 0));
     });
     expect(byProvider.columns.map((column) => column[0])).toEqual([20, 20, 0]);
+  });
+});
+
+describe("dailyPaceBudget", () => {
+  const timeZone = "America/New_York";
+  // Thursday 1 October 2026, 10:00 local (EDT), for one week.
+  const windowStart = Date.parse("2026-10-01T14:00:00Z");
+  const windowEnd = Date.parse("2026-10-08T14:00:00Z");
+  const pace = (now: string) =>
+    dailyPaceBudget({ windowStart, windowEnd, now: Date.parse(now), timeZone });
+
+  it("counts a partial first workday by its share inside the window", () => {
+    // Thursday 14/24 of a day, then all of Friday.
+    const friday = pace("2026-10-02T16:00:00Z");
+    expect(friday.isWorkday).toBe(true);
+    expect(friday.workdayWeightsSoFar).toBeCloseTo(14 / 24 + 1);
+    expect(friday.budgetPercent).toBeCloseTo(20 * (14 / 24 + 1));
+    // The window's last Thursday holds the 10 hours before the reset: five days in all.
+    expect(pace("2026-10-08T13:00:00Z").budgetPercent).toBeCloseTo(100);
+  });
+
+  it("carries unused workdays into a Monday mid-week", () => {
+    const monday = pace("2026-10-05T16:00:00Z");
+    expect(monday.isWorkday).toBe(true);
+    expect(monday.budgetPercent).toBeCloseTo(20 * (14 / 24 + 2));
+  });
+
+  it("marks Saturday as a day off without adding budget", () => {
+    const saturday = pace("2026-10-03T16:00:00Z");
+    expect(saturday.isWorkday).toBe(false);
+    expect(saturday.workdayWeightsSoFar).toBeCloseTo(14 / 24 + 1);
+  });
+
+  it("caps the budget at the whole limit", () => {
+    const result = dailyPaceBudget({
+      windowStart: Date.parse("2026-10-05T04:00:00Z"),
+      windowEnd: Date.parse("2026-10-19T04:00:00Z"),
+      now: Date.parse("2026-10-12T16:00:00Z"),
+      timeZone,
+    });
+    expect(result.workdayWeightsSoFar).toBeCloseTo(6);
+    expect(result.budgetPercent).toBe(100);
+  });
+
+  it("starts days at local midnight across a clock change", () => {
+    // Friday 6 March 2026 00:00 EST; clocks go forward on Sunday the 8th, so
+    // Monday starts 71 hours later, at 00:00 EDT (04:00Z).
+    const result = dailyPaceBudget({
+      windowStart: Date.parse("2026-03-06T05:00:00Z"),
+      windowEnd: Date.parse("2026-03-13T05:00:00Z"),
+      now: Date.parse("2026-03-09T04:30:00Z"),
+      timeZone,
+    });
+    expect(result.isWorkday).toBe(true);
+    expect(result.workdayWeightsSoFar).toBeCloseTo(2);
   });
 });

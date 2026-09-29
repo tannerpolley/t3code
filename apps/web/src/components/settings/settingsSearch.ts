@@ -500,6 +500,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "daily-usage-meter",
+    title: "Daily usage meter",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork usage limits weekly daily budget pace workday sidebar meter claude codex",
+    ],
+  },
+  {
     id: "agent-browser-tab-limits",
     title: "Agent browser tab limits",
     to: "/settings/customizations",

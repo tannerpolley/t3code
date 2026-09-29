@@ -32,7 +32,13 @@ import { getDriverOption } from "../settings/providerDriverMeta";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { barColor, PaceIcon, ResetCredits } from "./UsageLimits";
 import { AccountAvatar, LimitNotices } from "./UsageLimitsPooled";
-import { attributeWindow, limitChartColumns, type WindowAttribution } from "./usageLimitModels";
+import {
+  attributeWindow,
+  limitChartColumns,
+  localDay,
+  poolWindowSpan,
+  type WindowAttribution,
+} from "./usageLimitModels";
 import { type UsageChartSeries, UsageSeriesChart } from "./UsageProviderChart";
 import {
   BreakdownRow,
@@ -84,16 +90,6 @@ function usageProviderOf(driver: ServerProvider["driver"]): UsageProviderKind | 
   return null;
 }
 
-/** When the pooled window opened: the earliest member start, or null without a clock. */
-function poolWindowStart(pool: LimitPoolWindow, now: number): number | null {
-  const starts = pool.members.flatMap(({ window }) => {
-    if (window.resetsAt === undefined || window.windowDurationMins === undefined) return [];
-    const start = Date.parse(window.resetsAt) - window.windowDurationMins * 60_000;
-    return Number.isFinite(start) ? [Math.min(start, now)] : [];
-  });
-  return starts.length === 0 ? null : Math.min(...starts);
-}
-
 function shade(color: string, index: number): string {
   const percent = SHADES[index] ?? 26;
   return percent === 100 ? color : `color-mix(in oklab, ${color} ${percent}%, var(--background))`;
@@ -101,15 +97,6 @@ function shade(color: string, index: number): string {
 
 function formatPoints(points: number): string {
   return points > 0 && points < 0.1 ? "<0.1%" : `${points.toFixed(1)}%`;
-}
-
-function localDay(ms: number, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(ms);
 }
 
 /** The soonest reset that hands anything back; an untouched account resets to no effect. */
@@ -141,7 +128,7 @@ function useLimitModelUsage(
 ): LimitModelUsage {
   const oldestStart = pools
     .flatMap((pool) => pool.windows)
-    .reduce((oldest, window) => Math.min(oldest, poolWindowStart(window, now) ?? now), now);
+    .reduce((oldest, window) => Math.min(oldest, poolWindowSpan(window, now)?.start ?? now), now);
   const days = Math.min(MAX_DAILY_DAYS, Math.ceil((now - oldestStart) / DAY_MS) + 1);
   const hourInput = useMemo(() => makeWindow(1, new Date(now), "hour"), [now]);
   const dayInput = useMemo(
@@ -176,7 +163,7 @@ function estimateRows(
   readonly periods: readonly string[];
   readonly attributions: readonly (WindowAttribution | null)[];
 } {
-  const starts = rows.map((row) => poolWindowStart(row.window, now));
+  const starts = rows.map((row) => poolWindowSpan(row.window, now)?.start ?? null);
   const known = starts.filter((start) => start !== null);
   if (known.length === 0) {
     return { hourly: false, periods: [], attributions: rows.map(() => null) };

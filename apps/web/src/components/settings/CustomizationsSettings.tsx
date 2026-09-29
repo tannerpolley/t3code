@@ -176,6 +176,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Lay out the Usage page's Limits view like Cost and Tokens: pick a window (5 hours, weekly, monthly), see what is left per provider, and chart its estimated use by provider or model, from the usage your connected environments recorded. Off shows the per-provider window cards.",
   },
   {
+    key: "dailyUsageMeter",
+    searchId: "daily-usage-meter",
+    section: "usage",
+    description:
+      "A daily meter in the sidebar: each Monday–Friday gets 20% of each provider's weekly limit, and unused room carries forward.",
+  },
+  {
     key: "fastShimmer",
     searchId: "fast-shimmer",
     section: "motion",

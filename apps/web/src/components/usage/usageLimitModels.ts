@@ -40,6 +40,78 @@ export function dayStartMs(day: string, timeZone: string): number {
   return utcMidnight - (wall - utcMidnight);
 }
 
+/** The `YYYY-MM-DD` day an instant falls on in the time zone. */
+export function localDay(ms: number, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(ms);
+}
+
+function nextDay(day: string): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * When the pooled window opened and resets: the earliest-opening member's
+ * span (its start clamped to now), or null when no member has a clock.
+ */
+export function poolWindowSpan(
+  pool: LimitPoolWindow,
+  now: number,
+): { readonly start: number; readonly end: number } | null {
+  let span: { start: number; end: number } | null = null;
+  for (const { window } of pool.members) {
+    if (window.resetsAt === undefined || window.windowDurationMins === undefined) continue;
+    const end = Date.parse(window.resetsAt);
+    const start = Math.min(end - window.windowDurationMins * 60_000, now);
+    if (Number.isFinite(start) && (span === null || start < span.start)) span = { start, end };
+  }
+  return span;
+}
+
+/** Share of a weekly limit each full Monday–Friday day may spend. */
+const WORKDAY_SHARE_PERCENT = 20;
+
+/**
+ * Rolling daily pace for a weekly limit: each local Monday–Friday is worth
+ * 20% of the limit, weighted by how much of that calendar day lies inside the
+ * window, and unused room carries forward. The budget covers every workday
+ * from the window's start through the end of today, capped at 100%.
+ */
+export function dailyPaceBudget(input: {
+  readonly windowStart: number;
+  readonly windowEnd: number;
+  readonly now: number;
+  readonly timeZone: string;
+}): {
+  readonly budgetPercent: number;
+  readonly isWorkday: boolean;
+  readonly workdayWeightsSoFar: number;
+} {
+  const today = localDay(input.now, input.timeZone);
+  let weights = 0;
+  let isWorkday = false;
+  for (let day = localDay(input.windowStart, input.timeZone); day <= today; day = nextDay(day)) {
+    const weekday = new Date(`${day}T00:00:00Z`).getUTCDay();
+    const workday = weekday >= 1 && weekday <= 5;
+    if (day === today) isWorkday = workday;
+    if (!workday) continue;
+    // Local midnights, so a 23- or 25-hour day around a clock change still counts as one day.
+    const start = dayStartMs(day, input.timeZone);
+    const end = dayStartMs(nextDay(day), input.timeZone);
+    const inside = Math.min(end, input.windowEnd) - Math.max(start, input.windowStart);
+    weights += Math.max(0, inside) / (end - start);
+  }
+  return {
+    budgetPercent: Math.min(100, WORKDAY_SHARE_PERCENT * weights),
+    isWorkday,
+    workdayWeightsSoFar: weights,
+  };
+}
+
 /**
  * Splits a limit window's used percent across the models that ran in it.
  *
