@@ -16,7 +16,12 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { layer as eventStoreLayer } from "./EventStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
+import {
+  ProjectionMaintenanceV2,
+  layer as projectionMaintenanceLayer,
+} from "./ProjectionMaintenance.ts";
 import { ProjectionStoreV2, layer as projectionLayer } from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -144,6 +149,15 @@ const database = SqlitePersistenceMemory;
 const orchestratorLayer = Layer.mergeAll(
   database,
   projectionLayer.pipe(Layer.provide(database)),
+  projectionMaintenanceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        database,
+        projectionLayer.pipe(Layer.provide(database)),
+        eventStoreLayer.pipe(Layer.provide(database)),
+      ),
+    ),
+  ),
   makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "thread-title-refresh" },
     ProviderAdapterRegistry.makeLayer([adapter]),
@@ -225,6 +239,20 @@ it.effect("a title typed before the first message is not replaced by the first-m
     const thread = yield* projections.getThread(threadId);
     assert.equal(thread.title, "Typed before sending");
     assert.isNotOk(thread.titleRegeneration);
+  }).pipe(Effect.provide(orchestratorLayer)),
+);
+
+it.effect("a client rename stays the user's after the projection is rebuilt from events", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStoreV2;
+    const maintenance = yield* ProjectionMaintenanceV2;
+    const threadId = yield* createThread("rebuilt");
+    yield* metadata(threadId, "rename:rebuilt", { title: "Typed by hand" });
+    // Ownership has no other record: it survives only if the rename event carries it.
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    const rebuilt = yield* projections.getThread(threadId);
+    assert.equal(rebuilt.title, "Typed by hand");
+    assert.equal(rebuilt.titleSource, "user");
   }).pipe(Effect.provide(orchestratorLayer)),
 );
 
