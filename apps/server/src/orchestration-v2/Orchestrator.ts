@@ -2169,12 +2169,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "thread.metadata.update" &&
       command.expectedTitle !== undefined &&
-      command.expectedTitle !== thread.title
+      (command.expectedTitle !== thread.title || thread.titleSource === "user")
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.threadId} was renamed before the metadata update could be applied.`,
+        cause: `Thread ${command.threadId} title was edited before the metadata update could be applied.`,
       });
     }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {

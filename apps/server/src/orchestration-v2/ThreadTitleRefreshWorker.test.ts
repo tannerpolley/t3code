@@ -240,5 +240,26 @@ it.effect(
       const renamed = yield* projections.getThread(top.id);
       assert.equal(renamed.titleSource, "user");
       assert.isNotOk(renamed.titleRegeneration);
+
+      yield* create("same-title");
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("rename:same-title"),
+        threadId: ThreadId.make("thread:same-title"),
+        title: "same-title",
+      });
+      const sameTitleRefresh = yield* Effect.exit(
+        orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("server:title-refresh:same-title"),
+          threadId: ThreadId.make("thread:same-title"),
+          regenerateTitle: true,
+          expectedTitle: "same-title",
+        }),
+      );
+      assert.equal(sameTitleRefresh._tag, "Failure");
+      const sameTitle = yield* projections.getThread(ThreadId.make("thread:same-title"));
+      assert.equal(sameTitle.titleSource, "user");
+      assert.isNotOk(sameTitle.titleRegeneration);
     }).pipe(Effect.provide(orchestratorLayer)),
 );
