@@ -2467,6 +2467,11 @@ interface ClaudeLiveQueryContext {
   readonly queryPolicyKey: string;
   readonly selectionKey: string;
   readonly closed: Deferred.Deferred<void, never>;
+  // Whether this process is inside one of Claude's turns: set by a live
+  // own-turn frame, cleared by any live result, whichever run it lands in.
+  // Claude can fold a queued prompt into a turn already running, so which run
+  // requested a turn says nothing about whether that turn is still open.
+  claudeTurnOpen: boolean;
 }
 
 interface ActiveClaudeToolCall {
@@ -5946,10 +5951,18 @@ export function makeClaudeAdapterV2(
             queryPolicyKey,
             selectionKey: compiledSelection.queryIdentity,
             closed,
+            claudeTurnOpen: false,
           };
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
-            Stream.runForEach((message) => handleSdkMessage({ query: querySession, message })),
+            Stream.runForEach((message) => {
+              if (message.type === "result") {
+                context.claudeTurnOpen = false;
+              } else if (isClaudeOwnTurnFrame(message)) {
+                context.claudeTurnOpen = true;
+              }
+              return handleSdkMessage({ query: querySession, message });
+            }),
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
@@ -6091,11 +6104,12 @@ export function makeClaudeAdapterV2(
               yield* handleSdkMessage({ query: querySession.query, message: lastResult });
               return;
             }
-            // Claude's turn started and has not ended: its remaining frames and
-            // result arrive live into this run. With no turn under way (only
-            // notifications Claude never took up, or nothing buffered) nothing
-            // will follow, so settle instead of waiting on a result.
-            if (!drained.some(isClaudeOwnTurnFrame)) {
+            // Claude's turn is still open: its remaining frames and result
+            // arrive live into this run. Otherwise nothing will follow (only
+            // notifications Claude never took up, or its turn already ended in
+            // another run), so settle instead of waiting on a result. A live
+            // result during the replay already finalized this run.
+            if (!querySession.claudeTurnOpen && (yield* Ref.get(activeTurn)) === context) {
               const completedAt = yield* DateTime.now;
               yield* finalizeActiveTurn({ context, status: "completed", completedAt });
             }
@@ -6292,10 +6306,7 @@ export function makeClaudeAdapterV2(
             for (const entry of buffers.values()) {
               if (
                 entry.messages.some(
-                  (message) =>
-                    message.type === "user" ||
-                    message.type === "assistant" ||
-                    message.type === "result",
+                  (message) => isClaudeOwnTurnFrame(message) || message.type === "result",
                 )
               ) {
                 return true;

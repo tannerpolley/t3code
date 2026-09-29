@@ -4128,6 +4128,119 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("settles a wake run whose turn Claude folded into a queued user run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turnInput = (attempt: string, text: string, ordinal: number, wake = false) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(attempt),
+            text,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            ...(wake ? { messageCreatedBy: "agent", messageCreationSource: "provider" } : {}),
+          });
+
+        yield* harness.runtime.startTurn(
+          turnInput("attempt-claude-fold-1", "Run the build in the background.", 1),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [wakeTaskStarted, turnOneResult]);
+        yield* Queue.take(harness.terminalReceipts);
+
+        // Claude starts its notification turn before the user's queued
+        // follow-up attaches: the init is buffered and requests the wake run,
+        // which queues behind the follow-up.
+        yield* Queue.offerAll(harness.sdkMessages, [wakeNotification, wakeTurnStart]);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
+        yield* harness.runtime.startTurn(
+          turnInput("attempt-claude-fold-2", "How is the build going?", 2),
+        );
+        yield* awaitUntil(() => harness.offeredMessages.length === 2, "user prompt offered");
+
+        // Claude folds the follow-up into the running turn: one result ends
+        // both, and it completes the user's run.
+        yield* Queue.offerAll(harness.sdkMessages, [wakeAssistant, wakeResult]);
+        yield* Queue.take(harness.terminalReceipts);
+
+        // The wake run finds only the stale init; no result will follow.
+        yield* harness.runtime.startTurn(
+          turnInput("attempt-claude-fold-3", "Background task completed.", 3, true),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 3, "wake run terminal");
+        assert.equal(harness.terminalEvents()[2]?.status, "completed");
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("opens a fresh wake run for the turn after a zero-turn notification result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turnInput = (attempt: string, text: string, ordinal: number, wake = false) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(attempt),
+            text,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            ...(wake ? { messageCreatedBy: "agent", messageCreationSource: "provider" } : {}),
+          });
+
+        yield* harness.runtime.startTurn(
+          turnInput("attempt-claude-empty-wake-1", "Run the build in the background.", 1),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [wakeTaskStarted, turnOneResult]);
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* Queue.offerAll(harness.sdkMessages, [wakeNotification, wakeTurnStart]);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "first wake request");
+        yield* harness.runtime.startTurn(
+          turnInput("attempt-claude-empty-wake-2", "Background task completed.", 2, true),
+        );
+        assert.lengthOf(harness.terminalEvents(), 1);
+
+        // The first turn ends without a model turn; Claude then opens the real one.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000110",
+            result: "",
+            numTurns: 0,
+            origin: { kind: "task-notification" },
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            uuid: "00000000-0000-4000-8000-000000000111",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(() => harness.continuationRequests.length === 2, "second wake request");
+        yield* harness.runtime.startTurn(
+          turnInput("attempt-claude-empty-wake-3", "Background task completed.", 3, true),
+        );
+        assert.lengthOf(harness.terminalEvents(), 2);
+
+        yield* Queue.offerAll(harness.sdkMessages, [wakeAssistant, wakeResult]);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "completed");
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("terminalizes an agent server wake from a positive task-notification result", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -7373,13 +7486,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isTrue(yield* hasPendingBackgroundWork);
           assert.lengthOf(continuationRequests, 1);
 
-          yield* Queue.offer(
-            secondProcess,
-            makeResultFrame({
-              uuid: "00000000-0000-4000-8000-000000000806",
-              result: "The subagent finished with SUB_BUFFER_REPLACE_DONE.",
-            }),
-          );
+          // The wake turn that init opened died with the first process, so the
+          // continuation drains the buffer and settles without waiting on it.
           yield* runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId,
