@@ -289,6 +289,11 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
       "When a background shell or command finishes while its agent is idle, the agent wakes once, even if the provider's own notice is lost. A session is no longer disconnected for being idle just as its background work finishes. If a restart stops the work, the agent is told when threads continue after an update. Claude monitors stay listed with Stop, but no longer keep a thread or its parent waiting, block settling, or hold an idle session.",
   },
   {
+    title: "Background wake turns show everything they do",
+    description:
+      "When Claude wakes on its own because a background shell, monitor, or agent finished, one run opens as its turn starts and stays open until it ends. Its replies, tool calls, and new subagents show as they happen, and T3 tools such as delegating work are available during it.",
+  },
+  {
     title: "Subagents waiting on their own work stay running",
     description:
       "A delegated task whose turn ended while its own background work still runs stays with the running agents in Lineage and counts as running, instead of moving under Previous agents.",

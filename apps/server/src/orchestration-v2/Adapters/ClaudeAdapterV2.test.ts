@@ -1902,6 +1902,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     uuid: "00000000-0000-4000-8000-000000000103",
     session_id: WAKE_NATIVE_SESSION,
   });
+  // Claude opens every turn, its own wake turns included, with an init frame.
+  const wakeTurnStart = claudeSdkFrame({
+    type: "system",
+    subtype: "init",
+    uuid: "00000000-0000-4000-8000-000000000108",
+    session_id: WAKE_NATIVE_SESSION,
+  });
   const wakeAssistant = claudeSdkFrame({
     type: "assistant",
     message: {
@@ -3866,8 +3873,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
 
-        // The CLI starts a wake turn on its own (no buffered notification, so
-        // no continuation is requested yet) and the model asks a question.
+        // The CLI starts a wake turn on its own and the model asks a question
+        // before the continuation run attaches.
         const questionInput = {
           questions: [
             {
@@ -3906,7 +3913,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isBelow(attempt, 5000, "wake frame buffered");
           yield* Effect.yieldNow;
         }
-        assert.lengthOf(harness.continuationRequests, 0);
         const canUseTool = harness.getOpenedOptions()?.canUseTool;
         assert.isFunction(canUseTool);
         const questionResult = yield* Effect.promise(() =>
@@ -4742,7 +4748,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.continuationRequests, 0);
 
-        yield* Queue.offer(harness.sdkMessages, subagentNotification);
+        yield* Queue.offerAll(harness.sdkMessages, [subagentNotification, wakeTurnStart]);
         yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
         assert.equal(harness.continuationRequests[0]?.threadId, harness.threadId);
         assert.equal(harness.continuationRequests[0]?.detail, SUBAGENT_SUMMARY);
@@ -4871,6 +4877,397 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.events.some(
             (event) => event.type === "message.updated" && event.message.text === NARRATION,
           ),
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  // Frame order recorded on 2026-09-29 (thread b5efc6e4): a background Agent
+  // subagent finishes while the thread is idle and Claude runs its own wake
+  // turn. The subagent's own shell notification sits in the wake buffer too.
+  it.effect("attaches one run to Claude's own wake turn from its start to its result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const AGENT_TOOL_USE_ID = "toolu_01JVx6kYXLnQTWunuhycKeLX";
+        const AGENT_TASK_ID = "a4f224851ccf104bf";
+        const AGENT_BASH_TOOL_USE_ID = "toolu_01NeF4Yc7xTsMExACpWryMMt";
+        const AGENT_SHELL_TASK_ID = "bqompuds0";
+        const MCP_TOOL_USE_ID = "toolu_01M33Tx1ZLEoXgZZek";
+        const REVIEWER_TOOL_USE_ID = "toolu_01Fj6Mz8sSumNUYDA8Qtq9Rm";
+        const REVIEWER_TASK_ID = "a9990d31716b16db0";
+        const REVIEWER_BASH_TOOL_USE_ID = "toolu_01FKSUifddpYpGfnVA";
+        const BASH_TOOL_USE_ID = "toolu_wake_parent_bash";
+        const SUBAGENT_RESULT = "I've fixed this and committed it locally.";
+        const WAKE_TEXT = "The stall worker found the real cause.";
+        const WAKE_FINAL_TEXT = "The stall fix is built.";
+        const frame = (fields: Record<string, unknown>) =>
+          claudeSdkFrame({
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: `uuid-${nextUuid++}`,
+            ...fields,
+          });
+        let nextUuid = 0;
+        const turnFrame = (
+          type: "assistant" | "user",
+          content: ReadonlyArray<unknown>,
+          parent: string | null = null,
+        ) =>
+          frame({
+            type,
+            parent_tool_use_id: parent,
+            message: { id: `msg-${nextUuid}`, role: type, content },
+          });
+        const toolUse = (id: string, name: string, input: unknown, parent: string | null = null) =>
+          turnFrame("assistant", [{ type: "tool_use", id, name, input }], parent);
+        const toolResult = (id: string, text: string, parent: string | null = null) =>
+          turnFrame("user", [{ type: "tool_result", tool_use_id: id, content: text }], parent);
+        const asyncAgentAck = (toolUseId: string, taskId: string) =>
+          frame({
+            type: "user",
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: toolUseId,
+                  content: [{ type: "text", text: "Async agent launched successfully." }],
+                },
+              ],
+            },
+            tool_use_result: { isAsync: true, status: "async_launched", agentId: taskId },
+          });
+        const system = (subtype: string, fields: Record<string, unknown> = {}) =>
+          frame({ type: "system", subtype, ...fields });
+
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const itemFor = (nativeId: string) =>
+          harness.events.findLast(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === nativeId,
+          )?.turnItem;
+        const subagentFor = (taskId: string) =>
+          harness.events.findLast(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === taskId,
+          )?.subagent;
+        const assistantMessages = () =>
+          harness.events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "assistant"
+              ? [event.message]
+              : [],
+          );
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-launch-stall-fix"),
+            text: "Fix the stall in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [
+          toolUse(AGENT_TOOL_USE_ID, "Agent", {
+            prompt: "Fix the stall.",
+            run_in_background: true,
+          }),
+          system("task_started", {
+            task_id: AGENT_TASK_ID,
+            tool_use_id: AGENT_TOOL_USE_ID,
+            description: "Fix missed background-completion wakes",
+            task_type: "local_agent",
+            prompt: "Fix the stall.",
+          }),
+          asyncAgentAck(AGENT_TOOL_USE_ID, AGENT_TASK_ID),
+          makeResultFrame({ uuid: "result-launch", result: "Started the fix in the background." }),
+        ]);
+        yield* Queue.take(harness.terminalReceipts);
+
+        // The subagent keeps working after the parent settled: one of its shells
+        // ends (a notification Claude never wakes the parent for), it answers,
+        // and its own completion notification follows. Then Claude starts the
+        // wake turn.
+        yield* Queue.offerAll(harness.sdkMessages, [
+          toolUse(AGENT_BASH_TOOL_USE_ID, "Bash", { command: "vp test run" }, AGENT_TOOL_USE_ID),
+          system("task_started", {
+            task_id: AGENT_SHELL_TASK_ID,
+            tool_use_id: AGENT_BASH_TOOL_USE_ID,
+            description: "vp test run",
+            task_type: "local_bash",
+          }),
+          system("task_notification", {
+            task_id: AGENT_SHELL_TASK_ID,
+            tool_use_id: AGENT_BASH_TOOL_USE_ID,
+            status: "completed",
+            output_file: "/tmp/bqompuds0.output",
+            summary: "Background command completed",
+          }),
+          toolResult(AGENT_BASH_TOOL_USE_ID, "Tests passed.", AGENT_TOOL_USE_ID),
+          turnFrame("assistant", [{ type: "text", text: SUBAGENT_RESULT }], AGENT_TOOL_USE_ID),
+          system("background_tasks_changed", { tasks: [] }),
+          system("task_updated", { task_id: AGENT_TASK_ID }),
+          system("task_notification", {
+            task_id: AGENT_TASK_ID,
+            tool_use_id: AGENT_TOOL_USE_ID,
+            status: "completed",
+            output_file: "/tmp/a4f224851ccf104bf.output",
+            summary: SUBAGENT_RESULT,
+          }),
+        ]);
+        yield* awaitUntil(
+          () => itemFor(AGENT_BASH_TOOL_USE_ID)?.status === "completed",
+          "subagent shell drained",
+        );
+        // Notifications alone do not request the wake run.
+        assert.lengthOf(harness.continuationRequests, 0);
+        yield* Queue.offerAll(harness.sdkMessages, [
+          system("init"),
+          system("status", { status: "requesting" }),
+        ]);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "wake run requested");
+        assert.equal(harness.continuationRequests[0]?.detail, SUBAGENT_RESULT);
+
+        // The run attaches while the model is still thinking (as on 2026-09-29).
+        const wakeInput = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-stall-fix-wake"),
+          text: SUBAGENT_RESULT,
+          attachments: [],
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        });
+        yield* harness.runtime.startTurn(wakeInput);
+        yield* awaitUntil(
+          () => subagentFor(AGENT_TASK_ID)?.status === "completed",
+          "finished subagent replayed into the wake run",
+        );
+        assert.lengthOf(harness.terminalEvents(), 1, "the wake run stays open until its result");
+
+        yield* Queue.offerAll(harness.sdkMessages, [
+          frame({
+            type: "stream_event",
+            parent_tool_use_id: null,
+            event: { type: "message_start", message: { id: "msg-wake" } },
+          }),
+          turnFrame("assistant", [{ type: "thinking", thinking: "Review it.", signature: "s" }]),
+          turnFrame("assistant", [{ type: "text", text: WAKE_TEXT }]),
+          toolUse(MCP_TOOL_USE_ID, "mcp__t3-code__delegate_task", { prompt: "Review the fix." }),
+        ]);
+        yield* awaitUntil(() => itemFor(MCP_TOOL_USE_ID) !== undefined, "MCP call projected");
+        // The MCP call runs inside the open wake run.
+        assert.lengthOf(harness.terminalEvents(), 1);
+        yield* Queue.offerAll(harness.sdkMessages, [
+          toolResult(MCP_TOOL_USE_ID, "Delegated task started."),
+          toolUse(REVIEWER_TOOL_USE_ID, "Agent", {
+            prompt: "Adversarially review the fix.",
+            run_in_background: true,
+          }),
+          system("background_tasks_changed", {
+            tasks: [{ task_id: REVIEWER_TASK_ID, task_type: "local_agent" }],
+          }),
+          system("task_started", {
+            task_id: REVIEWER_TASK_ID,
+            tool_use_id: REVIEWER_TOOL_USE_ID,
+            description: "Adversarial review",
+            task_type: "local_agent",
+            prompt: "Adversarially review the fix.",
+          }),
+          asyncAgentAck(REVIEWER_TOOL_USE_ID, REVIEWER_TASK_ID),
+          toolUse(REVIEWER_BASH_TOOL_USE_ID, "Bash", { command: "git show" }, REVIEWER_TOOL_USE_ID),
+          toolResult(REVIEWER_BASH_TOOL_USE_ID, "diff", REVIEWER_TOOL_USE_ID),
+          toolUse(BASH_TOOL_USE_ID, "Bash", { command: "git log -1" }),
+          toolResult(BASH_TOOL_USE_ID, "0ac66a2f8c"),
+          turnFrame("assistant", [{ type: "text", text: WAKE_FINAL_TEXT }]),
+        ]);
+        yield* awaitUntil(
+          () => assistantMessages().some((message) => message.text === WAKE_FINAL_TEXT),
+          "wake turn output projected",
+        );
+        // The subagent launched in the wake turn has its record and child thread now.
+        const reviewer = subagentFor(REVIEWER_TASK_ID);
+        assert.equal(reviewer?.status, "running");
+        assert.equal(reviewer?.runId, wakeInput.runId);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "app_thread.created" && event.appThread.id === reviewer?.childThreadId,
+          ),
+        );
+        assert.equal(itemFor(REVIEWER_BASH_TOOL_USE_ID)?.threadId, reviewer?.childThreadId);
+        assert.lengthOf(harness.terminalEvents(), 1);
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "result-wake",
+            result: WAKE_FINAL_TEXT,
+            numTurns: 4,
+            origin: { kind: "task-notification" },
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "wake run terminal");
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+        assert.lengthOf(harness.continuationRequests, 1, "exactly one wake run");
+        for (const nativeId of [MCP_TOOL_USE_ID, BASH_TOOL_USE_ID]) {
+          assert.equal(itemFor(nativeId)?.runId, wakeInput.runId, nativeId);
+          assert.equal(itemFor(nativeId)?.status, "completed", nativeId);
+        }
+        for (const text of [WAKE_TEXT, WAKE_FINAL_TEXT]) {
+          assert.equal(
+            assistantMessages().find((message) => message.text === text)?.runId,
+            wakeInput.runId,
+            text,
+          );
+        }
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect.each([
+    { trigger: "a background shell finishing", monitor: false },
+    { trigger: "a Monitor event", monitor: true },
+  ])("attaches the wake run from Claude's turn start for $trigger", ({ monitor }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TOOL_USE_ID = "toolu-wake-trigger";
+        const MCP_TOOL_USE_ID = "toolu-wake-mcp";
+        const WAKE_TEXT = "Checked the output; continuing.";
+        let nextUuid = 0;
+        const frame = (fields: Record<string, unknown>) =>
+          claudeSdkFrame({
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: `uuid-${nextUuid++}`,
+            ...fields,
+          });
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const itemFor = (nativeId: string) =>
+          harness.events.findLast(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === nativeId,
+          )?.turnItem;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-wake-trigger"),
+            text: "Start it in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [
+          frame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: TOOL_USE_ID,
+                  name: monitor ? "Monitor" : "Bash",
+                  input: monitor
+                    ? { command: "tail -f /tmp/replay.log", description: "replay steps" }
+                    : { command: "npm run build", run_in_background: true },
+                },
+              ],
+            },
+          }),
+          frame({
+            type: "system",
+            subtype: "task_started",
+            task_id: WAKE_TASK_ID,
+            tool_use_id: TOOL_USE_ID,
+            description: "watch",
+            task_type: "local_bash",
+          }),
+          makeResultFrame({ uuid: "result-trigger-turn", result: "Started." }),
+        ]);
+        yield* Queue.take(harness.terminalReceipts);
+
+        // A shell reports its end; a Monitor event reaches the model with no frame at all.
+        if (!monitor) {
+          yield* Queue.offerAll(harness.sdkMessages, [
+            frame({ type: "system", subtype: "background_tasks_changed", tasks: [] }),
+            wakeNotification,
+          ]);
+        }
+        yield* Queue.offerAll(harness.sdkMessages, [
+          frame({ type: "system", subtype: "init" }),
+          frame({ type: "system", subtype: "status", status: "requesting" }),
+        ]);
+        yield* awaitUntil(() => harness.continuationRequests.length === 1, "wake run requested");
+        const wakeInput = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-wake-trigger-run"),
+          text: "Background task completed.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        });
+        yield* harness.runtime.startTurn(wakeInput);
+        yield* Queue.offerAll(harness.sdkMessages, [
+          frame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: { role: "assistant", content: [{ type: "text", text: WAKE_TEXT }] },
+          }),
+          frame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: MCP_TOOL_USE_ID,
+                  name: "mcp__t3-code__delegate_task",
+                  input: { prompt: "Review it." },
+                },
+              ],
+            },
+          }),
+        ]);
+        yield* awaitUntil(() => itemFor(MCP_TOOL_USE_ID) !== undefined, "MCP call projected");
+        assert.lengthOf(harness.terminalEvents(), 1, "the MCP call runs inside the open wake run");
+        yield* Queue.offerAll(harness.sdkMessages, [
+          frame({
+            type: "user",
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: MCP_TOOL_USE_ID, content: "ok" }],
+            },
+          }),
+          makeResultFrame({
+            uuid: "result-wake-trigger",
+            result: WAKE_TEXT,
+            origin: { kind: "task-notification" },
+          }),
+        ]);
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "wake run terminal");
+        assert.lengthOf(harness.continuationRequests, 1);
+        assert.equal(itemFor(MCP_TOOL_USE_ID)?.runId, wakeInput.runId);
+        const wakeMessage = harness.events.find(
+          (event) => event.type === "message.updated" && event.message.text === WAKE_TEXT,
+        );
+        assert.equal(
+          wakeMessage?.type === "message.updated" ? wakeMessage.message.runId : null,
+          wakeInput.runId,
         );
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
@@ -5163,8 +5560,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 .pendingBackgroundTasks?.length ?? -1) === 0,
             "roster emptied",
           );
-          // Notifications alone are not yet a wake: Claude has not produced the turn.
-          assert.lengthOf(harness.continuationRequests, 0);
+          // Claude's init opened the wake turn, so its one run is already requested; the
+          // second task finishing inside that turn joins it.
+          assert.lengthOf(harness.continuationRequests, 1);
 
           // Claude's wake turn (what the idle disconnect cut off at 17:41:15).
           yield* Queue.offerAll(harness.sdkMessages, [
@@ -5551,7 +5949,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
-        yield* Queue.offer(harness.sdkMessages, subagentStoppedNotification);
+        yield* Queue.offerAll(harness.sdkMessages, [subagentStoppedNotification, wakeTurnStart]);
         yield* awaitUntil(() => harness.continuationRequests.length === 1, "continuation request");
 
         yield* Queue.offer(
@@ -5669,7 +6067,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
 
-        yield* Queue.offer(harness.sdkMessages, firstNotification);
+        yield* Queue.offerAll(harness.sdkMessages, [firstNotification, wakeTurnStart]);
         yield* awaitUntil(
           () => harness.continuationRequests.length === 1,
           "first continuation request",
@@ -5797,7 +6195,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         // The resumed run's notification is wake evidence again and carries
         // its summary as the continuation detail.
-        yield* Queue.offer(harness.sdkMessages, secondNotification);
+        yield* Queue.offerAll(harness.sdkMessages, [secondNotification, wakeTurnStart]);
         yield* awaitUntil(
           () => harness.continuationRequests.length === 2,
           "second continuation request",
@@ -5960,7 +6358,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
 
-        yield* Queue.offer(harness.sdkMessages, firstNotification);
+        yield* Queue.offerAll(harness.sdkMessages, [firstNotification, wakeTurnStart]);
         yield* awaitUntil(
           () => harness.continuationRequests.length === 1,
           "first continuation request",
@@ -5992,8 +6390,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         // The resume task_started races past settle: no turn is active, so it
         // must re-open the session registry entry (pinning idle again) and
-        // buffer for replay. Its notification then counts as wake evidence
-        // and carries the new summary as the continuation detail. The resume
+        // buffer for replay. Its notification then counts as wake evidence;
+        // the SendMessage frame of Claude's own turn already requested the
+        // run, before any summary existed. The resume
         // rides on a SendMessage tool call whose frames race past settle too;
         // on drain replay the SendMessage tool_result is a delivery ACK and
         // must not terminalize the re-opened subagent.
@@ -6042,12 +6441,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-        yield* Queue.offer(harness.sdkMessages, secondNotification);
+        yield* Queue.offerAll(harness.sdkMessages, [secondNotification, wakeTurnStart]);
         yield* awaitUntil(
           () => harness.continuationRequests.length === 2,
           "second continuation request",
         );
-        assert.equal(harness.continuationRequests[1]?.detail, SECOND_SUMMARY);
+        assert.isNull(harness.continuationRequests[1]?.detail);
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
         yield* Queue.offer(
@@ -6869,7 +7268,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isTrue(yield* hasPendingBackgroundWork);
 
           // Session-registered subagent completion buffers; no opaque tombstone.
-          yield* Queue.offer(firstProcess, subagentNotification);
+          yield* Queue.offerAll(firstProcess, [subagentNotification, wakeTurnStart]);
           yield* awaitUntil(() => continuationRequests.length === 1, "continuation after notify");
           assert.equal(continuationRequests[0]?.detail, SUBAGENT_SUMMARY);
 

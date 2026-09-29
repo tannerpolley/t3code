@@ -2193,6 +2193,17 @@ function isClaudeProviderContinuationTurn(input: ProviderAdapterV2TurnInput): bo
   return input.message.createdBy === "agent" && input.message.creationSource === "provider";
 }
 
+// Frames of a turn Claude is running: init opens every turn, and top-level
+// assistant/user frames are its model output. Subagent frames (parent_tool_use_id
+// set) are the subagent working, not the parent model.
+function isClaudeOwnTurnFrame(message: SDKMessage): boolean {
+  return (
+    (message.type === "system" && message.subtype === "init") ||
+    ((message.type === "assistant" || message.type === "user") &&
+      message.parent_tool_use_id === null)
+  );
+}
+
 function isClaudeTaskNotificationOriginResult(message: SDKMessage): message is SDKResultMessage & {
   readonly origin: Extract<
     NonNullable<SDKResultMessage["origin"]>,
@@ -4659,14 +4670,12 @@ export function makeClaudeAdapterV2(
               });
             });
           }
-          // Subagent frames (parent_tool_use_id set) are the subagent working,
-          // not the parent model waking.
+          const isWakeTurnFrame = isClaudeOwnTurnFrame(message);
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
             isKnownSubagentTaskStarted ||
-            ((message.type === "assistant" || message.type === "user") &&
-              message.parent_tool_use_id === null) ||
+            isWakeTurnFrame ||
             message.type === "result";
           if (!isWakeEvidence) {
             return;
@@ -4693,27 +4702,14 @@ export function makeClaudeAdapterV2(
               message.task_id,
             );
           }
-          // A terminal task notification can clear the Waiting roster without
-          // Claude dequeuing it into a native model turn. Buffer it for replay,
-          // but do not open an opaque-task continuation until native user,
-          // assistant, or result output proves that Claude actually began the
-          // wake turn. Subagent notifications retain their existing immediate
-          // offer because their projected lifecycle owns the continuation.
-          const buffered = (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId);
-          const hasBufferedNotification =
-            buffered?.messages.some(
-              (entry) => entry.type === "system" && entry.subtype === "task_notification",
-            ) ?? false;
-          const isNativeOpaqueWakeFrame =
-            hasBufferedNotification && (message.type === "assistant" || message.type === "user");
-          if (
-            !isPendingSubagentNotification &&
-            !isNativeOpaqueWakeFrame &&
-            message.type !== "result"
-          ) {
-            return;
+          // A notification alone never requests the run: Claude may not dequeue
+          // it into a turn. The run is requested the moment Claude's own turn
+          // starts (its init frame, well before the model's first output), so
+          // it is attached for everything the turn does; a turn frame or its
+          // result stands in when init is missing.
+          if (isWakeTurnFrame || message.type === "result") {
+            yield* offerWakeContinuation(wakeInput.nativeThreadId);
           }
-          yield* offerWakeContinuation(wakeInput.nativeThreadId);
         });
 
         const applyBackgroundTaskRosterMessage = Effect.fnUntraced(function* (input: {
@@ -6077,42 +6073,24 @@ export function makeClaudeAdapterV2(
               updated.delete(nativeThreadId);
               return updated;
             });
-            if (drained.length === 0) {
-              // Spurious continuation (buffer already lost with a recycled
-              // session, or a duplicate request): settle immediately instead
-              // of leaving a run waiting on a prompt that was never sent.
-              const completedAt = yield* DateTime.now;
-              yield* finalizeActiveTurn({ context, status: "completed", completedAt });
-              return;
-            }
             // Replay any result message last: a result finalizes the turn, and
             // replaying it before the rest would drop them back into the wake
             // buffer and request another continuation.
-            const resultMessages = drained.filter((entry) => entry.type === "result");
-            const opaqueReplayTombstones = taskIdSetForNativeThread(
-              yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
-              nativeThreadId,
-            );
-            const hasOpaqueTaskNotification = drained.some(
-              (entry) =>
-                entry.type === "system" &&
-                entry.subtype === "task_notification" &&
-                opaqueReplayTombstones.has(entry.task_id),
-            );
             for (const entry of drained) {
               if (entry.type !== "result") {
                 yield* handleSdkMessage({ query: querySession.query, message: entry });
               }
             }
-            const lastResult = resultMessages.at(-1);
+            const lastResult = drained.findLast((entry) => entry.type === "result");
             if (lastResult !== undefined) {
               yield* handleSdkMessage({ query: querySession.query, message: lastResult });
               return;
             }
-            const hasNativeWakeFrame = drained.some(
-              (entry) => entry.type === "user" || entry.type === "assistant",
-            );
-            if (hasOpaqueTaskNotification && !hasNativeWakeFrame) {
+            // Claude's turn started and has not ended: its remaining frames and
+            // result arrive live into this run. With no turn under way (only
+            // notifications Claude never took up, or nothing buffered) nothing
+            // will follow, so settle instead of waiting on a result.
+            if (!drained.some(isClaudeOwnTurnFrame)) {
               const completedAt = yield* DateTime.now;
               yield* finalizeActiveTurn({ context, status: "completed", completedAt });
             }
