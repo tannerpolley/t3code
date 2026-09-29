@@ -183,6 +183,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "A daily meter in the sidebar: each Monday–Friday gets 20% of each provider's weekly limit, and unused room carries forward.",
   },
   {
+    key: "sidebarWeeklyUsage",
+    searchId: "sidebar-weekly-usage",
+    section: "usage",
+    description:
+      "The sidebar's Usage button shows Claude's and Codex's weekly quota left (7d 75%) instead of the chart icon, green from 70%, amber from 30%, red below. Click opens Limits.",
+  },
+  {
     key: "fastShimmer",
     searchId: "fast-shimmer",
     section: "motion",

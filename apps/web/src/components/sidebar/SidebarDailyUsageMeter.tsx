@@ -6,7 +6,7 @@ import {
   collectLimitPools,
   formatDuration,
 } from "@t3tools/shared/usageLimits";
-import { useMemo } from "react";
+import { Fragment, useMemo, type ReactNode } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -15,7 +15,7 @@ import { environmentPresentations } from "../../state/presentation";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
-import { useSidebar } from "../ui/sidebar";
+import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { barColor } from "../usage/UsageLimits";
 import { dailyPaceBudget, poolWindowSpan } from "../usage/usageLimitModels";
@@ -40,7 +40,8 @@ export function SidebarDailyUsageMeter() {
   return enabled ? <DailyUsageMeterRows /> : null;
 }
 
-function DailyUsageMeterRows() {
+/** Claude's and Codex's general weekly limit, pooled across accounts, with today's pace budget. */
+function useWeeklyLimitRows(): { readonly rows: readonly MeterRow[]; readonly now: number } {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   // The minute clock moves the budget across midnight; no timer of its own.
   const now = Date.parse(`${useNowMinute()}:00Z`);
@@ -66,6 +67,11 @@ function DailyUsageMeterRows() {
       ];
     });
   }, [now, presentations]);
+  return { rows, now };
+}
+
+function DailyUsageMeterRows() {
+  const { rows, now } = useWeeklyLimitRows();
   if (rows.length === 0) return null;
   return (
     <div className="flex flex-col pb-1">
@@ -76,9 +82,81 @@ function DailyUsageMeterRows() {
   );
 }
 
-function MeterRowButton({ row, now }: { readonly row: MeterRow; readonly now: number }) {
+/** Opens the Usage page on its Limits view, whichever tab it showed last. */
+function useOpenUsageLimits() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
+  return () => {
+    saveUsagePagePreferences({ ...readUsagePagePreferences(), metric: "limits" });
+    if (isMobile) setOpenMobile(false);
+    void navigate({ to: "/usage" });
+  };
+}
+
+/** Weekly quota left, colored like the desktop status bar: green from 70%, amber from 30%. */
+function weeklyLeftClass(leftPercent: number): string {
+  if (leftPercent >= 70) return "text-emerald-500";
+  if (leftPercent >= 30) return "text-amber-500";
+  return "text-red-500";
+}
+
+/**
+ * The footer's Usage button as each provider's weekly quota left (`7d 75%`), in place of the
+ * chart icon. Falls back to `fallback` until a weekly limit is known.
+ */
+export function SidebarWeeklyUsageItem(props: { readonly fallback: ReactNode }) {
+  const { rows, now } = useWeeklyLimitRows();
+  const openLimits = useOpenUsageLimits();
+  if (rows.length === 0) return props.fallback;
+  const summary = rows
+    .map((row) => `${row.label} ${100 - row.usedPercent}% of weekly left`)
+    .join(", ");
+  return (
+    <SidebarMenuItem className="shrink-0">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarMenuButton
+              aria-label={`Usage: ${summary}`}
+              onClick={openLimits}
+              className="w-auto gap-1.5 px-1.5 text-[11px] font-medium tabular-nums"
+            />
+          }
+        >
+          {rows.map((row, index) => (
+            <Fragment key={row.driver}>
+              {index > 0 ? (
+                <span aria-hidden className="h-3 w-px shrink-0 bg-sidebar-border" />
+              ) : null}
+              <ProviderInstanceIcon
+                driverKind={row.driver}
+                displayName={row.label}
+                className="size-3.5"
+                iconClassName="size-3.5"
+              />
+              <span className={weeklyLeftClass(100 - row.usedPercent)}>
+                7d {100 - row.usedPercent}%
+              </span>
+            </Fragment>
+          ))}
+        </TooltipTrigger>
+        <TooltipPopup side="top" className="text-xs">
+          <div className="flex flex-col gap-0.5">
+            {rows.map((row) => (
+              <span key={row.driver} className="tabular-nums">
+                {row.label}: {100 - row.usedPercent}% of weekly left · resets in{" "}
+                {formatDuration(row.resetsAt - now)}
+              </span>
+            ))}
+          </div>
+        </TooltipPopup>
+      </Tooltip>
+    </SidebarMenuItem>
+  );
+}
+
+function MeterRowButton({ row, now }: { readonly row: MeterRow; readonly now: number }) {
+  const openLimits = useOpenUsageLimits();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const left = row.budgetPercent - row.usedPercent;
   const fillColor =
@@ -91,13 +169,6 @@ function MeterRowButton({ row, now }: { readonly row: MeterRow; readonly now: nu
   const summary = row.isWorkday
     ? `${row.label}: ${row.usedPercent} of ${row.budgetPercent}% budget used`
     : `${row.label}: day off, ${row.usedPercent}% of weekly used`;
-  const openLimits = () => {
-    // The Usage page opens on whichever tab it last showed.
-    saveUsagePagePreferences({ ...readUsagePagePreferences(), metric: "limits" });
-    if (isMobile) setOpenMobile(false);
-    void navigate({ to: "/usage" });
-  };
-
   return (
     <Tooltip>
       <TooltipTrigger

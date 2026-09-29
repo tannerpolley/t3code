@@ -27,7 +27,7 @@ import {
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
-import { SidebarDailyUsageMeter } from "./SidebarDailyUsageMeter";
+import { SidebarDailyUsageMeter, SidebarWeeklyUsageItem } from "./SidebarDailyUsageMeter";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -170,12 +170,17 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/settings" });
   }, [closeMobileSidebar, navigate]);
 
+  const weeklyUsage = useClientSettings((settings) => settings.sidebarWeeklyUsage);
   const handleUsageClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
     }
     void navigate({ to: "/usage" });
   }, [isMobile, navigate, setOpenMobile]);
+
+  const usageItem = (
+    <SidebarUtilityItem icon={<ChartNoAxesColumnIcon />} label="Usage" onClick={handleUsageClick} />
+  );
 
   return (
     <SidebarMenu className="flex-row items-center">
@@ -207,11 +212,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handleIssuesClick}
             />
           ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
+          {weeklyUsage ? <SidebarWeeklyUsageItem fallback={usageItem} /> : usageItem}
         </>
       )}
       <SidebarUpdatePill />

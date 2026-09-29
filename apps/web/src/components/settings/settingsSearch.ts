@@ -500,6 +500,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "sidebar-weekly-usage",
+    title: "Weekly usage in the sidebar",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork usage limits weekly quota left sidebar footer claude codex 7d",
+    ],
+  },
+  {
     id: "daily-usage-meter",
     title: "Daily usage meter",
     to: "/settings/customizations",
