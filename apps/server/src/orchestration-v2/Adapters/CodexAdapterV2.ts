@@ -427,6 +427,26 @@ export function codexBackgroundCommandDetail(item: {
   return outputTail.length === 0 ? header : `${header}\n\nOutput tail:\n${outputTail}`;
 }
 
+/**
+ * Wake text for a native subagent that ended after its parent's turn. Codex
+ * also appends the agent's final message to the parent's history as a
+ * `<subagent_notification>`, which the wake turn reads.
+ */
+function codexSubagentWakeDetail(input: {
+  readonly title: string;
+  readonly status: OrchestrationV2Subagent["status"];
+  readonly result: string | null;
+}): string {
+  const ended = input.status === "completed" ? "finished" : `ended (${input.status})`;
+  const header = `Subagent ${input.title} ${ended}. Its <subagent_notification> in this thread has the full result.`;
+  const result = (input.result ?? "").trimEnd();
+  const resultTail =
+    result.length > BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH
+      ? `...${result.slice(-BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH)}`
+      : result;
+  return resultTail.length === 0 ? header : `${header}\n\nResult tail:\n${resultTail}`;
+}
+
 export interface CodexDynamicToolProjection extends McpToolPresentation {
   readonly toolName: string;
   readonly input: unknown;
@@ -2061,6 +2081,47 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             return [next, updated];
           });
 
+        // Codex delivers an agent's result in-turn while its parent runs. Once the
+        // parent's turn has settled, nothing reads it until the next turn, so wake
+        // the parent the way a late background command does: one offer per agent
+        // that ends, each queued behind active work.
+        const offerSubagentWake = (subagent: CodexSubagentThreadContext) =>
+          Effect.gen(function* () {
+            const parent = subagent.parentContext;
+            if (continuationRequests === undefined || parent.subagent !== null) return;
+            if (
+              (yield* Ref.get(interruptingNativeTurns)).has(parent.nativeTurnId) ||
+              (yield* Ref.get(terminalizedNonCompletedNativeTurns)).has(parent.nativeTurnId)
+            )
+              return;
+            for (const context of (yield* Ref.get(activeTurns)).values()) {
+              if (context.providerThread.id === parent.providerThread.id) return;
+            }
+            const task = subagent.task;
+            yield* continuationRequests.offer({
+              threadId: parent.projectionThreadId,
+              providerThreadId: parent.providerThread.id,
+              driver: CODEX_PROVIDER,
+              detail: codexSubagentWakeDetail({
+                title: subagent.childThread.title,
+                status: task.status,
+                result: task.result,
+              }),
+              notification: {
+                source: { kind: "background_task" },
+                outcome:
+                  task.status === "completed" || task.status === "failed"
+                    ? task.status
+                    : task.status === "interrupted" || task.status === "cancelled"
+                      ? "cancelled"
+                      : "unknown",
+                summary:
+                  task.status === "completed" ? "Subagent finished" : `Subagent ${task.status}`,
+                detail: subagent.childThread.title,
+              },
+            });
+          });
+
         const emitSubagentTaskUpdate = (input: {
           readonly subagent: CodexSubagentThreadContext;
           readonly status: OrchestrationV2Subagent["status"];
@@ -2130,6 +2191,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 result: task.result,
               },
             });
+            if (!settled && !isOrchestrationV2WorkActive(status)) {
+              yield* offerSubagentWake(input.subagent);
+            }
           });
 
         const emitSubagentProviderTurnStarted = (
