@@ -1213,7 +1213,11 @@ function SidebarProjectThreadRow(props: {
           "group/project-thread @container/thread-row flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors",
           active
             ? "bg-sidebar-row-active text-sidebar-foreground"
-            : "text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+            : cn(
+                // Codex style: the same white as subagent and shell rows, not only when selected.
+                props.codexStyle ? "text-foreground/85" : "text-sidebar-muted-foreground/80",
+                "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+              ),
         )}
         onClick={(event) => props.onClick(event, props.thread)}
         // Drag the row onto a chat composer to add the thread as context.
@@ -1327,6 +1331,23 @@ function SidebarSubagentTree(props: {
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   readonly nested?: boolean;
 }) {
+  // Children open by default, like a thread's own work; a collapse is remembered for this view.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const childWork = (row: ReturnType<typeof describeSidebarBackgroundWork>[number]) => {
+    const child = props.runningChildren.find((thread) => thread.id === row.childThreadId);
+    if (child === undefined) return null;
+    const grandchildren =
+      props.runningSubagentsByParentKey.get(
+        scopedThreadKey(scopeThreadRef(props.environmentId, child.id)),
+      ) ?? NO_THREADS;
+    const tasks = pendingBackgroundWorkOfThread(
+      child.id,
+      child.pendingBackgroundTasks,
+      props.tasks,
+    );
+    const rows = describeSidebarBackgroundWork(tasks, grandchildren);
+    return rows.length === 0 ? null : { child, grandchildren, tasks, rows };
+  };
   return (
     <BackgroundWorkTaskList
       compact
@@ -1335,20 +1356,26 @@ function SidebarSubagentTree(props: {
       environmentId={props.environmentId}
       threadId={props.threadId}
       rows={props.rows}
+      nestedToggle={(row) => {
+        const work = childWork(row);
+        if (work === null) return null;
+        const id = work.child.id;
+        return {
+          count: work.rows.length,
+          open: !collapsed.has(id),
+          onToggle: () =>
+            setCollapsed((current) => {
+              const next = new Set(current);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            }),
+        };
+      }}
       renderNested={(row) => {
-        const child = props.runningChildren.find((thread) => thread.id === row.childThreadId);
-        if (child === undefined) return null;
-        const grandchildren =
-          props.runningSubagentsByParentKey.get(
-            scopedThreadKey(scopeThreadRef(props.environmentId, child.id)),
-          ) ?? NO_THREADS;
-        const tasks = pendingBackgroundWorkOfThread(
-          child.id,
-          child.pendingBackgroundTasks,
-          props.tasks,
-        );
-        const rows = describeSidebarBackgroundWork(tasks, grandchildren);
-        if (rows.length === 0) return null;
+        const work = childWork(row);
+        if (work === null) return null;
+        const { child, grandchildren, tasks, rows } = work;
         return (
           // Under the row's icon: past the row's 8px padding and half its 16px icon.
           <div className="ms-4">

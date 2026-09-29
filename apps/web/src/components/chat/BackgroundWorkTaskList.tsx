@@ -1,7 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { TerminalIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, TerminalIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -47,6 +47,10 @@ export function BackgroundWorkTaskList(props: {
   /** Columns rows under another columns row, whose icon sits lower in a shorter row. */
   readonly nested?: boolean;
   readonly renderNested?: (row: BackgroundWorkTaskRow) => ReactNode;
+  /** A columns row's own collapsible work (its subagents and shells), shown as a count toggle. */
+  readonly nestedToggle?: (
+    row: BackgroundWorkTaskRow,
+  ) => { readonly count: number; readonly open: boolean; readonly onToggle: () => void } | null;
 }) {
   const navigate = useNavigate();
   // Columns match the sidebar thread row's px-2, so time and status slots share a right edge.
@@ -72,6 +76,7 @@ export function BackgroundWorkTaskList(props: {
     >
       {props.rows.map((row) => {
         const kindLabel = row.kind === "subagent" ? "Subagent" : "Background process";
+        const toggle = props.columns ? (props.nestedToggle?.(row) ?? null) : null;
         const provider = row.child
           ? providers?.find((entry) => entry.instanceId === row.child?.providerInstanceId)
           : ownerProvider;
@@ -100,6 +105,10 @@ export function BackgroundWorkTaskList(props: {
               </span>
             ) : null}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
+            {toggle ? (
+              // Room for the toggle, which sits over this spot because buttons cannot nest.
+              <span aria-hidden className="w-8 shrink-0" />
+            ) : null}
             <span className="w-12 shrink-0 text-right text-muted-foreground tabular-nums">
               {row.startedAt ? elapsed(row.kind, row.startedAt) : null}
             </span>
@@ -194,7 +203,27 @@ export function BackgroundWorkTaskList(props: {
                 className={cn(STOP_SHELL_ON_ROW_HOVER_CLASS, props.columns ? "end-1.5" : "end-0.5")}
               />
             ) : null}
-            {props.renderNested?.(row)}
+            {toggle ? (
+              <button
+                type="button"
+                aria-expanded={toggle.open}
+                aria-label={`${toggle.open ? "Hide" : "Show"} ${toggle.count} running ${toggle.count === 1 ? "task" : "tasks"} under ${row.label}`}
+                className={cn(
+                  "absolute top-0.5 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                  // Left of the time slot: 8px padding, 14px status mark, 48px time, two 8px gaps.
+                  "end-[86px]",
+                )}
+                onClick={toggle.onToggle}
+              >
+                {toggle.count}
+                {toggle.open ? (
+                  <ChevronDownIcon aria-hidden className="size-3" />
+                ) : (
+                  <ChevronRightIcon aria-hidden className="size-3" />
+                )}
+              </button>
+            ) : null}
+            {toggle === null || toggle.open ? props.renderNested?.(row) : null}
           </li>
         );
       })}
