@@ -183,6 +183,10 @@ Your active mode changes only when new developer instructions with a different \
 Use the \`request_user_input\` tool only when it is listed in the available tools for this turn.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
+
+## Background work in T3 Code
+
+Start long-running shell work as a background command instead of blocking on it. After spawning subagents or background commands whose results you don't need right away, end your turn instead of waiting inside it: T3 Code wakes you when they finish.
 ${browserToolInstructions(browserToolsAvailable)}
 ${T3_CODE_ORCHESTRATION_INSTRUCTIONS}
 </collaboration_mode>`;
