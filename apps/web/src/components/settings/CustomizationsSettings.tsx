@@ -616,6 +616,11 @@ export function CustomizationsSettings() {
             </div>
           }
         />
+        <ServerSwitchRow
+          settingKey="keepThreadTitlesCurrent"
+          searchId="keep-thread-titles-current"
+          description="Every ~10 minutes, GPT-6 Luna retitles top-level threads with new activity to what they're working on now. Titles you typed are kept. Regenerate title uses the same model and says when the title still fits."
+        />
       </CustomizationsGroup>
       <CustomizationsGroup title="Lineage & background work" section="lineage">
         <SettingsRow

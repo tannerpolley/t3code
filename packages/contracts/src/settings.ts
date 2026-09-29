@@ -1352,6 +1352,11 @@ export const ServerSettings = Schema.Struct({
    * one hard reload and a retry.
    */
   agentBrowserTabLimits: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Every ~10 minutes, retitle top-level threads with new messages to what they are working on
+   * now, using GPT-6 Luna. Titles a user typed are never changed.
+   */
+  keepThreadTitlesCurrent: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1661,6 +1666,7 @@ export const ServerSettingsPatch = Schema.Struct({
   wakeParentOnChildQuestion: Schema.optionalKey(Schema.Boolean),
   wakeParentOnResumedChild: Schema.optionalKey(Schema.Boolean),
   agentBrowserTabLimits: Schema.optionalKey(Schema.Boolean),
+  keepThreadTitlesCurrent: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

@@ -150,6 +150,12 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "snoozedUntil"
 >;
 
+/** A live top-level thread and when its latest user or assistant message changed (ISO). */
+export interface ProjectionTitleRefreshCandidate {
+  readonly thread: OrchestrationV2AppThread;
+  readonly latestMessageAt: string | null;
+}
+
 /** Thread activity needed by settlement, without transcript or fork history. */
 export type ProjectionSettlementCandidate = Pick<
   OrchestrationV2ThreadShell,
@@ -329,6 +335,10 @@ export interface ProjectionStoreV2Shape {
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
   readonly getSettlementCandidates: () => Effect.Effect<
     ReadonlyArray<ProjectionSettlementCandidate>,
+    ProjectionStoreV2Error
+  >;
+  readonly getTitleRefreshCandidates: () => Effect.Effect<
+    ReadonlyArray<ProjectionTitleRefreshCandidate>,
     ProjectionStoreV2Error
   >;
   readonly getTurnStartContext: (
@@ -1378,6 +1388,7 @@ export function threadShellFromProjection(
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
+    titleEvaluation: projection.thread.titleEvaluation ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
     deletedAt: projection.thread.deletedAt,
   };
@@ -1664,6 +1675,7 @@ function shellFromState(input: {
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
+    titleEvaluation: input.state.thread.titleEvaluation ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
@@ -5118,6 +5130,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
+    const getTitleRefreshCandidates: ProjectionStoreV2Shape["getTitleRefreshCandidates"] = () =>
+      sql<{ readonly payload_json: string; readonly latest_message_at: string | null }>`
+        SELECT t.payload_json,
+          (
+            SELECT MAX(message.updated_at) FROM orchestration_v2_projection_messages message
+            WHERE message.thread_id = t.thread_id AND message.role IN ('user', 'assistant')
+          ) AS latest_message_at
+        FROM orchestration_v2_projection_threads t
+        WHERE t.deleted_at IS NULL
+          AND t.archived_at IS NULL
+          AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+      `.pipe(
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (row) =>
+            decodeThreadPayload(row.payload_json).pipe(
+              Effect.map((thread) => ({ thread, latestMessageAt: row.latest_message_at })),
+            ),
+          ),
+        ),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
     const shellThreadStateFromRow = (input: {
       readonly row: ShellThreadRow;
       readonly runOrdinalsByThreadId: ReadonlyMap<ThreadId, Map<RunId, number>>;
@@ -5382,6 +5416,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadShell,
       getThread,
       getSettlementCandidates,
+      getTitleRefreshCandidates,
       getThreadProjection,
       getTurnStartContext,
       getTurnStartHistory,
@@ -5529,6 +5564,32 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 left.id.localeCompare(right.id),
             );
         }),
+      getTitleRefreshCandidates: () =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .filter(
+                ({ thread }) =>
+                  thread.deletedAt === null &&
+                  thread.archivedAt === null &&
+                  thread.lineage.relationshipToParent !== "subagent",
+              )
+              .map(({ thread, messages }) => {
+                const latest = messages
+                  .filter((message) => message.role === "user" || message.role === "assistant")
+                  .map((message) => message.updatedAt)
+                  .reduce<DateTime.Utc | null>(
+                    (max, value) =>
+                      max === null || DateTime.isGreaterThan(value, max) ? value : max,
+                    null,
+                  );
+                return {
+                  thread,
+                  latestMessageAt: latest === null ? null : DateTime.formatIso(latest),
+                };
+              }),
+          ),
+        ),
       getLimitRecoveryCandidates: (options) =>
         Ref.get(replayState).pipe(
           Effect.map((state) =>

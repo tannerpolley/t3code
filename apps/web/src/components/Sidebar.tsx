@@ -249,6 +249,10 @@ import {
   type ProviderInstanceEntry,
 } from "../providerInstances";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
+import {
+  newTitleRegenerationRequestId,
+  reportTitleRegenerationOutcome,
+} from "./titleRegenerationFeedback";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
 import {
@@ -4418,10 +4422,13 @@ export default function Sidebar() {
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;
+            const requestId = newTitleRegenerationRequestId();
             const result = await updateThreadMetadata({
               environmentId: threadRef.environmentId,
-              input: { threadId: threadRef.threadId, regenerateTitle: true },
+              input: { threadId: threadRef.threadId, regenerateTitle: true, commandId: requestId },
             });
+            if (result._tag === "Success")
+              void reportTitleRegenerationOutcome(threadRef, requestId);
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
               toastManager.add(

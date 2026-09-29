@@ -16,6 +16,10 @@ import {
   buildThreadActionMenuItems,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
+import {
+  newTitleRegenerationRequestId,
+  reportTitleRegenerationOutcome,
+} from "../components/titleRegenerationFeedback";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -226,15 +230,24 @@ export function useThreadActionMenu(input: {
           case "rename":
             onStartRename();
             return;
-          case "regenerate-title":
+          case "regenerate-title": {
             if (isRegeneratingTitle) return;
-            await reportFailure("Failed to regenerate thread title", () =>
-              updateThreadMetadata({
+            const requestId = newTitleRegenerationRequestId();
+            await reportFailure("Failed to regenerate thread title", async () => {
+              const result = await updateThreadMetadata({
                 environmentId: threadRef.environmentId,
-                input: { threadId: threadRef.threadId, regenerateTitle: true },
-              }),
-            );
+                input: {
+                  threadId: threadRef.threadId,
+                  regenerateTitle: true,
+                  commandId: requestId,
+                },
+              });
+              if (result._tag === "Success")
+                void reportTitleRegenerationOutcome(threadRef, requestId);
+              return result;
+            });
             return;
+          }
           case "mark-unread":
             markThreadUnread(threadRef);
             return;

@@ -218,7 +218,7 @@ export interface ThreadTitlePromptInput {
 }
 
 // Keep shared editorial rules in these two prompts in sync. Regeneration
-// intentionally adds guidance for thread history and the previous title.
+// intentionally adds guidance for thread history and the current title.
 const INITIAL_THREAD_TITLE_PROMPT = `Generate a title that will help the user recognize this T3 Code thread weeks later.
 Return JSON with keys title and needsRefinement.
 Set needsRefinement to true only if the subject is still unknown, such as an unresolved link, "fix this", or an unexplained attachment. Otherwise set it to false.
@@ -246,27 +246,28 @@ Editorial rules:
 - Local git history is not evidence of what a linked PR or issue is about. Never title the thread after branch names, commit messages, or merged commits found in the checkout.
 - If a linked PR or issue cannot be read, fall back to the user's stated action plus its number, such as "Take Over PR 8588". This is the one case where a PR or issue number belongs in the title.`;
 
+// Manual Regenerate and the automatic refresh share this prompt. It titles the thread's current
+// responsibility rather than its original subject, and keeps the title unless the work moved.
 function regenerateThreadTitlePrompt(previousTitle: string): string {
-  return `Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.
-The previous title was ${JSON.stringify(previousTitle)}.
+  return `Update the title of an existing T3 Code thread so the user can tell at a glance what the thread is responsible for right now.
+The current title is ${JSON.stringify(previousTitle)}.
 Return JSON with keys title and needsRefinement. Set needsRefinement to false.
 
-Determine the title in this order:
-1. Read the USER messages first. Identify the latest explicit durable goal. The original subject remains the subject until the user clearly changes what the thread is about.
-2. Use ASSISTANT messages to resolve vague links, unnamed code, and discovered product nouns. Do not promote one assistant finding into the thread subject unless the user adopts it as a new goal.
-3. Compare that subject with the previous title. Preserve accurate scope words, especially when earlier content is truncated. Replace the previous title when it is generic, artifact-based, a completion update, or contradicted by the thread.
-4. Title the durable subject and desired outcome, not the current workflow state.
+The thread contents are in conversation order; the end is the most recent. Determine the title in this order:
+1. Read the latest USER messages first. Identify the goals the user most recently set that are still active, including work the thread delegated and is waiting on. Earlier goals that were finished or dropped are background.
+2. Use the latest ASSISTANT reports to see what is actually in progress, resolve vague links and unnamed code, and name the concrete system or feature.
+3. Compare that current responsibility with the current title. Return the current title unchanged, character for character, if it still describes the work. Replace it only when the work has meaningfully moved: a new goal, a different system or feature, or a focus the current title does not cover. A rewording that means the same thing is not a reason to change it.
+4. Title the responsibility and its desired outcome, not the workflow step it is on.
 
 Editorial rules:
 - 3-8 words, fewer than 40 characters.
 - Use a compact noun phrase or clear action phrase.
-- Preserve the umbrella subject when later messages focus on one finding, provider, platform, or implementation detail.
-- A thread progressing through research, planning, implementation, review, CI, merge, and monitoring has usually not changed subjects.
-- Ignore deliverables and operations such as mocks, plans, HTML, branches, PRs, tests, CI, commits, merging, and monitoring unless they are the actual topic.
+- When several goals are active, name the one that dominates the latest messages, or their shared umbrella.
+- When the thread mainly coordinates delegated tasks, name what those tasks jointly accomplish.
+- A thread moving through research, planning, implementation, review, CI, merge, and monitoring of the same work has not changed responsibility.
+- Ignore deliverables and operations such as mocks, plans, HTML, branches, PRs, tests, CI, commits, merging, and monitoring unless they are the actual work now.
 - Models, subagents, tools, output formats, and monitoring instructions do not belong in the title unless they are themselves the topic.
-- Treat final operational follow-ups and assistant completion summaries as weak evidence of subject.
-- For reviews, name the reviewed feature or system and its durable concern, not one finding from the review.
-- For research, name the question domain rather than the research process.
+- For reviews, name the reviewed feature or system and its concern. For research, name the question domain rather than the research process.
 - Do not claim the work is complete.
 - Do not copy and truncate a thread message.
 - Avoid project names already visible in the UI, PR numbers, quotes, labels, filler, and trailing punctuation.
@@ -274,12 +275,11 @@ Editorial rules:
 - When a URL or attachment is the only source of the subject, use available tools to inspect it directly.
 - Local git history is not evidence of what a linked PR or issue is about. Never title the thread after branch names, commit messages, or merged commits found in the checkout.
 - If a linked PR or issue cannot be read, fall back to the user's stated action plus its number, such as "Take Over PR 8588". This is the one case where a PR or issue number belongs in the title.
-- Keep the previous title unchanged if it is already accurate. Otherwise return a meaningfully improved title, not a cosmetic paraphrase.
 
 Examples of the distinction:
-- A subagent-monitoring review that finds a Codex roster bug remains "Review Subagent Monitoring Risks," not "Codex Roster Bug Review."
-- A vague failing-test request later identified as a lazy thread-feed mismatch becomes "Fix Lazy Thread Feed Test," not "Prevent Mobile Feed Regressions."
-- A QR-sharing overhaul that ends with CI and merge work remains about QR sharing, not the PR lifecycle.`;
+- A thread titled "Sync Settings Across Devices" that finished that work and whose latest messages ask to fix a crash in the mobile feed becomes "Fix Mobile Feed Crash".
+- A thread titled "Fix Flaky Login Test" that moved from diagnosis to a fix to CI keeps "Fix Flaky Login Test".
+- "Review Sidebar Drag Handling" does not become "Sidebar Drag Handling Review".`;
 }
 
 function preserveMessageEnd(message: string): string {

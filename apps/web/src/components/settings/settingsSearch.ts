@@ -348,6 +348,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork sections subsections folders workspaces organize mirror"],
   },
   {
+    id: "keep-thread-titles-current",
+    title: "Keep thread titles current",
+    to: "/settings/customizations",
+    searchTerms: ["thread title rename regenerate automatic refresh luna sidebar names"],
+  },
+  {
     id: "idle-agent-session-disconnect",
     title: "Disconnect idle agent sessions",
     to: "/settings/customizations",

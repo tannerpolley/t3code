@@ -351,6 +351,17 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+/**
+ * The latest finished title regeneration. `evaluatedAt` is when that request started, so
+ * messages that land while it runs still count as new for the next automatic refresh.
+ */
+export const OrchestrationV2TitleEvaluation = Schema.Struct({
+  requestId: CommandId,
+  outcome: Schema.Literals(["changed", "unchanged", "failed"]),
+  evaluatedAt: IsoDateTime,
+});
+export type OrchestrationV2TitleEvaluation = typeof OrchestrationV2TitleEvaluation.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -413,6 +424,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  /** "user" once someone renames the thread; absent means generated. Automatic refresh skips user titles. */
+  titleSource: Schema.optional(Schema.Literals(["generated", "user"])),
+  titleEvaluation: Schema.optional(Schema.NullOr(OrchestrationV2TitleEvaluation)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
@@ -1586,6 +1600,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       }),
     ),
   ),
+  /** Lets the client that requested a regeneration report whether the title changed. */
+  titleEvaluation: Schema.optional(Schema.NullOr(OrchestrationV2TitleEvaluation)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -2387,6 +2403,8 @@ export const OrchestrationV2Command = Schema.Union([
     title: Schema.optional(TrimmedNonEmptyString),
     /** Kick off (true) or abandon (false) an async title regeneration. */
     regenerateTitle: Schema.optional(Schema.Boolean),
+    /** Reject unless the title still matches, so an automatic refresh cannot race a rename. */
+    expectedTitle: Schema.optional(Schema.String),
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2440,6 +2458,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     requestId: CommandId,
     title: Schema.optional(TrimmedNonEmptyString),
+    /** Generation failed; the title stays as it was. */
+    failed: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.runtime-mode.set"),

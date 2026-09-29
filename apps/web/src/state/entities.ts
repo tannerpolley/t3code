@@ -194,6 +194,21 @@ export function waitForThreadShell(ref: ScopedThreadRef, timeoutMs = 5_000): Pro
   });
 }
 
+/** Outcome of a title regeneration, once the server reports it; null if it never does in time. */
+export async function waitForTitleEvaluation(
+  ref: ScopedThreadRef,
+  requestId: string,
+  timeoutMs: number,
+): Promise<"changed" | "unchanged" | "failed" | null> {
+  const reported = await waitForAtomValue({
+    registry: appAtomRegistry,
+    atom: environmentThreadShells.threadShellAtom(ref),
+    predicate: (thread) => thread?.source.titleEvaluation?.requestId === requestId,
+    timeoutMs,
+  });
+  return reported ? (readThreadShell(ref)?.source.titleEvaluation?.outcome ?? null) : null;
+}
+
 export function readEnvironmentSupportsTitleRegeneration(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
