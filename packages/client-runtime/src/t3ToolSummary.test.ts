@@ -54,6 +54,15 @@ describe("summarizeT3ToolCalls", () => {
     ).toBe("Answered 2 pending question requests");
   });
 
+  it("summarizes the number of questions asked with the shared T3 tool", () => {
+    expect(
+      summarizeT3ToolCalls("question-ask", [
+        completed({ questions: [{ id: "one" }, { id: "two" }] }, {}),
+        completed({ questions: [{ id: "three" }] }, {}),
+      ]).label,
+    ).toBe("Asked 3 questions");
+  });
+
   it("counts attachments in distinct messages and falls back when attachment counts are missing", () => {
     const first = completed(
       { threadId: "thread-1", attachments: [{ id: "one" }, { id: "two" }] },

@@ -366,6 +366,67 @@ describe("orchestration V2 contracts", () => {
     expect(event.payload.id).toBe(RunId.make("run-1"));
   });
 
+  it("decodes app-owned user-input commands with canonical free-text and selection questions", () => {
+    const command = decodeOrchestrationV2Command({
+      type: "runtime-request.create-user-input",
+      commandId: "command-user-input-1",
+      threadId: "thread-1",
+      requestId: "request-user-input-1",
+      runId: "run-1",
+      providerSessionId: "provider-session-1",
+      questions: [
+        {
+          id: "details",
+          header: "Details",
+          question: "What should we preserve?",
+          options: [
+            { label: "Existing", description: "Keep current behavior" },
+            { label: "New", description: "Allow a new behavior" },
+          ],
+          multiSelect: false,
+        },
+        {
+          id: "areas",
+          header: "Areas",
+          question: "Which areas matter?",
+          options: [
+            { label: "Server", description: "Local T3 server" },
+            { label: "Mobile", description: "Phone client" },
+          ],
+          multiSelect: true,
+        },
+        {
+          id: "platform",
+          header: "Platform",
+          question: "Which platform?",
+          options: [
+            { label: "Web", description: "Browser client" },
+            { label: "Desktop", description: "Desktop app" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(command.type).toBe("runtime-request.create-user-input");
+    if (command.type !== "runtime-request.create-user-input") {
+      throw new Error("expected runtime-request.create-user-input");
+    }
+    expect(command.questions[0]?.options).toHaveLength(2);
+    expect(command.questions[1]?.multiSelect).toBe(true);
+    expect(command.questions[2]?.multiSelect).toBe(false);
+    expect(() =>
+      decodeOrchestrationV2Command({
+        ...command,
+        questions: [
+          ...command.questions,
+          { ...command.questions[0]!, id: "extra-one" },
+          { ...command.questions[1]!, id: "extra-two" },
+        ],
+      }),
+    ).toThrow();
+  });
+
   it("decodes app-owned delegated task commands", () => {
     const command = decodeOrchestrationV2Command({
       type: "delegated_task.request",

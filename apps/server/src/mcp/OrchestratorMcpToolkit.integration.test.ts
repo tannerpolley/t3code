@@ -7,6 +7,7 @@ import {
   IsoDateTime,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2UserInputQuestion,
   NodeId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -24,8 +25,10 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionDescriptor,
+  RunId,
   ProviderThreadId,
   ProviderTurnId,
+  type ProviderUserInputAnswers,
   RuntimeRequestId,
   type ScheduledTask,
   ScheduledTaskId,
@@ -716,6 +719,101 @@ describe("orchestrator MCP toolkit", () => {
                 );
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
+            const scopeForThread = (projection: OrchestrationV2ThreadProjection) => {
+              const providerThread = projection.providerThreads.find(
+                (thread) => thread.id === projection.thread.activeProviderThreadId,
+              );
+              if (providerThread?.providerSessionId == null)
+                throw new Error(`Thread ${projection.thread.id} has no active provider session.`);
+              return {
+                ...invocation,
+                threadId: projection.thread.id,
+                providerSessionId: providerThread.providerSessionId,
+                providerInstanceId: providerThread.providerInstanceId,
+              };
+            };
+            const startQuestion = (
+              callScope: McpInvocationContext.McpInvocationScope,
+              questions: ReadonlyArray<OrchestrationV2UserInputQuestion>,
+            ) =>
+              Effect.gen(function* () {
+                const questionId = questions[0]?.id;
+                if (questionId === undefined)
+                  return yield* Effect.die("A T3 user-input test needs at least one question.");
+                const afterSequence = yield* orchestrator.getThreadEventSequence(
+                  callScope.threadId,
+                );
+                const call = yield* invokeAs(callScope, "t3_request_user_input", {
+                  questions,
+                }).pipe(Effect.forkChild);
+                const pendingEvent = yield* orchestrator
+                  .streamStoredEventsFrom({
+                    threadId: callScope.threadId,
+                    afterSequence,
+                  })
+                  .pipe(
+                    Stream.filter(
+                      (stored) =>
+                        stored.event.type === "turn-item.updated" &&
+                        stored.event.payload.type === "user_input_request" &&
+                        stored.event.payload.status === "waiting" &&
+                        stored.event.payload.questions[0]?.id === questionId,
+                    ),
+                    Stream.runHead,
+                    Effect.orDie,
+                  );
+                if (Option.isNone(pendingEvent))
+                  return yield* Effect.die("The T3 question card was not created.");
+                const event = pendingEvent.value.event;
+                if (event.type !== "turn-item.updated")
+                  return yield* Effect.die("The T3 question card event was malformed.");
+                const item = event.payload;
+                if (item.type !== "user_input_request")
+                  return yield* Effect.die("The T3 question card event was malformed.");
+                const projection = yield* orchestrator.getThreadProjection(callScope.threadId);
+                expect(
+                  projection.runtimeRequests.find((request) => request.id === item.requestId)
+                    ?.responseCapability.type,
+                ).toBe("app_owned");
+                expect(
+                  projection.turnItems.find((candidate) => candidate.id === item.id),
+                ).toMatchObject({ status: "waiting", questions });
+                return { call, requestId: item.requestId };
+              });
+            const answerQuestion = (
+              callScope: McpInvocationContext.McpInvocationScope,
+              questions: ReadonlyArray<OrchestrationV2UserInputQuestion>,
+              answers: ProviderUserInputAnswers,
+            ) =>
+              Effect.gen(function* () {
+                const pending = yield* startQuestion(callScope, questions);
+                const messagesBeforeAnswer = (yield* orchestrator.getThreadProjection(
+                  callScope.threadId,
+                )).messages.length;
+                const response = yield* invokeAs(callScope, "t3_pending_request_respond", {
+                  requestId: pending.requestId,
+                  answers,
+                });
+                expect(response.isError).toBe(false);
+                const call = yield* Fiber.join(pending.call);
+                expect(call.isError).toBe(false);
+                expect(call.structuredContent).toEqual(answers);
+                const projection = yield* orchestrator.getThreadProjection(callScope.threadId);
+                expect(projection.messages).toHaveLength(messagesBeforeAnswer);
+                expect(
+                  projection.runtimeRequests.find((request) => request.id === pending.requestId),
+                ).toMatchObject({ status: "resolved", answers });
+                const item = projection.turnItems.find(
+                  (candidate) =>
+                    candidate.type === "user_input_request" &&
+                    candidate.requestId === pending.requestId,
+                );
+                expect(item).toMatchObject({
+                  type: "user_input_request",
+                  questionAnswer: { requestId: pending.requestId, answers },
+                });
+                return pending.requestId;
+              });
 
             const pinned = yield* invoke("t3_thread_organize", { action: "pin" });
             expect(pinned.structuredContent).toHaveProperty("sequence");
@@ -727,6 +825,388 @@ describe("orchestrator MCP toolkit", () => {
               return yield* Effect.die(new Error("Parent run missing."));
             }
             let parentRootNodeId = parentRun.rootNodeId;
+            const scopeForCaller = scopeForThread(parent);
+            const areasQuestion: OrchestrationV2UserInputQuestion = {
+              id: "areas",
+              header: "Areas",
+              question: "Which areas should this change cover?",
+              options: [
+                { label: "API", description: "Server and contracts" },
+                { label: "Web", description: "Browser client" },
+              ],
+              multiSelect: true,
+            };
+            const multiSelectQuestions: ReadonlyArray<OrchestrationV2UserInputQuestion> = [
+              areasQuestion,
+              {
+                id: "platform",
+                header: "Platform",
+                question: "Which platform should be prioritized?",
+                options: [
+                  { label: "Server", description: "T3 hosted locally" },
+                  { label: "Web", description: "T3 hosted remotely" },
+                ],
+                multiSelect: false,
+              },
+            ];
+            const multipleAnswers: ProviderUserInputAnswers = {
+              areas: ["API", "Web"],
+              platform: "Web",
+            };
+            yield* answerQuestion(scopeForCaller, multiSelectQuestions, multipleAnswers);
+
+            const staleSessionCall = yield* invokeAs(
+              { ...scopeForCaller, providerSessionId: "stale-provider-session" },
+              "t3_request_user_input",
+              { questions: [areasQuestion] },
+            );
+            expect(staleSessionCall.structuredContent).toMatchObject({ code: "parent_not_active" });
+
+            const answeredBeforeSubscribeId = RuntimeRequestId.make(
+              "request:answer-before-subscribe",
+            );
+            const answeredBeforeSubscribeProjection =
+              yield* orchestrator.getThreadProjection(parentThreadId);
+            const answerBeforeSubscribeRun = answeredBeforeSubscribeProjection.runs.find(
+              (run) => run.status === "running",
+            );
+            const answerBeforeSubscribeThread =
+              answeredBeforeSubscribeProjection.providerThreads.find(
+                (thread) => thread.id === answerBeforeSubscribeRun?.providerThreadId,
+              );
+            if (
+              answerBeforeSubscribeRun === undefined ||
+              answerBeforeSubscribeThread?.providerSessionId == null
+            )
+              return yield* Effect.die(
+                "The Codex caller lost its active run before the race check.",
+              );
+            const answerBeforeSubscribeCreated = yield* orchestrator.dispatch({
+              type: "runtime-request.create-user-input",
+              commandId: CommandId.make("command:answer-before-subscribe:create"),
+              threadId: parentThreadId,
+              requestId: answeredBeforeSubscribeId,
+              runId: answerBeforeSubscribeRun.id,
+              providerSessionId: answerBeforeSubscribeThread.providerSessionId,
+              questions: [areasQuestion],
+            });
+            const answerBeforeSubscribe = { areas: ["API", "Web"] };
+            yield* orchestrator.dispatch({
+              type: "runtime-request.respond",
+              commandId: CommandId.make("command:answer-before-subscribe:respond"),
+              threadId: parentThreadId,
+              requestId: answeredBeforeSubscribeId,
+              answers: answerBeforeSubscribe,
+            });
+            const replayedAnswer = yield* orchestrator
+              .streamStoredEventsFrom({
+                threadId: parentThreadId,
+                afterSequence: answerBeforeSubscribeCreated.sequence,
+              })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "runtime-request.updated" &&
+                    stored.event.payload.id === answeredBeforeSubscribeId &&
+                    stored.event.payload.status === "resolved",
+                ),
+                Stream.runHead,
+                Effect.orDie,
+              );
+            expect(
+              Option.isSome(replayedAnswer) &&
+                replayedAnswer.value.event.type === "runtime-request.updated" &&
+                replayedAnswer.value.event.payload.answers,
+            ).toEqual(answerBeforeSubscribe);
+
+            const staleRunCommand = yield* orchestrator
+              .dispatch({
+                type: "runtime-request.create-user-input",
+                commandId: CommandId.make("command:mcp-parent:stale-run"),
+                threadId: parentThreadId,
+                requestId: RuntimeRequestId.make("request:mcp-parent:stale-run"),
+                runId: RunId.make("run:mcp-parent:stale"),
+                providerSessionId: answerBeforeSubscribeThread.providerSessionId,
+                questions: [areasQuestion],
+              })
+              .pipe(Effect.result);
+            expect(staleRunCommand._tag).toBe("Failure");
+
+            const duplicateQuestionCall = yield* invokeAs(scopeForCaller, "t3_request_user_input", {
+              questions: [areasQuestion, areasQuestion],
+            });
+            expect(duplicateQuestionCall.structuredContent).toMatchObject({
+              code: "orchestration_error",
+            });
+            const tooManyOptionsCall = yield* invokeAs(
+              scopeForCaller,
+              "t3_request_user_input",
+              {
+                questions: [
+                  {
+                    ...areasQuestion,
+                    id: "too-many-options",
+                    options: Array.from({ length: 21 }, (_, index) => ({
+                      label: `Option ${index + 1}`,
+                      description: "A bounded option.",
+                    })),
+                  },
+                ],
+              },
+            );
+            expect(tooManyOptionsCall.structuredContent).toMatchObject({
+              code: "orchestration_error",
+            });
+
+            const claudeQuestionThreadId = ThreadId.make("thread:mcp-question-claude");
+            const claudeQuestionProjectId = ProjectId.make("project:mcp-question-claude");
+            const claudeQuestionGate = yield* Deferred.make<void>();
+            parentTerminalGates.set(claudeQuestionThreadId, claudeQuestionGate);
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("command:mcp-question-claude:create"),
+              createdBy: "user",
+              creationSource: "web",
+              threadId: claudeQuestionThreadId,
+              projectId: claudeQuestionProjectId,
+              title: "Question tool Claude caller",
+              modelSelection: claudeSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            const beforeClaudeRun =
+              yield* orchestrator.getThreadEventSequence(claudeQuestionThreadId);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-question-claude:start"),
+              threadId: claudeQuestionThreadId,
+              messageId: MessageId.make("message:mcp-question-claude:start"),
+              text: "Keep the Claude question caller active.",
+              attachments: [],
+              modelSelection: claudeSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            const claudeTurnStarted = yield* orchestrator
+              .streamStoredEventsFrom({
+                threadId: claudeQuestionThreadId,
+                afterSequence: beforeClaudeRun,
+              })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "provider-turn.updated" &&
+                    stored.event.payload.status === "running",
+                ),
+                Stream.runHead,
+                Effect.orDie,
+              );
+            expect(Option.isSome(claudeTurnStarted)).toBe(true);
+            const claudeQuestionProjection =
+              yield* orchestrator.getThreadProjection(claudeQuestionThreadId);
+            const claudeScope = scopeForThread(claudeQuestionProjection);
+            yield* answerQuestion(claudeScope, multiSelectQuestions, multipleAnswers);
+            const freeTextQuestion: OrchestrationV2UserInputQuestion = {
+              id: "details",
+              header: "Details",
+              question: "What detail should the implementation preserve?",
+              options: [],
+              allowCustomAnswer: true,
+            };
+            yield* answerQuestion(claudeScope, [freeTextQuestion], {
+              details: "Keep the existing thread lifecycle.",
+            });
+
+            const dismissQuestion: OrchestrationV2UserInputQuestion = {
+              id: "dismiss",
+              header: "Dismiss",
+              question: "Should this request be dismissed?",
+              options: [
+                { label: "Yes", description: "Dismiss the request" },
+                { label: "No", description: "Keep the request open" },
+              ],
+              multiSelect: false,
+            };
+            const dismissedQuestion = yield* startQuestion(claudeScope, [dismissQuestion]);
+            yield* orchestrator.dispatch({
+              type: "thread.user-input.dismiss",
+              commandId: CommandId.make("command:mcp-question-claude:dismiss"),
+              threadId: claudeQuestionThreadId,
+              requestId: dismissedQuestion.requestId,
+            });
+            const dismissedCall = yield* Fiber.join(dismissedQuestion.call);
+            expect(dismissedCall.structuredContent).toMatchObject({ code: "invalid_request" });
+            expect(
+              (yield* orchestrator.getThreadProjection(
+                claudeQuestionThreadId,
+              )).runtimeRequests.find((request) => request.id === dismissedQuestion.requestId),
+            ).toMatchObject({ status: "resolved", decision: "cancel" });
+
+            const switchedQuestion = yield* startQuestion(claudeScope, [dismissQuestion]);
+            yield* orchestrator.dispatch({
+              type: "provider.switch",
+              commandId: CommandId.make("command:mcp-question-claude:switch-provider"),
+              threadId: claudeQuestionThreadId,
+              modelSelection: codexSelection,
+            });
+            const switchedCall = yield* Fiber.join(switchedQuestion.call);
+            expect(switchedCall.structuredContent).toMatchObject({ code: "invalid_request" });
+            expect(
+              (yield* orchestrator.getThreadProjection(
+                claudeQuestionThreadId,
+              )).runtimeRequests.find((request) => request.id === switchedQuestion.requestId),
+            ).toMatchObject({ status: "resolved", decision: "cancel" });
+
+            const stopQuestionThreadId = ThreadId.make("thread:mcp-question-stop");
+            const stopQuestionProjectId = ProjectId.make("project:mcp-question-stop");
+            const stopQuestionGate = yield* Deferred.make<void>();
+            parentTerminalGates.set(stopQuestionThreadId, stopQuestionGate);
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("command:mcp-question-stop:create"),
+              createdBy: "user",
+              creationSource: "web",
+              threadId: stopQuestionThreadId,
+              projectId: stopQuestionProjectId,
+              title: "Question tool interruption caller",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            const beforeStopRun = yield* orchestrator.getThreadEventSequence(stopQuestionThreadId);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-question-stop:start"),
+              threadId: stopQuestionThreadId,
+              messageId: MessageId.make("message:mcp-question-stop:start"),
+              text: "Keep the stop test caller active.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            const stopTurnStarted = yield* orchestrator
+              .streamStoredEventsFrom({
+                threadId: stopQuestionThreadId,
+                afterSequence: beforeStopRun,
+              })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "provider-turn.updated" &&
+                    stored.event.payload.status === "running",
+                ),
+                Stream.runHead,
+                Effect.orDie,
+              );
+            expect(Option.isSome(stopTurnStarted)).toBe(true);
+            const stopQuestionProjection =
+              yield* orchestrator.getThreadProjection(stopQuestionThreadId);
+            const stopScope = scopeForThread(stopQuestionProjection);
+            const stopQuestion = yield* startQuestion(stopScope, [dismissQuestion]);
+            const stopRun = stopQuestionProjection.runs.find((run) => run.status === "running");
+            if (stopRun === undefined)
+              return yield* Effect.die("The Codex stop test caller lost its active run.");
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make("command:mcp-question-stop:interrupt"),
+              threadId: stopQuestionThreadId,
+              runId: stopRun.id,
+              reason: "Stop the agent while it is asking a question.",
+            });
+            const stoppedCall = yield* Fiber.join(stopQuestion.call);
+            expect(stoppedCall.structuredContent).toMatchObject({ code: "invalid_request" });
+            expect(
+              (yield* orchestrator.getThreadProjection(stopQuestionThreadId)).runtimeRequests.find(
+                (request) => request.id === stopQuestion.requestId,
+              ),
+            ).toMatchObject({ status: "resolved", decision: "cancel" });
+
+            const endedQuestionThreadId = ThreadId.make("thread:mcp-question-turn-ended");
+            const endedQuestionProjectId = ProjectId.make("project:mcp-question-turn-ended");
+            const endedQuestionGate = yield* Deferred.make<void>();
+            parentTerminalGates.set(endedQuestionThreadId, endedQuestionGate);
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("command:mcp-question-turn-ended:create"),
+              createdBy: "user",
+              creationSource: "web",
+              threadId: endedQuestionThreadId,
+              projectId: endedQuestionProjectId,
+              title: "Question tool terminal caller",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            const beforeEndedRun =
+              yield* orchestrator.getThreadEventSequence(endedQuestionThreadId);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-question-turn-ended:start"),
+              threadId: endedQuestionThreadId,
+              messageId: MessageId.make("message:mcp-question-turn-ended:start"),
+              text: "Keep the terminal test caller active until its question is pending.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator
+              .streamStoredEventsFrom({
+                threadId: endedQuestionThreadId,
+                afterSequence: beforeEndedRun,
+              })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "provider-turn.updated" &&
+                    stored.event.payload.status === "running",
+                ),
+                Stream.runHead,
+                Effect.orDie,
+              );
+            const endedQuestionProjection =
+              yield* orchestrator.getThreadProjection(endedQuestionThreadId);
+            const endedScope = scopeForThread(endedQuestionProjection);
+            const endedQuestion = yield* startQuestion(endedScope, [dismissQuestion]);
+            const endedRun = endedQuestionProjection.runs.find((run) => run.status === "running");
+            if (endedRun === undefined)
+              return yield* Effect.die("The terminal test caller lost its active run.");
+            const beforeTerminal =
+              yield* orchestrator.getThreadEventSequence(endedQuestionThreadId);
+            yield* Deferred.succeed(endedQuestionGate, undefined);
+            yield* orchestrator
+              .streamStoredEventsFrom({
+                threadId: endedQuestionThreadId,
+                afterSequence: beforeTerminal,
+              })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "run.updated" &&
+                    stored.event.payload.id === endedRun.id &&
+                    stored.event.payload.status === "completed",
+                ),
+                Stream.runHead,
+                Effect.orDie,
+              );
+            const endedCall = yield* Fiber.join(endedQuestion.call);
+            expect(endedCall.structuredContent).toMatchObject({ code: "invalid_request" });
+            expect(
+              (yield* orchestrator.getThreadProjection(endedQuestionThreadId)).runtimeRequests.find(
+                (request) => request.id === endedQuestion.requestId,
+              ),
+            ).toMatchObject({ status: "resolved", decision: "cancel" });
+
             const queueAutomaticCompletion = (suffix: string, taskText: string) =>
               Effect.gen(function* () {
                 const delegated = yield* orchestrator.dispatch({
