@@ -1219,7 +1219,7 @@ function SidebarProjectThreadRow(props: {
     .get(props.thread.environmentId)
     ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
   return (
-    <li className="relative list-none">
+    <li className="relative list-none" data-sidebar-thread-key={activeThreadKey}>
       <button
         type="button"
         aria-current={active ? "page" : undefined}
