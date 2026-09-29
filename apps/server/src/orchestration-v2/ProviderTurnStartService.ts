@@ -62,9 +62,9 @@ const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 
 export interface ProviderTurnStartServiceV2Shape {
   /**
-   * Starts the run's provider turn. When `willRetry` is true, a session open
-   * failure is returned so the caller can retry. Otherwise the run is settled
-   * as failed.
+   * Starts the run's provider turn. When `willRetry` is true, a failure to open
+   * the provider session or load its thread is returned so the caller can
+   * retry. Otherwise the run is settled as failed.
    */
   readonly start: (input: {
     readonly threadId: ThreadId;
@@ -537,34 +537,43 @@ export const layer: Layer.Layer<
               }),
         }),
       );
+      // For failures before the provider accepts the run. Earlier attempts return the error so
+      // the effect worker retries; the last attempt settles the run as failed so
+      // it cannot stay starting forever.
+      const failBeforeStart = Effect.fn("orchestrationV2.providerTurnStart.failBeforeStart")(
+        function* (error: Error, signal: string, title: string) {
+          if (input.willRetry === true) return yield* Effect.fail(error);
+          const nestedCause = error.cause;
+          const failure = makeProviderFailure({
+            cause: error,
+            message:
+              nestedCause instanceof Error
+                ? nestedCause.message
+                : typeof nestedCause === "string"
+                  ? nestedCause
+                  : error.message,
+            class: "provider_error",
+          });
+          yield* settleRunBeforeStart({
+            signal,
+            status: "failed",
+            now: yield* DateTime.now,
+            providerInstanceId: run.providerInstanceId,
+            itemProviderThreadId: providerThread.id,
+            item: { type: "error", title, failure },
+          });
+        },
+      );
       if (sessionResult._tag === "Failure") {
-        if (input.willRetry === true) return yield* sessionResult.failure;
-        const failedAt = yield* DateTime.now;
-        const openError = sessionResult.failure;
-        const nestedCause = "cause" in openError ? openError.cause : undefined;
-        const failure = makeProviderFailure({
-          cause: openError,
-          message:
-            nestedCause instanceof Error
-              ? nestedCause.message
-              : typeof nestedCause === "string"
-                ? nestedCause
-                : openError.message,
-          class: "provider_error",
-        });
-        yield* settleRunBeforeStart({
-          signal: "provider-session-open-failure",
-          status: "failed",
-          now: failedAt,
-          providerInstanceId: run.providerInstanceId,
-          itemProviderThreadId: providerThread.id,
-          item: { type: "error", title: "Provider session failed to open", failure },
-        });
-        return;
+        return yield* failBeforeStart(
+          sessionResult.failure,
+          "provider-session-open-failure",
+          "Provider session failed to open",
+        );
       }
       const session = sessionResult.success;
       let effectiveHandoffs = handoffs;
-      const loadedProviderThread = yield* Effect.gen(function* () {
+      const loadedProviderThreadResult = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
           const sourceProjection = yield* projectionStore.getThreadRecords(
             nativeForkTransfer.sourceThreadId,
@@ -724,7 +733,15 @@ export const layer: Layer.Layer<
           ],
         });
         return replacement;
-      });
+      }).pipe(Effect.result);
+      if (loadedProviderThreadResult._tag === "Failure") {
+        return yield* failBeforeStart(
+          loadedProviderThreadResult.failure,
+          "provider-thread-start-failure",
+          "Provider thread failed to start",
+        );
+      }
+      const loadedProviderThread = loadedProviderThreadResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) {
         return;
       }
