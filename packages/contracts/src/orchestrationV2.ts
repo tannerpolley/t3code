@@ -1734,11 +1734,12 @@ export const OrchestrationV2ProviderSessionDetachedJson =
 export type OrchestrationV2ProviderSessionDetachedJson =
   typeof OrchestrationV2ProviderSessionDetachedJson.Type;
 
-const OrchestrationV2PendingBackgroundTaskJson =
-  OrchestrationV2PendingBackgroundTask.mapFields((fields) => ({
+const OrchestrationV2PendingBackgroundTaskJson = OrchestrationV2PendingBackgroundTask.mapFields(
+  (fields) => ({
     ...fields,
     startedAt: Schema.optional(Schema.DateTimeUtcFromString),
-  }));
+  }),
+);
 const OrchestrationV2PendingBackgroundTasksJson = Schema.optional(
   Schema.Array(OrchestrationV2PendingBackgroundTaskJson),
 ).pipe(Schema.withDecodingDefault(Effect.succeed([])));
