@@ -337,10 +337,16 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<ProjectionSettlementCandidate>,
     ProjectionStoreV2Error
   >;
-  readonly getTitleRefreshCandidates: () => Effect.Effect<
-    ReadonlyArray<ProjectionTitleRefreshCandidate>,
-    ProjectionStoreV2Error
-  >;
+  /**
+   * Live top-level threads that are regenerating, plus those that could be due: not typed by
+   * the user and last evaluated at or before `evaluatedBefore` (`fallbackEvaluatedAt` when
+   * never). Only the latter read their latest message. A cheap prefilter;
+   * selectTitleRefreshThreads makes the decision.
+   */
+  readonly getTitleRefreshCandidates: (options: {
+    readonly evaluatedBefore: string;
+    readonly fallbackEvaluatedAt: string;
+  }) => Effect.Effect<ReadonlyArray<ProjectionTitleRefreshCandidate>, ProjectionStoreV2Error>;
   readonly getTurnStartContext: (
     threadId: ThreadId,
     runId: RunId,
@@ -5130,17 +5136,37 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
-    const getTitleRefreshCandidates: ProjectionStoreV2Shape["getTitleRefreshCandidates"] = () =>
+    const getTitleRefreshCandidates: ProjectionStoreV2Shape["getTitleRefreshCandidates"] = (
+      options,
+    ) =>
       sql<{ readonly payload_json: string; readonly latest_message_at: string | null }>`
-        SELECT t.payload_json,
-          (
-            SELECT MAX(message.updated_at) FROM orchestration_v2_projection_messages message
-            WHERE message.thread_id = t.thread_id AND message.role IN ('user', 'assistant')
-          ) AS latest_message_at
-        FROM orchestration_v2_projection_threads t
-        WHERE t.deleted_at IS NULL
-          AND t.archived_at IS NULL
-          AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+        WITH live AS (
+          SELECT t.thread_id, t.payload_json,
+            json_extract(t.payload_json, '$.titleRegeneration') IS NULL
+              AND json_extract(t.payload_json, '$.titleSource') IS NOT 'user'
+              AND COALESCE(
+                json_extract(t.payload_json, '$.titleEvaluation.evaluatedAt'),
+                ${options.fallbackEvaluatedAt}
+              ) <= ${options.evaluatedBefore} AS eligible,
+            json_extract(t.payload_json, '$.titleRegeneration') IS NOT NULL AS regenerating
+          FROM orchestration_v2_projection_threads t
+          WHERE t.deleted_at IS NULL
+            AND t.archived_at IS NULL
+            AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+        )
+        SELECT live.payload_json,
+          CASE WHEN live.eligible THEN NULLIF(MAX(
+            COALESCE((
+              SELECT MAX(message.updated_at) FROM orchestration_v2_projection_messages message
+              WHERE message.thread_id = live.thread_id AND message.role = 'user'
+            ), ''),
+            COALESCE((
+              SELECT MAX(message.updated_at) FROM orchestration_v2_projection_messages message
+              WHERE message.thread_id = live.thread_id AND message.role = 'assistant'
+            ), '')
+          ), '') END AS latest_message_at
+        FROM live
+        WHERE live.eligible OR live.regenerating
       `.pipe(
         Effect.flatMap((rows) =>
           Effect.forEach(rows, (row) =>
@@ -5564,6 +5590,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 left.id.localeCompare(right.id),
             );
         }),
+      // Returns every live top-level thread; selectTitleRefreshThreads applies the rules.
       getTitleRefreshCandidates: () =>
         Ref.get(replayState).pipe(
           Effect.map((state) =>

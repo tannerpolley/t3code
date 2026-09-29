@@ -15,13 +15,14 @@ import { TITLE_REFRESH_MODEL_SELECTION } from "./ThreadTitleRegenerationService.
 const MINUTE_MS = 60_000;
 /** A thread's title is re-evaluated at most this often, and only after new messages. */
 export const TITLE_REFRESH_INTERVAL_MS = 10 * MINUTE_MS;
-/** Regenerations running at once, counting manual and first-message ones. */
+/** A sweep starts refreshes only while fewer regenerations than this are pending in its read. */
 const MAX_IN_FLIGHT = 2;
 
 /**
- * Generated titles due for a refresh, most overdue first, capped so at most MAX_IN_FLIGHT
- * regenerations run at once. `fallbackEvaluatedAtMs` stands in for threads never evaluated
- * since this feature shipped, so only messages after it count as new.
+ * Generated titles due for a refresh, most overdue first. A sweep admits at most
+ * MAX_IN_FLIGHT minus the regenerations pending in the same read; nothing else limits
+ * manual or first-message regenerations. `fallbackEvaluatedAtMs` stands in for threads never
+ * evaluated since this feature shipped, so only messages after it count as new.
  */
 export function selectTitleRefreshThreads(
   candidates: ReadonlyArray<ProjectionTitleRefreshCandidate>,
@@ -70,7 +71,11 @@ export const makeSweep = Effect.gen(function* () {
     const codex = yield* providers.getInstance(TITLE_REFRESH_MODEL_SELECTION.instanceId);
     if (codex?.enabled !== true) return;
     const nowMs = yield* Clock.currentTimeMillis;
-    const due = selectTitleRefreshThreads(yield* projections.getTitleRefreshCandidates(), {
+    const candidates = yield* projections.getTitleRefreshCandidates({
+      evaluatedBefore: DateTime.formatIso(DateTime.makeUnsafe(nowMs - TITLE_REFRESH_INTERVAL_MS)),
+      fallbackEvaluatedAt: DateTime.formatIso(DateTime.makeUnsafe(startedAtMs)),
+    });
+    const due = selectTitleRefreshThreads(candidates, {
       nowMs,
       fallbackEvaluatedAtMs: startedAtMs,
     });
@@ -81,8 +86,11 @@ export const makeSweep = Effect.gen(function* () {
           commandId: CommandId.make(`server:title-refresh:${thread.id}:${nowMs}`),
           threadId: thread.id,
           regenerateTitle: true,
-          // A rename landing after the read above wins; the command is rejected.
-          expectedTitle: thread.title,
+          // A rename or a manual Regenerate landing after the read above wins.
+          titleRefreshGuard: {
+            title: thread.title,
+            evaluationRequestId: thread.titleEvaluation?.requestId ?? null,
+          },
         })
         .pipe(
           Effect.catchCause((cause) =>
@@ -97,7 +105,7 @@ export const makeSweep = Effect.gen(function* () {
 });
 
 // Passes run about once a minute with jitter; each thread's own ten-minute marker and the
-// in-flight cap spread the model calls out. The setting is read every pass.
+// per-sweep admission cap spread the model calls out. The setting is read every pass.
 export const workerLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const sweep = yield* makeSweep;

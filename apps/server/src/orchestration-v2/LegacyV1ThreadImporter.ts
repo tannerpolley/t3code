@@ -207,6 +207,8 @@ function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
     id: threadId,
     projectId: ProjectId.make(row.project_id),
     title: row.title.trim() === "" ? "Untitled thread" : row.title,
+    // V1 kept no record of who chose the title; keep it until the user regenerates.
+    titleSource: "user",
     providerInstanceId: modelSelection.instanceId,
     modelSelection,
     runtimeMode: runtimeModeFor(row.runtime_mode),

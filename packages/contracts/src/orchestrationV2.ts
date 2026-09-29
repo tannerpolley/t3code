@@ -2403,8 +2403,15 @@ export const OrchestrationV2Command = Schema.Union([
     title: Schema.optional(TrimmedNonEmptyString),
     /** Kick off (true) or abandon (false) an async title regeneration. */
     regenerateTitle: Schema.optional(Schema.Boolean),
-    /** Reject unless the title still matches, so an automatic refresh cannot race a rename. */
-    expectedTitle: Schema.optional(Schema.String),
+    /** Who chose `title`. Absent means a person in a client; an agent's rename stays eligible for automatic refresh. */
+    renamedBy: Schema.optional(OrchestrationV2Actor),
+    /**
+     * Marks an automatic refresh with the state the sweep read. It is rejected if the title,
+     * its evaluation, or its owner changed since, or another regeneration is pending.
+     */
+    titleRefreshGuard: Schema.optional(
+      Schema.Struct({ title: Schema.String, evaluationRequestId: Schema.NullOr(CommandId) }),
+    ),
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

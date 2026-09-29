@@ -18,7 +18,7 @@ import {
 } from "../components/threadActionMenu.logic";
 import {
   newTitleRegenerationRequestId,
-  reportTitleRegenerationOutcome,
+  reportTitleRegenerationOutcomes,
 } from "../components/titleRegenerationFeedback";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { threadEnvironment } from "../state/threads";
@@ -243,7 +243,7 @@ export function useThreadActionMenu(input: {
                 },
               });
               if (result._tag === "Success")
-                void reportTitleRegenerationOutcome(threadRef, requestId);
+                void reportTitleRegenerationOutcomes([{ threadRef, requestId }]);
               return result;
             });
             return;

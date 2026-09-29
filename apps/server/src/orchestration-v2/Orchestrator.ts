@@ -2168,13 +2168,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (
       command.type === "thread.metadata.update" &&
-      command.expectedTitle !== undefined &&
-      (command.expectedTitle !== thread.title || thread.titleSource === "user")
+      command.titleRefreshGuard !== undefined &&
+      (command.titleRefreshGuard.title !== thread.title ||
+        command.titleRefreshGuard.evaluationRequestId !==
+          (thread.titleEvaluation?.requestId ?? null) ||
+        thread.titleSource === "user" ||
+        thread.titleRegeneration != null)
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.threadId} title was edited before the metadata update could be applied.`,
+        cause: `Thread ${command.threadId} title changed or is regenerating; the automatic refresh is skipped.`,
       });
     }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
@@ -2636,7 +2640,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   titleSource: "generated" as const,
                 }
               : command.title !== undefined
-                ? { titleRegeneration: null, titleSource: "user" as const }
+                ? {
+                    titleRegeneration: null,
+                    titleSource:
+                      command.renamedBy === undefined || command.renamedBy === "user"
+                        ? ("user" as const)
+                        : ("generated" as const),
+                  }
                 : command.regenerateTitle === false
                   ? { titleRegeneration: null }
                   : {}),
@@ -4155,6 +4165,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
       if (
         !isNativeMaintenanceCommand(command) &&
+        // A title the user typed before the first message is kept.
+        projection.thread.titleSource !== "user" &&
         ((command.titleSeed !== undefined &&
           (yield* projectionStore
             .getMessageCount(command.threadId)

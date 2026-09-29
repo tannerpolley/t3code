@@ -12,6 +12,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -150,6 +151,177 @@ const orchestratorLayer = Layer.mergeAll(
   ),
 );
 
+const everyCandidate = {
+  evaluatedBefore: "2100-01-01T00:00:00.000Z",
+  fallbackEvaluatedAt: "1960-01-01T00:00:00.000Z",
+};
+
+const createThread = (name: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const threadId = ThreadId.make(`thread:${name}`);
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create:${name}`),
+      threadId,
+      projectId: ProjectId.make("project:title-refresh"),
+      title: name,
+      modelSelection: { instanceId, model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    return threadId;
+  });
+
+const sendMessage = (threadId: ThreadId, name: string, titleSeed?: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`message:${name}`),
+      threadId,
+      messageId: MessageId.make(`message:${name}`),
+      text: "Fix the reconnect loop",
+      attachments: [],
+      modelSelection: { instanceId, model: "gpt-5.4" },
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+      ...(titleSeed === undefined ? {} : { titleSeed }),
+    });
+  });
+
+const metadata = (
+  threadId: ThreadId,
+  commandId: string,
+  update: {
+    readonly title?: string;
+    readonly regenerateTitle?: boolean;
+    readonly titleRefreshGuard?: { title: string; evaluationRequestId: CommandId | null };
+  },
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    return yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(commandId),
+        threadId,
+        ...update,
+      }),
+    );
+  });
+
+it.effect("a title typed before the first message is not replaced by the first-message title", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStoreV2;
+    const threadId = yield* createThread("typed-first");
+    yield* metadata(threadId, "rename:typed-first", { title: "Typed before sending" });
+    yield* sendMessage(threadId, "typed-first", "Fix the reconnect loop");
+    const thread = yield* projections.getThread(threadId);
+    assert.equal(thread.title, "Typed before sending");
+    assert.isNotOk(thread.titleRegeneration);
+  }).pipe(Effect.provide(orchestratorLayer)),
+);
+
+it.effect("an agent's rename stays eligible for automatic refresh", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const projections = yield* ProjectionStoreV2;
+    const threadId = yield* createThread("agent-renamed");
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("rename:agent-renamed"),
+      threadId,
+      title: "Agent title",
+      renamedBy: "agent",
+    });
+    assert.equal((yield* projections.getThread(threadId)).titleSource, "generated");
+  }).pipe(Effect.provide(orchestratorLayer)),
+);
+
+it.effect("an automatic refresh cannot take over a manual Regenerate or a newer evaluation", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const projections = yield* ProjectionStoreV2;
+    const threadId = yield* createThread("manual-first");
+    const manual = CommandId.make("manual-regenerate");
+    yield* metadata(threadId, manual, { regenerateTitle: true });
+    const automatic = (commandId: string, evaluationRequestId: CommandId | null) =>
+      metadata(threadId, commandId, {
+        regenerateTitle: true,
+        titleRefreshGuard: { title: "manual-first", evaluationRequestId },
+      });
+
+    assert.equal((yield* automatic("automatic:pending", null))._tag, "Failure");
+    assert.equal((yield* projections.getThread(threadId)).titleRegeneration?.requestId, manual);
+
+    yield* orchestrator.dispatch({
+      type: "thread.title.regeneration.complete",
+      commandId: CommandId.make("manual-regenerate:title-complete"),
+      threadId,
+      requestId: manual,
+    });
+    // The sweep read the thread before the manual evaluation landed.
+    assert.equal((yield* automatic("automatic:stale", null))._tag, "Failure");
+    assert.equal((yield* automatic("automatic:current", manual))._tag, "Success");
+  }).pipe(Effect.provide(orchestratorLayer)),
+);
+
+it.effect("candidates skip typed and recently evaluated threads before reading messages", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* OrchestratorV2;
+    const projections = yield* ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const due = yield* createThread("due");
+    yield* sendMessage(due, "due");
+    const typed = yield* createThread("typed");
+    yield* metadata(typed, "rename:typed", { title: "Typed" });
+    yield* sendMessage(typed, "typed");
+    const recent = yield* createThread("recent");
+    yield* metadata(recent, "regenerate:recent", { regenerateTitle: true });
+    yield* orchestrator.dispatch({
+      type: "thread.title.regeneration.complete",
+      commandId: CommandId.make("regenerate:recent:title-complete"),
+      threadId: recent,
+      requestId: CommandId.make("regenerate:recent"),
+    });
+    yield* sendMessage(recent, "recent");
+    const busy = yield* createThread("busy");
+    yield* metadata(busy, "regenerate:busy", { regenerateTitle: true });
+    yield* sendMessage(busy, "busy");
+
+    // Evaluations from the test clock's epoch are newer than this cutoff; the fallback is older.
+    const candidates = yield* projections.getTitleRefreshCandidates({
+      evaluatedBefore: "1969-12-31T23:59:59.000Z",
+      fallbackEvaluatedAt: "1960-01-01T00:00:00.000Z",
+    });
+    assert.deepEqual(
+      candidates
+        .map(({ thread, latestMessageAt }) => [thread.id, latestMessageAt !== null])
+        .toSorted(([left], [right]) => String(left).localeCompare(String(right))),
+      [
+        [busy, false],
+        [due, true],
+      ],
+    );
+
+    const plan = yield* sql<{ readonly detail: string }>`
+      EXPLAIN QUERY PLAN
+      SELECT MAX(updated_at) FROM orchestration_v2_projection_messages
+      WHERE thread_id = ${due} AND role = 'assistant'
+    `;
+    assert.include(
+      plan.map((row) => row.detail).join("\n"),
+      "orchestration_v2_projection_messages_latest_assistant_idx",
+    );
+  }).pipe(Effect.provide(orchestratorLayer)),
+);
+
 it.effect(
   "reads live top-level threads with their latest message, and a rename beats a refresh",
   () =>
@@ -210,7 +382,7 @@ it.effect(
         creationSource: "web",
       });
 
-      const candidates = yield* projections.getTitleRefreshCandidates();
+      const candidates = yield* projections.getTitleRefreshCandidates(everyCandidate);
       assert.deepEqual(
         candidates
           .map(({ thread, latestMessageAt }) => [thread.title, latestMessageAt !== null])
@@ -233,7 +405,7 @@ it.effect(
           commandId: CommandId.make("server:title-refresh:top"),
           threadId: top.id,
           regenerateTitle: true,
-          expectedTitle: "top",
+          titleRefreshGuard: { title: "top", evaluationRequestId: null },
         }),
       );
       assert.equal(refresh._tag, "Failure");
@@ -254,7 +426,7 @@ it.effect(
           commandId: CommandId.make("server:title-refresh:same-title"),
           threadId: ThreadId.make("thread:same-title"),
           regenerateTitle: true,
-          expectedTitle: "same-title",
+          titleRefreshGuard: { title: "same-title", evaluationRequestId: null },
         }),
       );
       assert.equal(sameTitleRefresh._tag, "Failure");
