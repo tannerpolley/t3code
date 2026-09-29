@@ -4,7 +4,12 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { placeAddedProject, setAddProjectSection } from "../projectSectionPlacement";
+import {
+  currentAddProjectSection,
+  placeAddedProject,
+  setAddProjectSection,
+} from "../projectSectionPlacement";
+import { sectionFolderPath } from "../sectionProjectPath";
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -1051,6 +1056,22 @@ function OpenCommandPaletteDialog(props: {
       );
       const environmentSettings = environment?.serverConfig?.settings ?? null;
       const baseDirectory = environmentSettings?.addProjectBaseDirectory?.trim() ?? "";
+      // Started from a section: browse from that section's folder, the layout Organize by
+      // folder reads (<root>/<Section>[/<Subsection>]).
+      const sectionId = currentAddProjectSection();
+      const sections = sectionId === null ? [] : useUiStateStore.getState().sidebarProjectSections;
+      const section = sections.find((candidate) => candidate.id === sectionId);
+      const parent = sections.find((candidate) => candidate.id === section?.parentId);
+      const sectionFolder =
+        section === undefined
+          ? null
+          : sectionFolderPath(
+              environmentSettings?.projectFolderRoot?.trim() || baseDirectory,
+              parent === undefined ? [section.name] : [parent.name, section.name],
+            );
+      if (sectionFolder !== null) {
+        return ensureBrowseDirectoryPath(sectionFolder);
+      }
       if (baseDirectory.length === 0) {
         return "~/";
       }

@@ -40,6 +40,11 @@ export function setAddProjectSection(sectionId: string | null): void {
   addProjectSectionId = sectionId;
 }
 
+/** The section the open add-project flow started from, if any; read without consuming it. */
+export function currentAddProjectSection(): string | null {
+  return addProjectSectionId;
+}
+
 /** Called once the add-project flow creates or picks a project. */
 export function placeAddedProject(ref: ScopedProjectRef): void {
   const sectionId = addProjectSectionId;
