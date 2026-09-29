@@ -421,6 +421,29 @@ describe("subagent current activation", () => {
       { taskId: "bash-2", taskType: "local_bash", childThreadId: "thread-child" },
     ] as never;
     expect(resolveSubagentStatus(record, finished, parentRoster)).toBe("waiting");
+    // A waiting child's timer runs on from its run's start instead of freezing at the turn end.
+    const ranAt = {
+      latestRunId: "run-2",
+      latestRunStartedAt: at("2026-09-24T11:00:00.000Z"),
+      latestRunCompletedAt: at("2026-09-24T11:03:00.000Z"),
+    };
+    expect(
+      resolveSubagentActivation(
+        record,
+        { ...(finished as object), ...ranAt } as never,
+        parentRoster,
+      ),
+    ).toMatchObject({
+      status: "running",
+      startedAt: "2026-09-24T11:00:00.000Z",
+      completedAt: null,
+    });
+    expect(
+      resolveSubagentActivation(record, { ...(finished as object), ...ranAt } as never),
+    ).toMatchObject({
+      status: "completed",
+      completedAt: "2026-09-24T11:03:00.000Z",
+    });
     // A child the parent resumed reads from its live run.
     const resumed = { ...child, activityRunStatus: "running", status: "running" } as never;
     expect(resolveSubagentStatus(record, resumed)).toBe("running");

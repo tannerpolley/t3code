@@ -42,6 +42,8 @@ import {
   SquarePenIcon,
   Trash2Icon,
 } from "lucide-react";
+import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { AgentElapsed } from "../chat/AgentElapsed";
 import { BackgroundWorkTaskList } from "../chat/BackgroundWorkTaskList";
 import { useServerConfigs } from "../../state/entities";
 import { resolveSubagentModelLabel } from "../chat/SubagentTooltipContent";
@@ -1186,6 +1188,11 @@ function SidebarProjectThreadRow(props: {
     props.thread.pendingBackgroundTasks,
     runningSubagents,
   );
+  // Codex style times the current activity of a working or waiting thread, like its work rows.
+  const activityStartedAt =
+    props.codexStyle && (status === "working" || status === "waiting")
+      ? resolveThreadWorkingStartedAt({ ...props.thread, waiting: status === "waiting" })
+      : null;
   // Running work shows by default, even while the thread itself works; a collapse wins for this row.
   const [workOpen, setWorkOpen] = useState(true);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
@@ -1239,8 +1246,9 @@ function SidebarProjectThreadRow(props: {
         </span>
         {workRows.length > 0 ? (
           // Room for the work toggle, which sits over this spot because buttons cannot nest.
-          <span aria-hidden className={cn("shrink-0", props.codexStyle ? "w-12" : "w-8")} />
-        ) : (
+          <span aria-hidden className="w-8 shrink-0" />
+        ) : null}
+        {workRows.length === 0 || props.codexStyle ? (
           <span
             className={cn(
               "shrink-0 text-[11px] text-sidebar-muted-foreground/55",
@@ -1248,9 +1256,15 @@ function SidebarProjectThreadRow(props: {
               props.codexStyle && "w-12 text-right tabular-nums",
             )}
           >
-            {compactThreadTime(props.thread)}
+            {activityStartedAt ? (
+              <AgentElapsed
+                agent={{ status: "running", startedAt: activityStartedAt, completedAt: null }}
+              />
+            ) : (
+              compactThreadTime(props.thread)
+            )}
           </span>
-        )}
+        ) : null}
         {props.codexStyle ? <ThreadStatusMark status={statusMark} /> : null}
       </button>
       {workRows.length > 0 ? (
@@ -1260,8 +1274,9 @@ function SidebarProjectThreadRow(props: {
           aria-label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
           className={cn(
             "absolute top-2 flex h-5 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-[10px] text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-            // Left of the 14px status mark and its 8px gap in Codex style; flush with the padding otherwise.
-            props.codexStyle ? "right-[30px] w-12" : "right-2 w-8",
+            // Codex style: left of the time slot (8px padding, 14px status mark, 48px time, two 8px
+            // gaps); flush with the padding otherwise.
+            props.codexStyle ? "right-[86px] w-8" : "right-2 w-8",
           )}
           onClick={() => setWorkOpen(!workOpen)}
         >

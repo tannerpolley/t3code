@@ -56,9 +56,12 @@ export function findBackgroundTaskProviderThread<
   );
 }
 
-/** Ends one of a thread's background tasks through the live provider session that runs it. */
-export const stopBackgroundTask = Effect.fn("orchestration.stopBackgroundTask")(
-  function* (input: OrchestrationV2StopBackgroundTaskInput) {
+/**
+ * The provider thread holding one of `threadId`'s background tasks, and the live session running
+ * it (null once that session has ended). Null when the task is not one of the thread's.
+ */
+export const findBackgroundTaskSession = Effect.fn("orchestration.findBackgroundTaskSession")(
+  function* (input: { readonly threadId: ThreadId; readonly taskId: string }) {
     const threads = yield* ThreadManagementService;
     const own = yield* threads.getThreadRecords(input.threadId, ["providerThreads", "turnItems"], {
       turnItemTypes: ["command_execution"],
@@ -74,15 +77,25 @@ export const stopBackgroundTask = Effect.fn("orchestration.stopBackgroundTask")(
       own,
       parentProviderThreads: parent?.providerThreads ?? [],
     });
-    if (providerThread === null) {
-      return yield* stopError(input.taskId, "This background task is no longer running.");
-    }
+    if (providerThread === null) return null;
     const runtime =
       providerThread.providerSessionId === null
         ? null
         : Option.getOrNull(
             yield* (yield* ProviderSessionManagerV2).get(providerThread.providerSessionId),
           );
+    return { providerThread, runtime };
+  },
+);
+
+/** Ends one of a thread's background tasks through the live provider session that runs it. */
+export const stopBackgroundTask = Effect.fn("orchestration.stopBackgroundTask")(
+  function* (input: OrchestrationV2StopBackgroundTaskInput) {
+    const found = yield* findBackgroundTaskSession(input);
+    if (found === null) {
+      return yield* stopError(input.taskId, "This background task is no longer running.");
+    }
+    const { providerThread, runtime } = found;
     if (runtime?.stopBackgroundTask === undefined) {
       return yield* stopError(
         input.taskId,

@@ -1,18 +1,25 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Live, read-only output of a thread's background shell, for the popover viewer and for a
- * terminal tab that follows it.
+ * Live, read-only output of a thread's background shell or Claude monitor, for the popover viewer
+ * and for a terminal tab that follows it.
  *
  * Claude runs `run_in_background` Bash commands with output redirected to a file and reports the
- * path in the tool result ("Output is being written to: <path>"), which the thread's
- * command_execution turn item already stores. The SDK's background task messages carry ids only
+ * path in the tool result ("Output is being written to: <path>"), which a subagent thread's
+ * command_execution turn item stores as text. The SDK's background task messages carry ids only
  * until `task_notification.output_file` at the end.
+ *
+ * A Claude Monitor is a background shell too (`task_type` "local_bash") whose events are the
+ * lines it prints to that same `<session tasks dir>/<taskId>.output`. The SDK never streams those
+ * events (each one only wakes the agent with a `task-notification` result that names no task)
+ * and the Monitor tool result names no file. A top-level Claude shell's item also keeps the
+ * structured tool result, which has no path. So the live Claude session remembers the tasks
+ * directory Claude last reported (a Bash notice, or any task's final `output_file`).
  *
  * Codex streams command output as `item/commandExecution/outputDelta` notifications; the Codex
  * adapter appends them to a server-owned log per command (`makeBackgroundTaskLogWriter`).
  *
- * Either way the server re-finds the file from the thread's own items, so a client can only name
- * a task, never a path.
+ * In every case the server re-finds the file from the thread's own items or running tasks, so a
+ * client can only name a task, never a path.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -22,6 +29,7 @@ import {
   type OrchestrationV2BackgroundTaskOutputChunk,
   OrchestrationV2BackgroundTaskOutputError,
   type TerminalFollowBackgroundTaskInput,
+  ThreadId,
 } from "@t3tools/contracts";
 import { isHostWindows } from "@t3tools/shared/hostProcess";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
@@ -34,6 +42,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
+import { findBackgroundTaskSession } from "../orchestration-v2/BackgroundTaskStop.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 
 /** Largest tail sent at once; the client keeps a buffer of the same size. */
@@ -42,18 +51,35 @@ export const BACKGROUND_TASK_OUTPUT_TAIL_BYTES = 200 * 1024;
 // Claude task ids are short alphanumerics; anything else cannot name a reported task file.
 const TASK_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
+// Claude's notice ends the path with a sentence period, or the text ends there.
+const REPORTED_OUTPUT_PATTERN =
+  /Output is being written to: (.+?[\\/]tasks[\\/]([A-Za-z0-9_-]+)\.output)(?=\.?\s|\.?$)/g;
+
 /**
- * The output file Claude reported for `taskId` in a background Bash tool result, or null.
- * Only an absolute, normalized `<dir>/tasks/<taskId>.output` path is accepted.
+ * The directory of a Claude task output file: null unless `path` is an absolute, normalized
+ * `<dir>/tasks/<taskId>.output`.
  */
+export function claudeTaskOutputDir(path: string): string | null {
+  return NodePath.isAbsolute(path) &&
+    NodePath.normalize(path) === path &&
+    /[\\/]tasks[\\/][A-Za-z0-9_-]+\.output$/.test(path)
+    ? NodePath.dirname(path)
+    : null;
+}
+
+/** Every task output file Claude reported in a tool result ("Output is being written to: …"). */
+export function reportedTaskOutputPaths(
+  itemOutput: string,
+): ReadonlyArray<{ readonly taskId: string; readonly path: string }> {
+  return [...itemOutput.matchAll(REPORTED_OUTPUT_PATTERN)].flatMap(([, path = "", taskId = ""]) =>
+    claudeTaskOutputDir(path) === null ? [] : [{ taskId, path }],
+  );
+}
+
+/** The output file Claude reported for `taskId` in a background Bash tool result, or null. */
 export function backgroundTaskOutputPath(itemOutput: string, taskId: string): string | null {
   if (!TASK_ID_PATTERN.test(taskId)) return null;
-  const match = new RegExp(
-    `Output is being written to: (.+?[\\\\/]tasks[\\\\/]${taskId}\\.output)(?=\\.?\\s|\\.?$)`,
-  ).exec(itemOutput);
-  const path = match?.[1];
-  if (path === undefined || !NodePath.isAbsolute(path)) return null;
-  return NodePath.normalize(path) === path ? path : null;
+  return reportedTaskOutputPaths(itemOutput).find((entry) => entry.taskId === taskId)?.path ?? null;
 }
 
 export interface OutputTailState {
@@ -195,8 +221,8 @@ const decodeCommandItem = Schema.decodeUnknownOption(
 );
 
 /**
- * The output file of one of `threadId`'s background shells. `appearsLater` marks a Codex log,
- * which exists only once the command has printed something.
+ * The output file of one of `threadId`'s background shells or Claude monitors. `appearsLater`
+ * marks a Codex log, which exists only once the command has printed something.
  */
 export const resolveBackgroundTaskOutputFile = Effect.fn(
   "orchestration.resolveBackgroundTaskOutputFile",
@@ -229,7 +255,41 @@ export const resolveBackgroundTaskOutputFile = Effect.fn(
     const path = item.output ? backgroundTaskOutputPath(item.output, input.taskId) : null;
     if (path !== null) return { path, appearsLater: false };
   }
-  return yield* outputError(input.taskId, "This background task has no output file to show.");
+  // A Claude monitor's tool result names no file, and a top-level Claude shell's item keeps the
+  // structured result without the path, so ask the live session where its task files go.
+  const found = yield* findBackgroundTaskSession({
+    threadId: ThreadId.make(input.threadId),
+    taskId: input.taskId,
+  }).pipe(
+    Effect.mapError((cause) =>
+      outputError(input.taskId, "Failed to look up the background task.", cause),
+    ),
+  );
+  if (found === null || !TASK_ID_PATTERN.test(input.taskId)) {
+    return yield* outputError(
+      input.taskId,
+      "This thread has no running background task with that id.",
+    );
+  }
+  if (found.runtime === null) {
+    return yield* outputError(input.taskId, "The provider session running this task has ended.");
+  }
+  if (found.runtime.backgroundTaskOutputDir === undefined) {
+    return yield* outputError(
+      input.taskId,
+      `Provider '${found.runtime.driver}' does not report where this task's output goes.`,
+    );
+  }
+  const dir = yield* found.runtime.backgroundTaskOutputDir({
+    providerThread: found.providerThread,
+  });
+  if (dir === null) {
+    return yield* outputError(
+      input.taskId,
+      "Claude has not reported where this session keeps task output yet. It does once any of its background shells starts or ends.",
+    );
+  }
+  return { path: NodePath.join(dir, `${input.taskId}.output`), appearsLater: false };
 });
 
 const isMissingFile = (cause: unknown) =>

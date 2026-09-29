@@ -106,14 +106,16 @@ export function describeSidebarBackgroundWork(
     pendingBackgroundWorkOfThread(childId, [], tasks).length > 0;
   return [
     ...runningChildren.map((child) => {
-      const status = resolveSidebarThreadStatus(child);
+      const ownStatus = resolveSidebarThreadStatus(child);
+      const status =
+        ownStatus === "ready" && hasShells(child.id) ? ("waiting" as const) : ownStatus;
       return {
         taskId: child.id,
         label: child.title,
         kind: "subagent" as const,
-        startedAt: resolveThreadWorkingStartedAt(child),
+        startedAt: resolveThreadWorkingStartedAt({ ...child, waiting: status === "waiting" }),
         childThreadId: child.id,
-        status: status === "ready" && hasShells(child.id) ? ("waiting" as const) : status,
+        status,
         child,
       };
     }),

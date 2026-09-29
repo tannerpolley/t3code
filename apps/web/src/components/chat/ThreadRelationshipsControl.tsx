@@ -615,7 +615,8 @@ export function ThreadRelationshipsPanel(props: {
                 const agent =
                   isSubagent && !isParent ? subagentsByThreadId.get(threadId) : undefined;
                 // Timer and model follow the same child state as the status, not the parent's record.
-                const activation = agent && resolveSubagentActivation(agent, node?.thread);
+                const activation =
+                  agent && resolveSubagentActivation(agent, node?.thread, rosterTasks);
                 const threadTitle = relationshipThreadTitle({
                   title: node?.thread?.title ?? agent?.title ?? threadId,
                   isSubagent,

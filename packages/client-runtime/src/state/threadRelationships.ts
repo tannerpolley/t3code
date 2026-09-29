@@ -52,6 +52,25 @@ export function resolveMergeBackTargetThreadId(
     : projection.thread.lineage.parentThreadId;
 }
 
+/** A child whose turn ended while shells it started still run, on its own or its parent's roster. */
+function waitsOnOwnBackgroundWork(
+  childThread: Pick<
+    OrchestrationV2ThreadShell,
+    "id" | "activityRunStatus" | "status" | "pendingBackgroundTasks"
+  >,
+  parentTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"],
+): boolean {
+  const own = childThread.activityRunStatus ?? childThread.status;
+  return (
+    FINISHED_STATUSES.has(own) &&
+    pendingBackgroundWorkOfThread(
+      childThread.id,
+      childThread.pendingBackgroundTasks ?? [],
+      parentTasks,
+    ).length > 0
+  );
+}
+
 /**
  * A subagent's display status. The parent's subagent record settles with the run that spawned
  * it and is not reopened when the child is steered into a new run, so the child thread's own
@@ -77,18 +96,7 @@ export function resolveSubagentStatus(
     return request.kind === "user_input" ? "input" : "approval";
   }
   const own = childThread?.activityRunStatus ?? childThread?.status;
-  if (
-    childThread &&
-    own &&
-    FINISHED_STATUSES.has(own) &&
-    pendingBackgroundWorkOfThread(
-      childThread.id,
-      childThread.pendingBackgroundTasks ?? [],
-      parentTasks,
-    ).length > 0
-  ) {
-    return "waiting";
-  }
+  if (childThread && waitsOnOwnBackgroundWork(childThread, parentTasks)) return "waiting";
   if (!own || own === "idle") return subagent.status;
   // A task still open outlasts its child's finished turn: it waits on the child's own background
   // work or its report back. A resumed child's live run wins as before.
@@ -101,7 +109,9 @@ export function resolveSubagentStatus(
  * A subagent's current activation, from the same child state as its status: the child's live or
  * latest run (provider-native children get their record copied there by the server), and the
  * child's own model once it runs turns of its own. The parent's record stands in while the child
- * shell is missing or predates these fields. `status` only tells a live timer from a frozen one.
+ * shell is missing or predates these fields. `status` only tells a live timer from a frozen one:
+ * a child waiting on its own background work (see `resolveSubagentStatus`) keeps its run's
+ * timer live.
  */
 export function resolveSubagentActivation<Status extends string>(
   subagent: {
@@ -120,9 +130,13 @@ export function resolveSubagentActivation<Status extends string>(
         | "latestRunRequestedAt"
         | "latestRunStartedAt"
         | "latestRunCompletedAt"
+        | "id"
+        | "status"
+        | "pendingBackgroundTasks"
       >
     | null
     | undefined,
+  parentTasks?: OrchestrationV2ThreadShell["pendingBackgroundTasks"],
 ): {
   readonly status: Status | "running" | "completed";
   readonly startedAt: string | null;
@@ -141,10 +155,11 @@ export function resolveSubagentActivation<Status extends string>(
     };
   }
   if (childThread?.latestRunCompletedAt) {
+    const waiting = waitsOnOwnBackgroundWork(childThread, parentTasks);
     return {
-      status: "completed",
+      status: waiting ? "running" : "completed",
       startedAt: iso(childThread.latestRunStartedAt ?? childThread.latestRunRequestedAt),
-      completedAt: iso(childThread.latestRunCompletedAt),
+      completedAt: waiting ? null : iso(childThread.latestRunCompletedAt),
       model,
     };
   }

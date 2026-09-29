@@ -300,21 +300,29 @@ export function resolveThreadProviderStack(
   return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
 }
 
-/** Both shell and detail timers use the activity-owning run, never last activity. */
+/**
+ * Both shell and detail timers use the activity-owning run, never last activity. A thread
+ * `waiting` on its own background work (its turn ended, a shell or monitor still runs) keeps
+ * the clock of the run that started it; otherwise a settled thread has no start.
+ */
 export function resolveThreadWorkingStartedAt(input: {
   readonly latestRun: Pick<
     ThreadRunSummary,
     "runId" | "startedAt" | "requestedAt" | "completedAt"
   > | null;
   readonly runtime: Pick<ThreadRuntimeSummary, "activeRunId" | "activityStartedAt"> | null;
+  readonly waiting?: boolean;
 }): string | null {
   const valid = (value: string | null | undefined) =>
     value != null && Number.isFinite(Date.parse(value)) ? value : null;
-  if (input.runtime?.activityStartedAt !== undefined) return valid(input.runtime.activityStartedAt);
-  // Older servers can supply a timestamp only if the newest run owns the work.
   const run = input.latestRun;
-  if (run?.completedAt === null && run.runId === input.runtime?.activeRunId) {
-    return valid(run.startedAt) ?? valid(run.requestedAt);
-  }
-  return null;
+  const runStartedAt = valid(run?.startedAt) ?? valid(run?.requestedAt);
+  const working =
+    input.runtime?.activityStartedAt !== undefined
+      ? valid(input.runtime.activityStartedAt)
+      : // Older servers can supply a timestamp only if the newest run owns the work.
+        run?.completedAt === null && run.runId === input.runtime?.activeRunId
+        ? runStartedAt
+        : null;
+  return working ?? (input.waiting ? runStartedAt : null);
 }

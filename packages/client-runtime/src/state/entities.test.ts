@@ -165,6 +165,41 @@ describe("V2 client presentation", () => {
     expect(shell.pendingBackgroundTasks).toEqual([{ taskId: "bg-1", description: "sleep 20" }]);
   });
 
+  it("times a working thread from its activity and a waiting one from its run, not an idle one", () => {
+    const runId = RunId.make("run-waiting-clock");
+    const runStartedAt = DateTime.makeUnsafe("2026-06-20T01:00:02.000Z");
+    const settled = {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      latestRunStartedAt: runStartedAt,
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:03:00.000Z"),
+      activeRunId: null,
+      activityRunStatus: null,
+      activityRunStartedAt: null,
+      status: "completed" as const,
+    };
+    const working = presentThreadShell(environmentId, {
+      ...settled,
+      activeRunId: runId,
+      activityRunStatus: "running",
+      activityRunStartedAt: DateTime.makeUnsafe("2026-06-20T01:05:00.000Z"),
+      status: "running",
+    });
+    const waiting = presentThreadShell(environmentId, {
+      ...settled,
+      pendingBackgroundTasks: [{ taskId: "monitor-1", taskType: "local_bash" }],
+    });
+    const idle = presentThreadShell(environmentId, settled);
+
+    expect(resolveThreadWorkingStartedAt(working)).toBe("2026-06-20T01:05:00.000Z");
+    // Its turn ended at 01:03, but the clock runs on from the run that started the monitor.
+    expect(resolveThreadWorkingStartedAt({ ...waiting, waiting: true })).toBe(
+      DateTime.formatIso(runStartedAt),
+    );
+    expect(resolveThreadWorkingStartedAt(waiting)).toBeNull();
+    expect(resolveThreadWorkingStartedAt(idle)).toBeNull();
+  });
+
   it("stacks earlier provider owners behind the current one, newest history first to go", () => {
     const codex = ProviderInstanceId.make("codex");
     const claude = ProviderInstanceId.make("claude");

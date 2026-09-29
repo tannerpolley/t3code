@@ -86,6 +86,10 @@ import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import {
+  claudeTaskOutputDir,
+  reportedTaskOutputPaths,
+} from "../../orchestration/backgroundTaskOutput.ts";
+import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
 } from "../../provider/Drivers/ClaudeHome.ts";
@@ -1951,6 +1955,30 @@ function claudeToolResultBlocksFromUserMessage(
   return message.message.content.filter(isClaudeUserToolResultContentBlock);
 }
 
+/**
+ * The directory where Claude writes this session's `<taskId>.output` files, when the message
+ * reports one: a task's final `output_file`, or a background Bash notice in a tool result.
+ */
+function claudeReportedTaskOutputDir(message: SDKMessage): string | null {
+  if (message.type === "system" && message.subtype === "task_notification") {
+    return claudeTaskOutputDir(message.output_file);
+  }
+  for (const block of claudeToolResultBlocksFromUserMessage(message)) {
+    const content = block.type === "tool_result" ? block.content : undefined;
+    const texts =
+      typeof content === "string"
+        ? [content]
+        : Array.isArray(content)
+          ? content.flatMap((part) => (part.type === "text" ? [part.text] : []))
+          : [];
+    for (const text of texts) {
+      const path = reportedTaskOutputPaths(text)[0]?.path;
+      if (path !== undefined) return claudeTaskOutputDir(path);
+    }
+  }
+  return null;
+}
+
 function claudeToolResultEntriesFromMessage(message: SDKMessage): ReadonlyArray<{
   readonly toolResult: ClaudeToolResultContentBlock;
   readonly output: ClaudeNativeToolOutput;
@@ -2705,6 +2733,9 @@ export function makeClaudeAdapterV2(
         const pendingBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
         );
+        // Where Claude writes each session's `<taskId>.output` files, by native session id. Learned
+        // from what Claude reports, because a Monitor's tool result names no file.
+        const taskOutputDirByNativeThread = new Map<string, string>();
         // Wake eligibility is separate from the Waiting roster. It survives
         // empty background_tasks_changed levels (SDK: empty level can precede
         // task_notification) and is consumed when the first idle notification
@@ -4784,6 +4815,10 @@ export function makeClaudeAdapterV2(
           }
 
           const message = input.message;
+          const reportedTaskOutputDir = claudeReportedTaskOutputDir(message);
+          if (reportedTaskOutputDir !== null) {
+            taskOutputDirByNativeThread.set(liveQuery.nativeThreadId, reportedTaskOutputDir);
+          }
           if (message.type === "rate_limit_event") {
             const rateLimitInfo = message.rate_limit_info;
             if (!rateLimitInfo) return;
@@ -6318,6 +6353,13 @@ export function makeClaudeAdapterV2(
               );
             },
           ),
+          backgroundTaskOutputDir: (dirInput) =>
+            Effect.sync(() => {
+              const nativeThreadId = dirInput.providerThread.nativeThreadRef?.nativeId;
+              return nativeThreadId == null
+                ? null
+                : (taskOutputDirByNativeThread.get(nativeThreadId) ?? null);
+            }),
           ensureThread: Effect.fn("ClaudeAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapterV2EnsureThreadInput) {
               const createdAt = yield* DateTime.now;

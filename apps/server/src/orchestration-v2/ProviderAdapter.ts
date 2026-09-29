@@ -577,6 +577,14 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly taskId: string;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /**
+   * The directory where the provider writes `<taskId>.output` for `providerThread`'s background
+   * tasks, once the provider has reported it; null until then. Absent means the driver writes no
+   * such files (Codex output goes to T3's own logs).
+   */
+  readonly backgroundTaskOutputDir?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<string | null>;
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;

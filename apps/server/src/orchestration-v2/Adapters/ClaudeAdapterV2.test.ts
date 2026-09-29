@@ -4989,6 +4989,96 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("learns where the session writes task output from what Claude reports", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-task-output-dir"),
+            text: "Watch the build.",
+            attachments: [],
+          }),
+        );
+        const outputDir = () =>
+          harness.runtime.backgroundTaskOutputDir?.({ providerThread: harness.providerThread }) ??
+          Effect.die("Claude must report its task output directory.");
+        // Each roster change is a receipt that the frames before it were handled.
+        const taskStarted = (taskId: string, uuidSuffix: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: `toolu-${taskId}`,
+            description: taskId,
+            task_type: "local_bash",
+            uuid: `00000000-0000-4000-8000-00000000093${uuidSuffix}`,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+        const rosterHas = (taskId: string) =>
+          providerThreadRosterEvents(harness.events).some((event) =>
+            (event.providerThread.pendingBackgroundTasks ?? []).some(
+              (task) => task.taskId === taskId,
+            ),
+          );
+
+        // A Monitor's tool result names no file.
+        yield* Queue.offer(harness.sdkMessages, taskStarted("bmonitor1", "1"));
+        yield* awaitUntil(() => rosterHas("bmonitor1"), "monitor on the roster");
+        assert.isNull(yield* outputDir());
+
+        const tasksDir = `/tmp/claude-1000/-home-me-project/${WAKE_NATIVE_SESSION}/tasks`;
+        yield* Queue.offerAll(harness.sdkMessages, [
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "toolu-bshell1",
+                  content: [
+                    {
+                      type: "text",
+                      text: `Command running in background with ID: bshell1. Output is being written to: ${tasksDir}/bshell1.output. You will be notified when it completes.`,
+                    },
+                  ],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000932",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          taskStarted("bshell1", "3"),
+        ]);
+        yield* awaitUntil(() => rosterHas("bshell1"), "shell on the roster");
+        assert.equal(yield* outputDir(), tasksDir);
+
+        // A finished task's output_file reports it too, and a later report wins.
+        const movedDir = `/tmp/claude-1000/-home-me-other/${WAKE_NATIVE_SESSION}/tasks`;
+        yield* Queue.offerAll(harness.sdkMessages, [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: "bdone1",
+            status: "completed",
+            output_file: `${movedDir}/bdone1.output`,
+            summary: "done",
+            uuid: "00000000-0000-4000-8000-000000000934",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          taskStarted("bshell2", "5"),
+        ]);
+        yield* awaitUntil(() => rosterHas("bshell2"), "second shell on the roster");
+        assert.equal(yield* outputDir(), movedDir);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect.each(["requested", "observed-before", "observed-after", "inherit"] as const)(
     "records the subagent model from %s without inheriting the parent override",
     (source) =>

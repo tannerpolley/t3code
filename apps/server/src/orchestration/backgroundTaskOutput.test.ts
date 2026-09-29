@@ -4,13 +4,23 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
-import type { TerminalOpenInput, TerminalSessionSnapshot } from "@t3tools/contracts";
+import {
+  ProviderSessionId,
+  ProviderThreadId,
+  type TerminalOpenInput,
+  type TerminalSessionSnapshot,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { afterAll, assert, describe, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
+import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import {
@@ -135,12 +145,36 @@ describe("followBackgroundTaskInTerminal", () => {
     label: input.terminalId,
     updatedAt: "2026-09-28T00:00:00.000Z",
   });
+  // One live Claude session, whose roster holds thread-m's running monitor.
+  let sessionTasksDir: string | null = null;
+  const monitorThread = {
+    id: ProviderThreadId.make("provider-thread-m"),
+    providerSessionId: ProviderSessionId.make("provider-session-m"),
+    pendingBackgroundTasks: [{ taskId: "bmon1", taskType: "local_bash" }],
+  };
   const layer = Layer.mergeAll(
     SqlitePersistenceMemory,
     ServerConfig.layerTest(dir, { prefix: "bg-task-follow-config-" }),
     Layer.mock(TerminalManager)({
       open: (input) => Effect.sync(() => (opened.push(input), snapshot(input))),
       write: (input) => Effect.sync(() => void written.push(input.data)),
+    }),
+    Layer.mock(ThreadManagementService)({
+      getThreadRecords: (threadId) =>
+        Effect.succeed({
+          thread: { lineage: { parentThreadId: null } },
+          providerThreads: threadId === "thread-m" ? [monitorThread] : [],
+          turnItems: [],
+        } as never),
+    }),
+    Layer.mock(ProviderSessionManagerV2)({
+      get: () =>
+        Effect.succeed(
+          Option.some({
+            driver: "claudeAgent",
+            backgroundTaskOutputDir: () => Effect.sync(() => sessionTasksDir),
+          } as never),
+        ),
     }),
   ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -196,6 +230,37 @@ describe("followBackgroundTaskInTerminal", () => {
           written.at(-1),
           ` echo 'This background shell no longer has an output file.'\r`,
         );
+      }).pipe(Effect.provide(layer)),
+  );
+
+  effectIt.effect(
+    "follows a running Claude monitor in the directory its live session reported, and says what's missing",
+    () =>
+      Effect.gen(function* () {
+        const messageOf = (exit: Exit.Exit<unknown, { readonly message: string }>) =>
+          Exit.isFailure(exit)
+            ? (Option.getOrNull(Cause.findErrorOption(exit.cause))?.message ?? "")
+            : "";
+        // A Monitor's tool result names no file, and until Claude reports a task path neither
+        // does anything else in its session.
+        const unreported = yield* Effect.exit(follow("thread-m", "bmon1"));
+        assert.match(messageOf(unreported), /has not reported where this session keeps/);
+
+        // Claude writes each monitor event, as it happens, to <session>/tasks/<taskId>.output.
+        sessionTasksDir = NodePath.join(dir, "tasks");
+        const monitorFile = NodePath.join(sessionTasksDir, "bmon1.output");
+        NodeFS.writeFileSync(monitorFile, "event 1\nevent 2\n");
+        yield* follow("thread-m", "bmon1");
+        assert.equal(opened.at(-1)?.env?.T3CODE_BACKGROUND_OUTPUT, monitorFile);
+        assert.equal(written.at(-1), ` tail -c 204800 -F "$T3CODE_BACKGROUND_OUTPUT"\r`);
+
+        // Only the thread's own running tasks resolve.
+        const openedBefore = opened.length;
+        const otherThread = yield* Effect.exit(follow("thread-a", "bmon1"));
+        const notRunning = yield* Effect.exit(follow("thread-m", "bmon9"));
+        assert.match(messageOf(otherThread), /no running background task with that id/);
+        assert.match(messageOf(notRunning), /no running background task with that id/);
+        assert.lengthOf(opened, openedBefore);
       }).pipe(Effect.provide(layer)),
   );
 });
