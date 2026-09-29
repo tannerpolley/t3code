@@ -2751,6 +2751,9 @@ export function makeClaudeAdapterV2(
         // Where Claude writes each session's `<taskId>.output` files, by native session id. Learned
         // from what Claude reports, because a Monitor's tool result names no file.
         const taskOutputDirByNativeThread = new Map<string, string>();
+        // Claude reports a Monitor watcher as local_bash; only the tool_use that spawned it tells
+        // them apart. Recorded from every frame, so it holds whether or not a run was attached.
+        const monitorToolUseIds = new Set<string>();
         // Wake eligibility is separate from the Waiting roster. It survives
         // empty background_tasks_changed levels (SDK: empty level can precede
         // task_notification) and is consumed when the first idle notification
@@ -4758,9 +4761,8 @@ export function makeClaudeAdapterV2(
                   ]
                     .map((context) => context.toolCalls.get(toolUseId))
                     .find((toolCall) => toolCall !== undefined);
-            // Claude reports a Monitor watcher as local_bash; only its spawning call tells them apart.
             const taskType =
-              spawningCall?.toolName === "Monitor"
+              toolUseId !== undefined && monitorToolUseIds.delete(toolUseId)
                 ? "monitor"
                 : (claudeTaskTypeFromSdkMessage(message) ?? undefined);
             yield* upsertPendingBackgroundTask(input.nativeThreadId, {
@@ -4828,6 +4830,9 @@ export function makeClaudeAdapterV2(
           const reportedTaskOutputDir = claudeReportedTaskOutputDir(message);
           if (reportedTaskOutputDir !== null) {
             taskOutputDirByNativeThread.set(liveQuery.nativeThreadId, reportedTaskOutputDir);
+          }
+          for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
+            if (toolUse.name === "Monitor") monitorToolUseIds.add(toolUse.id);
           }
           if (message.type === "rate_limit_event") {
             const rateLimitInfo = message.rate_limit_info;

@@ -5273,6 +5273,72 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("tags a Monitor started before the wake run attaches", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const MONITOR_TOOL_USE_ID = "toolu-idle-monitor";
+        let nextUuid = 0;
+        const frame = (fields: Record<string, unknown>) =>
+          claudeSdkFrame({
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: `uuid-${nextUuid++}`,
+            ...fields,
+          });
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-idle-monitor"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [wakeTaskStarted, turnOneResult]);
+        yield* Queue.take(harness.terminalReceipts);
+        // Claude's wake turn opens a Monitor before T3 has attached its run.
+        const monitorEntry = { task_id: "task-idle-monitor", task_type: "local_bash" };
+        yield* Queue.offerAll(harness.sdkMessages, [
+          wakeNotification,
+          frame({ type: "system", subtype: "init" }),
+          frame({
+            type: "assistant",
+            parent_tool_use_id: null,
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: MONITOR_TOOL_USE_ID,
+                  name: "Monitor",
+                  input: { command: "tail -f /tmp/dev.log", description: "dev server" },
+                },
+              ],
+            },
+          }),
+          frame({ type: "system", subtype: "background_tasks_changed", tasks: [monitorEntry] }),
+          frame({
+            type: "system",
+            subtype: "task_started",
+            ...monitorEntry,
+            tool_use_id: MONITOR_TOOL_USE_ID,
+          }),
+        ]);
+        // Tagged even though no run was attached to see the spawning call.
+        yield* awaitUntil(
+          () =>
+            providerThreadRosterEvents(harness.events)
+              .at(-1)
+              ?.providerThread.pendingBackgroundTasks?.some(
+                (task) => task.taskId === "task-idle-monitor" && task.taskType === "monitor",
+              ) ?? false,
+          "idle Monitor tagged as a monitor",
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect(
     "keeps a subagent shell's tag and start across snapshots and stops it via the parent's query",
     () =>
