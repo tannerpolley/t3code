@@ -263,4 +263,42 @@ describe("followBackgroundTaskInTerminal", () => {
         assert.lengthOf(opened, openedBefore);
       }).pipe(Effect.provide(layer)),
   );
+
+  effectIt.effect("also follows the existing log files a waiting shell's command watches", () =>
+    Effect.gen(function* () {
+      const runLog = NodePath.join(dir, "tmp", "run.log");
+      const monitoredLog = NodePath.join(dir, "fit.log");
+      NodeFS.mkdirSync(NodePath.dirname(runLog), { recursive: true });
+      NodeFS.writeFileSync(runLog, "step 1\n");
+      NodeFS.writeFileSync(monitoredLog, "fit 1\n");
+      const waitFile = NodePath.join(dir, "tasks", "bwait1.output");
+      NodeFS.writeFileSync(waitFile, "");
+      // A subagent's Bash call backgrounds a silent wait on a relative log beside a missing one.
+      yield* insertItem(
+        "item-wait",
+        "thread-w",
+        `{"type":"command_execution","input":"until grep -q DONE tmp/run.log missing.log; do sleep 20; done","output":"${notice("bwait1", waitFile)}"}`,
+      );
+      yield* follow("thread-w", "bwait1");
+      assert.equal(opened.at(-1)?.env?.T3CODE_WATCHED_LOG_1, runLog);
+      assert.isUndefined(opened.at(-1)?.env?.T3CODE_WATCHED_LOG_2);
+      assert.equal(
+        written.at(-1),
+        ` tail -c 204800 -F "$T3CODE_BACKGROUND_OUTPUT" "$T3CODE_WATCHED_LOG_1"\r`,
+      );
+
+      // A Monitor's result names only its task id. With its own output file gone, only the log
+      // it watches is followed.
+      yield* insertItem(
+        "item-monitor",
+        "thread-m",
+        `{"type":"dynamic_tool","input":{"command":"tail -n0 -F ${monitoredLog} | grep --line-buffered Traceback"},"output":{"taskId":"bmon1"}}`,
+      );
+      sessionTasksDir = NodePath.join(dir, "tasks");
+      NodeFS.rmSync(NodePath.join(sessionTasksDir, "bmon1.output"), { force: true });
+      yield* follow("thread-m", "bmon1");
+      assert.equal(opened.at(-1)?.env?.T3CODE_WATCHED_LOG_1, monitoredLog);
+      assert.equal(written.at(-1), ` tail -c 204800 -F "$T3CODE_WATCHED_LOG_1"\r`);
+    }).pipe(Effect.provide(layer)),
+  );
 });

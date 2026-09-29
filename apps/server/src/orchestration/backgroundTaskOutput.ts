@@ -22,6 +22,7 @@
  * client can only name a task, never a path.
  */
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStringDecoder from "node:string_decoder";
 
@@ -44,6 +45,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerConfig } from "../config.ts";
 import { findBackgroundTaskSession } from "../orchestration-v2/BackgroundTaskStop.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
+import { watchedLogPaths } from "./watchedLogPaths.ts";
 
 /** Largest tail sent at once; the client keeps a buffer of the same size. */
 export const BACKGROUND_TASK_OUTPUT_TAIL_BYTES = 200 * 1024;
@@ -315,12 +317,97 @@ export const subscribeBackgroundTaskOutput = Effect.fn(
   ).pipe(Stream.filter((chunk) => chunk !== null));
 });
 
+/** The turn items that can start a background task, with the command they ran. */
+const decodeTaskItem = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Union([
+      Schema.Struct({
+        type: Schema.Literal("command_execution"),
+        input: Schema.String,
+        output: Schema.optional(Schema.NullOr(Schema.String)),
+        nativeItemRef: Schema.optional(Schema.NullOr(Schema.Struct({ nativeId: Schema.String }))),
+      }),
+      // A Claude Monitor.
+      Schema.Struct({
+        type: Schema.Literal("dynamic_tool"),
+        input: Schema.Struct({ command: Schema.String }),
+        output: Schema.Struct({ taskId: Schema.String }),
+      }),
+    ]),
+  ),
+);
+
+/**
+ * The command text that started one of `threadId`'s background tasks, or null: a Claude
+ * monitor's `command`, or the shell command of a Claude background Bash call (a subagent's
+ * result notice names the task's file, a top-level one's structured result its
+ * `backgroundTaskId`) or of a Codex command (its item id is the task id).
+ */
+export const findBackgroundTaskCommand = Effect.fn("orchestration.findBackgroundTaskCommand")(
+  function* (input: { readonly threadId: string; readonly taskId: string }) {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly payload_json: string }>`
+      SELECT payload_json
+      FROM orchestration_v2_projection_turn_items
+      WHERE thread_id = ${input.threadId}
+        AND type IN ('command_execution', 'dynamic_tool')
+        AND payload_json LIKE ${`%${input.taskId}%`}
+    `.pipe(
+      Effect.mapError((cause) =>
+        outputError(input.taskId, "Failed to look up the background task.", cause),
+      ),
+    );
+    for (const row of rows) {
+      const item = Option.getOrNull(decodeTaskItem(row.payload_json));
+      if (item === null) continue;
+      if (item.type === "dynamic_tool") {
+        if (item.output.taskId === input.taskId) return item.input.command;
+        continue;
+      }
+      const output = item.output ?? "";
+      if (
+        item.nativeItemRef?.nativeId === input.taskId ||
+        output.includes(`"backgroundTaskId":"${input.taskId}"`) ||
+        backgroundTaskOutputPath(output, input.taskId) !== null
+      ) {
+        return item.input;
+      }
+    }
+    return null;
+  },
+);
+
+/** Most log files a follow terminal adds beside the task's own output. */
+const MAX_WATCHED_LOGS = 4;
+
+const isRegularFile = (path: string) =>
+  NodeFSP.stat(path).then(
+    (stat) => stat.isFile(),
+    () => false,
+  );
+
+/** The first few of `paths` that are regular files now. */
+async function existingRegularFiles(paths: ReadonlyArray<string>): Promise<Array<string>> {
+  const files: Array<string> = [];
+  for (const path of paths) {
+    if (files.length === MAX_WATCHED_LOGS) break;
+    if (await isRegularFile(path)) files.push(path);
+  }
+  return files;
+}
+
 /** Carries the output path into the follow terminal, so the typed command never shows it. */
 const FOLLOW_OUTPUT_ENV = "T3CODE_BACKGROUND_OUTPUT";
+/** Same for the logs the task's command watches or writes: `T3CODE_WATCHED_LOG_1`, `_2`, … */
+const WATCHED_LOG_ENV = "T3CODE_WATCHED_LOG_";
 
 /**
  * Opens a terminal that follows a background shell's output: a normal shell with `tail -F` typed
  * into it, so Ctrl+C leaves a usable shell. The first screen is capped like the viewer's tail.
+ *
+ * Agents often start the real job detached and background only a silent wait on its log, so the
+ * tab also follows the existing files the task's command reads or writes (`watchedLogPaths`),
+ * relative ones resolved against the terminal's cwd, the thread's workspace.
  */
 export const followBackgroundTaskInTerminal = Effect.fn("terminal.followBackgroundTask")(function* (
   input: TerminalFollowBackgroundTaskInput,
@@ -340,18 +427,32 @@ export const followBackgroundTaskInTerminal = Effect.fn("terminal.followBackgrou
         () => false,
       ),
     ));
+  const command = yield* findBackgroundTaskCommand(input);
+  const watched =
+    command === null
+      ? []
+      : yield* Effect.promise(() =>
+          existingRegularFiles(
+            watchedLogPaths(command, input.cwd, NodeOS.homedir()).filter((file) => file !== path),
+          ),
+        );
+  const watchedEnv = Object.fromEntries(
+    watched.map((file, index) => [`${WATCHED_LOG_ENV}${index + 1}`, file]),
+  );
+  const followed = [...(followable ? [FOLLOW_OUTPUT_ENV] : []), ...Object.keys(watchedEnv)];
   const terminals = yield* TerminalManager;
   const snapshot = yield* terminals.open({
     ...openInput,
-    env: { ...openInput.env, [FOLLOW_OUTPUT_ENV]: path },
+    env: { ...openInput.env, [FOLLOW_OUTPUT_ENV]: path, ...watchedEnv },
   });
   // A leading space keeps the line out of shell history where that is configured.
   yield* terminals.write({
     threadId: input.threadId,
     terminalId: input.terminalId,
-    data: followable
-      ? ` tail -c ${BACKGROUND_TASK_OUTPUT_TAIL_BYTES} -F "$${FOLLOW_OUTPUT_ENV}"\r`
-      : ` echo 'This background shell no longer has an output file.'\r`,
+    data:
+      followed.length > 0
+        ? ` tail -c ${BACKGROUND_TASK_OUTPUT_TAIL_BYTES} -F ${followed.map((name) => `"$${name}"`).join(" ")}\r`
+        : ` echo 'This background shell no longer has an output file.'\r`,
   });
   return snapshot;
 });

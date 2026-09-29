@@ -117,7 +117,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "background-process-output",
     section: "lineage",
     description:
-      "Click a Claude or Codex background process, or a Claude monitor, to open it in a terminal tab that follows its live output or events. Off shows process rows as plain text.",
+      "Click a Claude or Codex background process, or a Claude monitor, to open it in a terminal tab that follows its live output or events, plus the log files its command watches or writes, so a shell that only waits on a detached job shows that job's log. Off shows process rows as plain text.",
   },
   {
     key: "composerCodeFormatting",
