@@ -504,6 +504,8 @@ export const ClientSettingsSchema = Schema.Struct({
   composerCodeFormatting: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Render $…$, $$…$$, \( \) and \[ \] math in chat messages with KaTeX. */
   chatMath: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** A Run button on shell code blocks in assistant messages. */
+  runShellBlocks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Offer to apply supported Codex project settings when onboarding imports projects. */
   onboardingCodexSettings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Show the Issues page in the sidebar. */
@@ -1799,6 +1801,7 @@ export const ClientSettingsPatch = Schema.Struct({
   activityNeedsYouFirst: Schema.optionalKey(Schema.Boolean),
   composerCodeFormatting: Schema.optionalKey(Schema.Boolean),
   chatMath: Schema.optionalKey(Schema.Boolean),
+  runShellBlocks: Schema.optionalKey(Schema.Boolean),
   onboardingCodexSettings: Schema.optionalKey(Schema.Boolean),
   issuesPage: Schema.optionalKey(Schema.Boolean),
   pluginSkills: Schema.optionalKey(Schema.Boolean),

@@ -197,6 +197,13 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+import { ShellRunButton, ShellRunPanel } from "./chat/ShellRun";
+import {
+  isShellRunLanguage,
+  normalizeShellCommand,
+  SHELL_RUN_MAX_COMMAND_CHARS,
+} from "../lib/shellRun";
+import { shellRunBlockKey } from "../state/shellRuns";
 
 interface ChatMarkdownProps {
   text: string;
@@ -230,6 +237,8 @@ interface ChatMarkdownProps {
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
+  /** The assistant message this text is; its shell code blocks get a Run button. */
+  shellRunMessageId?: string | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -1196,12 +1205,14 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  shellRun,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  shellRun: ComponentProps<typeof ShellRunButton> | null;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -1249,59 +1260,67 @@ function MarkdownCodeBlock({
   );
 
   return (
-    <div
-      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
-      data-language={language}
-      data-wrap={wrapped ? "true" : "false"}
-    >
-      <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
-        <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]">
-          <MarkdownCodeBlockTitleContent
-            fenceTitle={fenceTitle}
-            language={language}
-            theme={theme}
-          />
-        </span>
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="chat-markdown-chrome-action"
-                  aria-pressed={wrapped}
-                  onClick={() => setWrapped((value) => !value)}
-                  aria-label={wrapLabel}
-                />
-              }
-            >
-              <WrapTextIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="chat-markdown-chrome-action"
-                  onClick={handleCopy}
-                  aria-label={copyLabel}
-                />
-              }
-            >
-              {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{copyLabel}</TooltipPopup>
-          </Tooltip>
-        </span>
+    <>
+      <div
+        className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+        data-language={language}
+        data-wrap={wrapped ? "true" : "false"}
+      >
+        <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
+          <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]">
+            <MarkdownCodeBlockTitleContent
+              fenceTitle={fenceTitle}
+              language={language}
+              theme={theme}
+            />
+          </span>
+          <span
+            className="flex items-center gap-0.5"
+            role="toolbar"
+            aria-label="Code block actions"
+          >
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-pressed={wrapped}
+                    onClick={() => setWrapped((value) => !value)}
+                    aria-label={wrapLabel}
+                  />
+                }
+              >
+                <WrapTextIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+            </Tooltip>
+            {shellRun ? <ShellRunButton {...shellRun} /> : null}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    onClick={handleCopy}
+                    aria-label={copyLabel}
+                  />
+                }
+              >
+                {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{copyLabel}</TooltipPopup>
+            </Tooltip>
+          </span>
+        </div>
+        {children}
       </div>
-      {children}
-    </div>
+      {shellRun ? <ShellRunPanel blockKey={shellRun.blockKey} /> : null}
+    </>
   );
 }
 
@@ -2541,6 +2560,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  shellRunMessageId,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2711,6 +2731,7 @@ function useChatMarkdownState({
   // synchronously whether to intercept its `_blank`, and a subscription is what
   // makes a persisted "app" apply once settings hydrate after launch.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
+  const runShellBlocks = useClientSettings((settings) => settings.runShellBlocks);
   const resolveThreadPullRequest = useCallback(
     (href: string): (ThreadPullRequestKey & { readonly url: string }) | null => {
       if (
@@ -2931,6 +2952,18 @@ function useChatMarkdownState({
     ],
   );
 
+  // Runs need a thread to run in and a POSIX host (see SHELL_RUN_WRAPPER).
+  const hostOs = serverConfig?.environment.platform.os;
+  const shellRunMessage = useMemo(
+    () =>
+      runShellBlocks &&
+      shellRunMessageId !== undefined &&
+      threadRef !== undefined &&
+      hostOs !== "windows"
+        ? { threadRef, messageId: shellRunMessageId }
+        : null,
+    [hostOs, runShellBlocks, shellRunMessageId, threadRef],
+  );
   const componentState = useMemo(
     () => ({
       cwd,
@@ -2957,6 +2990,7 @@ function useChatMarkdownState({
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
+      shellRunMessage,
       skills,
       text,
       threadRef,
@@ -2987,6 +3021,7 @@ function useChatMarkdownState({
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
+      shellRunMessage,
       skills,
       text,
       threadRef,
@@ -3516,7 +3551,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, isStreaming } = use(ChatMarkdownRendererContext);
+    const { resolvedTheme, diffThemeName, isStreaming, shellRunMessage } = use(
+      ChatMarkdownRendererContext,
+    );
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
@@ -3524,12 +3561,34 @@ const CHAT_MARKDOWN_COMPONENTS = {
 
     const language = extractFenceLanguage(codeBlock.className);
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+    // A block is identified within its message by where it starts in the markdown source.
+    const blockOffset = node?.position?.start.offset;
+    const command =
+      shellRunMessage && !isStreaming && blockOffset !== undefined && isShellRunLanguage(language)
+        ? normalizeShellCommand(codeBlock.code)
+        : "";
+    const shellRun =
+      shellRunMessage &&
+      blockOffset !== undefined &&
+      command.length > 0 &&
+      command.length <= SHELL_RUN_MAX_COMMAND_CHARS
+        ? {
+            blockKey: shellRunBlockKey(
+              shellRunMessage.threadRef,
+              shellRunMessage.messageId,
+              blockOffset,
+            ),
+            threadRef: shellRunMessage.threadRef,
+            command,
+          }
+        : null;
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}
         language={language}
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
+        shellRun={shellRun}
       >
         <RenderErrorBoundary
           resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}

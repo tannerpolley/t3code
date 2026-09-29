@@ -117,7 +117,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "background-process-output",
     section: "lineage",
     description:
-      "Click a Claude or Codex background process, or a Claude monitor, to open it in a terminal tab that follows its live output or events. Off shows process rows as plain text.",
+      "Click a Claude or Codex background process, or a Claude monitor, to open it in a terminal tab that follows its live output or events, plus the log files its command watches or writes, so a shell that only waits on a detached job shows that job's log. Off shows process rows as plain text.",
   },
   {
     key: "composerCodeFormatting",
@@ -132,6 +132,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     section: "composer",
     description:
       "Render math in chat messages: $…$, $$…$$, \\( \\) and \\[ \\]. Dollar amounts such as $5 stay text. Off shows the formula source as plain text.",
+  },
+  {
+    key: "runShellBlocks",
+    searchId: "run-shell-blocks",
+    section: "composer",
+    description:
+      "A play button on bash, sh, zsh, shell, console and terminal code blocks in the agent's replies. It runs the block right away in the thread's folder (its worktree when it has one), shows the output under the block, and sends the command, exit code and output to the agent, queued behind its current work. Open the run in a terminal tab from the output panel. Off hides the button.",
   },
   {
     key: "pluginSkills",
