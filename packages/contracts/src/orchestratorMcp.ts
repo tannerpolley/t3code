@@ -189,7 +189,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   workspace: Schema.optional(
     Schema.Literals(["inherit", "worktree"]).annotate({
       description:
-        "Defaults to inherit: the child works in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's branch (local commits; uncommitted changes are not copied), with the project's setup script run there before the child starts.",
+        "Defaults to worktree for implementation and test roles, inherit otherwise. inherit keeps the child in this thread's checkout. worktree requires this thread to have a Git branch and gives the child its own new git worktree cut from that branch (local commits; uncommitted changes are not copied), with the project's setup script run before the child starts. Explicit workspace always overrides the role default.",
     }),
   ),
 });

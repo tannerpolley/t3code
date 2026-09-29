@@ -1499,14 +1499,17 @@ const make = Effect.gen(function* () {
           operation: "delegate-task",
         });
         const parentBranch = parent.thread.branch;
-        if (input.workspace === "worktree" && parentBranch === null) {
+        const workspace =
+          input.workspace ??
+          (input.role === "implementation" || input.role === "test" ? "worktree" : "inherit");
+        if (workspace === "worktree" && parentBranch === null) {
           return yield* failure(
             "invalid_request",
             "workspace \"worktree\" cuts the child's branch from this thread's branch, but this thread is not on a git branch.",
           );
         }
         const worktreeBranch =
-          input.workspace === "worktree" ? delegatedWorktreeBranch(input, commandId) : undefined;
+          workspace === "worktree" ? delegatedWorktreeBranch(input, commandId) : undefined;
         const result = yield* threadManagement
           .dispatch({
             type: "delegated_task.request",

@@ -160,6 +160,10 @@ snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
 On web and desktop, use **Agents** to follow work delegated to subagents.
+Delegated implementation and test agents get their own worktree and branch by
+default. Research and review agents use the coordinating thread's checkout.
+An agent can explicitly choose either workspace; creating a worktree requires
+the coordinating thread to be on a Git branch.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

@@ -2086,76 +2086,96 @@ describe("delegate_task workspace", () => {
       ),
     );
 
-  it.effect("gives a worktree child its own branch from the parent's before its first turn", () =>
-    Effect.gen(function* () {
-      const setupEntered = yield* Deferred.make<string>();
-      const allowSetup = yield* Deferred.make<void>();
-      const harness = makeHarness({
-        providers: [codexProvider],
-        runSetup: (input) =>
-          Deferred.succeed(setupEntered, input.worktreePath).pipe(
-            Effect.andThen(Deferred.await(allowSetup)),
-            Effect.as({ status: "no-script" as const }),
-          ),
-      });
-      yield* withDelegatingParent(harness, (service) =>
+  for (const workspaceChoice of [
+    { workspace: "worktree" },
+    { role: "implementation" },
+    { role: "test" },
+  ] as const) {
+    it.effect(
+      `prepares an isolated child before its first turn (${JSON.stringify(workspaceChoice)})`,
+      () =>
+        Effect.gen(function* () {
+          const setupEntered = yield* Deferred.make<string>();
+          const allowSetup = yield* Deferred.make<void>();
+          const harness = makeHarness({
+            providers: [codexProvider],
+            runSetup: (input) =>
+              Deferred.succeed(setupEntered, input.worktreePath).pipe(
+                Effect.andThen(Deferred.await(allowSetup)),
+                Effect.as({ status: "no-script" as const }),
+              ),
+          });
+          yield* withDelegatingParent(harness, (service) =>
+            Effect.gen(function* () {
+              const threads = yield* ThreadManagement.ThreadManagementService;
+              const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+              const request = {
+                task: "Implement the parser",
+                title: "Parser",
+                ...workspaceChoice,
+                clientRequestId: "parser",
+              } as const;
+              const task = yield* service.delegateTask(scope, request);
+              const created = yield* threads.getThreadProjection(task.childThreadId);
+              assert.equal(created.runs[0]?.status, "preparing");
+              assert.isNull(created.thread.worktreePath);
+
+              // Setup runs in the bound worktree while the child's run still waits to start.
+              assert.equal(yield* Deferred.await(setupEntered), "/repo-worktrees/feature");
+              const worktree = harness.createWorktree.mock.calls[0]![0];
+              assert.equal(worktree.cwd, "/repo");
+              assert.equal(worktree.refName, "feature/parent");
+              assert.match(worktree.newRefName ?? "", /^t3code\/parser-[0-9a-f]{8}$/);
+              const preparing = yield* threads.getThreadProjection(task.childThreadId);
+              assert.equal(preparing.thread.worktreePath, "/repo-worktrees/feature");
+              assert.equal(preparing.thread.branch, worktree.newRefName);
+              assert.equal(preparing.runs[0]?.status, "preparing");
+
+              // Retries with the same clientRequestId, during and after preparation, reuse it.
+              assert.equal((yield* service.delegateTask(scope, request)).taskId, task.taskId);
+              yield* Deferred.succeed(allowSetup, undefined);
+              yield* tracker.stream(task.childThreadId).pipe(
+                Stream.filter((snapshot) => snapshot?.phase === "done"),
+                Stream.runHead,
+              );
+              const retried = yield* service.delegateTask(scope, request);
+              assert.equal(retried.taskId, task.taskId);
+              assert.equal(harness.createWorktree.mock.calls.length, 1);
+              assert.equal(retried.worktreePath, "/repo-worktrees/feature");
+              assert.equal(retried.branch, worktree.newRefName);
+              const started = yield* threads.getThreadProjection(task.childThreadId);
+              assert.equal(started.runs.length, 1);
+              assert.equal(started.runs[0]?.status, "starting");
+            }),
+          );
+        }),
+    );
+  }
+
+  for (const workspaceChoice of [
+    {},
+    { role: "research" },
+    { role: "review" },
+    { role: "design" },
+    { role: "implementation", workspace: "inherit" },
+    { role: "test", workspace: "inherit" },
+  ] as const) {
+    it.effect(`keeps a child in the parent's checkout (${JSON.stringify(workspaceChoice)})`, () => {
+      const harness = makeHarness({ providers: [codexProvider] });
+      return withDelegatingParent(harness, (service) =>
         Effect.gen(function* () {
           const threads = yield* ThreadManagement.ThreadManagementService;
-          const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-          const request = {
-            task: "Implement the parser",
-            title: "Parser",
-            workspace: "worktree",
-            clientRequestId: "parser",
-          } as const;
-          const task = yield* service.delegateTask(scope, request);
-          const created = yield* threads.getThreadProjection(task.childThreadId);
-          assert.equal(created.runs[0]?.status, "preparing");
-          assert.isNull(created.thread.worktreePath);
-
-          // Setup runs in the bound worktree while the child's run still waits to start.
-          assert.equal(yield* Deferred.await(setupEntered), "/repo-worktrees/feature");
-          const worktree = harness.createWorktree.mock.calls[0]![0];
-          assert.equal(worktree.cwd, "/repo");
-          assert.equal(worktree.refName, "feature/parent");
-          assert.match(worktree.newRefName ?? "", /^t3code\/parser-[0-9a-f]{8}$/);
-          const preparing = yield* threads.getThreadProjection(task.childThreadId);
-          assert.equal(preparing.thread.worktreePath, "/repo-worktrees/feature");
-          assert.equal(preparing.thread.branch, worktree.newRefName);
-          assert.equal(preparing.runs[0]?.status, "preparing");
-
-          // Retries with the same clientRequestId, during and after preparation, reuse it.
-          assert.equal((yield* service.delegateTask(scope, request)).taskId, task.taskId);
-          yield* Deferred.succeed(allowSetup, undefined);
-          yield* tracker.stream(task.childThreadId).pipe(
-            Stream.filter((snapshot) => snapshot?.phase === "done"),
-            Stream.runHead,
-          );
-          const retried = yield* service.delegateTask(scope, request);
-          assert.equal(retried.taskId, task.taskId);
-          assert.equal(harness.createWorktree.mock.calls.length, 1);
-          assert.equal(retried.worktreePath, "/repo-worktrees/feature");
-          assert.equal(retried.branch, worktree.newRefName);
-          const started = yield* threads.getThreadProjection(task.childThreadId);
-          assert.equal(started.runs.length, 1);
-          assert.equal(started.runs[0]?.status, "starting");
+          const task = yield* service.delegateTask(scope, {
+            task: "Review the parser",
+            ...workspaceChoice,
+          });
+          assert.equal(task.branch, "feature/parent");
+          assert.equal(task.worktreePath, "/repo-worktrees/parent");
+          assert.equal(harness.createWorktree.mock.calls.length, 0);
+          const child = yield* threads.getThreadProjection(task.childThreadId);
+          assert.equal(child.runs[0]?.status, "starting");
         }),
       );
-    }),
-  );
-
-  it.effect("keeps a default child in the parent's checkout", () => {
-    const harness = makeHarness({ providers: [codexProvider] });
-    return withDelegatingParent(harness, (service) =>
-      Effect.gen(function* () {
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const task = yield* service.delegateTask(scope, { task: "Review the parser" });
-        assert.equal(task.branch, "feature/parent");
-        assert.equal(task.worktreePath, "/repo-worktrees/parent");
-        assert.equal(harness.createWorktree.mock.calls.length, 0);
-        const child = yield* threads.getThreadProjection(task.childThreadId);
-        assert.equal(child.runs[0]?.status, "starting");
-      }),
-    );
-  });
+    });
+  }
 });
