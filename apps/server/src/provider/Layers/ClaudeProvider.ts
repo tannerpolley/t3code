@@ -1,3 +1,4 @@
+import * as NodePath from "node:path";
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -181,6 +182,21 @@ export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+/**
+ * A probe started in the home directory would read `~/.claude/settings.json` as
+ * project settings, and Claude's startup plugin sync then records every enabled
+ * plugin as a project install for $HOME. Home is never a project, so read only
+ * user settings there.
+ */
+function claudeProbeSettingSources(
+  cwd: string | undefined,
+  home: string | undefined,
+): Array<SettingSource> {
+  const inHome =
+    cwd !== undefined && home !== undefined && NodePath.resolve(cwd) === NodePath.resolve(home);
+  return inHome ? ["user"] : [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES];
+}
+
 /** Build the exact SDK options used by the periodic Claude capability probe. */
 export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly executablePath: string;
@@ -192,7 +208,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
-    settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
+    settingSources: claudeProbeSettingSources(input.cwd, input.environment.HOME),
     // The probe keeps filesystem setting sources for slash-command discovery,
     // but must not run the user's hooks: it fires every few minutes, so
     // SessionStart hooks would run on every health check.

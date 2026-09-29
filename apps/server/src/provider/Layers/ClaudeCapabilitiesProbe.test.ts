@@ -23,6 +23,16 @@ vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
+it("reads only user settings when the probe starts in the home directory", () => {
+  const options = buildClaudeCapabilitiesProbeQueryOptions({
+    executablePath: "/usr/bin/claude",
+    abortController: new AbortController(),
+    environment: { HOME: "/home/user" },
+    cwd: "/home/user/",
+  });
+  assert.deepEqual(options.settingSources, ["user"]);
+});
+
 it("isolates Claude capability probes without dropping workspace setting sources", () => {
   const abortController = new AbortController();
   const options = buildClaudeCapabilitiesProbeQueryOptions({
