@@ -2166,6 +2166,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
       });
     }
+    if (
+      command.type === "thread.metadata.update" &&
+      command.titleRefreshGuard !== undefined &&
+      (command.titleRefreshGuard.title !== thread.title ||
+        command.titleRefreshGuard.evaluationRequestId !==
+          (thread.titleEvaluation?.requestId ?? null) ||
+        thread.titleSource === "user" ||
+        thread.titleRegeneration != null)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} title changed or is regenerating; the automatic refresh is skipped.`,
+      });
+    }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs"])
@@ -2616,13 +2631,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       : []),
                   ],
                 }),
-            // regenerateTitle: true arms the in-flight marker; a landing title
-            // or an explicit false (generation failed/abandoned) clears it.
+            // regenerateTitle: true arms the in-flight marker and hands the title
+            // back to generation; a rename makes it the user's and clears the marker,
+            // as does an explicit false (generation failed/abandoned).
             ...(command.regenerateTitle === true
-              ? { titleRegeneration: { requestId: command.commandId, startedAt: now } }
-              : command.regenerateTitle === false || command.title !== undefined
-                ? { titleRegeneration: null }
-                : {}),
+              ? {
+                  titleRegeneration: { requestId: command.commandId, startedAt: now },
+                  titleSource: "generated" as const,
+                }
+              : command.title !== undefined
+                ? {
+                    titleRegeneration: null,
+                    titleSource:
+                      command.renamedBy === undefined || command.renamedBy === "user"
+                        ? ("user" as const)
+                        : ("generated" as const),
+                  }
+                : command.regenerateTitle === false
+                  ? { titleRegeneration: null }
+                  : {}),
             updatedAt: now,
           };
         }
@@ -2762,6 +2789,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ...thread,
                 ...(command.title === undefined ? {} : { title: command.title }),
                 titleRegeneration: null,
+                titleEvaluation: {
+                  requestId: command.requestId,
+                  outcome:
+                    command.failed === true
+                      ? "failed"
+                      : command.title !== undefined && command.title !== thread.title
+                        ? "changed"
+                        : "unchanged",
+                  evaluatedAt: DateTime.formatIso(thread.titleRegeneration.startedAt),
+                },
                 updatedAt: now,
               }
             : thread;
@@ -4128,6 +4165,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
       if (
         !isNativeMaintenanceCommand(command) &&
+        // A title the user typed before the first message is kept.
+        projection.thread.titleSource !== "user" &&
         ((command.titleSeed !== undefined &&
           (yield* projectionStore
             .getMessageCount(command.threadId)

@@ -205,6 +205,8 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
       assert.isTrue((yield* maintenance.verify).valid);
       const shellProjection = yield* projections.getThreadProjection(threadId);
       assert.equal(shellProjection.thread.historyOrigin, "v1_import");
+      // V1 kept no title provenance, so an imported title is protected from automatic refresh.
+      assert.equal(shellProjection.thread.titleSource, "user");
       assert.equal(shellProjection.thread.branch, "main");
       assert.equal(shellProjection.thread.worktreePath, "/tmp/legacy-project");
       assert.deepEqual(

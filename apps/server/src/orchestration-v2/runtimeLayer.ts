@@ -1,5 +1,6 @@
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as IdleSessionReaper from "./IdleSessionReaper.ts";
+import * as ThreadTitleRefreshWorker from "./ThreadTitleRefreshWorker.ts";
 import * as ChildQuestionWake from "./ChildQuestionWake.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -310,6 +311,9 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
         providerSessionManagerProvided,
       ),
     ),
+  ),
+  ThreadTitleRefreshWorker.workerLive.pipe(
+    Layer.provide(Layer.merge(projectionStoreLayer, threadManagementProvided)),
   ),
   ChildQuestionWake.layer.pipe(
     Layer.provide(

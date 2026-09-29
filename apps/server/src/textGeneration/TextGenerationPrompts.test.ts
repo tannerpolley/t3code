@@ -188,16 +188,14 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("67890 bytes");
   });
 
-  it("regenerates from recent thread contents and identifies the previous title", () => {
+  it("regenerates from recent thread contents and identifies the current title", () => {
     const result = buildThreadTitlePrompt({
       message: `USER:\nInvestigate reconnect regressions\n\nASSISTANT:\nThe remaining issue is stale session state`,
       previousTitle: "Investigate reconnect regressions",
     });
 
-    expect(result.prompt).toContain(
-      "Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.",
-    );
-    expect(result.prompt).toContain('The previous title was "Investigate reconnect regressions".');
+    expect(result.prompt).toContain("what the thread is responsible for right now");
+    expect(result.prompt).toContain('The current title is "Investigate reconnect regressions".');
     expect(result.prompt).toContain("Thread contents:");
     expect(result.prompt).toContain("The remaining issue is stale session state");
   });
