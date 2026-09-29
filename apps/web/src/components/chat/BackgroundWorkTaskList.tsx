@@ -11,10 +11,24 @@ import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "./AgentElapsed";
-import { BackgroundProcessOutputButton } from "./BackgroundProcessOutput";
+import {
+  BackgroundProcessOutputButton,
+  BackgroundShellElapsed,
+  StopBackgroundShellButton,
+  STOP_SHELL_ON_ROW_HOVER_CLASS,
+} from "./BackgroundProcessOutput";
 import type { BackgroundWorkTaskRow } from "./BackgroundWorkTaskList.logic";
 import { resolveSubagentModelLabel } from "./SubagentTooltipContent";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
+
+/** Shells turn amber once they may be stuck; agents show plain elapsed time. */
+function elapsed(kind: BackgroundWorkTaskRow["kind"], startedAt: string) {
+  return kind === "process" ? (
+    <BackgroundShellElapsed startedAt={startedAt} />
+  ) : (
+    <AgentElapsed agent={{ status: "running", startedAt, completedAt: null }} />
+  );
+}
 
 /**
  * One row per pending background task; subagents with a thread open it like their Lineage row.
@@ -87,11 +101,7 @@ export function BackgroundWorkTaskList(props: {
             ) : null}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
             <span className="w-12 shrink-0 text-right text-muted-foreground tabular-nums">
-              {row.startedAt ? (
-                <AgentElapsed
-                  agent={{ status: "running", startedAt: row.startedAt, completedAt: null }}
-                />
-              ) : null}
+              {row.startedAt ? elapsed(row.kind, row.startedAt) : null}
             </span>
             <ThreadStatusMark status={row.status ?? "working"} />
           </>
@@ -108,9 +118,7 @@ export function BackgroundWorkTaskList(props: {
               </span>
             ) : row.startedAt ? (
               <span className="w-12 shrink-0 text-right text-muted-foreground">
-                <AgentElapsed
-                  agent={{ status: "running", startedAt: row.startedAt, completedAt: null }}
-                />
+                {elapsed(row.kind, row.startedAt)}
               </span>
             ) : null}
           </>
@@ -155,6 +163,8 @@ export function BackgroundWorkTaskList(props: {
             className={
               props.columns
                 ? cn(
+                    // Only a shell row is a hover group, so its stop button shows on its own hover.
+                    row.kind === "process" && "group/shell",
                     // Straight tree lines: a trunk from the owner's icon, an elbow to each row's
                     // middle; the last row's trunk stops at its elbow.
                     "relative ps-1.5 before:absolute before:start-0 before:bottom-0 before:border-s before:border-sidebar-border after:absolute after:start-0 after:top-3 after:w-3 after:border-t after:border-sidebar-border last:before:bottom-auto",
@@ -162,7 +172,7 @@ export function BackgroundWorkTaskList(props: {
                       ? "before:-top-1 last:before:h-4"
                       : "before:-top-2 last:before:h-5",
                   )
-                : undefined
+                : cn("relative", row.kind === "process" && "group/shell")
             }
           >
             {props.compact ? (
@@ -175,6 +185,15 @@ export function BackgroundWorkTaskList(props: {
             ) : (
               element
             )}
+            {row.kind === "process" ? (
+              <StopBackgroundShellButton
+                environmentId={props.environmentId}
+                threadId={props.threadId}
+                taskId={row.taskId}
+                label={row.label}
+                className={cn(STOP_SHELL_ON_ROW_HOVER_CLASS, props.columns ? "end-1.5" : "end-0.5")}
+              />
+            ) : null}
             {props.renderNested?.(row)}
           </li>
         );

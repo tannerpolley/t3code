@@ -190,6 +190,7 @@ import {
   followBackgroundTaskInTerminal,
   subscribeBackgroundTaskOutput,
 } from "./orchestration/backgroundTaskOutput.ts";
+import { stopBackgroundTask } from "./orchestration-v2/BackgroundTaskStop.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
@@ -1971,6 +1972,15 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput,
             subscribeBackgroundTaskOutput(input),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask,
+            stopBackgroundTask(input),
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.thread_id": input.threadId,

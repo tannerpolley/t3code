@@ -58,6 +58,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
       transform: (stream) => stream.pipe(Stream.scan("", appendBackgroundTaskOutput)),
     }),
+    stopBackgroundTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:stop-background-task",
+      tag: ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask,
+    }),
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnDiff,

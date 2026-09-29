@@ -34,6 +34,7 @@ import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -3213,6 +3214,54 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
         }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
       ),
+  );
+
+  it.effect("stops one background command by its item id through its process", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-bg-stop-one",
+            entries: [
+              ...backgroundExecTranscript.entries.slice(0, -1),
+              {
+                type: "expect_outbound",
+                label: "terminate-background-command",
+                frame: {
+                  id: 4,
+                  method: "thread/backgroundTerminals/terminate",
+                  params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "terminate-background-command",
+                frame: { id: 4, result: { terminated: true } },
+              },
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-bg-stop-one"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* harness.firstTerminal;
+        const stop = harness.runtime.stopBackgroundTask;
+        if (stop === undefined) return yield* Effect.die("Codex must stop background commands.");
+        // An id Codex is not running is refused before anything reaches Codex.
+        const unknown = yield* Effect.exit(
+          stop({ providerThread: harness.providerThread, taskId: "call-not-running" }),
+        );
+        assert.isTrue(Exit.isFailure(unknown));
+        // The replay only accepts terminate for the command's own process id.
+        yield* stop({ providerThread: harness.providerThread, taskId: BG_COMMAND_ITEM });
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
   );
 
   for (const terminated of [true, false, "still_running"] as const) {

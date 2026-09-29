@@ -69,7 +69,12 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
 import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
-import { BackgroundProcessOutputButton } from "./BackgroundProcessOutput";
+import {
+  BackgroundProcessOutputButton,
+  BackgroundShellElapsed,
+  StopBackgroundShellButton,
+  STOP_SHELL_ON_ROW_HOVER_CLASS,
+} from "./BackgroundProcessOutput";
 import {
   type BackgroundWorkTaskRow,
   describeBackgroundWorkTasks,
@@ -224,8 +229,9 @@ export function resolveSubagentProgressText(input: {
 }
 
 /**
- * The thread's own background shells, listed with its children: a terminal, the command, and a
- * spinner. A row opens the process output when that viewer is on.
+ * The thread's own background shells, listed with its children: a terminal, the command, its age,
+ * and a spinner that a stop button covers on hover. A row opens the process output when that
+ * viewer is on.
  */
 function LineageProcessRows(props: {
   readonly environmentId: EnvironmentId;
@@ -242,11 +248,16 @@ function LineageProcessRows(props: {
             <span className="min-w-0 flex-1 truncate leading-4 text-foreground/85">
               {row.label}
             </span>
+            {row.startedAt ? (
+              <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
+                <BackgroundShellElapsed startedAt={row.startedAt} />
+              </span>
+            ) : null}
             <ThreadStatusMark status="working" />
           </>
         );
         return (
-          <li key={row.taskId} className="flex">
+          <li key={row.taskId} className="group/shell relative flex">
             {processOutput ? (
               <BackgroundProcessOutputButton
                 environmentId={props.environmentId}
@@ -262,6 +273,13 @@ function LineageProcessRows(props: {
                 {content}
               </div>
             )}
+            <StopBackgroundShellButton
+              environmentId={props.environmentId}
+              threadId={props.threadId}
+              taskId={row.taskId}
+              label={row.label}
+              className={cn(STOP_SHELL_ON_ROW_HOVER_CLASS, "end-2 top-2")}
+            />
           </li>
         );
       })}

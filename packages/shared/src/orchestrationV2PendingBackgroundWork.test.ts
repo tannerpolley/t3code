@@ -1,8 +1,11 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import {
   derivePendingBackgroundWork,
   formatPendingBackgroundWorkLabel,
 } from "./orchestrationV2PendingBackgroundWork.ts";
+
+const SHELL_STARTED_AT = DateTime.makeUnsafe("2026-09-29T08:00:00.000Z");
 
 describe("derivePendingBackgroundWork", () => {
   it("returns empty while the latest run is not settled", () => {
@@ -123,8 +126,13 @@ describe("derivePendingBackgroundWork", () => {
           id: "pt-1" as never,
           pendingBackgroundTasks: [
             { taskId: "bg-1", description: "Run Codex review", taskType: "local_bash" },
-            // A shell a Claude subagent started keeps the subagent's thread.
-            { taskId: "bg-2", taskType: "local_bash", childThreadId: "child-1" as never },
+            // A shell a Claude subagent started keeps the subagent's thread and start time.
+            {
+              taskId: "bg-2",
+              taskType: "local_bash",
+              childThreadId: "child-1" as never,
+              startedAt: SHELL_STARTED_AT,
+            },
           ],
         },
       ],
@@ -133,7 +141,12 @@ describe("derivePendingBackgroundWork", () => {
     });
     expect(tasks).toEqual([
       { taskId: "bg-1", description: "Run Codex review", taskType: "local_bash" },
-      { taskId: "bg-2", taskType: "local_bash", childThreadId: "child-1" },
+      {
+        taskId: "bg-2",
+        taskType: "local_bash",
+        childThreadId: "child-1",
+        startedAt: SHELL_STARTED_AT,
+      },
     ]);
   });
 
@@ -149,6 +162,7 @@ describe("derivePendingBackgroundWork", () => {
           title: "npm test",
           nativeItemRef: { nativeId: "cmd-1" },
           input: "npm test",
+          startedAt: SHELL_STARTED_AT,
         },
         {
           id: "item-2" as never,
@@ -161,7 +175,12 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([
-      { taskId: "cmd-1", description: "npm test", taskType: "command_execution" },
+      {
+        taskId: "cmd-1",
+        description: "npm test",
+        taskType: "command_execution",
+        startedAt: SHELL_STARTED_AT,
+      },
     ]);
   });
 

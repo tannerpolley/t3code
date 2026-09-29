@@ -349,6 +349,8 @@ export interface ClaudeAgentSdkQuerySession {
   readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Stops one background task; the SDK then reports it with a `stopped` task_notification. */
+  readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -469,6 +471,14 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly stage: "decoded";
       readonly payload: {
         readonly type: "query.interrupt";
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.stop_task";
+        readonly taskId: string;
       };
     }
   | {
@@ -665,6 +675,19 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
               }),
             ),
           ),
+          stopTask: (taskId) =>
+            Effect.tryPromise({
+              try: () => queryRuntime.stopTask(taskId),
+              catch: (cause) => queryRunnerError(cause, "stopTask"),
+            }).pipe(
+              Effect.tap(() =>
+                logProtocolEvent({
+                  direction: "outgoing",
+                  stage: "decoded",
+                  payload: { type: "query.stop_task", taskId },
+                }),
+              ),
+            ),
           close: Queue.shutdown(promptQueue).pipe(
             Effect.andThen(closeClaudeQuery(queryRuntime)),
             Effect.tap(() =>
@@ -2961,21 +2984,29 @@ export function makeClaudeAdapterV2(
           tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
         ) =>
           Effect.gen(function* () {
+            const now = yield* DateTime.now;
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const updated = new Map(current);
               if (tasks.length === 0) {
                 updated.delete(nativeThreadId);
               } else {
-                // Snapshots carry ids only: keep the subagent thread that task_started tagged.
+                // Snapshots carry ids only: keep the subagent thread that task_started tagged,
+                // and the time the task first entered the roster.
                 const previous = rosterForNativeThread(current, nativeThreadId);
                 updated.set(
                   nativeThreadId,
                   new Map(
                     tasks.map((task) => {
-                      const childThreadId = previous.get(task.taskId)?.childThreadId;
+                      const kept = previous.get(task.taskId);
                       return [
                         task.taskId,
-                        childThreadId === undefined ? task : { ...task, childThreadId },
+                        {
+                          ...task,
+                          ...(kept?.childThreadId === undefined
+                            ? {}
+                            : { childThreadId: kept.childThreadId }),
+                          startedAt: kept?.startedAt ?? now,
+                        },
                       ] as const;
                     }),
                   ),
@@ -2999,9 +3030,14 @@ export function makeClaudeAdapterV2(
           task: OrchestrationV2PendingBackgroundTask,
         ) =>
           Effect.gen(function* () {
+            const now = yield* DateTime.now;
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const roster = new Map(rosterForNativeThread(current, nativeThreadId));
-              roster.set(task.taskId, task);
+              // A snapshot may have listed the task first; keep when it entered the roster.
+              roster.set(task.taskId, {
+                ...task,
+                startedAt: roster.get(task.taskId)?.startedAt ?? now,
+              });
               return new Map(current).set(nativeThreadId, roster);
             });
             yield* markWakeEligibleOpaqueBackgroundTasks(nativeThreadId, [task.taskId]);
@@ -6249,6 +6285,39 @@ export function makeClaudeAdapterV2(
                 ).size > 0
               );
             }),
+          stopBackgroundTask: Effect.fn("ClaudeAdapterV2.stopBackgroundTask")(
+            function* (stopInput) {
+              const nativeThreadId = stopInput.providerThread.nativeThreadRef?.nativeId;
+              const live = yield* Ref.get(queryContext);
+              if (
+                nativeThreadId === undefined ||
+                nativeThreadId === null ||
+                !(yield* hasPendingBackgroundTaskOnNativeThread(nativeThreadId, stopInput.taskId))
+              ) {
+                return yield* new ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude provider thread ${stopInput.providerThread.id} has no running background task ${stopInput.taskId}.`,
+                });
+              }
+              if (live === null || live.nativeThreadId !== nativeThreadId) {
+                return yield* new ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude provider thread ${stopInput.providerThread.id} has no live query.`,
+                });
+              }
+              // The SDK answers with a `stopped` task_notification, which clears the roster.
+              yield* live.query.stopTask(stopInput.taskId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail: `Claude could not stop background task ${stopInput.taskId}.`,
+                      cause,
+                    }),
+                ),
+              );
+            },
+          ),
           ensureThread: Effect.fn("ClaudeAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapterV2EnsureThreadInput) {
               const createdAt = yield* DateTime.now;

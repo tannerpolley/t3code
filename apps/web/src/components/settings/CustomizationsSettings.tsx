@@ -265,6 +265,11 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
       "A background shell that a Claude subagent starts is listed under that subagent in the sidebar and in Lineage, not beside the parent's own agents, and keeps the subagent waiting until it ends. The parent still waits on it, since the shell runs in the parent's session.",
   },
   {
+    title: "Background shells can be stopped",
+    description:
+      "Background shells show their age, flag possible stuck waits after 2 hours, and can be stopped.",
+  },
+  {
     title: "Subagents waiting on their own work stay running",
     description:
       "A delegated task whose turn ended while its own background work still runs stays with the running agents in Lineage and counts as running, instead of moving under Previous agents.",

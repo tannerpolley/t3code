@@ -186,6 +186,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
   OrchestrationV2BackgroundTaskOutputError,
+  OrchestrationV2StopBackgroundTaskError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
@@ -1566,6 +1567,14 @@ const WsOrchestrationV2SubscribeBackgroundTaskOutputRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2StopBackgroundTaskRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask,
+  {
+    payload: OrchestrationV2RpcSchemas.stopBackgroundTask.input,
+    error: Schema.Union([OrchestrationV2StopBackgroundTaskError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -1842,4 +1851,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeBackgroundTaskOutputRpc,
+  WsOrchestrationV2StopBackgroundTaskRpc,
 );

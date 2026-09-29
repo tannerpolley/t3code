@@ -5909,6 +5909,32 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
               ),
             ),
+          stopBackgroundTask: (stopInput) =>
+            Effect.gen(function* () {
+              // A background command's task id is its native item id; Codex names its process.
+              const tracked = [...(yield* Ref.get(runningCommandItemsByTurn)).values()]
+                .map((items) => items.get(stopInput.taskId))
+                .find((item) => item !== undefined);
+              if (tracked?.processId === undefined) {
+                return yield* toProtocolError(
+                  `Codex has no running background command ${stopInput.taskId}.`,
+                );
+              }
+              // Codex then completes the command item, which ends its pending work.
+              yield* terminateBackgroundTerminal(
+                yield* getNativeThreadId(stopInput.providerThread),
+                tracked.processId,
+              );
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterProtocolError({
+                    driver: CODEX_PROVIDER,
+                    detail: `Failed to stop Codex background command ${stopInput.taskId}.`,
+                    payload: cause,
+                  }),
+              ),
+            ),
           uploadFeedback: (feedbackInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(feedbackInput.providerThread);

@@ -1,8 +1,13 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { useNavigate } from "@tanstack/react-router";
-import { useLayoutEffect, useRef, useState, type ComponentProps } from "react";
+import { SquareIcon } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 
 import { readProject, readThreadShell } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -11,7 +16,12 @@ import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { cn } from "../../lib/utils";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { AgentElapsed } from "./AgentElapsed";
+import { msUntilPossiblyStuck } from "./BackgroundWorkTaskList.logic";
 
 interface BackgroundProcessTarget {
   readonly environmentId: EnvironmentId;
@@ -141,5 +151,92 @@ function BackgroundProcessOutputView(props: BackgroundProcessTarget) {
         </pre>
       )}
     </div>
+  );
+}
+
+/**
+ * How long a background shell has run. Past the possibly-stuck threshold it turns amber with a
+ * hint; one timer flips it there, while `AgentElapsed` keeps its own ticking.
+ */
+export function BackgroundShellElapsed(props: { readonly startedAt: string }) {
+  // Rows are keyed by task, so a shell's start never changes under this state.
+  const [stuck, setStuck] = useState(() => msUntilPossiblyStuck(props.startedAt, Date.now()) === 0);
+  useEffect(() => {
+    if (stuck) return;
+    const id = setTimeout(() => setStuck(true), msUntilPossiblyStuck(props.startedAt, Date.now()));
+    return () => clearTimeout(id);
+  }, [props.startedAt, stuck]);
+  const elapsed = (
+    <AgentElapsed agent={{ status: "running", startedAt: props.startedAt, completedAt: null }} />
+  );
+  if (!stuck) return elapsed;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="text-amber-600 dark:text-amber-400" />}>
+        {elapsed}
+      </TooltipTrigger>
+      <TooltipPopup className="max-w-72">
+        Possibly stuck: running for over 2 hours. A wait loop such as{" "}
+        <code>until ! pgrep -f …</code> can match itself and never end. Stop it if it should have
+        finished.
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/**
+ * Places a row's stop button over its status mark, shown while the row (a `group/shell`) is
+ * hovered or the button has focus. Callers add the horizontal inset.
+ */
+export const STOP_SHELL_ON_ROW_HOVER_CLASS =
+  "pointer-events-none absolute top-0.5 bg-accent opacity-0 group-hover/shell:pointer-events-auto group-hover/shell:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100";
+
+/**
+ * Stops one background shell through the provider session running it. It sits beside the row's
+ * own button (buttons cannot nest), so a click here never opens the output.
+ */
+export function StopBackgroundShellButton(
+  props: BackgroundProcessTarget & { readonly className?: string },
+) {
+  const stop = useAtomCommand(orchestrationEnvironment.stopBackgroundTask, {
+    reportFailure: false,
+  });
+  const [stopping, setStopping] = useState(false);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Stop ${props.label}`}
+            disabled={stopping}
+            className={cn(
+              "flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-destructive disabled:cursor-default disabled:opacity-50",
+              props.className,
+            )}
+            onClick={async (event) => {
+              event.stopPropagation();
+              setStopping(true);
+              const result = await stop({
+                environmentId: props.environmentId,
+                input: { threadId: props.threadId, taskId: props.taskId },
+              });
+              setStopping(false);
+              if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add({
+                  type: "error",
+                  title: "Could not stop the shell",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                });
+              }
+            }}
+          />
+        }
+      >
+        <SquareIcon aria-hidden className="size-3 fill-current" />
+      </TooltipTrigger>
+      <TooltipPopup>Stop this shell</TooltipPopup>
+    </Tooltip>
   );
 }

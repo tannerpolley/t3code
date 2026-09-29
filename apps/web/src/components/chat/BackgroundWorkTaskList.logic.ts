@@ -13,6 +13,17 @@ import * as DateTime from "effect/DateTime";
 import type { SidebarThreadSummary } from "../../types";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 
+/** A background shell running longer than this may be a wait loop that never ends. */
+export const POSSIBLY_STUCK_SHELL_MS = 2 * 60 * 60 * 1000;
+
+/** Milliseconds until a shell started at `startedAt` (ISO) counts as possibly stuck; 0 once it does. */
+export function msUntilPossiblyStuck(startedAt: string, nowMs: number): number {
+  return Math.max(0, Date.parse(startedAt) + POSSIBLY_STUCK_SHELL_MS - nowMs);
+}
+
+const isoOrNull = (value: DateTime.Utc | null | undefined) =>
+  value ? DateTime.formatIso(value) : null;
+
 export interface BackgroundWorkTaskRow {
   readonly taskId: string;
   readonly label: string;
@@ -45,7 +56,7 @@ export function describeBackgroundWorkTasks(
       (candidate) =>
         candidate.id === subagentId || candidate.nativeTaskRef?.nativeId === task.taskId,
     );
-    const startedAt = item?.startedAt ?? subagent?.startedAt ?? null;
+    const startedAt = item?.startedAt ?? subagent?.startedAt ?? task.startedAt;
     return {
       taskId: task.taskId,
       label: task.description ?? task.taskId,
@@ -53,7 +64,7 @@ export function describeBackgroundWorkTasks(
         item?.type === "subagent" || subagent !== undefined || isAgentTask(task)
           ? "subagent"
           : "process",
-      startedAt: startedAt === null ? null : DateTime.formatIso(startedAt),
+      startedAt: isoOrNull(startedAt),
       childThreadId:
         (item?.type === "subagent" ? item.childThreadId : null) ?? subagent?.childThreadId ?? null,
     };
@@ -113,7 +124,7 @@ export function describeSidebarBackgroundWork(
       taskId: task.taskId,
       label: task.description ?? task.taskId,
       kind: "subagent" as const,
-      startedAt: null,
+      startedAt: isoOrNull(task.startedAt),
       childThreadId: task.childThreadId ?? null,
     })),
     ...tasks
@@ -122,7 +133,7 @@ export function describeSidebarBackgroundWork(
         taskId: task.taskId,
         label: task.description ?? task.taskId,
         kind: "process" as const,
-        startedAt: null,
+        startedAt: isoOrNull(task.startedAt),
         childThreadId: null,
       })),
   ];

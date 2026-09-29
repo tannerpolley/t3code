@@ -68,6 +68,7 @@ type PendingBackgroundWorkTurnItem = {
   readonly input?: unknown;
   readonly prompt?: string | undefined;
   readonly childThreadId?: ThreadId | null;
+  readonly startedAt?: OrchestrationV2TurnItem["startedAt"];
 };
 
 function isLatestRunSettledForBackgroundWait(
@@ -176,6 +177,7 @@ export function derivePendingBackgroundWork(input: {
         ...(description === undefined || description.length === 0 ? {} : { description }),
         ...(task.taskType === undefined ? {} : { taskType: task.taskType }),
         ...(task.childThreadId === undefined ? {} : { childThreadId: task.childThreadId }),
+        ...(task.startedAt === undefined ? {} : { startedAt: task.startedAt }),
       });
     }
   }
@@ -207,6 +209,7 @@ export function derivePendingBackgroundWork(input: {
       ...(description === undefined ? {} : { description }),
       taskType: item.type,
       ...(item.childThreadId ? { childThreadId: item.childThreadId } : {}),
+      ...(item.startedAt ? { startedAt: item.startedAt } : {}),
     });
   }
 

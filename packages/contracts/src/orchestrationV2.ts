@@ -668,6 +668,8 @@ export const OrchestrationV2PendingBackgroundTask = Schema.Struct({
    * subagent thread that started it inside the parent's session (Claude native subagents).
    */
   childThreadId: Schema.optional(ThreadId),
+  /** When the task entered the roster (or its turn item started); absent from older servers. */
+  startedAt: Schema.optional(Schema.DateTimeUtc),
 });
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
@@ -2673,6 +2675,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeBackgroundTaskOutput: "orchestration.subscribeBackgroundTaskOutput",
+  stopBackgroundTask: "orchestration.stopBackgroundTask",
 } as const;
 
 export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
@@ -2989,6 +2992,24 @@ export class OrchestrationV2BackgroundTaskOutputError extends Schema.TaggedError
   },
 ) {}
 
+/** Ends one background task through the provider session that owns it. */
+export const OrchestrationV2StopBackgroundTaskInput = Schema.Struct({
+  /** The thread the task counts for; a Claude subagent's shell may sit on its parent's roster. */
+  threadId: ThreadId,
+  taskId: TrimmedNonEmptyString,
+});
+export type OrchestrationV2StopBackgroundTaskInput =
+  typeof OrchestrationV2StopBackgroundTaskInput.Type;
+
+export class OrchestrationV2StopBackgroundTaskError extends Schema.TaggedError<OrchestrationV2StopBackgroundTaskError>()(
+  "OrchestrationV2StopBackgroundTaskError",
+  {
+    taskId: Schema.String,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const OrchestrationV2RpcSchemas = {
   dispatchCommand: {
     input: OrchestrationV2Command,
@@ -3033,6 +3054,10 @@ export const OrchestrationV2RpcSchemas = {
   subscribeBackgroundTaskOutput: {
     input: OrchestrationV2SubscribeBackgroundTaskOutputInput,
     output: OrchestrationV2BackgroundTaskOutputChunk,
+  },
+  stopBackgroundTask: {
+    input: OrchestrationV2StopBackgroundTaskInput,
+    output: Schema.Void,
   },
 } as const;
 

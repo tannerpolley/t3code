@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   describeBackgroundWorkTasks,
   describeSidebarBackgroundWork,
+  msUntilPossiblyStuck,
 } from "./BackgroundWorkTaskList.logic";
 
 const startedAt = DateTime.makeUnsafe("2026-09-23T10:00:00.000Z");
@@ -76,7 +77,7 @@ describe("describeSidebarBackgroundWork", () => {
       [
         { taskId: "agent-1", description: "Review the diff", taskType: "subagent" },
         { taskId: "agent-2", description: "Explore", taskType: "local_agent" },
-        { taskId: "bash-1", description: "sleep 20", taskType: "local_bash" },
+        { taskId: "bash-1", description: "sleep 20", taskType: "local_bash", startedAt },
       ] as never,
       [runningChild],
     );
@@ -102,7 +103,8 @@ describe("describeSidebarBackgroundWork", () => {
         taskId: "bash-1",
         label: "sleep 20",
         kind: "process",
-        startedAt: null,
+        // The roster's start time gives the shell its age.
+        startedAt: "2026-09-23T10:00:00.000Z",
         childThreadId: null,
       },
     ]);
@@ -172,5 +174,15 @@ describe("describeSidebarBackgroundWork", () => {
     expect(
       pendingBackgroundWorkOfThread("parent-thread", parentRoster).map((task) => task.taskId),
     ).toEqual(["bash-own"]);
+  });
+});
+
+describe("msUntilPossiblyStuck", () => {
+  it("counts down to two hours after the shell started, then stays at zero", () => {
+    const started = Date.parse("2026-09-23T10:00:00.000Z");
+    const minute = 60_000;
+    expect(msUntilPossiblyStuck("2026-09-23T10:00:00.000Z", started + 119 * minute)).toBe(minute);
+    expect(msUntilPossiblyStuck("2026-09-23T10:00:00.000Z", started + 120 * minute)).toBe(0);
+    expect(msUntilPossiblyStuck("2026-09-23T10:00:00.000Z", started + 300 * minute)).toBe(0);
   });
 });
