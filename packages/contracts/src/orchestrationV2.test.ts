@@ -942,6 +942,33 @@ describe("orchestration V2 contracts", () => {
     expect(runtimeThread.nativeMetadata).toBeNull();
   });
 
+  it("round-trips a pending background task's startedAt through stored provider-thread JSON", () => {
+    const codec = Schema.fromJsonString(OrchestrationV2ProviderThreadJson);
+    const stored = Schema.encodeSync(codec)(
+      decodeOrchestrationV2ProviderThread({
+        id: "provider-thread-1",
+        driver: "claude",
+        providerInstanceId: "claudeAgent",
+        providerSessionId: null,
+        appThreadId: "thread-1",
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        pendingBackgroundTasks: [{ taskId: "task-1", startedAt: now }],
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    const task = Schema.decodeUnknownSync(codec)(stored).pendingBackgroundTasks?.[0];
+    expect(task?.startedAt && DateTime.formatIso(task.startedAt)).toBe(DateTime.formatIso(now));
+  });
+
   it("decodes historical thread shell JSON without pendingBackgroundTasks as empty roster", () => {
     const shell = decodeOrchestrationV2ThreadShell({
       createdBy: "user",

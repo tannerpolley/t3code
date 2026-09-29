@@ -1734,11 +1734,21 @@ export const OrchestrationV2ProviderSessionDetachedJson =
 export type OrchestrationV2ProviderSessionDetachedJson =
   typeof OrchestrationV2ProviderSessionDetachedJson.Type;
 
+const OrchestrationV2PendingBackgroundTaskJson =
+  OrchestrationV2PendingBackgroundTask.mapFields((fields) => ({
+    ...fields,
+    startedAt: Schema.optional(Schema.DateTimeUtcFromString),
+  }));
+const OrchestrationV2PendingBackgroundTasksJson = Schema.optional(
+  Schema.Array(OrchestrationV2PendingBackgroundTaskJson),
+).pipe(Schema.withDecodingDefault(Effect.succeed([])));
+
 export const OrchestrationV2ProviderThreadJson = OrchestrationV2ProviderThread.mapFields(
   (fields) => ({
     ...fields,
     createdAt: Schema.DateTimeUtcFromString,
     updatedAt: Schema.DateTimeUtcFromString,
+    pendingBackgroundTasks: OrchestrationV2PendingBackgroundTasksJson,
   }),
 );
 export type OrchestrationV2ProviderThreadJson = typeof OrchestrationV2ProviderThreadJson.Type;
@@ -2055,6 +2065,7 @@ export type OrchestrationV2LatestVisibleMessageSummaryJson =
 
 export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFields((fields) => ({
   ...fields,
+  pendingBackgroundTasks: OrchestrationV2PendingBackgroundTasksJson,
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
