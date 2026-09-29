@@ -284,9 +284,9 @@ const ALWAYS_ON_FIXES: ReadonlyArray<{ readonly title: string; readonly descript
       "Background shells show their age, flag possible stuck waits after 2 hours, and can be stopped.",
   },
   {
-    title: "Finished background work always wakes its agent",
+    title: "Idle disconnect no longer cuts off a background wake",
     description:
-      "When a background shell or command finishes while its agent is idle, the agent wakes once, even if the provider's own notice is lost. A session is no longer disconnected for being idle just as its background work finishes. If a restart stops the work, the agent is told when threads continue after an update. Claude monitors stay listed with Stop, but no longer keep a thread or its parent waiting, block settling, or hold an idle session.",
+      "A session is no longer disconnected for being idle while its background work runs or just as it finishes, so the agent's own wake turn for that work is not cut off. Claude monitors stay listed with Stop, but no longer keep a thread or its parent waiting, block settling, or hold an idle session.",
   },
   {
     title: "Background wake turns show everything they do",
