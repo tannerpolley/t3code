@@ -217,7 +217,11 @@ const decodeCommandItem = Schema.decodeUnknownOption(
     Schema.Struct({
       driver: Schema.optional(Schema.String),
       output: Schema.optional(Schema.NullOr(Schema.String)),
-      nativeItemRef: Schema.optional(Schema.NullOr(Schema.Struct({ nativeId: Schema.String }))),
+      nativeItemRef: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({ nativeId: Schema.String, driver: Schema.optional(Schema.String) }),
+        ),
+      ),
     }),
   ),
 );
@@ -248,7 +252,9 @@ export const resolveBackgroundTaskOutputFile = Effect.fn(
   for (const row of rows) {
     const item = Option.getOrNull(decodeCommandItem(row.payload_json));
     if (item === null) continue;
-    if (item.driver === "codex" && item.nativeItemRef?.nativeId === input.taskId) {
+    // Stored items name their provider on `nativeItemRef`; older shapes put it at the top level.
+    const driver = item.nativeItemRef?.driver ?? item.driver;
+    if (driver === "codex" && item.nativeItemRef?.nativeId === input.taskId) {
       return {
         path: codexBackgroundTaskLogPath(logsDir, input.threadId, input.taskId),
         appearsLater: true,

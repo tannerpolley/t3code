@@ -203,7 +203,7 @@ describe("followBackgroundTaskInTerminal", () => {
         yield* insertItem(
           "item-codex",
           "thread-a",
-          `{"driver":"codex","nativeItemRef":{"driver":"codex","nativeId":"call_codex1"}}`,
+          `{"nativeItemRef":{"driver":"codex","nativeId":"call_codex1"}}`,
         );
 
         yield* follow("thread-a", "bclaude1");
