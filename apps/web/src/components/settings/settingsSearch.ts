@@ -460,6 +460,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork latex katex math formulas equations markdown dollar"],
   },
   {
+    id: "run-shell-blocks",
+    title: "Run button on shell code blocks",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork run play shell bash command code block terminal output agent",
+    ],
+  },
+  {
     id: "onboarding-codex-settings",
     title: "Codex settings during onboarding",
     to: "/settings/customizations",

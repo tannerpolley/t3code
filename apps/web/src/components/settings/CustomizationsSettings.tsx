@@ -134,6 +134,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Render math in chat messages: $…$, $$…$$, \\( \\) and \\[ \\]. Dollar amounts such as $5 stay text. Off shows the formula source as plain text.",
   },
   {
+    key: "runShellBlocks",
+    searchId: "run-shell-blocks",
+    section: "composer",
+    description:
+      "A play button on bash, sh, zsh, shell, console and terminal code blocks in the agent's replies. It runs the block right away in the thread's folder (its worktree when it has one), shows the output under the block, and sends the command, exit code and output to the agent, queued behind its current work. Open the run in a terminal tab from the output panel. Off hides the button.",
+  },
+  {
     key: "pluginSkills",
     searchId: "plugin-skills",
     section: "composer",

@@ -1,18 +1,16 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { useNavigate } from "@tanstack/react-router";
 import { SquareIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
 
-import { readProject, readThreadShell } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
-import { terminalEnvironment } from "../../state/terminal";
+import { readThreadTerminalLaunch, terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -42,11 +40,8 @@ function useFollowBackgroundProcessInTerminal() {
   });
   return async (target: BackgroundProcessTarget): Promise<boolean> => {
     const threadRef = scopeThreadRef(target.environmentId, target.threadId);
-    const thread = readThreadShell(threadRef);
-    const project = thread
-      ? readProject(scopeProjectRef(target.environmentId, thread.projectId))
-      : null;
-    if (!thread || !project) return false;
+    const launch = readThreadTerminalLaunch(threadRef);
+    if (!launch) return false;
     const terminalId = `bg-${target.taskId}`.slice(0, 128);
     const store = useTerminalUiStateStore.getState();
     const known = selectThreadTerminalUiState(
@@ -54,20 +49,9 @@ function useFollowBackgroundProcessInTerminal() {
       threadRef,
     ).terminalIds.includes(terminalId);
     if (!known) {
-      const scriptTarget = {
-        project: { cwd: project.workspaceRoot },
-        worktreePath: thread.worktreePath,
-      };
       const result = await follow({
         environmentId: target.environmentId,
-        input: {
-          threadId: target.threadId,
-          terminalId,
-          taskId: target.taskId,
-          cwd: projectScriptCwd(scriptTarget),
-          ...(thread.worktreePath != null ? { worktreePath: thread.worktreePath } : {}),
-          env: projectScriptRuntimeEnv(scriptTarget),
-        },
+        input: { threadId: target.threadId, terminalId, taskId: target.taskId, ...launch.open },
       });
       if (result._tag === "Failure") return false;
     }
