@@ -75,9 +75,9 @@ describe("Pi upstream output-budget workaround", () => {
 });
 
 describe("Pi T3 tool discovery", () => {
-  for (const discovery of ["inactive", "active", "missing", "hidden"] as const) {
+  for (const discovery of ["inactive", "active", "missing", "replaced", "hidden"] as const) {
     it(`registers callable T3 tools with ${discovery} tool_search`, async () => {
-      const calls: Array<{ method: string; params?: unknown }> = [];
+      const calls: Array<{ jsonrpc?: string; id?: number; method: string; params?: unknown }> = [];
       const registered = new Map<
         string,
         {
@@ -128,7 +128,9 @@ describe("Pi T3 tool discovery", () => {
           pi: {
             getAllTools: () => {
               assert.isTrue(runtimeReady, "catalog access must wait for session_start");
-              return discovery === "missing" ? [] : [{ name: "tool_search" }];
+              if (discovery === "missing") return [];
+              const path = discovery === "replaced" ? "/ext/other-search.ts" : "builtin:tool-search";
+              return [{ name: "tool_search", sourceInfo: { path } }];
             },
             getActiveTools: () => active,
             setActiveTools: (names: string[]) => {

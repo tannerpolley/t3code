@@ -315,17 +315,23 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   if (preloadedTools !== undefined) registerTools(preloadedTools, true);
   let started: Promise<void> | undefined;
 
+  // Only Pi's built-in tool_search can load T3's deferred tools; an
+  // extension's same-named replacement may search just its own catalog.
+  const activateToolSearch = () => {
+    const builtin = pi
+      .getAllTools()
+      .some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path?.startsWith("builtin:"));
+    if (!builtin) return false;
+    const activeTools = pi.getActiveTools();
+    if (!activeTools.includes("tool_search")) pi.setActiveTools([...activeTools, "tool_search"]);
+    return pi.getActiveTools().includes("tool_search");
+  };
+
   const ensureStarted = () => {
     if (started !== undefined) return started;
     const attempt = (async () => {
       const tools = preloadedTools ?? (await loadTools());
-      if (pi.getAllTools().some((tool) => tool.name === "tool_search")) {
-        const activeTools = pi.getActiveTools();
-        if (!activeTools.includes("tool_search")) {
-          pi.setActiveTools([...activeTools, "tool_search"]);
-        }
-        deferredTools = pi.getActiveTools().includes("tool_search");
-      }
+      deferredTools = activateToolSearch();
       if (preloadedTools === undefined || !deferredTools) {
         registerTools(tools, deferredTools);
       }
@@ -346,6 +352,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       const message = error instanceof Error ? error.message : String(error);
       ctx.ui.notify(\`t3-code MCP unavailable: \${message}\`, "warning");
     }
+  });
+
+  // /tree restores the target branch's tool selection, which may predate tool_search.
+  pi.on("session_tree", () => {
+    if (deferredTools) activateToolSearch();
   });
 }
 `;
