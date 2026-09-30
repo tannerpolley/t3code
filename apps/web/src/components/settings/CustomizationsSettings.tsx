@@ -149,6 +149,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "A play button on bash, sh, zsh, shell, console and terminal code blocks in the agent's replies. It runs the block right away in the thread's folder (its worktree when it has one), shows the output under the block, and sends the command, exit code and output to the agent, queued behind its current work. Open the run in a terminal tab from the output panel. Off hides the button.",
   },
   {
+    key: "openQuestionsAutomatically",
+    searchId: "open-questions-automatically",
+    section: "composer",
+    description:
+      "When an agent in any thread, including another project's or a subagent's, asks you a question, show it in a floating panel over whatever you are viewing, so you can answer on the spot. Later hides a question until it is asked again; the thread still shows it. Off shows questions only in their thread.",
+  },
+  {
     key: "pluginSkills",
     searchId: "plugin-skills",
     section: "composer",

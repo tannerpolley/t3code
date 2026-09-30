@@ -434,6 +434,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "open-questions-automatically",
+    title: "Open questions automatically",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork question popup floating panel answer anywhere other thread user input ask",
+    ],
+  },
+  {
     id: "activity-needs-you-first",
     title: "Threads that need you go first",
     to: "/settings/customizations",

@@ -172,10 +172,12 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
 it("counts notifying threads across environments, replaces repeat alerts, and clears on focus", async () => {
+  vi.useFakeTimers();
   await render();
   complete();
   await render();
@@ -188,6 +190,7 @@ it("counts notifying threads across environments, replaces repeat alerts, and cl
   focused = true;
   window.dispatchEvent(new Event("focus"));
   expect(state.badge).toHaveBeenLastCalledWith(0);
+  vi.runAllTimers();
   expect(
     TestNotification.sent.every((notification) => notification.close.mock.calls.length > 0),
   ).toBe(true);
@@ -195,6 +198,23 @@ it("counts notifying threads across environments, replaces repeat alerts, and cl
   complete("two", "2026-09-13T08:02:00Z");
   await render();
   expect(state.badge).toHaveBeenLastCalledWith(1);
+});
+
+it("still opens the thread when the click raised the window before it arrived", async () => {
+  vi.useFakeTimers();
+  await render();
+  state.shells.set("one", shell({ hasPendingUserInput: true }));
+  await render();
+  const notification = TestNotification.sent[0]!;
+  window.dispatchEvent(new Event("focus"));
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+  // A closed notification never delivers its click.
+  expect(notification.close).not.toHaveBeenCalled();
+  notification.dispatchEvent(new Event("click"));
+  expect(state.navigate).toHaveBeenCalledWith({
+    to: "/$environmentId/$threadId",
+    params: { environmentId: EnvironmentId.make("one"), threadId: "thread" },
+  });
 });
 
 it("does not badge old completions on first load or reconnect", async () => {
