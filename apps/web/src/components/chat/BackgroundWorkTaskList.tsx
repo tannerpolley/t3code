@@ -1,13 +1,15 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { TerminalIcon } from "lucide-react";
+import { ClockIcon, TerminalIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
+import { useTheme } from "../../hooks/useTheme";
+import { cn } from "../../lib/utils";
+import { syntheticFileNameForLanguageId } from "../../pierre-icons";
 import { useServerConfigs, useThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   SidebarCaretSlot,
@@ -17,14 +19,114 @@ import {
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "./AgentElapsed";
 import {
+  BackgroundTaskResourceUsageLabel,
+  backgroundTaskResourceUsageKey,
+  useBackgroundTaskListVisibility,
+  useBackgroundTaskResourceUsage,
+} from "./BackgroundTaskUsage";
+import {
   BackgroundProcessOutputButton,
   BackgroundShellElapsed,
   StopBackgroundShellButton,
   STOP_SHELL_ON_ROW_HOVER_CLASS,
 } from "./BackgroundProcessOutput";
+import { PierreEntryIcon } from "./PierreEntryIcon";
 import type { BackgroundWorkTaskRow } from "./BackgroundWorkTaskList.logic";
 import { resolveSubagentModelLabel } from "./SubagentTooltipContent";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
+
+const COMMAND_KIND_LABELS: Record<string, string> = {
+  bash: "Bash",
+  python: "Python",
+  pytest: "pytest",
+  uv: "uv",
+  conda: "Conda",
+  node: "Node.js",
+  bun: "Bun",
+  rust: "Rust",
+  go: "Go",
+  java: "Java",
+  r: "R",
+  julia: "Julia",
+  ruby: "Ruby",
+  c: "C",
+  cpp: "C++",
+  make: "Build",
+  docker: "Docker",
+  latex: "LaTeX",
+  git: "Git",
+  watcher: "Watcher",
+};
+
+const COMMAND_KIND_FILE: Record<string, string> = {
+  bun: "bun.lockb",
+  docker: "Dockerfile",
+  git: ".gitignore",
+  make: "Makefile",
+};
+
+const COMMAND_KIND_LANGUAGE: Record<string, string> = {
+  bash: "bash",
+  python: "python",
+  pytest: "python",
+  uv: "python",
+  conda: "python",
+  node: "javascript",
+  rust: "rust",
+  go: "go",
+  java: "java",
+  r: "r",
+  julia: "julia",
+  ruby: "ruby",
+  c: "c",
+  cpp: "cpp",
+  latex: "latex",
+};
+
+function backgroundProcessKindLabel(taskType?: string, commandKind?: string): string {
+  return taskType === "monitor" || commandKind === "watcher"
+    ? "Watcher"
+    : (COMMAND_KIND_LABELS[commandKind ?? ""] ?? "Shell");
+}
+
+export function BackgroundProcessKindIcon(props: {
+  readonly taskType?: string | undefined;
+  readonly commandKind?: string | undefined;
+  readonly className: string;
+}) {
+  const { resolvedTheme } = useTheme();
+  const label = backgroundProcessKindLabel(props.taskType, props.commandKind);
+  const iconClassName = cn("size-4", props.className);
+  const fileName = props.commandKind
+    ? (COMMAND_KIND_FILE[props.commandKind] ??
+      (COMMAND_KIND_LANGUAGE[props.commandKind] === undefined
+        ? null
+        : syntheticFileNameForLanguageId(COMMAND_KIND_LANGUAGE[props.commandKind]!)))
+    : null;
+  const icon =
+    props.taskType === "monitor" || props.commandKind === "watcher" ? (
+      <ClockIcon aria-hidden className={cn(iconClassName, "text-muted-foreground")} />
+    ) : fileName !== null ? (
+      <PierreEntryIcon
+        pathValue={fileName}
+        kind="file"
+        theme={resolvedTheme}
+        className={props.className}
+      />
+    ) : (
+      <TerminalIcon aria-hidden className={cn(iconClassName, "text-muted-foreground")} />
+    );
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span aria-label={label} className="inline-flex shrink-0" role="img" />}
+      >
+        {icon}
+      </TooltipTrigger>
+      <TooltipPopup side="right">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** Shells turn amber once they may be stuck; agents show plain elapsed time. */
 function elapsed(kind: BackgroundWorkTaskRow["kind"], startedAt: string) {
@@ -45,7 +147,7 @@ function elapsed(kind: BackgroundWorkTaskRow["kind"], startedAt: string) {
  */
 export function BackgroundWorkTaskList(props: {
   readonly environmentId: EnvironmentId;
-  /** The thread that owns these tasks; process rows open its task output. */
+  /** Default owner; process rows can name another provider session. */
   readonly threadId: ThreadId;
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
@@ -64,6 +166,20 @@ export function BackgroundWorkTaskList(props: {
   const providers = useServerConfigs().get(props.environmentId)?.providers;
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
+  const hasProcesses = props.rows.some((row) => row.kind === "process");
+  const { listRef, isVisible } = useBackgroundTaskListVisibility(hasProcesses);
+  const taskThreadIds = [
+    ...new Set(
+      props.rows
+        .filter((row) => row.kind === "process")
+        .map((row) => row.ownerThreadId ?? props.threadId),
+    ),
+  ];
+  const resourceUsage = useBackgroundTaskResourceUsage({
+    environmentId: props.environmentId,
+    threadIds: taskThreadIds,
+    enabled: hasProcesses && isVisible,
+  });
   // An agent task without its own thread runs on the owner's provider, so it shows that icon.
   const ownerInstanceId = useThreadShell(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -71,6 +187,7 @@ export function BackgroundWorkTaskList(props: {
   const ownerProvider = providers?.find((entry) => entry.instanceId === ownerInstanceId);
   return (
     <ul
+      ref={listRef}
       className={
         props.columns
           ? // No scroll box: it would clip the tree lines reaching up to the owner's icon.
@@ -82,18 +199,18 @@ export function BackgroundWorkTaskList(props: {
     >
       {props.rows.map((row) => {
         const kindLabel = row.kind === "subagent" ? "Subagent" : "Background process";
+        const processKindLabel = backgroundProcessKindLabel(row.taskType, row.commandKind);
+        const taskThreadId = row.ownerThreadId ?? props.threadId;
         const toggle = props.columns ? (props.nestedToggle?.(row) ?? null) : null;
         const provider = row.child
           ? providers?.find((entry) => entry.instanceId === row.child?.providerInstanceId)
           : ownerProvider;
         const icon =
           row.kind === "process" ? (
-            <TerminalIcon
-              aria-hidden
-              className={cn(
-                "shrink-0 text-muted-foreground",
-                props.columns ? "size-4" : "size-3.5",
-              )}
+            <BackgroundProcessKindIcon
+              taskType={row.taskType}
+              commandKind={row.commandKind}
+              className={props.columns ? "size-4" : "size-3.5"}
             />
           ) : (
             <ThreadRelationshipIcon driver={provider?.driver} provider={provider} />
@@ -112,6 +229,12 @@ export function BackgroundWorkTaskList(props: {
               </span>
             ) : null}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
+            {row.kind === "process" ? (
+              <BackgroundTaskResourceUsageLabel
+                usage={resourceUsage.get(backgroundTaskResourceUsageKey(taskThreadId, row.taskId))}
+                className="min-w-[3.5rem]"
+              />
+            ) : null}
             <SidebarTrailingColumns
               count={toggle?.count}
               time={row.startedAt ? elapsed(row.kind, row.startedAt) : null}
@@ -122,6 +245,12 @@ export function BackgroundWorkTaskList(props: {
           <>
             {icon}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
+            {row.kind === "process" ? (
+              <BackgroundTaskResourceUsageLabel
+                usage={resourceUsage.get(backgroundTaskResourceUsageKey(taskThreadId, row.taskId))}
+                className="min-w-[3rem]"
+              />
+            ) : null}
             {props.compact ? null : (
               <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
             )}
@@ -157,7 +286,7 @@ export function BackgroundWorkTaskList(props: {
           // Opens the process in a terminal tab that follows its output.
           <BackgroundProcessOutputButton
             environmentId={props.environmentId}
-            threadId={props.threadId}
+            threadId={taskThreadId}
             taskId={row.taskId}
             label={row.label}
             className={cn(
@@ -194,6 +323,7 @@ export function BackgroundWorkTaskList(props: {
                 <TooltipTrigger render={element} />
                 <TooltipPopup side="right">
                   {row.label} · {kindLabel}
+                  {row.kind === "process" ? ` · ${processKindLabel}` : null}
                 </TooltipPopup>
               </Tooltip>
             ) : (
@@ -202,7 +332,7 @@ export function BackgroundWorkTaskList(props: {
             {row.kind === "process" ? (
               <StopBackgroundShellButton
                 environmentId={props.environmentId}
-                threadId={props.threadId}
+                threadId={taskThreadId}
                 taskId={row.taskId}
                 label={row.label}
                 className={cn(STOP_SHELL_ON_ROW_HOVER_CLASS, props.columns ? "end-1.5" : "end-0.5")}

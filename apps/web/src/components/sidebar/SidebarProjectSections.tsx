@@ -1347,6 +1347,8 @@ function SidebarSubagentTree(props: {
   /** The pending tasks `rows` came from, which also carry the shells this level's children started. */
   readonly tasks: SidebarThreadSummary["pendingBackgroundTasks"];
   readonly rows: ReturnType<typeof describeSidebarBackgroundWork>;
+  /** Owner sessions for tasks merged from ancestors into this subagent's roster. */
+  readonly taskOwnerThreadIdById?: ReadonlyMap<string, ThreadId>;
   /** The threads behind this level's subagent rows. */
   readonly runningChildren: readonly SidebarThreadSummary[];
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
@@ -1354,6 +1356,9 @@ function SidebarSubagentTree(props: {
 }) {
   // Children open by default, like a thread's own work; a collapse is remembered for this view.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const taskOwnerThreadIdById =
+    props.taskOwnerThreadIdById ??
+    new Map(props.tasks.map((task) => [task.taskId, props.threadId] as const));
   const childWork = (row: ReturnType<typeof describeSidebarBackgroundWork>[number]) => {
     const child = props.runningChildren.find((thread) => thread.id === row.childThreadId);
     if (child === undefined) return null;
@@ -1366,8 +1371,10 @@ function SidebarSubagentTree(props: {
       child.pendingBackgroundTasks,
       props.tasks,
     );
-    const rows = describeSidebarBackgroundWork(tasks, grandchildren);
-    return rows.length === 0 ? null : { child, grandchildren, tasks, rows };
+    const owners = new Map(taskOwnerThreadIdById);
+    for (const task of child.pendingBackgroundTasks) owners.set(task.taskId, child.id);
+    const rows = describeSidebarBackgroundWork(tasks, grandchildren, owners);
+    return rows.length === 0 ? null : { child, grandchildren, tasks, rows, owners };
   };
   return (
     <BackgroundWorkTaskList
@@ -1396,7 +1403,7 @@ function SidebarSubagentTree(props: {
       renderNested={(row) => {
         const work = childWork(row);
         if (work === null) return null;
-        const { child, grandchildren, tasks, rows } = work;
+        const { child, grandchildren, tasks, rows, owners } = work;
         return (
           // Under the row's caret: past the row's 8px padding and half its 16px caret slot.
           <div className="ms-4">
@@ -1406,6 +1413,7 @@ function SidebarSubagentTree(props: {
               threadId={child.id}
               tasks={tasks}
               rows={rows}
+              taskOwnerThreadIdById={owners}
               runningChildren={grandchildren}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
             />

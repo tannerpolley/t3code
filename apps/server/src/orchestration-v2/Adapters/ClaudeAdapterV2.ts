@@ -30,6 +30,7 @@ import {
   heldBackgroundWork,
   isMonitorBackgroundTask,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { classifyShellCommand } from "@t3tools/shared/shellCommand";
 import {
   applyClaudePromptEffortPrefix,
   getModelSelectionStringOptionValue,
@@ -2757,9 +2758,13 @@ export function makeClaudeAdapterV2(
         // Where Claude writes each session's `<taskId>.output` files, by native session id. Learned
         // from what Claude reports, because a Monitor's tool result names no file.
         const taskOutputDirByNativeThread = new Map<string, string>();
-        // Claude reports a Monitor watcher as local_bash; only the tool_use that spawned it tells
-        // them apart. Recorded from every frame, so it holds whether or not a run was attached.
-        const monitorToolUseIds = new Set<string>();
+        // Claude reports a Monitor watcher as local_bash, and a task's messages never name its
+        // command; only the tool_use that spawned it (a Monitor or background Bash call) does.
+        // Recorded from every frame, so it holds whether or not a run was attached.
+        const backgroundToolUses = new Map<
+          string,
+          { readonly monitor: boolean; readonly commandKind?: string }
+        >();
         // Wake eligibility is separate from the Waiting roster. It survives
         // empty background_tasks_changed levels (SDK: empty level can precede
         // task_notification) and is consumed when the first idle notification
@@ -3045,8 +3050,8 @@ export function makeClaudeAdapterV2(
               if (tasks.length === 0) {
                 updated.delete(nativeThreadId);
               } else {
-                // Snapshots carry ids only: keep the subagent thread and monitor kind that
-                // task_started tagged, and the time the task first entered the roster.
+                // Snapshots carry ids only: keep the subagent thread, monitor type and command
+                // kind that task_started tagged, and the time the task first entered the roster.
                 const previous = rosterForNativeThread(current, nativeThreadId);
                 updated.set(
                   nativeThreadId,
@@ -3063,6 +3068,9 @@ export function makeClaudeAdapterV2(
                           ...(kept !== undefined && isMonitorBackgroundTask(kept)
                             ? { taskType: kept.taskType }
                             : {}),
+                          ...(kept?.commandKind === undefined
+                            ? {}
+                            : { commandKind: kept.commandKind }),
                           startedAt: kept?.startedAt ?? now,
                         },
                       ] as const;
@@ -4767,14 +4775,16 @@ export function makeClaudeAdapterV2(
                   ]
                     .map((context) => context.toolCalls.get(toolUseId))
                     .find((toolCall) => toolCall !== undefined);
-            const taskType =
-              toolUseId !== undefined && monitorToolUseIds.delete(toolUseId)
-                ? "monitor"
-                : (claudeTaskTypeFromSdkMessage(message) ?? undefined);
+            const toolUse = toolUseId === undefined ? undefined : backgroundToolUses.get(toolUseId);
+            if (toolUseId !== undefined) backgroundToolUses.delete(toolUseId);
+            const taskType = toolUse?.monitor
+              ? "monitor"
+              : (claudeTaskTypeFromSdkMessage(message) ?? undefined);
             yield* upsertPendingBackgroundTask(input.nativeThreadId, {
               taskId: message.task_id,
               ...(description === undefined ? {} : { description }),
               ...(taskType === undefined ? {} : { taskType }),
+              ...(toolUse?.commandKind === undefined ? {} : { commandKind: toolUse.commandKind }),
               // Only a child-thread call has no run of its own.
               ...(spawningCall?.runId === null ? { childThreadId: spawningCall.threadId } : {}),
             });
@@ -4838,7 +4848,22 @@ export function makeClaudeAdapterV2(
             taskOutputDirByNativeThread.set(liveQuery.nativeThreadId, reportedTaskOutputDir);
           }
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
-            if (toolUse.name === "Monitor") monitorToolUseIds.add(toolUse.id);
+            const input =
+              typeof toolUse.input === "object" && toolUse.input !== null ? toolUse.input : {};
+            const command = Reflect.get(input, "command");
+            if (
+              toolUse.name === "Monitor" ||
+              (toolUse.name === "Bash" && Reflect.get(input, "run_in_background") === true)
+            ) {
+              backgroundToolUses.set(toolUse.id, {
+                monitor: toolUse.name === "Monitor",
+                ...(toolUse.name === "Monitor"
+                  ? { commandKind: "watcher" }
+                  : typeof command === "string"
+                    ? { commandKind: classifyShellCommand(command) }
+                    : {}),
+              });
+            }
           }
           if (message.type === "rate_limit_event") {
             const rateLimitInfo = message.rate_limit_info;

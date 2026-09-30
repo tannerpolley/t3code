@@ -187,6 +187,7 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import {
+  readBackgroundTaskResourceUsage,
   followBackgroundTaskInTerminal,
   subscribeBackgroundTaskOutput,
 } from "./orchestration/backgroundTaskOutput.ts";
@@ -2459,6 +2460,28 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.serverGetBackgroundTaskResourceUsage]: ({ threadIds }) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetBackgroundTaskResourceUsage,
+            Effect.gen(function* () {
+              const threads = yield* Effect.forEach(
+                [...new Set(threadIds)],
+                (threadId) =>
+                  Effect.map(
+                    Effect.option(orchestrationEngine.getThreadShell(threadId)),
+                    (shell) => ({
+                      threadId,
+                      tasks: Option.getOrNull(shell)?.pendingBackgroundTasks ?? [],
+                    }),
+                  ),
+                { concurrency: 4 },
+              );
+              return yield* readBackgroundTaskResourceUsage({
+                threads,
+              });
+            }),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverGetUsageSummary]: (input) =>
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {

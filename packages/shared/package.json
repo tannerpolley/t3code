@@ -351,6 +351,10 @@
       "types": "./src/Array.ts",
       "import": "./src/Array.ts"
     },
+    "./shellCommand": {
+      "types": "./src/shellCommand.ts",
+      "import": "./src/shellCommand.ts"
+    },
     "./orchestrationV2PendingBackgroundWork": {
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"

@@ -2,7 +2,7 @@ import { OrchestrationDispatchCommandError } from "./orchestration.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -185,6 +185,7 @@ import {
 import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
+  OrchestrationV2BackgroundTaskResourceUsage,
   OrchestrationV2BackgroundTaskOutputError,
   OrchestrationV2StopBackgroundTaskError,
   OrchestrationV2DispatchCommandError,
@@ -449,6 +450,7 @@ export const WS_METHODS = {
   serverGetHostResources: "server.getHostResources",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
+  serverGetBackgroundTaskResourceUsage: "server.getBackgroundTaskResourceUsage",
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
@@ -782,6 +784,15 @@ const WsServerGetResourceTelemetryHistoryRpc = Rpc.make(
   {
     payload: ResourceTelemetryHistoryInput,
     success: ResourceTelemetryHistory,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
+const WsServerGetBackgroundTaskResourceUsageRpc = Rpc.make(
+  WS_METHODS.serverGetBackgroundTaskResourceUsage,
+  {
+    payload: Schema.Struct({ threadIds: Schema.Array(ThreadId) }),
+    success: Schema.Array(OrchestrationV2BackgroundTaskResourceUsage),
     error: EnvironmentAuthorizationError,
   },
 );
@@ -1718,6 +1729,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetHostResourcesRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerGetResourceTelemetryHistoryRpc,
+  WsServerGetBackgroundTaskResourceUsageRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,

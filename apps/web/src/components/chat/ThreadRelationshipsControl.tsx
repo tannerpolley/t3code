@@ -48,7 +48,6 @@ import {
   GitForkIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
-  TerminalIcon,
   UnplugIcon,
 } from "lucide-react";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
@@ -68,7 +67,13 @@ import {
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
-import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
+import { BackgroundProcessKindIcon, BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
+import {
+  BackgroundTaskResourceUsageLabel,
+  backgroundTaskResourceUsageKey,
+  useBackgroundTaskListVisibility,
+  useBackgroundTaskResourceUsage,
+} from "./BackgroundTaskUsage";
 import {
   BackgroundProcessOutputButton,
   BackgroundShellElapsed,
@@ -236,18 +241,47 @@ export function resolveSubagentProgressText(input: {
 function LineageProcessRows(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly parentThreadId: ThreadId | null;
+  readonly parentTaskIds: ReadonlySet<string>;
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
 }) {
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
+  const processRows = props.rows.filter((row) => row.kind === "process");
+  const { listRef, isVisible } = useBackgroundTaskListVisibility(processRows.length > 0);
+  const usageThreadIds = [
+    ...new Set(
+      processRows.map((row) =>
+        props.parentTaskIds.has(row.taskId)
+          ? (props.parentThreadId ?? props.threadId)
+          : props.threadId,
+      ),
+    ),
+  ];
+  const resourceUsage = useBackgroundTaskResourceUsage({
+    environmentId: props.environmentId,
+    threadIds: usageThreadIds,
+    enabled: processRows.length > 0 && isVisible,
+  });
   return (
-    <ul aria-label="Background processes" className="m-0 list-none p-0">
+    <ul ref={listRef} aria-label="Background processes" className="m-0 list-none p-0">
       {props.rows.map((row) => {
+        const taskThreadId = props.parentTaskIds.has(row.taskId)
+          ? (props.parentThreadId ?? props.threadId)
+          : props.threadId;
+        const usage = resourceUsage.get(backgroundTaskResourceUsageKey(taskThreadId, row.taskId));
         const content = (
           <>
-            <TerminalIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+            <BackgroundProcessKindIcon
+              taskType={row.taskType}
+              commandKind={row.commandKind}
+              className="size-4"
+            />
             <span className="min-w-0 flex-1 truncate leading-4 text-foreground/85">
               {row.label}
             </span>
+            {row.kind === "process" ? (
+              <BackgroundTaskResourceUsageLabel usage={usage} className="min-w-[3.5rem]" />
+            ) : null}
             {row.startedAt ? (
               <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
                 <BackgroundShellElapsed startedAt={row.startedAt} />
@@ -261,7 +295,7 @@ function LineageProcessRows(props: {
             {processOutput ? (
               <BackgroundProcessOutputButton
                 environmentId={props.environmentId}
-                threadId={props.threadId}
+                threadId={taskThreadId}
                 taskId={row.taskId}
                 label={row.label}
                 className={THREAD_DETAILS_PANEL_LINK_ROW_CLASS}
@@ -275,7 +309,7 @@ function LineageProcessRows(props: {
             )}
             <StopBackgroundShellButton
               environmentId={props.environmentId}
-              threadId={props.threadId}
+              threadId={taskThreadId}
               taskId={row.taskId}
               label={row.label}
               className={cn(STOP_SHELL_ON_ROW_HOVER_CLASS, "end-2 top-2")}
@@ -401,10 +435,13 @@ export function ThreadRelationshipsPanel(props: {
   // roster may carry shells its own subagents started, and its parent's shells it started.
   const rosterTasks = liveThreadsById.get(props.threadId)?.pendingBackgroundTasks ?? [];
   const parentThreadId = currentThread?.lineage.parentThreadId;
-  const ownTasks = pendingBackgroundWorkOfThread(
-    props.threadId,
-    rosterTasks,
-    parentThreadId ? liveThreadsById.get(parentThreadId)?.pendingBackgroundTasks : [],
+  const parentRosterTasks = parentThreadId
+    ? (liveThreadsById.get(parentThreadId)?.pendingBackgroundTasks ?? [])
+    : [];
+  const ownTasks = pendingBackgroundWorkOfThread(props.threadId, rosterTasks, parentRosterTasks);
+  // A shell started by a subagent stays on its parent provider session's task roster and output.
+  const parentTaskIds = new Set(
+    pendingBackgroundWorkOfThread(props.threadId, [], parentRosterTasks).map((task) => task.taskId),
   );
   const ownProcessRows =
     redesign && projection !== null && ownTasks.length > 0
@@ -596,6 +633,8 @@ export function ThreadRelationshipsPanel(props: {
             <LineageProcessRows
               environmentId={props.environmentId}
               threadId={props.threadId}
+              parentThreadId={parentThreadId ?? null}
+              parentTaskIds={parentTaskIds}
               rows={ownProcessRows}
             />
           ) : null}
@@ -739,15 +778,19 @@ export function ThreadRelationshipsPanel(props: {
                 );
                 const rowExpanded = !node?.missing && detailsExpanded(threadId);
                 // The child's own pending background work, read from its shell rather than its projection.
+                const childTasks = node?.thread?.pendingBackgroundTasks ?? [];
+                const parentTasks = pendingBackgroundWorkOfThread(threadId, [], rosterTasks);
+                const taskOwnerThreadIdById = new Map(
+                  childTasks.map((task) => [task.taskId, threadId] as const),
+                );
+                for (const task of parentTasks)
+                  taskOwnerThreadIdById.set(task.taskId, props.threadId);
                 const processRows =
                   agent && rowExpanded
                     ? describeSidebarBackgroundWork(
-                        pendingBackgroundWorkOfThread(
-                          threadId,
-                          node?.thread?.pendingBackgroundTasks ?? [],
-                          rosterTasks,
-                        ),
+                        pendingBackgroundWorkOfThread(threadId, childTasks, rosterTasks),
                         [],
+                        taskOwnerThreadIdById,
                       )
                     : [];
                 const detailsToggle =

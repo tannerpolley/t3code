@@ -1056,6 +1056,13 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetResourceTelemetryHistory,
       staleTimeMs: 5_000,
     }),
+    backgroundTaskResourceUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:background-task-resource-usage",
+      tag: WS_METHODS.serverGetBackgroundTaskResourceUsage,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+      refreshIntervalMs: 5_000,
+    }),
     searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:acp-registry:search",
       tag: WS_METHODS.serverSearchAcpRegistry,
