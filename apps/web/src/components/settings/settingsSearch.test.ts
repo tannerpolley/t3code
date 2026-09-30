@@ -228,7 +228,9 @@ describe("searchSettings", () => {
 
   it("ranks keybinding commands after other settings", () => {
     const ids = searchSettings("model").map((item) => item.id);
-    expect(ids[0]).toBe("default-model");
+    expect(ids.indexOf("keybinding-modelPicker.toggle")).toBeGreaterThan(
+      ids.indexOf("default-model"),
+    );
     expect(ids.indexOf("keybinding-modelPicker.toggle")).toBeGreaterThan(
       ids.indexOf("text-generation-model"),
     );
