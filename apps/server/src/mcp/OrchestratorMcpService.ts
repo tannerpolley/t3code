@@ -77,6 +77,7 @@ import {
   ThreadManagementService,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
+import { deriveDelegatedTaskNode } from "../orchestration-v2/IdAllocator.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -445,9 +446,13 @@ function stableCommandId(input: {
  * Branch for a delegated child's own worktree: readable from the task, and fixed by the
  * delegate command id so a retry with the same clientRequestId never cuts a second branch.
  */
+/** Ends every worktree branch this command id names, whatever the task text. */
+function delegatedWorktreeBranchSuffix(commandId: CommandId) {
+  return `-${NodeCrypto.createHash("sha256").update(commandId).digest("hex").slice(0, 8)}`;
+}
+
 function delegatedWorktreeBranch(input: OrchestratorMcpDelegateTaskInput, commandId: CommandId) {
-  const hash = NodeCrypto.createHash("sha256").update(commandId).digest("hex").slice(0, 8);
-  return `${WORKTREE_BRANCH_PREFIX}/${sanitizeBranchFragment((input.title ?? input.task).slice(0, 40))}-${hash}`;
+  return `${WORKTREE_BRANCH_PREFIX}/${sanitizeBranchFragment((input.title ?? input.task).slice(0, 40))}${delegatedWorktreeBranchSuffix(commandId)}`;
 }
 
 function stableThreadId(input: {
@@ -1401,10 +1406,30 @@ const make = Effect.gen(function* () {
         const requestedWorkspace =
           input.workspace ??
           (input.role === "implementation" || input.role === "test" ? "worktree" : "inherit");
+        // A retry replays the command this request key already accepted, so it keeps
+        // that decision: only a worktree child starts on a branch this command id named.
+        const acceptedChildThreadId =
+          parent.subagents.find((task) => task.id === deriveDelegatedTaskNode({ commandId }))
+            ?.childThreadId ?? null;
+        const acceptedChild =
+          acceptedChildThreadId === null ? undefined : yield* loadProjection(acceptedChildThreadId);
+        const acceptedWorkspace =
+          acceptedChild === undefined
+            ? undefined
+            : acceptedChild.thread.branch?.endsWith(delegatedWorktreeBranchSuffix(commandId))
+              ? "worktree"
+              : "inherit";
+        const needsBase =
+          acceptedChild === undefined
+            ? requestedWorkspace === "worktree"
+            : acceptedWorkspace === "worktree" &&
+              acceptedChild.runs.some((run) => run.status === "preparing");
         // Threads started in the project root record no branch, so cut from
         // whatever branch their checkout is on right now.
+        // ponytail: the base is not recorded, so a retry whose first call never started
+        // preparation re-reads it; record it on the command if that window matters.
         const parentBranch =
-          requestedWorkspace === "worktree" && parent.thread.branch === null
+          needsBase && parent.thread.branch === null
             ? yield* threadLaunch
                 .readCheckoutBranch({
                   commandId,
@@ -1420,9 +1445,8 @@ const make = Effect.gen(function* () {
                   ),
                 )
             : parent.thread.branch;
-        let workspaceNote: string | undefined;
-        let workspace = requestedWorkspace;
-        if (workspace === "worktree" && parentBranch === null) {
+        let workspace = acceptedWorkspace ?? requestedWorkspace;
+        if (acceptedWorkspace === undefined && workspace === "worktree" && parentBranch === null) {
           if (input.workspace === "worktree") {
             return yield* failure(
               "invalid_request",
@@ -1430,9 +1454,17 @@ const make = Effect.gen(function* () {
             );
           }
           workspace = "inherit";
-          workspaceNote =
-            "This thread's checkout is on a detached HEAD or is not a git repository, so the child shares this checkout instead of getting its own worktree.";
         }
+        if (needsBase && acceptedWorkspace === "worktree" && parentBranch === null) {
+          return yield* failure(
+            "orchestration_error",
+            "The delegated task is waiting for its worktree, but this thread's checkout is on a detached HEAD or is not a git repository. Check out a branch and retry, or cancel the task.",
+          );
+        }
+        const workspaceNote =
+          workspace === "inherit" && requestedWorkspace === "worktree"
+            ? "This thread's checkout is on a detached HEAD or is not a git repository, so the child shares this checkout instead of getting its own worktree."
+            : undefined;
         const withNote = (result: OrchestratorMcpDelegateTaskResult) =>
           workspaceNote === undefined ? result : { ...result, workspaceNote };
         const worktreeBranch =

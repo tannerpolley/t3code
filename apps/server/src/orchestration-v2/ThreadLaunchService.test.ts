@@ -102,6 +102,7 @@ interface HarnessOptions {
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly localStatus?: GitWorkflow.GitWorkflowService["Service"]["localStatus"];
+  readonly invalidateLocalStatus?: GitWorkflow.GitWorkflowService["Service"]["invalidateLocalStatus"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
@@ -166,6 +167,7 @@ function makeHarness(options: HarnessOptions = {}) {
       createWorktree,
       renameBranch,
       localStatus,
+      invalidateLocalStatus: options.invalidateLocalStatus ?? (() => Effect.void),
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       remoteExists: () => Effect.succeed(true),
       remoteBranchExists: () => Effect.succeed(true),
@@ -2190,15 +2192,35 @@ describe("delegate_task workspace", () => {
 
   // A thread started in the project root records no branch; its checkout says where it is.
   const rootParent = { branch: null, worktreePath: null };
+  const checkoutStatus = (refName: string | null) => ({
+    isRepo: true,
+    hasPrimaryRemote: false,
+    isDefaultRef: refName === "main",
+    refName,
+    hasWorkingTreeChanges: false,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+  });
   const rootCheckoutStatus = (refName: string | null) => () =>
-    Effect.succeed({
-      isRepo: true,
-      hasPrimaryRemote: false,
-      isDefaultRef: refName === "main",
-      refName,
-      hasWorkingTreeChanges: false,
-      workingTree: { files: [], insertions: 0, deletions: 0 },
-    });
+    Effect.succeed(checkoutStatus(refName));
+  // A checkout whose status is cached until invalidated, like the git service's.
+  const switchableCheckout = (initial: string | null) => {
+    let head = initial;
+    let cached: string | null | undefined;
+    return {
+      localStatus: () =>
+        Effect.sync(() => {
+          if (cached === undefined) cached = head;
+          return checkoutStatus(cached);
+        }),
+      invalidateLocalStatus: () =>
+        Effect.sync(() => {
+          cached = undefined;
+        }),
+      switchTo: (refName: string | null) => {
+        head = refName;
+      },
+    };
+  };
 
   it.effect("cuts a root thread's implementation child from the branch its checkout is on", () => {
     const harness = makeHarness({
@@ -2270,4 +2292,62 @@ describe("delegate_task workspace", () => {
       rootParent,
     );
   });
+
+  it.effect("cuts the child from a branch switched to just before delegating", () => {
+    const checkout = switchableCheckout("main");
+    const harness = makeHarness({ providers: [codexProvider], ...checkout });
+    return withDelegatingParent(
+      harness,
+      (service) =>
+        Effect.gen(function* () {
+          const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+          yield* harness.localStatus({ cwd: "/repo" });
+          checkout.switchTo("feature/switched");
+          const task = yield* service.delegateTask(scope, {
+            task: "Implement the parser",
+            role: "implementation",
+          });
+          yield* tracker.stream(task.childThreadId).pipe(
+            Stream.filter((snapshot) => snapshot?.phase === "done"),
+            Stream.runHead,
+          );
+          assert.equal(harness.createWorktree.mock.calls[0]![0].refName, "feature/switched");
+        }),
+      rootParent,
+    );
+  });
+
+  for (const workspaceChoice of [{ role: "implementation" }, { workspace: "worktree" }] as const) {
+    it.effect(
+      `keeps an accepted worktree child when a retry finds the checkout detached (${JSON.stringify(workspaceChoice)})`,
+      () => {
+        const checkout = switchableCheckout("main");
+        const harness = makeHarness({ providers: [codexProvider], ...checkout });
+        return withDelegatingParent(
+          harness,
+          (service) =>
+            Effect.gen(function* () {
+              const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+              const request = {
+                task: "Implement the parser",
+                ...workspaceChoice,
+                clientRequestId: "detached-retry",
+              };
+              const task = yield* service.delegateTask(scope, request);
+              yield* tracker.stream(task.childThreadId).pipe(
+                Stream.filter((snapshot) => snapshot?.phase === "done"),
+                Stream.runHead,
+              );
+              checkout.switchTo(null);
+              const retried = yield* service.delegateTask(scope, request);
+              assert.equal(retried.taskId, task.taskId);
+              assert.isUndefined(retried.workspaceNote);
+              assert.equal(retried.worktreePath, "/repo-worktrees/feature");
+              assert.equal(harness.createWorktree.mock.calls.length, 1);
+            }),
+          rootParent,
+        );
+      },
+    );
+  }
 });

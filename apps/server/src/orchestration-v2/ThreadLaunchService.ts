@@ -837,6 +837,8 @@ const make = Effect.gen(function* () {
           }),
         ),
       ));
+    // Status is cached briefly; an agent may have switched branches just before delegating.
+    yield* git.invalidateLocalStatus(cwd);
     const status = yield* git
       .localStatus({ cwd })
       .pipe(Effect.mapError(mapError(input, "read-branch")));
