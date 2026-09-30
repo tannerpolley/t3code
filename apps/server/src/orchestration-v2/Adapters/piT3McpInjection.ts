@@ -3,11 +3,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import type { McpProviderSessionConfig } from "../../mcp/McpProviderSession.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { t3OrchestrationInstructions } from "../../provider/T3OrchestrationInstructions.ts";
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
+  T3_PI_INSTRUCTIONS_ENV,
   T3_PI_RUNTIME_MODE_ENV,
 } from "./piT3McpExtensionSource.ts";
 
@@ -281,11 +284,21 @@ export function buildPiRpcLaunch(input: {
   // credentials inherited from the server or a parent provider process.
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
+  delete environment[T3_PI_INSTRUCTIONS_ENV];
 
   return {
     args,
     env: {
       ...environment,
+      // Same builders as Codex and Claude. Pi's env is fixed at spawn, so
+      // model roles refresh when the session's process starts, not per turn.
+      ...(hasT3Extension
+        ? {
+            [T3_PI_INSTRUCTIONS_ENV]:
+              buildRuntimeInstructions({ harness: "Pi" }) +
+              (hasT3Mcp ? t3OrchestrationInstructions(input.mcpSession?.modelRoles) : ""),
+          }
+        : {}),
       ...(hasT3Extension && input.runtimeMode !== undefined
         ? {
             [T3_PI_RUNTIME_MODE_ENV]:

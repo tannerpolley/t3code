@@ -97,7 +97,8 @@ function providerTurnAnalyticsProperties(input: {
   const modelSelection = input.context?.modelSelection;
   const effort = modelSelection
     ? (getModelSelectionStringOptionValue(modelSelection, "reasoningEffort") ??
-      getModelSelectionStringOptionValue(modelSelection, "effort"))
+      getModelSelectionStringOptionValue(modelSelection, "effort") ??
+      getModelSelectionStringOptionValue(modelSelection, "thinking"))
     : undefined;
   return {
     provider: input.driver,

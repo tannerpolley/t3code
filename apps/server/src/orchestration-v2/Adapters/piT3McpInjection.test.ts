@@ -1,6 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL_ROLES,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
@@ -8,6 +13,7 @@ import {
   PI_T3_MCP_EXTENSION_FILENAME,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
+  T3_PI_INSTRUCTIONS_ENV,
   T3_PI_RUNTIME_MODE_ENV,
 } from "./piT3McpExtensionSource.ts";
 import {
@@ -86,6 +92,35 @@ describe("pi T3 MCP injection", () => {
     assert.isUndefined(permissionOnly.env[T3_MCP_URL_ENV]);
     assert.isUndefined(permissionOnly.env[T3_MCP_BEARER_ENV]);
     assert.equal(permissionOnly.env[T3_PI_RUNTIME_MODE_ENV], "auto-accept-edits");
+  });
+
+  it("hands Pi the shared runtime, orchestration, and model-role instructions", () => {
+    const launch = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: { [T3_PI_INSTRUCTIONS_ENV]: "stale parent instructions" },
+      mcpSession: {
+        ...mcpSession,
+        modelRoles: DEFAULT_MODEL_ROLES.map((role) => ({ ...role, unavailableReason: null })),
+      },
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+    });
+    const instructions = launch.env[T3_PI_INSTRUCTIONS_ENV] ?? "";
+    assert.include(instructions, "through the Pi harness");
+    assert.include(instructions, "<showing_images>");
+    assert.include(instructions, "<pull_request_linking>");
+    assert.include(instructions, "## T3 Code orchestration");
+    assert.include(instructions, "- Checker: Read-only review of a build");
+    assert.notInclude(instructions, "stale parent instructions");
+
+    // Without MCP the agent still gets runtime context, but no orchestration tools to use.
+    const permissionOnly = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: {},
+      mcpSession: undefined,
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+    });
+    assert.include(permissionOnly.env[T3_PI_INSTRUCTIONS_ENV], "<showing_images>");
+    assert.notInclude(permissionOnly.env[T3_PI_INSTRUCTIONS_ENV], "T3 Code orchestration");
   });
 
   it("falls back to Pi's first supported mode for legacy auto threads", () => {
