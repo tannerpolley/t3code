@@ -1,4 +1,3 @@
-import * as NodePath from "node:path";
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -192,8 +191,11 @@ function claudeProbeSettingSources(
   cwd: string | undefined,
   home: string | undefined,
 ): Array<SettingSource> {
+  const withoutTrailingSlash = (path: string) => path.replace(/\/+$/, "");
   const inHome =
-    cwd !== undefined && home !== undefined && NodePath.resolve(cwd) === NodePath.resolve(home);
+    cwd !== undefined &&
+    home !== undefined &&
+    withoutTrailingSlash(cwd) === withoutTrailingSlash(home);
   return inHome ? ["user"] : [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES];
 }
 

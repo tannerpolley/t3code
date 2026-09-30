@@ -465,7 +465,7 @@ export const readBackgroundTaskResourceUsage = Effect.fn(
   "orchestration.readBackgroundTaskResourceUsage",
 )(function* (input: {
   readonly threads: ReadonlyArray<{
-    readonly threadId: string;
+    readonly threadId: ThreadId;
     readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
   }>;
 }) {
