@@ -1129,6 +1129,95 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("reports each turn's usage as the growth of Pi's session totals", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const totals = (input: number, output: number, cacheRead: number, cacheWrite: number) => ({
+        sessionId: "abc",
+        tokens: { input, output, cacheRead, cacheWrite },
+      });
+      const settledUsage = Effect.gen(function* () {
+        const settled = yield* takeEvent(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+        );
+        return settled.type === "provider_turn.updated"
+          ? settled.providerTurn.turnTokenUsage
+          : undefined;
+      });
+
+      // First turn of a fresh session: the whole session total is this turn's.
+      fake.queueStats(totals(0, 0, 0, 0));
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      fake.queueStats(totals(1_200, 300, 8_000, 500));
+      yield* fake.emit({ type: "agent_settled" });
+      assert.deepEqual(yield* settledUsage, {
+        usageStatus: "complete",
+        usageScope: "main_agent",
+        inputTokens: 9_700,
+        cachedInputTokens: 8_000,
+        cacheCreationTokens: 500,
+        outputTokens: 300,
+        hasSubagents: false,
+      });
+
+      // The second turn, including its compaction, counts only what it added.
+      fake.queueStats(totals(1_200, 300, 8_000, 500));
+      yield* startTurn(runtime, providerThread, "default", [], "Hello pi", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      fake.queueStats(totals(2_000, 900, 20_000, 500));
+      yield* fake.emit({ type: "agent_settled" });
+      assert.deepEqual(yield* settledUsage, {
+        usageStatus: "complete",
+        usageScope: "main_agent",
+        inputTokens: 12_800,
+        cachedInputTokens: 12_000,
+        cacheCreationTokens: 0,
+        outputTokens: 600,
+        hasSubagents: false,
+      });
+
+      // Without starting totals the turn's share is unknown.
+      yield* startTurn(runtime, providerThread, "default", [], "Hello pi", undefined, 3);
+      yield* fake.takeRequest("prompt");
+      fake.queueStats(totals(2_500, 1_000, 30_000, 500));
+      yield* fake.emit({ type: "agent_settled" });
+      assert.deepEqual(yield* settledUsage, {
+        usageStatus: "unavailable",
+        usageScope: "main_agent",
+        hasSubagents: false,
+      });
+
+      // A failed turn keeps its counted usage but not the claim of a full total.
+      fake.queueStats(totals(2_500, 1_000, 30_000, 500));
+      yield* startTurn(runtime, providerThread, "default", [], "Hello pi", undefined, 4);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "message_end",
+        message: { role: "assistant", content: [], stopReason: "error", errorMessage: "boom" },
+      });
+      fake.queueStats(totals(2_600, 1_000, 30_000, 500));
+      yield* fake.emit({ type: "agent_settled" });
+      assert.deepEqual(yield* settledUsage, {
+        usageStatus: "partial",
+        usageScope: "main_agent",
+        inputTokens: 100,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        hasSubagents: false,
+      });
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("captures session-tree refs at turn boundaries and rolls back via fork", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

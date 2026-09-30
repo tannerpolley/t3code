@@ -2,14 +2,14 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./piT3McpExtensionSource.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE, T3_PI_INSTRUCTIONS_ENV } from "./piT3McpExtensionSource.ts";
 
 type RequestHook = (
   event: { payload: unknown },
   ctx: { model: { provider: string } },
 ) => Record<string, unknown> | undefined;
 
-async function loadRequestHook(): Promise<RequestHook> {
+async function loadHooks(env: Record<string, string> = {}): Promise<Map<string, RequestHook>> {
   const handlers = new Map<string, RequestHook>();
   // Execute the shipped extension with MCP disabled; this path needs no Typebox.
   const source = NodeModule.stripTypeScriptTypes(
@@ -19,10 +19,14 @@ async function loadRequestHook(): Promise<RequestHook> {
     ),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: { env: {} },
+    process: { env },
     pi: { on: (name: string, handler: RequestHook) => handlers.set(name, handler) },
   });
-  const hook = handlers.get("before_provider_request");
+  return handlers;
+}
+
+async function loadRequestHook(): Promise<RequestHook> {
+  const hook = (await loadHooks()).get("before_provider_request");
   assert.isDefined(hook);
   return hook!;
 }
@@ -54,5 +58,18 @@ describe("Pi upstream output-budget workaround", () => {
     assert.isUndefined(
       hook({ payload: { max_tokens: 231_969 } }, { model: { provider: "anthropic" } }),
     );
+  });
+});
+
+describe("Pi T3 instructions", () => {
+  it("appends the server-built instructions to Pi's system prompt without MCP", async () => {
+    const hook = (
+      await loadHooks({ [T3_PI_INSTRUCTIONS_ENV]: "<showing_images>x</showing_images>" })
+    ).get("before_agent_start") as unknown as
+      | ((event: { systemPrompt: string }) => { systemPrompt: string })
+      | undefined;
+    assert.deepEqual(hook?.({ systemPrompt: "Pi base" }), {
+      systemPrompt: "Pi base\n\n<showing_images>x</showing_images>",
+    });
   });
 });

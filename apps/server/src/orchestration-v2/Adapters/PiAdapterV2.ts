@@ -45,6 +45,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type OrchestrationV2ProviderTurnTokenUsage,
+  type TurnTokenUsage,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -312,10 +313,80 @@ function compactionTitle(status: PiCompactionStatus): string {
   }
 }
 
+/** Pi's session-wide billed token counters, from `get_session_stats`. */
+interface PiUsageTotals {
+  readonly sessionId: string | undefined;
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+}
+
+function piUsageTotals(stats: unknown): PiUsageTotals | undefined {
+  const tokens = recordField(stats, "tokens");
+  const count = (key: string) => {
+    const value = recordNumber(tokens, key);
+    return value !== undefined && Number.isFinite(value) && value >= 0
+      ? Math.trunc(value)
+      : undefined;
+  };
+  const input = count("input");
+  const output = count("output");
+  const cacheRead = count("cacheRead");
+  const cacheWrite = count("cacheWrite");
+  if (
+    input === undefined ||
+    output === undefined ||
+    cacheRead === undefined ||
+    cacheWrite === undefined
+  ) {
+    return undefined;
+  }
+  return { sessionId: recordString(stats, "sessionId"), input, output, cacheRead, cacheWrite };
+}
+
+/**
+ * Main-agent usage for one turn: the growth of Pi's session totals across it.
+ * Pi sums every persisted assistant response (failed retry attempts included),
+ * compaction and branch summaries, and extension-recorded usage, so the
+ * difference covers all of them. Pi's `input` excludes cache reads and
+ * writes; the normalized input includes both. Output already includes reasoning.
+ */
+function piTurnTokenUsage(
+  start: PiUsageTotals | undefined,
+  end: PiUsageTotals | undefined,
+  completed: boolean,
+): TurnTokenUsage {
+  if (
+    start === undefined ||
+    end === undefined ||
+    start.sessionId !== end.sessionId ||
+    end.input < start.input ||
+    end.output < start.output ||
+    end.cacheRead < start.cacheRead ||
+    end.cacheWrite < start.cacheWrite
+  ) {
+    return { usageStatus: "unavailable", usageScope: "main_agent", hasSubagents: false };
+  }
+  const cachedInputTokens = end.cacheRead - start.cacheRead;
+  const cacheCreationTokens = end.cacheWrite - start.cacheWrite;
+  return {
+    usageStatus: completed ? "complete" : "partial",
+    usageScope: "main_agent",
+    inputTokens: end.input - start.input + cachedInputTokens + cacheCreationTokens,
+    cachedInputTokens,
+    cacheCreationTokens,
+    outputTokens: end.output - start.output,
+    hasSubagents: false,
+  };
+}
+
 interface ActivePiTurn {
   readonly turnInput: ProviderAdapterV2TurnInput;
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly startedAt: DateTime.Utc;
+  /** Session totals before the prompt; undefined when Pi could not report them. */
+  readonly usageAtStart: PiUsageTotals | undefined;
   readonly itemOrdinals: Map<string, number>;
   nextItemOrdinal: number;
   /** Increments on assistant `message_start` so content indexes stay unique. */
@@ -640,17 +711,16 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       };
 
       /**
-       * Pi only reports context usage through `get_session_stats`, so the
-       * settled turn carries it on the base's per-turn `tokenUsage` (#8144).
+       * Pi only reports usage through `get_session_stats`. The settled turn
+       * carries its context meter on the base's per-turn `tokenUsage` (#8144)
+       * and the difference from the turn's starting totals as `turnTokenUsage`.
        * Usage is secondary telemetry: the request is bounded and a provider
        * version without stats simply leaves the turn without a report, which
        * keeps the meter on the last turn that had one.
        */
-      const readTokenUsage = (fallbackUsedTokens: number | null, updatedAt: DateTime.Utc) =>
-        request({ type: "get_session_stats" }, 2_000).pipe(
-          Effect.map((stats) => tokenUsageFromStats(stats, fallbackUsedTokens, updatedAt)),
-          Effect.orElseSucceed(() => undefined),
-        );
+      const readSessionStats = request({ type: "get_session_stats" }, 2_000).pipe(
+        Effect.orElseSucceed(() => undefined),
+      );
 
       /**
        * Pi attaches the current message's cumulative usage to every streaming
@@ -1432,10 +1502,13 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         }
         yield* cancelPendingPrompts(completedAt);
         const treeRefs = yield* captureTurnTreeRefs();
-        const tokenUsage = readUsage
-          ? yield* readTokenUsage(turn.latestCompactionAfterTokens, completedAt)
-          : undefined;
+        const stats = readUsage ? yield* readSessionStats : undefined;
+        const tokenUsage =
+          stats === undefined
+            ? undefined
+            : tokenUsageFromStats(stats, turn.latestCompactionAfterTokens, completedAt);
         const failure = turn.interrupted ? null : turn.failure;
+        const status = turn.interrupted ? "interrupted" : failure !== null ? "failed" : "completed";
         yield* emit({
           type: "provider_turn.updated",
           driver: PI_PROVIDER,
@@ -1445,9 +1518,14 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             ...(treeRefs?.turnStartEntryId == null
               ? {}
               : { nativeTurnRef: providerRef(treeRefs.turnStartEntryId) }),
-            status: turn.interrupted ? "interrupted" : failure !== null ? "failed" : "completed",
+            status,
             completedAt,
             ...(tokenUsage === undefined ? {} : { tokenUsage }),
+            turnTokenUsage: piTurnTokenUsage(
+              turn.usageAtStart,
+              piUsageTotals(stats),
+              status === "completed",
+            ),
           },
         });
         yield* updateProviderThread(state, {
@@ -2310,6 +2388,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
               compactCommand === null
                 ? yield* resolvePromptPayload(turnInput.message.text, turnInput.message.attachments)
                 : null;
+            const usageAtStart = piUsageTotals(yield* readSessionStats);
             const startedAt = yield* DateTime.now;
             const syntheticNativeTurnId = `${state.providerThread.id}:attempt:${turnInput.attemptId}`;
             const providerTurn: OrchestrationV2ProviderTurn = {
@@ -2330,6 +2409,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
               turnInput,
               providerTurn,
               startedAt,
+              usageAtStart,
               itemOrdinals: new Map(),
               nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
               messageOrdinal: 0,
