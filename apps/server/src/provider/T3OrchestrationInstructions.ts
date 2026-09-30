@@ -1,4 +1,4 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import type { ModelRole, ProviderInteractionMode } from "@t3tools/contracts";
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
@@ -30,6 +30,40 @@ Tool names may include a harness-normalized MCP prefix, such as \`mcp__t3_code__
 
 ACP fallback: some ACP agents accept the injected MCP server but fail to expose its tools. When the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call the same tools through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset when T3 runs as a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. This is the supported T3 transport fallback, not an ordinary shell-based substitute for delegation.
 `;
+
+/**
+ * The user's model roles as one line each: name, when to use it, and the
+ * exact `delegate_task` target. Sent with every turn, so keep it compact;
+ * the settings schema bounds the role count and description length.
+ */
+export function t3ModelRolesInstructions(roles: ReadonlyArray<ModelRole>): string {
+  if (roles.length === 0) return "";
+  const lines = roles.map((role) => {
+    const { providerInstanceId, model, options } = role.target;
+    const target = {
+      providerInstanceId,
+      model,
+      ...(options === undefined || options.length === 0
+        ? {}
+        : { options: Object.fromEntries(options.map((option) => [option.id, option.value])) }),
+    };
+    const when = role.description.length > 0 ? `: ${role.description}` : "";
+    return `- ${role.name}${when}. Target: \`${JSON.stringify(target)}\``;
+  });
+  return `
+
+### Model roles
+
+The user's defaults for delegated work. Use them at your discretion; explicit user instructions win. Pass a role's JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists them again.
+
+${lines.join("\n")}
+`;
+}
+
+/** Orchestration instructions followed by the user's model roles. */
+export function t3OrchestrationInstructions(roles: ReadonlyArray<ModelRole> = []): string {
+  return `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}${t3ModelRolesInstructions(roles)}`;
+}
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 

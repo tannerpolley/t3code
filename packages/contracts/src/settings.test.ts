@@ -6,7 +6,10 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  DEFAULT_MODEL_ROLES,
   DEFAULT_SERVER_SETTINGS,
+  MAX_MODEL_ROLE_DESCRIPTION_LENGTH,
+  MAX_MODEL_ROLES,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -45,6 +48,48 @@ describe("ServerSettings response streaming", () => {
       expect(() => decodeServerSettings(input)).toThrow();
       expect(() => decodeServerSettingsPatch(input)).toThrow();
     }
+  });
+});
+
+describe("model roles", () => {
+  const role = DEFAULT_MODEL_ROLES[0]!;
+
+  it("seeds the default roles into settings files written before roles existed", () => {
+    const roles = decodeServerSettings({ enableAgentBrowserAccess: false }).modelRoles;
+    expect(roles.map((entry) => entry.name)).toEqual([
+      "Orchestrator",
+      "Fast builder",
+      "Checker",
+      "Thorough builder",
+      "Evidence gatherer",
+      "Quick Claude",
+      "Strong reviewer",
+    ]);
+    expect(roles[2]!.target).toEqual({
+      providerInstanceId: "codex",
+      model: "gpt-6.1-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  });
+
+  it("keeps a saved list, including an empty one, and replaces it through a patch", () => {
+    expect(decodeServerSettings({ modelRoles: [] }).modelRoles).toEqual([]);
+    const saved = encodeServerSettings({ ...DEFAULT_SERVER_SETTINGS, modelRoles: [role] });
+    expect(decodeServerSettings(saved).modelRoles).toEqual([role]);
+    expect(decodeServerSettingsPatch({ modelRoles: [role] })).toEqual({ modelRoles: [role] });
+  });
+
+  it("bounds the role count and description length", () => {
+    const many = Array.from({ length: MAX_MODEL_ROLES + 1 }, (_, index) => ({
+      ...role,
+      id: `role-${index}`,
+    }));
+    expect(() => decodeServerSettingsPatch({ modelRoles: many })).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({
+        modelRoles: [{ ...role, description: "x".repeat(MAX_MODEL_ROLE_DESCRIPTION_LENGTH + 1) }],
+      }),
+    ).toThrow();
   });
 });
 

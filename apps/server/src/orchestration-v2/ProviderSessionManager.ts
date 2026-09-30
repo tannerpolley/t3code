@@ -411,6 +411,18 @@ export const layerWithOptions = (
       };
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
+      // An unreadable settings file keeps the roles the session already has.
+      const syncModelRoles = (threadId: ThreadId) =>
+        Option.isNone(serverSettings)
+          ? Effect.void
+          : serverSettings.value.getSettings.pipe(
+              Effect.tap((settings) =>
+                Effect.sync(() =>
+                  McpProviderSession.setMcpProviderModelRoles(threadId, settings.modelRoles),
+                ),
+              ),
+              Effect.ignore,
+            );
       const mcpPrepareLock = yield* makeKeyedSerialExecutor<ThreadId>();
       /**
        * Resolves (or mints) the thread's MCP credential and returns it with a
@@ -459,6 +471,7 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
+                    yield* syncModelRoles(threadId);
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -471,6 +484,7 @@ export const layerWithOptions = (
                   capabilities,
                 });
                 McpProviderSession.setMcpProviderSession(credential.config);
+                yield* syncModelRoles(threadId);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),
@@ -1379,6 +1393,7 @@ export const layerWithOptions = (
                 providerInstanceId: runtime.instanceId,
               }),
             ).pipe(
+              Effect.andThen(syncModelRoles(input.threadId)),
               Effect.andThen(observeActivity(providerSessionId, markBusy(providerSessionId))),
               Effect.andThen(runtime.startTurn(input)),
               Effect.catch((error) =>

@@ -1,9 +1,9 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import type { ModelRole, ProviderInteractionMode } from "@t3tools/contracts";
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
-  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  t3OrchestrationInstructions,
 } from "./T3OrchestrationInstructions.ts";
 
 const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = `
@@ -172,6 +172,7 @@ ${browserToolInstructions(browserToolsAvailable)}
 
 const codexDefaultModeDeveloperInstructions = (
   browserToolsAvailable: boolean | T3CodeToolAvailability,
+  modelRoles: ReadonlyArray<ModelRole>,
 ): string => `<collaboration_mode># Collaboration Mode: Default
 
 You are now in Default mode. Any previous instructions for other modes (e.g. Plan mode) are no longer active.
@@ -188,7 +189,7 @@ In Default mode, strongly prefer making reasonable assumptions and executing the
 
 Start long-running shell work as a background command instead of blocking on it. After spawning subagents or background commands whose results you don't need right away, end your turn instead of waiting inside it: T3 Code wakes you when they finish.
 ${browserToolInstructions(browserToolsAvailable)}
-${T3_CODE_ORCHESTRATION_INSTRUCTIONS}
+${t3OrchestrationInstructions(modelRoles)}
 </collaboration_mode>`;
 
 export interface CodexRuntimeInfo {
@@ -205,11 +206,12 @@ export function buildCodexDeveloperInstructions(
    * setting, so the prompt cannot claim tools the turn doesn't have.
    */
   browserToolsAvailable: boolean | T3CodeToolAvailability = true,
+  modelRoles: ReadonlyArray<ModelRole> = [],
 ): string {
   const base =
     interactionMode === "plan"
       ? codexPlanModeDeveloperInstructions(browserToolsAvailable)
-      : codexDefaultModeDeveloperInstructions(browserToolsAvailable);
+      : codexDefaultModeDeveloperInstructions(browserToolsAvailable, modelRoles);
   return `${base}
 
 ${buildRuntimeInstructions({ harness: "Codex", ...runtime })}`;

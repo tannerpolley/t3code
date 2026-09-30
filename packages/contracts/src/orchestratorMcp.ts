@@ -36,6 +36,7 @@ import {
   ProviderOptionSelectionValue,
 } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ModelRole } from "./settings.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
   description: "Complete task or message text for the target agent.",
@@ -497,6 +498,11 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  /**
+   * The user's model roles: defaults to use at the agent's discretion when
+   * picking a `delegate_task` target. Explicit user instructions win.
+   */
+  modelRoles: Schema.Array(ModelRole),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

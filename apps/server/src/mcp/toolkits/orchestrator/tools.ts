@@ -41,7 +41,7 @@ const threadMetadataDependencies = [
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
-    "List the V2 provider instances, models, inherited runtime settings, and app-owned orchestration features available to this T3 thread. For a separate top-level thread in a new or existing worktree, use t3_thread_launch with workspaceStrategy.",
+    "List the V2 provider instances, models, inherited runtime settings, the user's model roles (default delegate_task targets for kinds of work), and app-owned orchestration features available to this T3 thread. For a separate top-level thread in a new or existing worktree, use t3_thread_launch with workspaceStrategy.",
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",

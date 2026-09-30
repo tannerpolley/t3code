@@ -1424,6 +1424,12 @@ const make = Effect.gen(function* () {
         const parent = yield* loadProjection(scope.threadId);
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+        const modelRoles = Option.isNone(serverSettings)
+          ? []
+          : yield* serverSettings.value.getSettings.pipe(
+              Effect.map((settings) => settings.modelRoles),
+              Effect.orElseSucceed(() => []),
+            );
         return {
           parentThreadId: scope.threadId,
           inheritedProviderInstanceId: parent.thread.modelSelection.instanceId,
@@ -1452,6 +1458,7 @@ const make = Effect.gen(function* () {
               constraints: [...constraints],
             };
           }),
+          modelRoles,
           features: {
             appOwnedSubagents: true,
             asyncPolling: true,

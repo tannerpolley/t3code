@@ -10,6 +10,7 @@ import { DraftInput } from "../ui/draft-input";
 import { toastManager } from "../ui/toast";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { ModelRolesSection } from "./ModelRolesSettings";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
@@ -724,6 +725,7 @@ export function CustomizationsSettings() {
           description="An agent can give a delegated task its own worktree on a new branch from the parent's, set up before the task starts, so children editing code in parallel don't collide. Lineage shows the child's branch and worktree. Nothing merges or removes it automatically. Agents choose this per task; no switch."
         />
       </CustomizationsGroup>
+      <ModelRolesSection />
       <CustomizationsGroup title="Usage" section="usage" />
       <CustomizationsGroup title="Appearance & motion" section="motion" />
       <SettingsSection title="Always-on fixes">

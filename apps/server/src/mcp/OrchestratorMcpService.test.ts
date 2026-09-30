@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  type ModelRole,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -22,6 +24,7 @@ import {
 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
@@ -564,6 +567,46 @@ describe("OrchestratorMcpService provider resolution", () => {
         }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
       }),
   );
+
+  it.effect("lists the user's model roles so agents can re-read them mid-session", () => {
+    const modelRoles: ReadonlyArray<ModelRole> = [
+      {
+        id: "reviewer",
+        name: "Reviewer",
+        description: "Read-only review",
+        target: {
+          providerInstanceId: codexInstanceId,
+          model: "gpt-5.4",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      },
+    ];
+    return Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const capabilities = yield* service.capabilities(scope);
+      assert.deepEqual(capabilities.modelRoles, modelRoles);
+    }).pipe(
+      Effect.provide(
+        OrchestratorMcpService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              Layer.mock(ThreadManagementService)({
+                getThreadRecords: () => Effect.succeed(parentProjection([])),
+              }),
+              Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+              adapterRegistryLayer([]),
+              Layer.mock(ThreadLaunchService)({}),
+              Layer.mock(ScheduledTaskService)({}),
+              Layer.mock(ServerSettingsService)({
+                getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, modelRoles }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
 
   it.effect(
     "delegates to an Antigravity instance whose adapter resolves through the registry",
