@@ -294,8 +294,9 @@ describe("formatElapsedDurationLabel", () => {
 
 describe("formatElapsedSeconds", () => {
   it.each([
-    [0, "00h 00m 00s"],
-    [65, "00h 01m 05s"],
+    [0, "00m 00s"],
+    [65, "01m 05s"],
+    [3599, "59m 59s"],
     [3600, "01h 00m 00s"],
     [99 * 3600, "99h 00m 00s"],
     [100 * 3600, "100h 00m 00s"],

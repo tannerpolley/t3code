@@ -69,7 +69,7 @@ export function SidebarCaretToggle(props: {
 /**
  * The right columns, last in the row: a right-aligned count, then time, then status mark. Widths
  * are in `ch` at a fixed size and weight, so they hold in any interface font; the time fits the
- * fixed elapsed label ("00h 00m 00s") on one line.
+ * elapsed label, up to "00h 00m 00s", on one line; right-aligned so minutes and seconds line up whether or not a time shows hours.
  */
 export function SidebarTrailingColumns(props: {
   readonly count?: number | undefined;

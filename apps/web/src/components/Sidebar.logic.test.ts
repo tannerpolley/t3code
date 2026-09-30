@@ -1376,7 +1376,7 @@ describe("formatStoppedThreadDuration", () => {
 
   it("freezes the completed run's duration rather than its age", () => {
     expect(formatStoppedThreadDuration(presentThreadShell(localEnvironmentId, base))).toBe(
-      "00h 01m 05s",
+      "01m 05s",
     );
   });
 

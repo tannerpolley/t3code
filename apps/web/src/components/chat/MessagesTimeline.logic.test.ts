@@ -1122,7 +1122,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(foldRow?.runId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
     // User message boundary (00:00:00) → terminal message updatedAt (00:00:22).
-    expect(foldRow?.label).toBe("Worked for 00h 00m 22s");
+    expect(foldRow?.label).toBe("Worked for 00m 22s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
@@ -1414,7 +1414,7 @@ describe("deriveMessagesTimelineRows", () => {
     );
     // User message (00:00:00) → trailing work entry (00:00:12).
     expect(foldRow?.runId).toBe("turn-1");
-    expect(foldRow?.label).toBe("Worked for 00h 00m 12s");
+    expect(foldRow?.label).toBe("Worked for 00m 12s");
   });
 
   it("uses latest-turn timings and the stopped label for an interrupted latest turn", () => {
@@ -1449,7 +1449,7 @@ describe("deriveMessagesTimelineRows", () => {
       expect.objectContaining({
         kind: "turn-fold",
         runId: "turn-1",
-        label: "You stopped after 00h 00m 47s",
+        label: "You stopped after 00m 47s",
         expanded: false,
       }),
     ]);
@@ -1567,7 +1567,7 @@ describe("deriveMessagesTimelineRows", () => {
           ]);
           expect(rows[1]?.createdAt).toBe(time(0));
           if (!isWorking)
-            expect(rows[1]).toMatchObject({ label: "Worked for 00h 00m 20s", expanded });
+            expect(rows[1]).toMatchObject({ label: "Worked for 00m 20s", expanded });
           expect(rows.some((row) => row.id === "final")).toBe(true);
           expect(rows.some((row) => row.id === "work")).toBe(isWorking || expanded);
         }
@@ -3032,7 +3032,7 @@ describe("v2 run and attempt history", () => {
     expect(foldRow?.runId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
     // User message boundary (00:00:00) → terminal message updatedAt (00:00:22).
-    expect(foldRow?.label).toBe("Worked for 00h 00m 22s");
+    expect(foldRow?.label).toBe("Worked for 00m 22s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",

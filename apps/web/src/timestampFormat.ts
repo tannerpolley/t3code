@@ -326,7 +326,15 @@ export function formatExpiresInLabel(isoDate: string, nowMs: number = Date.now()
 }
 
 /** Fixed work duration; hour digits grow beyond 99 instead of switching units. */
+/**
+ * Zero-padded "05m 09s", with "01h " in front only once a time reaches an hour. Times sit in a
+ * right-aligned column sized for the hour part, so minutes and seconds line up either way.
+ */
 export function formatElapsedSeconds(totalSeconds: number): string {
   const seconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
-  return `${String(Math.floor(seconds / 3600)).padStart(2, "0")}h ${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}m ${String(seconds % 60).padStart(2, "0")}s`;
+  const hours = Math.floor(seconds / 3600);
+  const minutesAndSeconds = `${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return hours === 0
+    ? minutesAndSeconds
+    : `${String(hours).padStart(2, "0")}h ${minutesAndSeconds}`;
 }
