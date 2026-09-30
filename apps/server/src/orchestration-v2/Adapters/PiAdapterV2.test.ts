@@ -1456,6 +1456,18 @@ describe("PiAdapterV2", () => {
           subagentItem.turnItem.type === "subagent" &&
           subagentItem.turnItem.childThreadId === null,
       );
+      // Usage records mark the turn as having run a subagent, like Codex and Claude.
+      yield* fake.emit({ type: "agent_settled" });
+      const settled = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status !== "running",
+      );
+      assert.strictEqual(
+        settled.type === "provider_turn.updated"
+          ? settled.providerTurn.turnTokenUsage?.hasSubagents
+          : undefined,
+        true,
+      );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

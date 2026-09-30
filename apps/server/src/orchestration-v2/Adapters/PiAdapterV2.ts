@@ -356,6 +356,7 @@ function piTurnTokenUsage(
   start: PiUsageTotals | undefined,
   end: PiUsageTotals | undefined,
   completed: boolean,
+  hasSubagents: boolean,
 ): TurnTokenUsage {
   if (
     start === undefined ||
@@ -366,7 +367,7 @@ function piTurnTokenUsage(
     end.cacheRead < start.cacheRead ||
     end.cacheWrite < start.cacheWrite
   ) {
-    return { usageStatus: "unavailable", usageScope: "main_agent", hasSubagents: false };
+    return { usageStatus: "unavailable", usageScope: "main_agent", hasSubagents };
   }
   const cachedInputTokens = end.cacheRead - start.cacheRead;
   const cacheCreationTokens = end.cacheWrite - start.cacheWrite;
@@ -377,7 +378,7 @@ function piTurnTokenUsage(
     cachedInputTokens,
     cacheCreationTokens,
     outputTokens: end.output - start.output,
-    hasSubagents: false,
+    hasSubagents,
   };
 }
 
@@ -387,6 +388,8 @@ interface ActivePiTurn {
   readonly startedAt: DateTime.Utc;
   /** Session totals before the prompt; undefined when Pi could not report them. */
   readonly usageAtStart: PiUsageTotals | undefined;
+  /** Set once the turn runs Pi's native subagent tool, so usage records say so. */
+  hasSubagents: boolean;
   readonly itemOrdinals: Map<string, number>;
   nextItemOrdinal: number;
   /** Increments on assistant `message_start` so content indexes stay unique. */
@@ -1125,6 +1128,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           const agent = recordString(result, "agent");
           const task = recordString(result, "task");
           if (agent === undefined || task === undefined) continue;
+          turn.hasSubagents = true;
           const nativeTaskId = `${toolCallId}:subagent:${recordNumber(result, "step") ?? index}`;
           const subagentId = idAllocator.derive.nodeFromProviderItem({
             driver: PI_PROVIDER,
@@ -1525,6 +1529,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
               turn.usageAtStart,
               piUsageTotals(stats),
               status === "completed",
+              turn.hasSubagents,
             ),
           },
         });
@@ -2410,6 +2415,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
               providerTurn,
               startedAt,
               usageAtStart,
+              hasSubagents: false,
               itemOrdinals: new Map(),
               nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
               messageOrdinal: 0,
