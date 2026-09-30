@@ -1127,6 +1127,10 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 });
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
+/** Codex's marker for interim commentary versus the final answer; absent when unknown. */
+export const OrchestrationV2AssistantMessagePhase = Schema.Literals(["commentary", "final_answer"]);
+export type OrchestrationV2AssistantMessagePhase = typeof OrchestrationV2AssistantMessagePhase.Type;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1152,6 +1156,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
     streaming: Schema.Boolean,
+    phase: Schema.optional(OrchestrationV2AssistantMessagePhase),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1880,6 +1885,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
     streaming: Schema.Boolean,
+    phase: Schema.optional(OrchestrationV2AssistantMessagePhase),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

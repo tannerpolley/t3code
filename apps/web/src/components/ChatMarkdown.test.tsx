@@ -104,6 +104,7 @@ describe("ChatMarkdown math", () => {
       "It costs $5 and $10 total.",
       "Price: $5.00, then $6.",
       "Budget $1,200 or $5k.",
+      "Plans are $5/mo or $20+ and $10/hour.",
       // Plugin skill references, even when the skill list isn't loaded.
       "have more agents use $cse:research and use the $cse:zotero to get them",
     ]) {
@@ -114,6 +115,17 @@ describe("ChatMarkdown math", () => {
     expect(
       renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Area $2\\pi r$ and $x$."} />),
     ).toContain('<annotation encoding="application/x-tex">2\\pi r</annotation>');
+    for (const [text, formula] of [
+      ["Half is $1/2$ at $5/mo.", "1/2"],
+      ["Slope $2/x$ here.", "2/x"],
+      ["Rate $1/a$ here.", "1/a"],
+      ["$$2/x$$", "2/x"],
+      ["Plans are $5/mo and $x^2$ grows.", "x^2"],
+    ] as const) {
+      const html = renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={text} />);
+      expect(html).toContain(`<annotation encoding="application/x-tex">${formula}</annotation>`);
+      expect(html).not.toContain("katex-error");
+    }
     expect(
       renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Maps $x:y$ here."} />),
     ).toContain('<annotation encoding="application/x-tex">x:y</annotation>');

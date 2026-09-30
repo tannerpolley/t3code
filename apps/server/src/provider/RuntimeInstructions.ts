@@ -6,6 +6,10 @@ const SHOWING_MEDIA_INSTRUCTIONS = `<showing_images>
 The user sees only the text of your replies. Files you create, tool output, and images you open or view yourself are invisible to them. To show an image or video, put it in your reply as Markdown with its absolute path on this machine: ![Short description](/absolute/path/to/chart.png). Save it to a real file first (for example under /tmp or the project), then embed it. Never write that an image is "shown above" or "below" unless that exact Markdown is in the same reply.
 </showing_images>`;
 
+const MATH_INSTRUCTIONS = `<math>
+Chat renders LaTeX with KaTeX. Write inline math as $…$ and display equations as $$…$$ on their own lines, and use them for equations and formulas instead of plain-text approximations. Don't wrap math in code fences.
+</math>`;
+
 /** Shared runtime context; omit model and effort when the harness manages them dynamically. */
 export function buildRuntimeInstructions(runtime: {
   readonly harness: string;
@@ -17,7 +21,7 @@ export function buildRuntimeInstructions(runtime: {
   const effort = toSingleLine(runtime.reasoningEffort ?? "");
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${model}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
-  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise.</runtime_info>\n\n${SHOWING_MEDIA_INSTRUCTIONS}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise.</runtime_info>\n\n${SHOWING_MEDIA_INSTRUCTIONS}\n\n${MATH_INSTRUCTIONS}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
 }
 
 function toSingleLine(value: string): string {

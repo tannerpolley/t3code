@@ -30,6 +30,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
+  OrchestrationV2AssistantMessagePhase,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
   ModelSelection,
@@ -2803,7 +2804,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         const buildAgentMessageArtifacts = (
           context: ActiveCodexTurnContext,
-          item: { readonly id: string; readonly text: string },
+          item: {
+            readonly id: string;
+            readonly text: string;
+            readonly phase?: OrchestrationV2AssistantMessagePhase | undefined;
+          },
           completed: boolean,
         ) =>
           Effect.gen(function* () {
@@ -2872,6 +2877,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               messageId,
               text: item.text,
               streaming: !completed,
+              ...(item.phase ? { phase: item.phase } : {}),
             };
             return { node, message, turnItem };
           });
@@ -2967,6 +2973,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }
         });
 
+        // Codex reports each agent message's phase on its started/completed items, not on deltas.
+        const agentMessagePhases = new Map<string, OrchestrationV2AssistantMessagePhase>();
         const agentMessageDeltas = yield* makeProviderTextDeltaCoalescer({
           flushIntervalMs: CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS,
           emit: (update) =>
@@ -2999,7 +3007,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               }
               const artifacts = yield* buildAgentMessageArtifacts(
                 context,
-                { id: update.itemId, text: update.text },
+                {
+                  id: update.itemId,
+                  text: update.text,
+                  phase: agentMessagePhases.get(update.itemId),
+                },
                 update.completed,
               );
               yield* emitProviderEvent({
@@ -4010,6 +4022,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             yield* completeProviderRetry(context, yield* DateTime.now);
 
             if (payload.item.type === "agentMessage") {
+              if (payload.item.phase) agentMessagePhases.set(payload.item.id, payload.item.phase);
               if (payload.item.phase !== "commentary") {
                 yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                   const updated = new Map(current);
@@ -4306,6 +4319,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             if (payload.item.delivery === "async" && payload.item.questions?.length) {
+              agentMessagePhases.delete(payload.item.id);
               const artifacts = yield* buildUserInputRequestArtifacts({
                 context,
                 nativeItemId: payload.item.id,
@@ -4348,6 +4362,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             const finalAnswer = payload.item.phase !== "commentary";
+            if (payload.item.phase) agentMessagePhases.set(payload.item.id, payload.item.phase);
             if (finalAnswer) {
               yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                 const updated = new Map(current);
@@ -4365,6 +4380,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               itemId: payload.item.id,
               finalText: payload.item.text,
             });
+            agentMessagePhases.delete(payload.item.id);
             yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
               const itemIds = current.get(payload.turnId);
               if (itemIds === undefined || !itemIds.has(payload.item.id)) {
