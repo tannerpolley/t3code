@@ -1,7 +1,7 @@
 /**
  * Source for the T3-owned Pi extension that consumes T3's HTTP MCP server.
  *
- * Pi core has no MCP client. This file is TypeScript that Pi itself loads via
+ * This bridge owns its MCP client. Pi loads this TypeScript via
  * `--extension`. It is written to a cache path at session open so packaged
  * AppImage builds do not need a sibling .ts file next to the bundled server.
  *
@@ -31,7 +31,7 @@ const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const INSTRUCTIONS_ENV = ${JSON.stringify(T3_PI_INSTRUCTIONS_ENV)};
 const PROTOCOL = "2025-06-18";
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "tool_search"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
@@ -250,9 +250,16 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // Wrapping the first user message instead would stop it from starting
   // with "/" and silently break slash-command expansion.
   const instructions = env(INSTRUCTIONS_ENV);
+  let deferredTools = false;
   if (instructions !== undefined) {
     pi.on("before_agent_start", (event) => ({
-      systemPrompt: event.systemPrompt + "\\n\\n" + instructions,
+      systemPrompt:
+        event.systemPrompt +
+        "\\n\\n" +
+        instructions +
+        (deferredTools
+          ? "\\n\\nT3 tools load through tool_search; search for the named T3 tool before calling it."
+          : ""),
     }));
   }
 
@@ -269,41 +276,58 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   }
 
   const client = createMcpClient(endpoint, token);
+  const registerTools = (tools: McpTool[], deferred: boolean) => {
+    for (const tool of tools) {
+      const name = tool.name;
+      const registeredName = \`mcp__t3-code__\${name}\`;
+      const description = tool.description ?? name;
+      pi.registerTool({
+        name: registeredName,
+        label: name,
+        description,
+        ...(deferred ? { exposure: "deferred" as const } : {}),
+        promptSnippet: description.split("\\n")[0] ?? name,
+        parameters: jsonSchemaToTypebox(tool.inputSchema),
+        async execute(_toolCallId, params, signal) {
+          const result = await client.callTool(
+            name,
+            (params ?? {}) as Record<string, unknown>,
+            signal,
+          );
+          const text = formatMcpContent(result);
+          return {
+            content: [{ type: "text", text }],
+            details: { server: "t3-code", tool: name },
+            ...(isMcpToolError(result) ? { isError: true } : {}),
+          };
+        },
+      });
+    }
+  };
+  const loadTools = async () => {
+    const signal = AbortSignal.timeout(10_000);
+    await client.connect(signal);
+    return client.listTools(signal);
+  };
+  // Register before Pi restores the transcript's active tool loadout.
+  // Old Pi ignores exposure; session_start selects direct tools if search is absent.
+  const preloadedTools = await loadTools().catch(() => undefined);
+  if (preloadedTools !== undefined) registerTools(preloadedTools, true);
   let started: Promise<void> | undefined;
 
   const ensureStarted = () => {
     if (started !== undefined) return started;
     const attempt = (async () => {
-      const signal = AbortSignal.timeout(10_000);
-      await client.connect(signal);
-      const tools = await client.listTools(signal);
-      for (const tool of tools) {
-        const name = tool.name;
-        const registeredName = \`mcp__t3-code__\${name}\`;
-        const description = tool.description ?? name;
-        pi.registerTool({
-          name: registeredName,
-          label: name,
-          description,
-          promptSnippet: description.split("\\n")[0] ?? name,
-          promptGuidelines: [
-            \`Use \${registeredName} from the t3-code MCP server when the user asks for T3 orchestration that this tool covers.\`,
-          ],
-          parameters: jsonSchemaToTypebox(tool.inputSchema),
-          async execute(_toolCallId, params, signal) {
-            const result = await client.callTool(
-              name,
-              (params ?? {}) as Record<string, unknown>,
-              signal,
-            );
-            const text = formatMcpContent(result);
-            return {
-              content: [{ type: "text", text }],
-              details: { server: "t3-code", tool: name },
-              ...(isMcpToolError(result) ? { isError: true } : {}),
-            };
-          },
-        });
+      const tools = preloadedTools ?? (await loadTools());
+      if (pi.getAllTools().some((tool) => tool.name === "tool_search")) {
+        const activeTools = pi.getActiveTools();
+        if (!activeTools.includes("tool_search")) {
+          pi.setActiveTools([...activeTools, "tool_search"]);
+        }
+        deferredTools = pi.getActiveTools().includes("tool_search");
+      }
+      if (preloadedTools === undefined || !deferredTools) {
+        registerTools(tools, deferredTools);
       }
     })();
     started = attempt;
@@ -313,12 +337,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     return attempt;
   };
 
-  // Await here so tools exist before session_start and the first prompt.
-  // session_start is a retry if the process later reloads the extension.
-  // Best effort during extension load. A failed first connection is retried
-  // below on session_start instead of pinning this process to the failure.
-  await ensureStarted().catch(() => undefined);
-
+  // Tool-catalog methods are unavailable during extension loading. Select
+  // exposure after the runtime binds; retry a failed preload before the prompt.
   pi.on("session_start", async (_event, ctx) => {
     try {
       await ensureStarted();
