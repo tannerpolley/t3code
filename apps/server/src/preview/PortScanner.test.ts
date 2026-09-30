@@ -14,12 +14,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 import { FetchHttpClient } from "effect/unstable/http";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
@@ -60,6 +62,7 @@ const makeProbeFailureLayer = (
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
         Layer.succeed(Net.NetService, {
           canListenOnHost: () => Effect.succeed(true),
           isPortAvailableOnLoopback: () => Effect.succeed(true),
@@ -77,6 +80,7 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       TestProcessRunner,
+      Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
       TestIntegrationNet,
       Layer.succeed(HostProcessPlatform, "win32"),
       FetchHttpClient.layer,
@@ -89,37 +93,174 @@ const LSOF_TEST_PORT = 43_123;
 const makeLsofScannerLayer = (input: {
   readonly pid: () => number;
   readonly fetch: typeof globalThis.fetch;
-}) =>
-  PortScanner.layer.pipe(
+  readonly platform?: NodeJS.Platform;
+  readonly listeners?: ReadonlyArray<{ readonly pid: number; readonly port: number }>;
+  readonly parents?: () => ReadonlyMap<number, number>;
+  readonly parentFailure?: boolean;
+  readonly netProbes?: number[];
+}) => {
+  const parents = input.parents ?? (() => new Map([[input.pid(), process.pid]]));
+  const platform = input.platform ?? "linux";
+  return PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ProcessRunner.ProcessRunner, {
-          run: () =>
-            Effect.succeed({
-              stdout: `p${input.pid()}\ncnode\nn*:${LSOF_TEST_PORT}\n`,
+          run: (command) => {
+            const parentProbe =
+              command.command === "ps" || command.args.at(-1)?.includes("Get-CimInstance");
+            if (parentProbe && input.parentFailure) return processProbeFailure(command);
+            const listeners = input.listeners ?? [{ pid: input.pid(), port: LSOF_TEST_PORT }];
+            return Effect.succeed({
+              stdout: parentProbe
+                ? [...parents()].map(([pid, ppid]) => `${pid} ${ppid}`).join("\n")
+                : listeners
+                    .map(({ pid, port }) =>
+                      platform === "win32"
+                        ? `127.0.0.1|${port}|${pid}|node`
+                        : `p${pid}\ncnode\nn*:${port}\n`,
+                    )
+                    .join("\n"),
               stderr: "",
-              code: null,
+              code: ChildProcessSpawner.ExitCode(0),
               timedOut: false,
               stdoutTruncated: false,
               stderrTruncated: false,
               stdoutInvalidUtf8: false,
               stderrInvalidUtf8: false,
-            }),
+            });
+          },
         }),
+        Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop(
+            input.parentFailure
+              ? {}
+              : {
+                  readDirectory: () => Effect.sync(() => [...parents().keys()].map(String)),
+                  readFileString: (path) =>
+                    Effect.sync(() => {
+                      const pid = Number(path.split("/")[2]);
+                      return `${pid} (node worker) name) S ${parents().get(pid)} 0 0`;
+                    }),
+                },
+          ),
+        ),
         Layer.succeed(Net.NetService, {
           canListenOnHost: () => Effect.succeed(true),
-          isPortAvailableOnLoopback: () => Effect.succeed(true),
+          isPortAvailableOnLoopback: (port) =>
+            Effect.sync(() => {
+              input.netProbes?.push(port);
+              return true;
+            }),
           hasListenerOnHost: () => Effect.succeed(false),
           reserveLoopbackPort: () => Effect.succeed(40_000),
           findAvailablePort: (preferred) => Effect.succeed(preferred),
         }),
-        Layer.succeed(HostProcessPlatform, "linux"),
+        Layer.succeed(HostProcessPlatform, platform),
         FetchHttpClient.layer.pipe(
           Layer.provide(Layer.succeed(FetchHttpClient.Fetch, input.fetch)),
         ),
       ),
     ),
   );
+};
+
+for (const platform of ["linux", "darwin", "win32"] as const) {
+  const unrelatedListener = { pid: 9876, port: 57_343 };
+  const childListener = { pid: 1234, port: LSOF_TEST_PORT };
+  const parents = () =>
+    new Map([
+      [unrelatedListener.pid, 1],
+      [childListener.pid, 1233],
+      [1233, process.pid],
+      [process.pid, 1],
+    ]);
+
+  for (const scenario of [
+    "unrelated",
+    "descendant",
+    "common dev port",
+    "configured URL",
+  ] as const) {
+    effectIt.effect(`${platform}: probes only eligible listeners (${scenario})`, () => {
+      const requests: string[] = [];
+      const netProbes: number[] = [];
+      const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+        requests.push(String(input));
+        return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+      }) as typeof globalThis.fetch;
+      const configuredUrl = `http://localhost:${LSOF_TEST_PORT}/docs`;
+      const listeners = [
+        unrelatedListener,
+        ...(scenario === "descendant"
+          ? [childListener, { pid: process.pid, port: 43_124 }]
+          : scenario === "common dev port"
+            ? [{ pid: unrelatedListener.pid, port: 3000 }]
+            : scenario === "configured URL"
+              ? [{ pid: unrelatedListener.pid, port: LSOF_TEST_PORT }]
+              : []),
+      ];
+      const layer = makeLsofScannerLayer({
+        pid: () => childListener.pid,
+        fetch: fetchFn,
+        platform,
+        listeners,
+        parents,
+        netProbes,
+      });
+
+      return Effect.gen(function* () {
+        const scanner = yield* PortScanner.PortDiscovery;
+        const servers = yield* scanner.scan(scenario === "configured URL" ? [configuredUrl] : []);
+        const expectedUrls =
+          scenario === "descendant"
+            ? [`http://localhost:${LSOF_TEST_PORT}/`, "http://localhost:43124/"]
+            : scenario === "common dev port"
+              ? ["http://localhost:3000/"]
+              : scenario === "configured URL"
+                ? [configuredUrl]
+                : [];
+        expect(requests.toSorted()).toEqual(expectedUrls.toSorted());
+        expect(servers.map((server) => server.port)).toEqual(
+          expectedUrls.map((url) => Number(new URL(url).port)).toSorted((a, b) => a - b),
+        );
+        expect(netProbes).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+  }
+
+  effectIt.effect(
+    `${platform}: falls back to dev ports and configured URLs if ancestry fails`,
+    () => {
+      const requests: string[] = [];
+      const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+        requests.push(String(input));
+        return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+      }) as typeof globalThis.fetch;
+      const configuredUrl = "http://localhost:43125/docs";
+      const layer = makeLsofScannerLayer({
+        pid: () => childListener.pid,
+        fetch: fetchFn,
+        platform,
+        listeners: [unrelatedListener, childListener, { pid: unrelatedListener.pid, port: 3000 }],
+        parents,
+        parentFailure: true,
+      });
+
+      return Effect.gen(function* () {
+        const scanner = yield* PortScanner.PortDiscovery;
+        yield* scanner.registerTerminalProcesses({
+          threadId: "thread-1",
+          terminalId: "terminal-1",
+          processIds: [childListener.pid],
+        });
+        const servers = yield* scanner.scan([configuredUrl]);
+        expect(servers.map((server) => server.port)).toEqual([3000, 43125]);
+        expect(requests.toSorted()).toEqual(["http://localhost:3000/", configuredUrl].toSorted());
+      }).pipe(Effect.provide(layer));
+    },
+  );
+}
 
 const openServer = (
   port: number,
