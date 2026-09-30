@@ -579,7 +579,7 @@ describe("buildCodexDeveloperInstructions", () => {
       });
       NodeAssert.match(
         instructions,
-        /<runtime_info>.*embed images and videos.*Markdown.*<\/runtime_info>/,
+        /<showing_images>[\s\S]*!\[Short description\]\(\/absolute\/path\/to\/chart\.png\)[\s\S]*<\/showing_images>/,
       );
     }
   });
