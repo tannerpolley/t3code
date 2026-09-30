@@ -1398,16 +1398,43 @@ const make = Effect.gen(function* () {
           requestKey: key,
           operation: "delegate-task",
         });
-        const parentBranch = parent.thread.branch;
-        const workspace =
+        const requestedWorkspace =
           input.workspace ??
           (input.role === "implementation" || input.role === "test" ? "worktree" : "inherit");
+        // Threads started in the project root record no branch, so cut from
+        // whatever branch their checkout is on right now.
+        const parentBranch =
+          requestedWorkspace === "worktree" && parent.thread.branch === null
+            ? yield* threadLaunch
+                .readCheckoutBranch({
+                  commandId,
+                  projectId: parent.thread.projectId,
+                  worktreePath: parent.thread.worktreePath,
+                })
+                .pipe(
+                  Effect.mapError((error) =>
+                    failure(
+                      "orchestration_error",
+                      `Unable to read this thread's checkout branch: ${errorMessage(error)}`,
+                    ),
+                  ),
+                )
+            : parent.thread.branch;
+        let workspaceNote: string | undefined;
+        let workspace = requestedWorkspace;
         if (workspace === "worktree" && parentBranch === null) {
-          return yield* failure(
-            "invalid_request",
-            "workspace \"worktree\" cuts the child's branch from this thread's branch, but this thread is not on a git branch.",
-          );
+          if (input.workspace === "worktree") {
+            return yield* failure(
+              "invalid_request",
+              "workspace \"worktree\" cuts the child's branch from this thread's checkout, but that checkout is on a detached HEAD or is not a git repository.",
+            );
+          }
+          workspace = "inherit";
+          workspaceNote =
+            "This thread's checkout is on a detached HEAD or is not a git repository, so the child shares this checkout instead of getting its own worktree.";
         }
+        const withNote = (result: OrchestratorMcpDelegateTaskResult) =>
+          workspaceNote === undefined ? result : { ...result, workspaceNote };
         const worktreeBranch =
           workspace === "worktree" ? delegatedWorktreeBranch(input, commandId) : undefined;
         const result = yield* threadManagement
@@ -1487,7 +1514,7 @@ const make = Effect.gen(function* () {
         }
 
         if (input.mode !== "wait") {
-          return yield* readTask(scope, taskId, false, true);
+          return withNote(yield* readTask(scope, taskId, false, true));
         }
         const timeoutMs = Math.min(
           MAX_WAIT_TIMEOUT_MS,
@@ -1495,7 +1522,7 @@ const make = Effect.gen(function* () {
         );
         const waited = yield* waitForTask(scope, taskId, timeoutMs);
         if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
-          return waited.value;
+          return withNote(waited.value);
         }
         // The blocking wait timed out or returned the child's question, so it
         // no longer owns delivery: upgrade the task so a later terminal wakes
@@ -1536,7 +1563,9 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return Option.isSome(waited) ? waited.value : yield* readTask(scope, taskId, true, true);
+        return withNote(
+          Option.isSome(waited) ? waited.value : yield* readTask(scope, taskId, true, true),
+        );
       }),
     taskStatus: (scope, taskId) => readTask(scope, taskId, false, true),
     cancelTask: (scope, input) =>

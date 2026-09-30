@@ -101,6 +101,7 @@ interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
+  readonly localStatus?: GitWorkflow.GitWorkflowService["Service"]["localStatus"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
@@ -128,6 +129,9 @@ function makeHarness(options: HarnessOptions = {}) {
   );
   const renameBranch = vi.fn(
     options.renameBranch ?? ((input) => Effect.succeed({ branch: input.newBranch })),
+  );
+  const localStatus = vi.fn(
+    options.localStatus ?? (() => Effect.die("unexpected checkout status read")),
   );
   const runSetup = vi.fn(
     options.runSetup ?? (() => Effect.succeed({ status: "no-script" as const })),
@@ -161,6 +165,7 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
       renameBranch,
+      localStatus,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       remoteExists: () => Effect.succeed(true),
       remoteBranchExists: () => Effect.succeed(true),
@@ -214,6 +219,7 @@ function makeHarness(options: HarnessOptions = {}) {
     ),
     createWorktree,
     renameBranch,
+    localStatus,
     generateBranchName,
     generateThreadTitle,
     runSetup,
@@ -1747,7 +1753,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     };
     const failed = yield* ThreadMessageIntake.launchThread(input).pipe(
       Effect.provideService(ThreadLaunch.ThreadLaunchService, {
-        prepareDeferredRun: launches.prepareDeferredRun,
+        ...launches,
         launch: (request) =>
           launches.launch(request).pipe(
             Effect.andThen(
@@ -2040,6 +2046,10 @@ describe("delegate_task workspace", () => {
       E,
       ThreadManagement.ThreadManagementService | WorktreeSetupTracker.WorktreeSetupTracker
     >,
+    parentWorkspace: { readonly branch: string | null; readonly worktreePath: string | null } = {
+      branch: "feature/parent",
+      worktreePath: "/repo-worktrees/parent",
+    },
   ) =>
     Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -2053,8 +2063,7 @@ describe("delegate_task workspace", () => {
         modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
-        branch: "feature/parent",
-        worktreePath: "/repo-worktrees/parent",
+        ...parentWorkspace,
         createdBy: "user",
         creationSource: "web",
       });
@@ -2178,4 +2187,87 @@ describe("delegate_task workspace", () => {
       );
     });
   }
+
+  // A thread started in the project root records no branch; its checkout says where it is.
+  const rootParent = { branch: null, worktreePath: null };
+  const rootCheckoutStatus = (refName: string | null) => () =>
+    Effect.succeed({
+      isRepo: true,
+      hasPrimaryRemote: false,
+      isDefaultRef: refName === "main",
+      refName,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+    });
+
+  it.effect("cuts a root thread's implementation child from the branch its checkout is on", () => {
+    const harness = makeHarness({
+      providers: [codexProvider],
+      localStatus: rootCheckoutStatus("main"),
+    });
+    return withDelegatingParent(
+      harness,
+      (service) =>
+        Effect.gen(function* () {
+          const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+          const task = yield* service.delegateTask(scope, {
+            task: "Implement the parser",
+            role: "implementation",
+          });
+          assert.isUndefined(task.workspaceNote);
+          yield* tracker.stream(task.childThreadId).pipe(
+            Stream.filter((snapshot) => snapshot?.phase === "done"),
+            Stream.runHead,
+          );
+          assert.equal(harness.localStatus.mock.calls[0]?.[0]?.cwd, "/repo");
+          const worktree = harness.createWorktree.mock.calls[0]![0];
+          assert.equal(worktree.cwd, "/repo");
+          assert.equal(worktree.refName, "main");
+        }),
+      rootParent,
+    );
+  });
+
+  it.effect("keeps a defaulted child in a detached checkout and says so", () => {
+    const harness = makeHarness({
+      providers: [codexProvider],
+      localStatus: rootCheckoutStatus(null),
+    });
+    return withDelegatingParent(
+      harness,
+      (service) =>
+        Effect.gen(function* () {
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const task = yield* service.delegateTask(scope, {
+            task: "Implement the parser",
+            role: "implementation",
+          });
+          assert.isString(task.workspaceNote);
+          assert.isNull(task.worktreePath);
+          assert.equal(harness.createWorktree.mock.calls.length, 0);
+          const child = yield* threads.getThreadProjection(task.childThreadId);
+          assert.equal(child.runs[0]?.status, "starting");
+        }),
+      rootParent,
+    );
+  });
+
+  it.effect("rejects an explicit worktree from a detached checkout", () => {
+    const harness = makeHarness({
+      providers: [codexProvider],
+      localStatus: rootCheckoutStatus(null),
+    });
+    return withDelegatingParent(
+      harness,
+      (service) =>
+        Effect.gen(function* () {
+          const error = yield* service
+            .delegateTask(scope, { task: "Implement the parser", workspace: "worktree" })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "invalid_request");
+          assert.include(error.message, "detached HEAD");
+        }),
+      rootParent,
+    );
+  });
 });

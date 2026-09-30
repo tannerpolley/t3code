@@ -106,6 +106,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   {
     operation: Schema.Literals([
       "resolve-project",
+      "read-branch",
       "read-receipt",
       "generate-metadata",
       "provision-worktree",
@@ -144,6 +145,15 @@ export class ThreadLaunchService extends Context.Service<
         readonly runId: RunId;
       },
     ) => Effect.Effect<void, ThreadLaunchError>;
+    /**
+     * The branch a thread's checkout is on right now: its worktree, else the project root.
+     * Null on a detached HEAD or outside git.
+     */
+    readonly readCheckoutBranch: (input: {
+      readonly commandId: CommandId;
+      readonly projectId: ProjectId;
+      readonly worktreePath: string | null;
+    }) => Effect.Effect<string | null, ThreadLaunchError>;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
@@ -177,7 +187,7 @@ const make = Effect.gen(function* () {
 
   const mapError =
     (
-      input: ThreadWorkspacePreparationInput,
+      input: Pick<ThreadWorkspacePreparationInput, "commandId" | "projectId">,
       operation: ThreadLaunchError["operation"],
       threadId?: ThreadId,
     ) =>
@@ -812,9 +822,31 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const readCheckoutBranch: ThreadLaunchService["Service"]["readCheckoutBranch"] = Effect.fn(
+    "ThreadLaunchService.readCheckoutBranch",
+  )(function* (input) {
+    const cwd =
+      input.worktreePath ??
+      (yield* projects.getById(input.projectId).pipe(
+        Effect.mapError(mapError(input, "resolve-project")),
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(mapError(input, "resolve-project")("Project no longer exists.")),
+            onSome: (project) => Effect.succeed(project.workspaceRoot),
+          }),
+        ),
+      ));
+    const status = yield* git
+      .localStatus({ cwd })
+      .pipe(Effect.mapError(mapError(input, "read-branch")));
+    return status.isRepo ? status.refName : null;
+  });
+
   return ThreadLaunchService.of({
     launch,
     prepareDeferredRun: (input) => ensurePreparation(input, input.threadId, input.runId),
+    readCheckoutBranch,
   });
 });
 

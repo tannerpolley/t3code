@@ -167,8 +167,9 @@ retry and the normal snooze choices.
 On web and desktop, use **Agents** to follow work delegated to subagents.
 Delegated implementation and test agents get their own worktree and branch by
 default. Research and review agents use the coordinating thread's checkout.
-An agent can explicitly choose either workspace; creating a worktree requires
-the coordinating thread to be on a Git branch.
+An agent can explicitly choose either workspace. A worktree branches from the
+coordinating thread's current Git branch; if its checkout has no branch, such as
+a detached HEAD, delegated agents share that checkout instead.
 
 To tell agents which model and effort suit each kind of delegated work, edit
 **Model roles** in **Settings → Customizations** on web and desktop. Agents use

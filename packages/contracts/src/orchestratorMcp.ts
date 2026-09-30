@@ -217,6 +217,10 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   }),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
+  workspaceNote: Schema.optional(Schema.String).annotate({
+    description:
+      "Present on the delegate_task result when the role's default worktree was not possible and the child shares this thread's checkout instead.",
+  }),
   waitTimedOut: Schema.Boolean.annotate({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
