@@ -240,7 +240,7 @@ export function BackgroundWorkTaskList(props: {
               />
             ) : null}
             <SidebarTrailingColumns
-              count={toggle?.count}
+              count={toggle && !toggle.open ? toggle.count : undefined}
               time={row.startedAt ? elapsed(row.kind, row.startedAt) : null}
               status={<ThreadStatusMark status={row.status ?? "working"} />}
             />

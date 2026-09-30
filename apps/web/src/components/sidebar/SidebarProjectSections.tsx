@@ -836,7 +836,8 @@ function SortableSectionHeader(props: {
         )}
         <span className="truncate">{projectSectionName(section)}</span>
         {codexStyle ? (
-          <SidebarTrailingColumns count={section.projectKeys.length} />
+          // Counts show only while collapsed: they stand in for the hidden rows.
+          <SidebarTrailingColumns count={expanded ? undefined : section.projectKeys.length} />
         ) : (
           <span className="ms-auto shrink-0 text-[11px] text-sidebar-muted-foreground/55">
             {section.projectKeys.length}
@@ -1021,11 +1022,13 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           {codexStyle ? (
             <SidebarTrailingColumns
               count={
-                props.threads.length > 0
-                  ? props.threads.length
-                  : project.groupedProjectCount > 1
-                    ? project.groupedProjectCount
-                    : undefined
+                props.isProjectExpanded
+                  ? undefined
+                  : props.threads.length > 0
+                    ? props.threads.length
+                    : project.groupedProjectCount > 1
+                      ? project.groupedProjectCount
+                      : undefined
               }
             />
           ) : props.threads.length > 0 ? (
@@ -1256,7 +1259,7 @@ function SidebarProjectThreadRow(props: {
         </span>
         {props.codexStyle ? (
           <SidebarTrailingColumns
-            count={workRows.length > 0 ? workRows.length : undefined}
+            count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
             time={<SidebarThreadTime thread={props.thread} status={status} />}
             status={<ThreadStatusMark status={statusMark} />}
           />
