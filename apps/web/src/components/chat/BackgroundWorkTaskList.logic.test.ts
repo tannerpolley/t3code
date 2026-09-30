@@ -1,3 +1,4 @@
+import { ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { describe, expect, it } from "vite-plus/test";
@@ -5,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   describeBackgroundWorkTasks,
   describeSidebarBackgroundWork,
+  groupBackgroundWorkTaskRows,
   msUntilPossiblyStuck,
 } from "./BackgroundWorkTaskList.logic";
 
@@ -190,6 +192,51 @@ describe("describeSidebarBackgroundWork", () => {
     expect(
       pendingBackgroundWorkOfThread("parent-thread", parentRoster).map((task) => task.taskId),
     ).toEqual(["bash-own"]);
+  });
+});
+
+describe("groupBackgroundWorkTaskRows", () => {
+  it("groups mixed agent and process rows while preserving their order, links, and owners", () => {
+    const parent = ThreadId.make("parent-thread");
+    const child = ThreadId.make("child-thread");
+    const projection = {
+      turnItems: [],
+      subagents: [
+        { id: "agent", nativeTaskRef: { nativeId: "codex-agent" }, childThreadId: child },
+      ],
+    } as never;
+    const rows = describeBackgroundWorkTasks(
+      [
+        { taskId: "shell", taskType: "local_bash", commandKind: "python", startedAt },
+        { taskId: "codex-agent", taskType: "subagent", description: "Check the diff" },
+        { taskId: "monitor", taskType: "monitor", commandKind: "watcher", startedAt },
+        { taskId: "claude-agent", taskType: "local_agent", description: "Explore" },
+      ],
+      projection,
+    ).map((row) => ({ ...row, ownerThreadId: parent }));
+    const { agents, processes } = groupBackgroundWorkTaskRows(rows);
+    expect(agents.map((row) => row.taskId)).toEqual(["codex-agent", "claude-agent"]);
+    expect(processes.map((row) => row.taskId)).toEqual(["shell", "monitor"]);
+    expect(agents[0]?.childThreadId).toBe(child);
+    expect(processes[0]?.ownerThreadId).toBe(parent);
+    // Keep the original rows: their metadata and session ownership must reach output and Stop.
+    expect(agents[0]).toBe(rows[1]);
+    expect(agents[1]).toBe(rows[3]);
+    expect(processes[0]).toBe(rows[0]);
+    expect(processes[1]).toBe(rows[2]);
+  });
+
+  it("leaves an absent group empty for agent-only, process-only, and empty lists", () => {
+    const rows = describeBackgroundWorkTasks(
+      [
+        { taskId: "agent", taskType: "remote_agent" },
+        { taskId: "shell", taskType: "command_execution" },
+      ],
+      { turnItems: [], subagents: [] },
+    );
+    expect(groupBackgroundWorkTaskRows([rows[0]!])).toEqual({ agents: [rows[0]], processes: [] });
+    expect(groupBackgroundWorkTaskRows([rows[1]!])).toEqual({ agents: [], processes: [rows[1]] });
+    expect(groupBackgroundWorkTaskRows([])).toEqual({ agents: [], processes: [] });
   });
 });
 

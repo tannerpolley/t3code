@@ -84,6 +84,7 @@ import {
   type BackgroundWorkTaskRow,
   describeBackgroundWorkTasks,
   describeSidebarBackgroundWork,
+  groupBackgroundWorkTaskRows,
 } from "./BackgroundWorkTaskList.logic";
 import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
 import { resolveThreadStatusMark } from "../Sidebar.logic";
@@ -234,11 +235,10 @@ export function resolveSubagentProgressText(input: {
 }
 
 /**
- * The thread's own background shells, listed with its children: a terminal, the command, its age,
- * and a spinner that a stop button covers on hover. A row opens the process output when that
- * viewer is on.
+ * The thread's own background tasks: kind, label, resources, elapsed time, and status.
+ * Uses the sidebar's output button and stop action; resource usage refreshes only while visible.
  */
-function LineageProcessRows(props: {
+function ThreadBackgroundTaskRows(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly parentThreadId: ThreadId | null;
@@ -431,8 +431,8 @@ export function ThreadRelationshipsPanel(props: {
       : null,
     finishedAt,
   });
-  // Shells the thread started run beside its agents, so they list and count like children. The
-  // roster may carry shells its own subagents started, and its parent's shells it started.
+  // Keep the thread's tasks separate from shells its subagents started. A subagent's own shells
+  // can live on its parent's provider roster, so keep their session owner for output and Stop.
   const rosterTasks = liveThreadsById.get(props.threadId)?.pendingBackgroundTasks ?? [];
   const parentThreadId = currentThread?.lineage.parentThreadId;
   const parentRosterTasks = parentThreadId
@@ -443,10 +443,9 @@ export function ThreadRelationshipsPanel(props: {
   const parentTaskIds = new Set(
     pendingBackgroundWorkOfThread(props.threadId, [], parentRosterTasks).map((task) => task.taskId),
   );
-  const ownProcessRows =
-    redesign && projection !== null && ownTasks.length > 0
-      ? describeBackgroundWorkTasks(ownTasks, projection).filter((row) => row.kind === "process")
-      : [];
+  const { processes: ownProcessRows } = groupBackgroundWorkTaskRows(
+    describeBackgroundWorkTasks(ownTasks, projection ?? { turnItems: [], subagents: [] }),
+  );
   const runningAgentCount =
     projection?.subagents.filter((agent) =>
       isRunning(
@@ -457,9 +456,9 @@ export function ThreadRelationshipsPanel(props: {
         ),
       ),
     ).length ?? active.filter(({ edge }) => isRunning(edge.status)).length;
-  const runningCount = runningAgentCount + ownProcessRows.length;
+  const hasAgents = relationshipRows.length > 0 || runningAgentCount > 0;
 
-  if (relationshipRows.length === 0 && runningCount === 0) {
+  if (!hasAgents && ownProcessRows.length === 0) {
     return null;
   }
 
@@ -570,10 +569,10 @@ export function ThreadRelationshipsPanel(props: {
       ? null
       : (graph.nodes.get(mergeTargetThreadId)?.thread?.title ?? null);
 
-  return (
+  const agentsSection = (
     <ThreadDetailsSection
-      headingId="thread-details-lineage-heading"
-      title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
+      headingId="thread-details-agents-heading"
+      title={runningAgentCount > 0 ? `Agents · ${runningAgentCount} running` : "Agents"}
       data-thread-relationships-panel
       actions={
         <>
@@ -629,15 +628,6 @@ export function ThreadRelationshipsPanel(props: {
     >
       {groups.map((group) => (
         <Fragment key={group.id}>
-          {group.id === "previous" && ownProcessRows.length > 0 ? (
-            <LineageProcessRows
-              environmentId={props.environmentId}
-              threadId={props.threadId}
-              parentThreadId={parentThreadId ?? null}
-              parentTaskIds={parentTaskIds}
-              rows={ownProcessRows}
-            />
-          ) : null}
           <ThreadLineageGroup {...group}>
             {(visibleRows) =>
               visibleRows.map(({ threadId, edge }) => {
@@ -943,5 +933,25 @@ export function ThreadRelationshipsPanel(props: {
         </Fragment>
       ))}
     </ThreadDetailsSection>
+  );
+
+  return (
+    <>
+      {hasAgents ? agentsSection : null}
+      {ownProcessRows.length > 0 ? (
+        <ThreadDetailsSection
+          headingId="thread-details-background-tasks-heading"
+          title="Background tasks"
+        >
+          <ThreadBackgroundTaskRows
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+            parentThreadId={parentThreadId ?? null}
+            parentTaskIds={parentTaskIds}
+            rows={ownProcessRows}
+          />
+        </ThreadDetailsSection>
+      ) : null}
+    </>
   );
 }

@@ -94,7 +94,7 @@ it("shows the matching child agent details and refreshes them when the agent set
       .join(" ")
       .replace(/\s+/g, " ");
   expect(text()).toContain("Checker");
-  expect(text()).toContain("Lineage · 3 running");
+  expect(text()).toContain("Agents · 3 running");
   expect(text()).toContain("running");
   expect(text()).not.toContain("gpt-5.4");
   expect(text()).not.toContain("gpt-5.3");
@@ -116,7 +116,7 @@ it("shows the matching child agent details and refreshes them when the agent set
     ],
   };
   await act(async () => renderer.update(cloneElement(panel)));
-  expect(renderer.root.findByType("h3").children).toEqual(["Lineage"]);
+  expect(renderer.root.findByType("h3").children).toEqual(["Agents"]);
   expect(text()).toContain("Previous agents (1)");
   expect(text()).not.toContain("Checker");
   await act(async () =>
@@ -147,7 +147,7 @@ it("shows the matching child agent details and refreshes them when the agent set
     })),
   };
   await act(async () => renderer.update(cloneElement(panel)));
-  expect(text()).toContain("Lineage · 8 running");
+  expect(text()).toContain("Agents · 8 running");
 
   state.projection = {
     ...projection,
@@ -197,7 +197,7 @@ it("shows the matching child agent details and refreshes them when the agent set
     subagents: [{ ...agent, childThreadId: null }],
   };
   await act(async () => renderer.update(cloneElement(panel)));
-  expect(text()).toContain("Lineage · 1 running");
+  expect(text()).toContain("Agents · 1 running");
 
   // Expand all follows the rows on screen, not the collapsed agent inside closed Previous agents.
   state.projection = {

@@ -31,7 +31,10 @@ import {
   STOP_SHELL_ON_ROW_HOVER_CLASS,
 } from "./BackgroundProcessOutput";
 import { PierreEntryIcon } from "./PierreEntryIcon";
-import type { BackgroundWorkTaskRow } from "./BackgroundWorkTaskList.logic";
+import {
+  groupBackgroundWorkTaskRows,
+  type BackgroundWorkTaskRow,
+} from "./BackgroundWorkTaskList.logic";
 import { resolveSubagentModelLabel } from "./SubagentTooltipContent";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
 
@@ -166,7 +169,8 @@ export function BackgroundWorkTaskList(props: {
   const providers = useServerConfigs().get(props.environmentId)?.providers;
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
-  const hasProcesses = props.rows.some((row) => row.kind === "process");
+  const { agents, processes } = groupBackgroundWorkTaskRows(props.rows);
+  const hasProcesses = processes.length > 0;
   const { listRef, isVisible } = useBackgroundTaskListVisibility(hasProcesses);
   const taskThreadIds = [
     ...new Set(
@@ -197,7 +201,7 @@ export function BackgroundWorkTaskList(props: {
             : "max-h-48 space-y-0.5 overflow-y-auto pb-1 text-xs"
       }
     >
-      {props.rows.map((row) => {
+      {[...agents, ...processes].map((row) => {
         const kindLabel = row.kind === "subagent" ? "Subagent" : "Background process";
         const processKindLabel = backgroundProcessKindLabel(row.taskType, row.commandKind);
         const taskThreadId = row.ownerThreadId ?? props.threadId;
@@ -302,7 +306,8 @@ export function BackgroundWorkTaskList(props: {
         return (
           <li
             key={row.taskId}
-            className={
+            className={cn(
+              agents.length > 0 && row === processes[0] && "border-t border-sidebar-border/40",
               props.columns
                 ? cn(
                     // Only a shell row is a hover group, so its stop button shows on its own hover.
@@ -315,8 +320,8 @@ export function BackgroundWorkTaskList(props: {
                       ? "before:-top-1 last:before:h-4"
                       : "before:-top-2 last:before:h-5",
                   )
-                : cn("relative", row.kind === "process" && "group/shell")
-            }
+                : cn("relative", row.kind === "process" && "group/shell"),
+            )}
           >
             {props.compact ? (
               <Tooltip>

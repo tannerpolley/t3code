@@ -43,6 +43,14 @@ export interface BackgroundWorkTaskRow {
   readonly child?: Pick<SidebarThreadSummary, "providerInstanceId" | "modelSelection"> | undefined;
 }
 
+/** Separates agents from the owner's processes without changing order within either group. */
+export function groupBackgroundWorkTaskRows(rows: ReadonlyArray<BackgroundWorkTaskRow>) {
+  return {
+    agents: rows.filter((row) => row.kind === "subagent"),
+    processes: rows.filter((row) => row.kind === "process"),
+  };
+}
+
 /**
  * Joins each pending task back to the projection record it came from. Task ids are the turn
  * item's native id (or its id), matching `derivePendingBackgroundWork`; roster-only tasks
