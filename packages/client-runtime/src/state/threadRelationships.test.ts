@@ -388,6 +388,18 @@ describe("subagent current activation", () => {
     expect(resolveSubagentStatus(record, failed)).toBe("failed");
   });
 
+  it("shows no start for a finished child whose run never recorded one", () => {
+    const unknownStart = {
+      ...child,
+      latestRunId: "run-2",
+      latestRunRequestedAt: at("2026-09-24T10:50:00.000Z"),
+      latestRunCompletedAt: at("2026-09-24T11:03:00.000Z"),
+      status: "completed",
+    } as never;
+    // The request time would count queue wait as work.
+    expect(resolveSubagentActivation(record, unknownStart).startedAt).toBeNull();
+  });
+
   it("keeps the record's model for a provider-native child, and the record without a child", () => {
     const native = {
       ...child,

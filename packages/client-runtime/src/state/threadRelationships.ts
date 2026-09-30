@@ -164,7 +164,8 @@ export function resolveSubagentActivation<Status extends string>(
     const waiting = waitsOnOwnBackgroundWork(childThread, parentTasks);
     return {
       status: waiting ? "running" : "completed",
-      startedAt: iso(childThread.latestRunStartedAt ?? childThread.latestRunRequestedAt),
+      // Unknown start means no duration; the request time would count queue wait as work.
+      startedAt: iso(childThread.latestRunStartedAt),
       completedAt: waiting ? null : iso(childThread.latestRunCompletedAt),
       model,
     };
