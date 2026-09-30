@@ -31,6 +31,8 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { modelRoleStatuses } from "../mcp/delegateTaskTarget.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -330,6 +332,7 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const providerRegistry = yield* Effect.serviceOption(ProviderRegistry);
       const eventSink = yield* EventSinkV2;
       const idAllocator = yield* IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestorV2;
@@ -411,6 +414,22 @@ export const layerWithOptions = (
       };
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
+      // Roles carry the same availability check `delegate_task` applies. An
+      // unreadable settings file keeps the roles the session already has.
+      const syncModelRoles = (threadId: ThreadId) =>
+        Option.isNone(serverSettings)
+          ? Effect.void
+          : Effect.gen(function* () {
+              const settings = yield* serverSettings.value.getSettings;
+              const providers = Option.isSome(providerRegistry)
+                ? yield* providerRegistry.value.getProviders
+                : [];
+              const capableInstanceIds = new Set(yield* registry.list());
+              McpProviderSession.setMcpProviderModelRoles(
+                threadId,
+                modelRoleStatuses(settings.modelRoles, providers, capableInstanceIds),
+              );
+            }).pipe(Effect.ignore);
       const mcpPrepareLock = yield* makeKeyedSerialExecutor<ThreadId>();
       /**
        * Resolves (or mints) the thread's MCP credential and returns it with a
@@ -459,6 +478,7 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
+                    yield* syncModelRoles(threadId);
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -471,6 +491,7 @@ export const layerWithOptions = (
                   capabilities,
                 });
                 McpProviderSession.setMcpProviderSession(credential.config);
+                yield* syncModelRoles(threadId);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),
@@ -1379,6 +1400,7 @@ export const layerWithOptions = (
                 providerInstanceId: runtime.instanceId,
               }),
             ).pipe(
+              Effect.andThen(syncModelRoles(input.threadId)),
               Effect.andThen(observeActivity(providerSessionId, markBusy(providerSessionId))),
               Effect.andThen(runtime.startTurn(input)),
               Effect.catch((error) =>

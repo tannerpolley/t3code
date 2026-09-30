@@ -1,7 +1,6 @@
 import {
   CommandId,
   type RunId,
-  isProviderAvailable,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -44,8 +43,6 @@ import {
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
   type ProviderInteractionMode,
-  type ProviderOptionDescriptor,
-  type ProviderOptionSelection,
   type RuntimeMode,
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
@@ -84,6 +81,11 @@ import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
+import {
+  checkDelegateTarget,
+  modelRoleStatuses,
+  providerConstraints,
+} from "./delegateTaskTarget.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -218,71 +220,6 @@ function scheduledTaskSummary(task: ScheduledTask): OrchestratorMcpScheduledTask
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
   };
-}
-
-function providerConstraints(
-  provider: ServerProvider | undefined,
-  supportsOrchestrationV2: boolean,
-): ReadonlyArray<string> {
-  const constraints: Array<string> = [];
-  if (!supportsOrchestrationV2) {
-    constraints.push("No V2 provider adapter is registered.");
-  }
-  if (provider === undefined) return constraints;
-  if (!provider.enabled) constraints.push("Provider instance is disabled.");
-  if (!provider.installed) constraints.push("Provider executable is not installed.");
-  if (!isProviderAvailable(provider)) {
-    constraints.push(provider.unavailableReason ?? "Provider driver is unavailable.");
-  }
-  if (provider.status === "error" || provider.status === "disabled") {
-    constraints.push(provider.message ?? `Provider status is ${provider.status}.`);
-  }
-  if (provider.auth.status === "unauthenticated") {
-    constraints.push("Provider is not authenticated.");
-  }
-  return constraints;
-}
-
-/**
- * Checks requested option selections for duplicates and, when the model
- * advertises option descriptors, against those descriptors. Models without
- * descriptors skip the descriptor checks (mirroring how model slugs are only
- * validated when the provider advertises models), but duplicate ids always
- * fail: downstream consumers disagree on whether the first or last value of
- * a duplicated id wins.
- */
-function invalidOptionSelections(
-  selections: ReadonlyArray<ProviderOptionSelection>,
-  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
-): ReadonlyArray<string> {
-  const problems: Array<string> = [];
-  const seen = new Set<string>();
-  for (const selection of selections) {
-    if (seen.has(selection.id)) {
-      problems.push(`Option ${selection.id} was specified more than once.`);
-      continue;
-    }
-    seen.add(selection.id);
-    if (descriptors === undefined) continue;
-    const descriptor = descriptors.find((candidate) => candidate.id === selection.id);
-    if (descriptor === undefined) {
-      const known = descriptors.map((candidate) => candidate.id).join(", ");
-      problems.push(`Unknown option ${selection.id}; supported options: ${known || "none"}.`);
-      continue;
-    }
-    if (descriptor.type === "boolean" && typeof selection.value !== "boolean") {
-      problems.push(`Option ${selection.id} expects a boolean value.`);
-      continue;
-    }
-    if (
-      descriptor.type === "select" &&
-      !descriptor.options.some((choice) => choice.id === selection.value)
-    ) {
-      const choices = descriptor.options.map((choice) => choice.id).join(", ");
-      problems.push(`Option ${selection.id} must be one of: ${choices}.`);
-    }
-  }
-  return problems;
 }
 
 function taskStatusForRun(
@@ -988,67 +925,19 @@ const make = Effect.gen(function* () {
       }
       instanceId ??= input.parent.thread.modelSelection.instanceId;
 
-      const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
-      if (provider === undefined) {
-        return yield* failure(
-          "provider_unavailable",
-          `Provider instance ${instanceId} is not registered.`,
-        );
-      }
-      if (requestedDriver !== undefined && provider.driver !== requestedDriver) {
-        return yield* failure(
-          "invalid_request",
-          `Provider instance ${instanceId} uses driver ${provider.driver}, not ${requestedDriver}.`,
-        );
-      }
-      const constraints = providerConstraints(
-        provider,
-        orchestrationCapableInstanceIds.has(provider.instanceId),
-      );
-      if (constraints.length > 0) {
-        return yield* failure(
-          "provider_unavailable",
-          `Provider ${instanceId} cannot run a child task: ${constraints.join(" ")}`,
-        );
-      }
-
       const inheritedSelection = input.parent.thread.modelSelection;
-      const requestedModel = input.target?.model;
-      const model =
-        requestedModel ??
-        (instanceId === inheritedSelection.instanceId
-          ? inheritedSelection.model
-          : provider?.models[0]?.slug);
-      if (model === undefined) {
-        return yield* failure(
-          "model_unavailable",
-          `Provider ${instanceId} has no model available for inheritance.`,
-        );
-      }
-      if (
-        requestedModel !== undefined &&
-        provider !== undefined &&
-        provider.models.length > 0 &&
-        !provider.models.some((candidate) => candidate.slug === requestedModel)
-      ) {
-        return yield* failure(
-          "model_unavailable",
-          `Model ${requestedModel} is not advertised by provider ${instanceId}.`,
-        );
-      }
-
       const requestedOptions = input.target?.options;
-      if (requestedOptions !== undefined) {
-        const descriptors = provider.models.find((candidate) => candidate.slug === model)
-          ?.capabilities?.optionDescriptors;
-        const invalid = invalidOptionSelections(requestedOptions, descriptors);
-        if (invalid.length > 0) {
-          return yield* failure(
-            "invalid_request",
-            `Model ${model} on provider ${instanceId} rejected options: ${invalid.join(" ")}`,
-          );
-        }
-      }
+      const model = checkDelegateTarget({
+        providers: input.providers,
+        orchestrationCapableInstanceIds,
+        instanceId,
+        requestedDriver,
+        requestedModel: input.target?.model,
+        inheritedModel:
+          instanceId === inheritedSelection.instanceId ? inheritedSelection.model : undefined,
+        options: requestedOptions,
+      });
+      if (typeof model !== "string") return yield* model;
 
       return {
         modelSelection:
@@ -1424,6 +1313,16 @@ const make = Effect.gen(function* () {
         const parent = yield* loadProjection(scope.threadId);
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+        const modelRoles = modelRoleStatuses(
+          Option.isNone(serverSettings)
+            ? []
+            : yield* serverSettings.value.getSettings.pipe(
+                Effect.map((settings) => settings.modelRoles),
+                Effect.orElseSucceed(() => []),
+              ),
+          providers,
+          orchestrationCapableInstanceIds,
+        );
         return {
           parentThreadId: scope.threadId,
           inheritedProviderInstanceId: parent.thread.modelSelection.instanceId,
@@ -1452,6 +1351,7 @@ const make = Effect.gen(function* () {
               constraints: [...constraints],
             };
           }),
+          modelRoles,
           features: {
             appOwnedSubagents: true,
             asyncPolling: true,

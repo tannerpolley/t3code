@@ -531,9 +531,23 @@ describe("CodexAdapterV2 runtime policy", () => {
           model: "gpt-5.4",
         },
         hasT3Mcp: true,
+        modelRoles: [
+          {
+            id: "checker",
+            name: "Checker",
+            description: "Read-only review",
+            target: { providerInstanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            unavailableReason: null,
+          },
+        ],
       });
 
       assert.equal(params.collaborationMode?.mode, "plan");
+      // Plan mode delegates research and review too, so it sees the roles.
+      assert.include(
+        params.collaborationMode?.settings.developer_instructions ?? "",
+        '- Checker: Read-only review. Target: `{"providerInstanceId":"codex","model":"gpt-5.4"}`',
+      );
       assert.include(
         params.collaborationMode?.settings.developer_instructions ?? "",
         "request_user_input",

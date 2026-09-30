@@ -388,6 +388,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "model-roles",
+    title: "Model roles",
+    to: "/settings/customizations",
+    searchTerms: [
+      "model roles orchestrator delegate subagent builder checker reviewer default model effort",
+    ],
+  },
+  {
     id: "codex-style-sidebar",
     title: "Codex-style project sidebar",
     to: "/settings/customizations",

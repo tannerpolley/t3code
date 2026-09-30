@@ -1190,7 +1190,133 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const MAX_MODEL_ROLES = 20;
+export const MAX_MODEL_ROLE_NAME_LENGTH = 60;
+export const MAX_MODEL_ROLE_DESCRIPTION_LENGTH = 200;
+export const MAX_MODEL_ROLE_MODEL_LENGTH = 100;
+export const MAX_MODEL_ROLE_OPTIONS = 8;
+export const MAX_MODEL_ROLE_OPTION_LENGTH = 60;
+
+const ModelRoleOptionText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(MAX_MODEL_ROLE_OPTION_LENGTH),
+);
+
+/**
+ * A named default for delegated work. Orchestrating agents read these from
+ * their T3 instructions and `orchestrator_capabilities`, and pass `target`
+ * to `delegate_task` unchanged. Every field is bounded because the roles are
+ * sent with every turn.
+ */
+export const ModelRole = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_NAME_LENGTH)),
+  description: TrimmedString.check(Schema.isMaxLength(MAX_MODEL_ROLE_DESCRIPTION_LENGTH)),
+  target: Schema.Struct({
+    providerInstanceId: ProviderInstanceId,
+    model: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_MODEL_LENGTH)),
+    options: Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          id: ModelRoleOptionText,
+          value: Schema.Union([ModelRoleOptionText, Schema.Boolean]),
+        }),
+      ).check(
+        Schema.isMaxLength(MAX_MODEL_ROLE_OPTIONS),
+        Schema.makeFilter(
+          (options) => new Set(options.map((option) => option.id)).size === options.length,
+          { expected: "option ids that are each used once" },
+        ),
+      ),
+    ),
+  }),
+});
+export type ModelRole = typeof ModelRole.Type;
+
+export const ModelRoles = Schema.Array(ModelRole).check(Schema.isMaxLength(MAX_MODEL_ROLES));
+
+const modelRole = (
+  id: string,
+  name: string,
+  description: string,
+  providerInstanceId: "claudeAgent" | "codex",
+  model: string,
+  effort: string,
+): ModelRole => ({
+  id,
+  name,
+  description,
+  target: {
+    providerInstanceId: ProviderInstanceId.make(providerInstanceId),
+    model,
+    options: [{ id: providerInstanceId === "codex" ? "reasoningEffort" : "effort", value: effort }],
+  },
+});
+
+export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
+  modelRole(
+    "orchestrator",
+    "Orchestrator",
+    "Plans, delegates, integrates; default main-thread model",
+    "claudeAgent",
+    "claude-opus-5-5",
+    "high",
+  ),
+  modelRole(
+    "fast-builder",
+    "Fast builder",
+    "Bounded changes where speed matters; a Checker reviews afterwards",
+    "claudeAgent",
+    "claude-opus-5-5",
+    "high",
+  ),
+  modelRole(
+    "checker",
+    "Checker",
+    "Read-only review of a build: missed places, weak tests, edge cases; budget review and sanity checks",
+    "codex",
+    "gpt-6.1-sol",
+    "high",
+  ),
+  modelRole(
+    "thorough-builder",
+    "Thorough builder",
+    "Broad, cross-cutting or correctness-critical implementation; complex diagnosis, even read-only",
+    "codex",
+    "gpt-6.1-sol",
+    "high",
+  ),
+  modelRole(
+    "evidence-gatherer",
+    "Evidence gatherer",
+    "Deterministic work with one clear result; gathering evidence without making decisions",
+    "codex",
+    "gpt-6-luna",
+    "max",
+  ),
+  modelRole(
+    "quick-claude",
+    "Quick Claude",
+    "Quick, well-specified Claude-side work",
+    "claudeAgent",
+    "claude-sonnet-5-5",
+    "medium",
+  ),
+  modelRole(
+    "strong-reviewer",
+    "Strong reviewer",
+    "Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call",
+    "codex",
+    "gpt-6-astra",
+    "xhigh",
+  ),
+];
+
 export const ServerSettings = Schema.Struct({
+  /**
+   * Ordered defaults for delegated work, shown to orchestrating agents in
+   * new sessions and turns. Server-side because the prompt is built here.
+   */
+  modelRoles: ModelRoles.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_MODEL_ROLES))),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(
@@ -1584,6 +1710,8 @@ const OpenCodeSettingsPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  // Whole-list replacement: roles are ordered and edited as one list.
+  modelRoles: Schema.optionalKey(ModelRoles),
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(
       Schema.Union([

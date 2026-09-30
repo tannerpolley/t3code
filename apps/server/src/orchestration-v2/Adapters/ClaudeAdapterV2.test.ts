@@ -5544,6 +5544,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               taskId: WAKE_TASK_ID,
               description: "npm run dev",
               taskType: "local_bash",
+              commandKind: "node",
               childThreadId,
               startedAt,
             },

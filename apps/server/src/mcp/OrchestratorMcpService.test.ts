@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  type ModelRole,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -22,6 +24,7 @@ import {
 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
@@ -564,6 +567,77 @@ describe("OrchestratorMcpService provider resolution", () => {
         }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
       }),
   );
+
+  it.effect("lists the user's model roles, marking targets delegate_task would reject", () => {
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const role = (
+      id: string,
+      providerInstanceId: ProviderInstanceId,
+      model: string,
+    ): ModelRole => ({
+      id,
+      name: id,
+      description: "",
+      target: { providerInstanceId, model, options: [{ id: "reasoningEffort", value: "high" }] },
+    });
+    const modelRoles = [
+      role("ready", codexInstanceId, "gpt-5.4"),
+      role("retired-model", codexInstanceId, "gpt-0"),
+      role("missing-provider", ProviderInstanceId.make("ghost"), "gpt-5.4"),
+      role("signed-out", claudeInstanceId, "claude-sonnet-4-6"),
+    ];
+    const providers: ReadonlyArray<ServerProvider> = [
+      providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      }),
+      {
+        ...providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          model: "claude-sonnet-4-6",
+        }),
+        auth: { status: "unauthenticated" },
+      },
+    ];
+    return Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const capabilities = yield* service.capabilities(scope);
+      assert.deepEqual(
+        capabilities.modelRoles,
+        modelRoles.map((entry, index) => ({
+          ...entry,
+          unavailableReason: [
+            null,
+            "Model gpt-0 is not advertised by provider codex.",
+            "Provider instance ghost is not registered.",
+            "Provider claudeAgent cannot run a child task: Provider is not authenticated.",
+          ][index]!,
+        })),
+      );
+    }).pipe(
+      Effect.provide(
+        OrchestratorMcpService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              Layer.mock(ThreadManagementService)({
+                getThreadRecords: () => Effect.succeed(parentProjection([])),
+              }),
+              Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
+              adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+              Layer.mock(ThreadLaunchService)({}),
+              Layer.mock(ScheduledTaskService)({}),
+              Layer.mock(ServerSettingsService)({
+                getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, modelRoles }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
 
   it.effect(
     "delegates to an Antigravity instance whose adapter resolves through the registry",

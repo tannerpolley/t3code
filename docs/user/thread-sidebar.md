@@ -170,6 +170,13 @@ default. Research and review agents use the coordinating thread's checkout.
 An agent can explicitly choose either workspace; creating a worktree requires
 the coordinating thread to be on a Git branch.
 
+To tell agents which model and effort suit each kind of delegated work, edit
+**Model roles** in **Settings → Customizations** on web and desktop. Agents use
+these roles as defaults at their own discretion; your explicit instructions in a
+thread win. Codex agents see changes on their next turn and Claude agents in their
+next session, and any agent can re-read the current roles at any time. A role whose
+provider or model isn't available is marked as unavailable.
+
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
