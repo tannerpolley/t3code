@@ -45,6 +45,13 @@ describe("resolveT3McpToolPresentation", () => {
     });
   });
 
+  it("pretty prints the shared question tool", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_request_user_input")).toEqual({
+      displayName: "Ask the user",
+      logo: "t3-code",
+    });
+  });
+
   it("pretty prints bare T3 MCP toolkit names", () => {
     expect(resolveT3McpToolPresentation("list_scheduled_tasks")).toEqual({
       displayName: "List scheduled tasks",

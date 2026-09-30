@@ -1,13 +1,16 @@
 import {
   type CommandId,
-  type RuntimeRequestId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  ProviderSessionId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import {
@@ -21,6 +24,7 @@ import {
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
 import { ThreadToolkit } from "./tools.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
@@ -194,6 +198,87 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         })
         .pipe(Effect.mapError(unavailable));
       return { sequence: result.sequence };
+    }),
+  t3_request_user_input: (input) =>
+    Effect.gen(function* () {
+      const { scope, caller, threads } = yield* readMutationCaller();
+      const projection = yield* threads
+        .getProjectThreadRecords({ projectId: caller.projectId, threadId: caller.id }, [
+          "runs",
+          "providerThreads",
+          "providerTurns",
+        ])
+        .pipe(Effect.mapError(unavailable));
+      const run = projection.runs.find(
+        (candidate) => candidate.id === caller.activeRunId && candidate.status === "running",
+      );
+      const providerThread = projection.providerThreads.find(
+        (candidate) => candidate.id === run?.providerThreadId,
+      );
+      const providerTurn = projection.providerTurns.find(
+        (candidate) =>
+          candidate.providerThreadId === providerThread?.id &&
+          candidate.runAttemptId === run?.activeAttemptId &&
+          candidate.status === "running",
+      );
+      if (
+        run === undefined ||
+        providerThread === undefined ||
+        providerTurn === undefined ||
+        projection.thread.activeProviderThreadId !== providerThread.id ||
+        providerThread.appThreadId !== caller.id ||
+        providerThread.ownerNodeId !== null ||
+        providerThread.providerInstanceId !== scope.providerInstanceId ||
+        providerThread.providerSessionId !== scope.providerSessionId
+      )
+        return yield* new OrchestratorMcpFailure({
+          code: "parent_not_active",
+          message: "The calling provider no longer owns an active thread run.",
+        });
+
+      const commandId = yield* newCommandId();
+      const requestId = RuntimeRequestId.make(`${commandId}:user-input`);
+      const created = yield* threads
+        .dispatch({
+          type: "runtime-request.create-user-input",
+          commandId,
+          threadId: caller.id,
+          requestId,
+          runId: run.id,
+          providerSessionId: ProviderSessionId.make(scope.providerSessionId),
+          questions: input.questions,
+        })
+        .pipe(Effect.mapError(unavailable));
+      const orchestrator = yield* OrchestratorV2;
+      const resolution = yield* orchestrator
+        .streamStoredEventsFrom({ threadId: caller.id, afterSequence: created.sequence })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "runtime-request.updated" &&
+              stored.event.payload.id === requestId &&
+              stored.event.payload.status !== "pending",
+          ),
+          Stream.runHead,
+          Effect.mapError(unavailable),
+        );
+      if (Option.isNone(resolution))
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "The user-input request ended before it was answered.",
+        });
+      const event = resolution.value.event;
+      if (
+        event.type !== "runtime-request.updated" ||
+        event.payload.status !== "resolved" ||
+        event.payload.decision !== undefined ||
+        event.payload.answers === undefined
+      )
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The user-input request ended before it was answered.",
+        });
+      return event.payload.answers;
     }),
   t3_pending_request_list: (input) =>
     Effect.gen(function* () {

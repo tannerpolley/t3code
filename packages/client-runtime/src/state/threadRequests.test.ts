@@ -101,6 +101,26 @@ describe("pending v2 questions", () => {
     expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
   });
 
+  it("makes app-owned questions dismissible without turning them into message replies", () => {
+    const appOwned = {
+      ...projection,
+      runtimeRequests: projection.runtimeRequests.map((request) => ({
+        ...request,
+        responseCapability: {
+          type: "app_owned" as const,
+          providerSessionId: ProviderSessionId.make("app-owned-session"),
+        },
+      })),
+      turnItems: projection.turnItems.map((item) =>
+        item.type === "user_input_request" ? { ...item, responseMode: undefined } : item,
+      ),
+    };
+    const pending = derivePendingThreadRequests(appOwned).userInputs[0];
+    expect(pending?.responseCapability).toBe("app_owned");
+    expect(pending?.dismissible).toBe(true);
+    expect(pending?.responseMode).toBeUndefined();
+  });
+
   it("removes answered requests from the composer while retaining their answers in projection data", () => {
     const answered = {
       ...projection,

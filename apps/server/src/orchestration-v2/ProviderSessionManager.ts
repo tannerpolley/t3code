@@ -636,7 +636,8 @@ export const layerWithOptions = (
             const releasedRequests = projection.runtimeRequests.filter(
               (request) =>
                 request.status === "pending" &&
-                request.responseCapability.type === "live" &&
+                (request.responseCapability.type === "live" ||
+                  request.responseCapability.type === "app_owned") &&
                 request.responseCapability.providerSessionId === providerSessionId,
             );
 

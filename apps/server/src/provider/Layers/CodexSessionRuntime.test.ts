@@ -565,6 +565,8 @@ describe("buildCodexDeveloperInstructions", () => {
 
     NodeAssert.match(instructions, /^<collaboration_mode># Collaboration Mode: Default/);
     NodeAssert.match(instructions, /T3 Code/);
+    NodeAssert.match(instructions, /t3_request_user_input/);
+    NodeAssert.match(instructions, /native `request_user_input` tool/);
     NodeAssert.match(instructions, /Codex harness/);
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
   });

@@ -840,6 +840,7 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
   responseCapability: Schema.Union([
     Schema.Struct({ type: Schema.Literal("live"), providerSessionId: ProviderSessionId }),
+    Schema.Struct({ type: Schema.Literal("app_owned"), providerSessionId: ProviderSessionId }),
     Schema.Struct({ type: Schema.Literal("message") }),
     Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
   ]),
@@ -924,6 +925,11 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
   required: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
+
+export const OrchestrationV2UserInputQuestions = Schema.Array(
+  OrchestrationV2UserInputQuestion,
+).check(Schema.isMinLength(1), Schema.isMaxLength(3));
+export type OrchestrationV2UserInputQuestions = typeof OrchestrationV2UserInputQuestions.Type;
 
 const OrchestrationV2PlanArtifactBaseFields = {
   id: PlanId,
@@ -2600,6 +2606,15 @@ export const OrchestrationV2Command = Schema.Union([
     // Full replacement list. Absent = leave the message's attachments as-is,
     // so pre-attachment clients editing text keep the original attachments.
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.create-user-input"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+    runId: RunId,
+    providerSessionId: ProviderSessionId,
+    questions: OrchestrationV2UserInputQuestions,
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),

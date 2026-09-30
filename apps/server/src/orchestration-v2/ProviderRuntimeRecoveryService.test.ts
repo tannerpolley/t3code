@@ -140,7 +140,10 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
         id: RuntimeRequestId.make("request_orphaned"),
         nodeId: NodeId.make("node_orphaned"),
         status: "pending",
-        responseCapability: { type: "not_resumable", reason: "old process" },
+        responseCapability: {
+          type: "app_owned",
+          providerSessionId: ProviderSessionId.make("provider_session_orphaned"),
+        },
       },
     ],
     providerSessions: [],
