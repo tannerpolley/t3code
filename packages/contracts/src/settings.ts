@@ -17,7 +17,6 @@ import {
   CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
-  ProviderOptionSelection,
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
@@ -1192,21 +1191,43 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const MAX_MODEL_ROLES = 20;
+export const MAX_MODEL_ROLE_NAME_LENGTH = 60;
 export const MAX_MODEL_ROLE_DESCRIPTION_LENGTH = 200;
+export const MAX_MODEL_ROLE_MODEL_LENGTH = 100;
+export const MAX_MODEL_ROLE_OPTIONS = 8;
+export const MAX_MODEL_ROLE_OPTION_LENGTH = 60;
+
+const ModelRoleOptionText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(MAX_MODEL_ROLE_OPTION_LENGTH),
+);
 
 /**
  * A named default for delegated work. Orchestrating agents read these from
  * their T3 instructions and `orchestrator_capabilities`, and pass `target`
- * to `delegate_task` unchanged.
+ * to `delegate_task` unchanged. Every field is bounded because the roles are
+ * sent with every turn.
  */
 export const ModelRole = Schema.Struct({
   id: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(60)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_NAME_LENGTH)),
   description: TrimmedString.check(Schema.isMaxLength(MAX_MODEL_ROLE_DESCRIPTION_LENGTH)),
   target: Schema.Struct({
     providerInstanceId: ProviderInstanceId,
-    model: TrimmedNonEmptyString,
-    options: Schema.optionalKey(Schema.Array(ProviderOptionSelection)),
+    model: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_MODEL_LENGTH)),
+    options: Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          id: ModelRoleOptionText,
+          value: Schema.Union([ModelRoleOptionText, Schema.Boolean]),
+        }),
+      ).check(
+        Schema.isMaxLength(MAX_MODEL_ROLE_OPTIONS),
+        Schema.makeFilter(
+          (options) => new Set(options.map((option) => option.id)).size === options.length,
+          { expected: "option ids that are each used once" },
+        ),
+      ),
+    ),
   }),
 });
 export type ModelRole = typeof ModelRole.Type;

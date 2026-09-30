@@ -1,4 +1,9 @@
-import type { EnvironmentId, ModelRole, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestratorMcpModelRole,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -23,11 +28,11 @@ export interface McpProviderSessionConfig {
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /**
-   * The user's model roles, refreshed from settings when the session is
-   * prepared and before each turn. Adapters render them into the
-   * orchestration instructions.
+   * The user's model roles with their current availability, refreshed when
+   * the session is prepared and before each turn. Adapters render them into
+   * the orchestration instructions.
    */
-  readonly modelRoles?: ReadonlyArray<ModelRole>;
+  readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
 }
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */
@@ -56,7 +61,7 @@ export function setMcpProviderSession(config: McpProviderSessionConfig): void {
 /** Refreshes the roles on the thread's session, if it has one. */
 export function setMcpProviderModelRoles(
   threadId: ThreadId,
-  modelRoles: ReadonlyArray<ModelRole>,
+  modelRoles: ReadonlyArray<OrchestratorMcpModelRole>,
 ): void {
   const session = sessionsByThread.get(threadId);
   if (session !== undefined) sessionsByThread.set(threadId, { ...session, modelRoles });

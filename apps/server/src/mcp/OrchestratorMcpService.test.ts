@@ -568,23 +568,54 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect("lists the user's model roles so agents can re-read them mid-session", () => {
-    const modelRoles: ReadonlyArray<ModelRole> = [
+  it.effect("lists the user's model roles, marking targets delegate_task would reject", () => {
+    const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+    const role = (
+      id: string,
+      providerInstanceId: ProviderInstanceId,
+      model: string,
+    ): ModelRole => ({
+      id,
+      name: id,
+      description: "",
+      target: { providerInstanceId, model, options: [{ id: "reasoningEffort", value: "high" }] },
+    });
+    const modelRoles = [
+      role("ready", codexInstanceId, "gpt-5.4"),
+      role("retired-model", codexInstanceId, "gpt-0"),
+      role("missing-provider", ProviderInstanceId.make("ghost"), "gpt-5.4"),
+      role("signed-out", claudeInstanceId, "claude-sonnet-4-6"),
+    ];
+    const providers: ReadonlyArray<ServerProvider> = [
+      providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: "gpt-5.4",
+      }),
       {
-        id: "reviewer",
-        name: "Reviewer",
-        description: "Read-only review",
-        target: {
-          providerInstanceId: codexInstanceId,
-          model: "gpt-5.4",
-          options: [{ id: "reasoningEffort", value: "high" }],
-        },
+        ...providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          model: "claude-sonnet-4-6",
+        }),
+        auth: { status: "unauthenticated" },
       },
     ];
     return Effect.gen(function* () {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       const capabilities = yield* service.capabilities(scope);
-      assert.deepEqual(capabilities.modelRoles, modelRoles);
+      assert.deepEqual(
+        capabilities.modelRoles,
+        modelRoles.map((entry, index) => ({
+          ...entry,
+          unavailableReason: [
+            null,
+            "Model gpt-0 is not advertised by provider codex.",
+            "Provider instance ghost is not registered.",
+            "Provider claudeAgent cannot run a child task: Provider is not authenticated.",
+          ][index]!,
+        })),
+      );
     }).pipe(
       Effect.provide(
         OrchestratorMcpService.layer.pipe(
@@ -594,8 +625,8 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.mock(ThreadManagementService)({
                 getThreadRecords: () => Effect.succeed(parentProjection([])),
               }),
-              Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-              adapterRegistryLayer([]),
+              Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
+              adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
               Layer.mock(ThreadLaunchService)({}),
               Layer.mock(ScheduledTaskService)({}),
               Layer.mock(ServerSettingsService)({

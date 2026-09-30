@@ -31,6 +31,8 @@ import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { modelRoleStatuses } from "../mcp/delegateTaskTarget.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -330,6 +332,7 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const providerRegistry = yield* Effect.serviceOption(ProviderRegistry);
       const eventSink = yield* EventSinkV2;
       const idAllocator = yield* IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestorV2;
@@ -411,18 +414,22 @@ export const layerWithOptions = (
       };
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
-      // An unreadable settings file keeps the roles the session already has.
+      // Roles carry the same availability check `delegate_task` applies. An
+      // unreadable settings file keeps the roles the session already has.
       const syncModelRoles = (threadId: ThreadId) =>
         Option.isNone(serverSettings)
           ? Effect.void
-          : serverSettings.value.getSettings.pipe(
-              Effect.tap((settings) =>
-                Effect.sync(() =>
-                  McpProviderSession.setMcpProviderModelRoles(threadId, settings.modelRoles),
-                ),
-              ),
-              Effect.ignore,
-            );
+          : Effect.gen(function* () {
+              const settings = yield* serverSettings.value.getSettings;
+              const providers = Option.isSome(providerRegistry)
+                ? yield* providerRegistry.value.getProviders
+                : [];
+              const capableInstanceIds = new Set(yield* registry.list());
+              McpProviderSession.setMcpProviderModelRoles(
+                threadId,
+                modelRoleStatuses(settings.modelRoles, providers, capableInstanceIds),
+              );
+            }).pipe(Effect.ignore);
       const mcpPrepareLock = yield* makeKeyedSerialExecutor<ThreadId>();
       /**
        * Resolves (or mints) the thread's MCP credential and returns it with a

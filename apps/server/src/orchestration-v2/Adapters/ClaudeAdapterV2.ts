@@ -60,7 +60,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
-  type ModelRole,
+  type OrchestratorMcpModelRole,
   type ProviderApprovalDecision,
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -767,7 +767,7 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
-  readonly modelRoles?: ReadonlyArray<ModelRole>;
+  readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;

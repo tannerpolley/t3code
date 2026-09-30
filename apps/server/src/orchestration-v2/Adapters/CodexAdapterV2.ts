@@ -32,8 +32,8 @@ import type {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
-  ModelRole,
   ModelSelection,
+  OrchestratorMcpModelRole,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderFailure,
@@ -698,7 +698,7 @@ export function buildCodexTurnStartParams(input: {
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
-  readonly modelRoles?: ReadonlyArray<ModelRole>;
+  readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);

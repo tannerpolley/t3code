@@ -1,17 +1,20 @@
 import {
   DEFAULT_MODEL_ROLES,
   MAX_MODEL_ROLE_DESCRIPTION_LENGTH,
+  MAX_MODEL_ROLE_NAME_LENGTH,
   MAX_MODEL_ROLES,
   type ModelRole,
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { randomUUID } from "../../lib/utils";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -19,6 +22,12 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
+import {
+  editModelRolesDraft,
+  type ModelRoleEdit,
+  modelRolesDraft,
+  receiveServerModelRoles,
+} from "./modelRolesDraft";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
@@ -41,32 +50,37 @@ export function ModelRolesSection() {
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(settings, providers);
-  const roles = settings.modelRoles;
-  const save = (next: ReadonlyArray<ModelRole>) => updateSettings({ modelRoles: next });
-  const updateRole = (index: number, patch: Partial<ModelRole>) =>
-    save(roles.map((role, current) => (current === index ? { ...role, ...patch } : role)));
-  const move = (index: number, offset: -1 | 1) => {
-    const next = [...roles];
-    const [role] = next.splice(index, 1);
-    next.splice(index + offset, 0, role!);
-    save(next);
+  const serverRoles = settings.modelRoles;
+  // Handlers read the ref so two actions in one tick (a name committed on
+  // blur, then a click) both build on the latest list.
+  const [draft, setDraft] = useState(() => modelRolesDraft(serverRoles));
+  const draftRef = useRef(draft);
+  useEffect(() => {
+    const next = receiveServerModelRoles(draftRef.current, serverRoles);
+    draftRef.current = next;
+    setDraft(next);
+  }, [serverRoles]);
+  const edit = (change: ModelRoleEdit) => {
+    const next = editModelRolesDraft(draftRef.current, change);
+    if (next === draftRef.current) return;
+    draftRef.current = next;
+    setDraft(next);
+    updateSettings({ modelRoles: next.roles });
   };
-  const addRole = () =>
-    save([
-      ...roles,
-      {
-        id: `role-${randomUUID().slice(0, 8)}`,
-        name: "New role",
-        description: "",
-        target: (roles[0] ?? DEFAULT_MODEL_ROLES[0]!).target,
-      },
-    ]);
+  const roles = draft.roles;
   const unavailableReason = (role: ModelRole): string | null => {
     const entry = entries.find(
       (candidate) => candidate.instanceId === role.target.providerInstanceId,
     );
-    if (!entry?.enabled || !entry.isAvailable) {
-      return `Provider ${role.target.providerInstanceId} isn't available on this environment.`;
+    if (!entry?.enabled) {
+      return `Provider ${role.target.providerInstanceId} isn't enabled on this environment.`;
+    }
+    if (!entry.installed) return `${entry.displayName} isn't installed.`;
+    if (entry.snapshot.auth.status === "unauthenticated") {
+      return `${entry.displayName} isn't signed in.`;
+    }
+    if (!isProviderInstancePickerReady(entry)) {
+      return entry.snapshot.message ?? `${entry.displayName} isn't ready.`;
     }
     const models = modelOptionsByInstance.get(entry.instanceId) ?? [];
     return models.some((option) => option.slug === role.target.model && !option.isUnavailable)
@@ -80,10 +94,13 @@ export function ModelRolesSection() {
         serverScoped
         settingKeys={MODEL_ROLE_KEYS}
         {...searchableSetting("model-roles")}
-        description="Defaults orchestrating agents see for delegated work: which model and effort suits each kind of task. Agents choose among them at their discretion, and your explicit instructions win. Changes apply to new sessions and turns; running agents can re-read them with orchestrator_capabilities."
+        description="Defaults orchestrating agents see for delegated work: which model and effort suits each kind of task. Agents choose among them at their discretion, and your explicit instructions win. Codex: next turn. Claude: next session. Agents can re-read them anytime via orchestrator_capabilities."
         resetAction={
           Equal.equals(roles, DEFAULT_MODEL_ROLES) ? null : (
-            <SettingResetButton label="model roles" onClick={() => save(DEFAULT_MODEL_ROLES)} />
+            <SettingResetButton
+              label="model roles"
+              onClick={() => edit({ type: "replace", roles: DEFAULT_MODEL_ROLES })}
+            />
           )
         }
         control={
@@ -91,7 +108,17 @@ export function ModelRolesSection() {
             size="sm"
             variant="outline"
             disabled={roles.length >= MAX_MODEL_ROLES}
-            onClick={addRole}
+            onClick={() =>
+              edit({
+                type: "add",
+                role: {
+                  id: `role-${randomUUID().slice(0, 8)}`,
+                  name: "New role",
+                  description: "",
+                  target: (draftRef.current.roles[0] ?? DEFAULT_MODEL_ROLES[0]!).target,
+                },
+              })
+            }
           >
             <PlusIcon className="size-3.5" />
             Add role
@@ -112,11 +139,13 @@ export function ModelRolesSection() {
               <DraftInput
                 aria-label="Role name"
                 size="sm"
-                maxLength={60}
+                maxLength={MAX_MODEL_ROLE_NAME_LENGTH}
                 value={role.name}
                 onCommit={(next) => {
                   const name = next.trim();
-                  if (name.length > 0 && name !== role.name) updateRole(index, { name });
+                  if (name.length > 0 && name !== role.name) {
+                    edit({ type: "update", id: role.id, patch: { name } });
+                  }
                 }}
               />
             }
@@ -129,7 +158,9 @@ export function ModelRolesSection() {
                 value={role.description}
                 onCommit={(next) => {
                   const description = next.trim();
-                  if (description !== role.description) updateRole(index, { description });
+                  if (description !== role.description) {
+                    edit({ type: "update", id: role.id, patch: { description } });
+                  }
                 }}
               />
             }
@@ -145,7 +176,11 @@ export function ModelRolesSection() {
                   triggerVariant="outline"
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onInstanceModelChange={(providerInstanceId, model) =>
-                    updateRole(index, { target: { providerInstanceId, model } })
+                    edit({
+                      type: "update",
+                      id: role.id,
+                      patch: { target: { providerInstanceId, model } },
+                    })
                   }
                 />
                 {entry ? (
@@ -161,13 +196,7 @@ export function ModelRolesSection() {
                     triggerVariant="outline"
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     onModelOptionsChange={(options) =>
-                      updateRole(index, {
-                        target: {
-                          providerInstanceId: role.target.providerInstanceId,
-                          model: role.target.model,
-                          ...(options === undefined ? {} : { options }),
-                        },
-                      })
+                      edit({ type: "options", id: role.id, options })
                     }
                   />
                 ) : null}
@@ -176,7 +205,7 @@ export function ModelRolesSection() {
                   variant="ghost"
                   aria-label={`Move ${role.name} up`}
                   disabled={index === 0}
-                  onClick={() => move(index, -1)}
+                  onClick={() => edit({ type: "move", id: role.id, offset: -1 })}
                 >
                   <ArrowUpIcon className="size-3.5" />
                 </Button>
@@ -185,7 +214,7 @@ export function ModelRolesSection() {
                   variant="ghost"
                   aria-label={`Move ${role.name} down`}
                   disabled={index === roles.length - 1}
-                  onClick={() => move(index, 1)}
+                  onClick={() => edit({ type: "move", id: role.id, offset: 1 })}
                 >
                   <ArrowDownIcon className="size-3.5" />
                 </Button>
@@ -193,7 +222,7 @@ export function ModelRolesSection() {
                   size="icon-sm"
                   variant="ghost"
                   aria-label={`Remove ${role.name}`}
-                  onClick={() => save(roles.filter((_, current) => current !== index))}
+                  onClick={() => edit({ type: "remove", id: role.id })}
                 >
                   <Trash2Icon className="size-3.5" />
                 </Button>

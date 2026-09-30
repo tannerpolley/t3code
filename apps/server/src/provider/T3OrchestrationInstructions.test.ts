@@ -3,11 +3,16 @@ import * as Schema from "effect/Schema";
 import {
   DEFAULT_MODEL_ROLES,
   MAX_MODEL_ROLE_DESCRIPTION_LENGTH,
+  MAX_MODEL_ROLE_MODEL_LENGTH,
+  MAX_MODEL_ROLE_NAME_LENGTH,
+  MAX_MODEL_ROLE_OPTION_LENGTH,
+  MAX_MODEL_ROLE_OPTIONS,
   MAX_MODEL_ROLES,
   ModelRoles,
 } from "@t3tools/contracts";
 
 import {
+  MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
   t3AcpPromptWithInstructions,
   t3ModelRolesInstructions,
@@ -35,7 +40,12 @@ describe("T3 orchestration provider instructions", () => {
   });
 
   it("lists each model role on one line with its exact delegate_task target", () => {
-    const text = t3ModelRolesInstructions(DEFAULT_MODEL_ROLES);
+    const unavailable = "Provider codex cannot run a child task: Provider is not authenticated.";
+    const roles = DEFAULT_MODEL_ROLES.map((role) => ({
+      ...role,
+      unavailableReason: role.id === "strong-reviewer" ? unavailable : null,
+    }));
+    const text = t3ModelRolesInstructions(roles);
     assert.include(text, "Use them at your discretion; explicit user instructions win.");
     assert.include(
       text,
@@ -45,26 +55,41 @@ describe("T3 orchestration provider instructions", () => {
       text,
       '- Quick Claude: Quick, well-specified Claude-side work. Target: `{"providerInstanceId":"claudeAgent","model":"claude-sonnet-5-5","options":{"effort":"medium"}}`',
     );
+    // An unavailable role keeps its line but offers no target to delegate to.
+    assert.include(
+      text,
+      `- Strong reviewer: Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call. Unavailable: ${unavailable}`,
+    );
+    assert.notInclude(text, "gpt-6-astra");
     assert.equal(text.split("\n").filter((line) => line.startsWith("- ")).length, 7);
     assert.isBelow(text.length, 1_700);
-    assert.equal(
-      t3OrchestrationInstructions(DEFAULT_MODEL_ROLES),
-      T3_CODE_ORCHESTRATION_INSTRUCTIONS + text,
-    );
+    assert.equal(t3OrchestrationInstructions(roles), T3_CODE_ORCHESTRATION_INSTRUCTIONS + text);
     assert.equal(t3OrchestrationInstructions([]), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 
-  it("stays bounded at the largest role list settings accept", () => {
-    const role = DEFAULT_MODEL_ROLES[0]!;
+  it.each([
+    ["plain", "x"],
+    ["escaped", "\u0001"],
+  ])("stays within its cap at the largest %s roles settings accept", (_, char) => {
+    const text = (length: number) => char.repeat(length);
     const largest = decodeModelRoles(
-      Array.from({ length: MAX_MODEL_ROLES }, (_, index) => ({
-        ...role,
+      Array.from({ length: MAX_MODEL_ROLES }, (__, index) => ({
         id: `role-${index}`,
-        name: "n".repeat(60),
-        description: "d".repeat(MAX_MODEL_ROLE_DESCRIPTION_LENGTH),
+        name: text(MAX_MODEL_ROLE_NAME_LENGTH),
+        description: text(MAX_MODEL_ROLE_DESCRIPTION_LENGTH),
+        target: {
+          providerInstanceId: "codex",
+          model: text(MAX_MODEL_ROLE_MODEL_LENGTH),
+          options: Array.from({ length: MAX_MODEL_ROLE_OPTIONS }, (___, option) => ({
+            id: `${option}${text(MAX_MODEL_ROLE_OPTION_LENGTH - 1)}`,
+            value: text(MAX_MODEL_ROLE_OPTION_LENGTH),
+          })),
+        },
       })),
-    );
-    assert.isBelow(t3ModelRolesInstructions(largest).length, 8_000);
+    ).map((role) => ({ ...role, unavailableReason: null }));
+    const rendered = t3ModelRolesInstructions(largest);
+    assert.isAtMost(rendered.length, MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH);
+    assert.match(rendered, /- \d+ more roles not shown; call `orchestrator_capabilities`/);
   });
 
   it("injects prompt fallback only for an MCP-enabled first run", () => {

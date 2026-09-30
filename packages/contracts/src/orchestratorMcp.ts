@@ -491,6 +491,16 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
+/**
+ * A model role as orchestrators see it. `unavailableReason` is why
+ * `delegate_task` would reject the role's target right now, or null.
+ */
+export const OrchestratorMcpModelRole = Schema.Struct({
+  ...ModelRole.fields,
+  unavailableReason: Schema.NullOr(Schema.String),
+});
+export type OrchestratorMcpModelRole = typeof OrchestratorMcpModelRole.Type;
+
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   parentThreadId: ThreadId,
   inheritedProviderInstanceId: ProviderInstanceId,
@@ -502,7 +512,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
    * The user's model roles: defaults to use at the agent's discretion when
    * picking a `delegate_task` target. Explicit user instructions win.
    */
-  modelRoles: Schema.Array(ModelRole),
+  modelRoles: Schema.Array(OrchestratorMcpModelRole),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,
