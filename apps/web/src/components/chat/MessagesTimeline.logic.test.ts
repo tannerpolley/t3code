@@ -19,6 +19,7 @@ import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
 import { MessageId, RunId } from "@t3tools/contracts";
 import {
+  assistantTextIsSubstantial,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
@@ -255,6 +256,33 @@ describe("shouldPreserveAssistantLineBreaks", () => {
       ),
     ).toBe(true);
     expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
+  });
+});
+
+describe("assistantTextIsSubstantial", () => {
+  it.each([
+    "## Summary\nShipped.",
+    "Changes:\n- one\n- two",
+    "Steps:\n1. Build",
+    "| a | b |\n|---|---|",
+    "```ts\nconst x = 1;\n```",
+    "![Chart](/tmp/chart.png)",
+    "> Quoted note",
+    "$$\nE = mc^2\n$$",
+    "Area is \\(\\pi r^2\\).",
+    "Done with the first part.\n\nThe second part needs review.",
+    "word ".repeat(60),
+  ])("keeps %j visible", (text) => {
+    expect(assistantTextIsSubstantial(text)).toBe(true);
+  });
+
+  it.each([
+    "Checking the deployment config…",
+    "Now the logic edits.",
+    "Waiting on CI.\nThen I'll merge.",
+    "It costs $5 - that's fine.",
+  ])("folds %j", (text) => {
+    expect(assistantTextIsSubstantial(text)).toBe(false);
   });
 });
 
@@ -1049,7 +1077,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
-  it("folds the first assistant message and settled work before the terminal response", () => {
+  it("folds a short progress note and settled work before the terminal response", () => {
     const timelineEntries = [
       {
         id: "user-entry",
@@ -1072,7 +1100,7 @@ describe("deriveMessagesTimelineRows", () => {
         message: {
           id: "assistant-first" as never,
           role: "assistant" as const,
-          text: "Synthetic deployment checklist\n1. Confirm the deployment is ready.",
+          text: "Checking the deployment config…",
           runId: "turn-1" as never,
           createdAt: "2026-01-01T00:00:05Z",
           updatedAt: "2026-01-01T00:00:06Z",
@@ -1148,6 +1176,66 @@ describe("deriveMessagesTimelineRows", () => {
     expect(
       expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
     ).toBeDefined();
+  });
+
+  it("keeps a substantial summary visible when a tool call and a short closing line follow it", () => {
+    const runId = RunId.make("turn-1");
+    const message = (id: string, text: string, at: string) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt: at,
+      message: {
+        id: id as never,
+        role: "assistant" as const,
+        text,
+        runId,
+        createdAt: at,
+        updatedAt: at,
+        streaming: false,
+      },
+    });
+    const work = (id: string, at: string) => ({
+      id: `${id}-entry`,
+      kind: "work" as const,
+      createdAt: at,
+      entry: { id, createdAt: at, runId, label: "Ran command", tone: "tool" as const },
+    });
+    const timelineEntries = [
+      {
+        id: "user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user-1" as never,
+          role: "user" as const,
+          text: "Build it",
+          runId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      message("progress", "Checking the build…", "2026-01-01T00:00:01Z"),
+      work("work-1", "2026-01-01T00:00:02Z"),
+      message("summary", "## Summary\n- Built the feature\n- Tests pass", "2026-01-01T00:00:03Z"),
+      work("work-2", "2026-01-01T00:00:04Z"),
+      message("closing", "Waiting on CI.", "2026-01-01T00:00:05Z"),
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "summary-entry",
+      "closing-entry",
+    ]);
   });
 
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {
@@ -1566,8 +1654,7 @@ describe("deriveMessagesTimelineRows", () => {
             "steer",
           ]);
           expect(rows[1]?.createdAt).toBe(time(0));
-          if (!isWorking)
-            expect(rows[1]).toMatchObject({ label: "Worked for 00m 20s", expanded });
+          if (!isWorking) expect(rows[1]).toMatchObject({ label: "Worked for 00m 20s", expanded });
           expect(rows.some((row) => row.id === "final")).toBe(true);
           expect(rows.some((row) => row.id === "work")).toBe(isWorking || expanded);
         }

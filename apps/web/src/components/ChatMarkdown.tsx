@@ -362,9 +362,9 @@ export function normalizeProviderMathDelimiters(
         }
         if (
           inlineTicks === 0 &&
-          // Amounts such as $5, $1,200, $5.00 or $5k are currency, not the start of math.
+          // Amounts such as $5, $1,200, $5.00, $5k, $5/mo or $5+ are currency, not the start of math.
           // ponytail: `$1 + 1$` also reads as currency; math starting with a digit and a space is rare.
-          (/^\$(?=\d(?:[\p{L}\p{N}_-]*\p{L}|[\d,]*(?:\.\d+)?)(?=$|[\s.,!?;:)\]]))/u.test(
+          (/^\$(?=\d(?:[\p{L}\p{N}_-]*\p{L}|[\d,]*(?:\.\d+)?)(?=$|[\s.,!?;:)\]]|\/\p{L}|\+(?!\S)))/u.test(
             part.slice(index),
           ) ||
             isSkillReference(part.slice(index), knownSkills))

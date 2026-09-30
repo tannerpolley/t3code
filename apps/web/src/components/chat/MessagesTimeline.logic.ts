@@ -533,6 +533,22 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
+const SUBSTANTIAL_TEXT_LENGTH = 280;
+// Headings, list items, blockquotes, table rows, code fences, images, display
+// or bracketed math, and paragraph breaks.
+const SUBSTANTIAL_MARKDOWN =
+  /^ {0,3}(?:#{1,6}\s|[-*+]\s+\S|\d+[.)]\s+\S|>|\||```|~~~)|!\[[^\]]*\]\(|\$\$|\\\[|\\\(|\n[ \t]*\n/m;
+
+/**
+ * Whether an assistant message carries real content (a summary, answer, or
+ * structured output) rather than a short progress note like "Checking X…".
+ * Settled turns keep substantial messages outside the "Worked for" fold.
+ */
+export function assistantTextIsSubstantial(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length > SUBSTANTIAL_TEXT_LENGTH || SUBSTANTIAL_MARKDOWN.test(trimmed);
+}
+
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
   let nullTurnResponseIndex = 0;
@@ -732,8 +748,9 @@ function failedTimelineRunIds(
 
 /**
  * Settled turns fold activity before their terminal assistant message behind
- * a "Worked for ..." row. Ordinary trailing work joins the fold, while failures
- * and work still in progress stay visible.
+ * a "Worked for ..." row. Ordinary trailing work joins the fold, while failures,
+ * work still in progress, and substantial assistant messages stay visible. The
+ * one fold row sits at the turn's start; visible messages follow in order.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -838,6 +855,8 @@ function deriveTurnFolds(input: {
         continue;
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
+      // Real answers stay readable in place; only progress notes fold.
+      if (entry.kind === "message" && assistantTextIsSubstantial(entry.message.text)) continue;
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
