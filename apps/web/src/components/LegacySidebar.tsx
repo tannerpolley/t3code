@@ -126,7 +126,7 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { formatRelativeTimeLabel } from "../timestampFormat";
+import { SidebarThreadTime } from "./sidebar/SidebarThreadTime";
 import { Kbd } from "./ui/kbd";
 import {
   getArm64IntelBuildWarningDescription,
@@ -930,9 +930,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       isHighlighted ? "text-foreground" : "text-secondary-label"
                     }`}
                   >
-                    {formatRelativeTimeLabel(
-                      thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-                    )}
+                    <SidebarThreadTime thread={thread} />
                   </span>
                 )}
               </span>

@@ -42,8 +42,7 @@ import {
   SquarePenIcon,
   Trash2Icon,
 } from "lucide-react";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
-import { AgentElapsed } from "../chat/AgentElapsed";
+import { SidebarThreadTime } from "./SidebarThreadTime";
 import { BackgroundWorkTaskList } from "../chat/BackgroundWorkTaskList";
 import { SidebarCaretSlot, SidebarCaretToggle, SidebarTrailingColumns } from "./SidebarColumns";
 import { useServerConfigs } from "../../state/entities";
@@ -77,7 +76,6 @@ import {
 } from "../../projectSectionPlacement";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { SidebarThreadSummary } from "../../types";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore";
 import { cn } from "~/lib/utils";
 import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
@@ -1170,12 +1168,6 @@ function ProjectDropLine() {
   );
 }
 
-function compactThreadTime(thread: SidebarThreadSummary): string {
-  const label = formatRelativeTimeLabel(thread.latestUserMessageAt ?? thread.updatedAt);
-  if (label === "just now") return "now";
-  return label.endsWith(" ago") ? label.slice(0, -4) : label;
-}
-
 function SidebarProjectThreadRow(props: {
   readonly thread: SidebarThreadSummary;
   /** Codex style marks status on the right; otherwise a dot leads the row. */
@@ -1203,11 +1195,6 @@ function SidebarProjectThreadRow(props: {
     props.thread.pendingBackgroundTasks,
     runningSubagents,
   );
-  // Codex style times the current activity of a working or waiting thread, like its work rows.
-  const activityStartedAt =
-    props.codexStyle && (status === "working" || status === "waiting")
-      ? resolveThreadWorkingStartedAt({ ...props.thread, waiting: status === "waiting" })
-      : null;
   // Running work shows by default, even while the thread itself works; a collapse wins for this row.
   const [workOpen, setWorkOpen] = useState(true);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
@@ -1270,15 +1257,7 @@ function SidebarProjectThreadRow(props: {
         {props.codexStyle ? (
           <SidebarTrailingColumns
             count={workRows.length > 0 ? workRows.length : undefined}
-            time={
-              activityStartedAt ? (
-                <AgentElapsed
-                  agent={{ status: "running", startedAt: activityStartedAt, completedAt: null }}
-                />
-              ) : (
-                compactThreadTime(props.thread)
-              )
-            }
+            time={<SidebarThreadTime thread={props.thread} status={status} />}
             status={<ThreadStatusMark status={statusMark} />}
           />
         ) : workRows.length > 0 ? (
@@ -1286,7 +1265,7 @@ function SidebarProjectThreadRow(props: {
           <span aria-hidden className="w-8 shrink-0" />
         ) : (
           <span className="shrink-0 text-[11px] text-sidebar-muted-foreground/55">
-            {compactThreadTime(props.thread)}
+            <SidebarThreadTime thread={props.thread} status={status} />
           </span>
         )}
       </button>

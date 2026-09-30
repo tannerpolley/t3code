@@ -3,6 +3,8 @@ import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
   floatNeedsYouThreads,
@@ -16,7 +18,7 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
-  formatWorkingDurationLabel,
+  formatStoppedThreadDuration,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
   getSidebarForkParentThreadId,
@@ -1361,17 +1363,32 @@ describe("resolveWorkingStartedAt", () => {
   });
 });
 
-describe("formatWorkingDurationLabel", () => {
-  it("formats seconds, minutes, and hours", () => {
-    expect(formatWorkingDurationLabel(0)).toBe("0s");
-    expect(formatWorkingDurationLabel(42_000)).toBe("42s");
-    expect(formatWorkingDurationLabel(5 * 60_000)).toBe("5m");
-    expect(formatWorkingDurationLabel(90 * 60_000)).toBe("1h 30m");
+describe("formatStoppedThreadDuration", () => {
+  const startedAt = DateTime.makeUnsafe("2026-09-21T12:00:00.000Z");
+  const completedAt = DateTime.makeUnsafe("2026-09-21T12:01:05.000Z");
+  const base = {
+    ...makeThreadFixture().source,
+    latestRunId: RunId.make("last-run"),
+    latestRunStartedAt: startedAt,
+    latestRunCompletedAt: completedAt,
+    updatedAt: DateTime.makeUnsafe("2026-09-23T12:00:00.000Z"),
+  };
+
+  it("freezes the completed run's duration rather than its age", () => {
+    expect(formatStoppedThreadDuration(presentThreadShell(localEnvironmentId, base))).toBe(
+      "00h 01m 05s",
+    );
   });
 
-  it("clamps negative and non-finite elapsed values to zero", () => {
-    expect(formatWorkingDurationLabel(-5_000)).toBe("0s");
-    expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
+  it.each([
+    ["no run", { latestRunId: null }],
+    ["no start", { latestRunStartedAt: null }],
+    ["no finish", { latestRunCompletedAt: null }],
+    ["neither time", { latestRunStartedAt: null, latestRunCompletedAt: null }],
+    ["older server without a finish field", { latestRunCompletedAt: undefined }],
+  ])("shows nothing for %s", (_, missing) => {
+    const thread = presentThreadShell(localEnvironmentId, { ...base, ...missing });
+    expect(formatStoppedThreadDuration(thread)).toBeNull();
   });
 });
 

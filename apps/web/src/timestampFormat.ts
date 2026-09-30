@@ -324,3 +324,9 @@ export function formatExpiresInLabel(isoDate: string, nowMs: number = Date.now()
   if (seconds > 0) tail.push(`${seconds}s`);
   return tail.length > 0 ? `Expires in ${days}d ${tail.join(" ")}` : `Expires in ${days}d`;
 }
+
+/** Fixed work duration; hour digits grow beyond 99 instead of switching units. */
+export function formatElapsedSeconds(totalSeconds: number): string {
+  const seconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
+  return `${String(Math.floor(seconds / 3600)).padStart(2, "0")}h ${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}m ${String(seconds % 60).padStart(2, "0")}s`;
+}

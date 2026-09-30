@@ -69,7 +69,7 @@ export function SidebarCaretToggle(props: {
 /**
  * The right columns, last in the row: a right-aligned count, then time, then status mark. Widths
  * are in `ch` at a fixed size and weight, so they hold in any interface font; the time fits the
- * longest elapsed label ("59m 59s", "10h 05m") on one line.
+ * fixed elapsed label ("00h 00m 00s") on one line.
  */
 export function SidebarTrailingColumns(props: {
   readonly count?: number | undefined;
@@ -79,7 +79,7 @@ export function SidebarTrailingColumns(props: {
   return (
     <span className="ms-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-[11px] font-normal tabular-nums">
       <span className="w-[3ch] text-right text-sidebar-muted-foreground/55">{props.count}</span>
-      <span className="w-[8ch] text-right text-muted-foreground">{props.time}</span>
+      <span className="w-[11ch] text-right text-muted-foreground">{props.time}</span>
       <span className="flex w-3.5 justify-center">{props.status}</span>
     </span>
   );

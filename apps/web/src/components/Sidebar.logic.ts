@@ -30,6 +30,8 @@ import {
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
+import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
+import { formatElapsedSeconds } from "../timestampFormat";
 import { isLatestRunSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
@@ -1194,12 +1196,13 @@ export function resolveWorkingStartedAt(
   return resolveThreadWorkingStartedAt(thread);
 }
 
-export function formatWorkingDurationLabel(elapsedMs: number): string {
-  const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+export function formatStoppedThreadDuration(
+  thread: Pick<SidebarThreadSummary, "latestRun" | "source">,
+): string | null {
+  // Older shells synthesize completedAt from updatedAt; that is age, not a known finish.
+  if (!thread.latestRun || thread.source.latestRunCompletedAt == null) return null;
+  const elapsedMs = deriveSubagentElapsedMs({ ...thread.latestRun, status: "completed" }, 0);
+  return elapsedMs === null ? null : formatElapsedSeconds(elapsedMs / 1000);
 }
 
 export function resolveThreadStatusPill(input: {
