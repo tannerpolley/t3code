@@ -97,6 +97,7 @@ import {
   remarkCodexDirectives,
   renderCodexFileCitationsAsMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
+import { markdownImageUnavailableLabel } from "./markdownImageState";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
   resolveMarkdownMediaPreview,
@@ -1673,18 +1674,22 @@ function ChatMarkdownMediaUnavailableLabel(props: {
 function ChatMarkdownImageFallback(props: {
   readonly alt: string;
   readonly copyMarkdown?: string | undefined;
-  readonly kind?: "image" | "video";
+  readonly kind?: "image" | "video" | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
+  readonly unavailableLabel?: string | undefined;
 }) {
   const content = (
     <span
       data-markdown-copy={props.copyMarkdown}
+      role="alert"
       className={cn(
         CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
         "rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
       )}
     >
-      <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} />
+      {props.unavailableLabel ?? (
+        <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} />
+      )}
     </span>
   );
   return props.actionsSource ? (
@@ -1702,8 +1707,8 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
 
 /**
  * A standalone image holds a 16:9 slot (or its authored size) until it has
- * decoded, and keeps that slot if it fails, so a timeline row moves at most
- * once: when the natural size arrives. A bare `<img>` is zero height until
+ * decoded. A failure replaces it with a small path-bearing chip.
+ * A bare `<img>` is zero height until
  * then. Once decoded the image renders bare again so its box, hit area, and
  * alignment are exactly the image's own. Inline images (badges, icons in a
  * sentence) skip the slot: a placeholder taller than the image would move the
@@ -1716,7 +1721,7 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
 function ChatMarkdownImage(props: {
   /** Null while the URL is being resolved; the last decoded image stays up. */
   readonly src: string | null;
-  readonly sourceFailed?: boolean | undefined;
+  readonly sourcePath?: string | undefined;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly standalone: boolean;
@@ -1733,9 +1738,12 @@ function ChatMarkdownImage(props: {
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const src = props.src ?? loadedSrc;
-  const failed = props.sourceFailed === true || (src !== null && failedSrc === src);
-  // A failure forgets the decoded image so the next URL loads behind the slot.
-  const settled = src !== null && !failed && (!props.standalone || loadedSrc !== null);
+  const unavailableLabel = markdownImageUnavailableLabel({
+    path: props.sourcePath ?? props.alt,
+    loadFailed: src !== null && failedSrc === src,
+    reason: "Could not load or decode the image.",
+  });
+  const settled = src !== null && (!props.standalone || loadedSrc !== null);
   // Cached images are complete before `onLoad` can fire.
   const markLoadedIfComplete = useCallback(
     (image: HTMLImageElement | null) => {
@@ -1761,6 +1769,16 @@ function ChatMarkdownImage(props: {
     },
   });
 
+  if (unavailableLabel) {
+    return (
+      <ChatMarkdownImageFallback
+        alt={props.alt}
+        copyMarkdown={props.copyMarkdown}
+        actionsSource={props.actionsSource}
+        unavailableLabel={unavailableLabel}
+      />
+    );
+  }
   if (settled) {
     return (
       <MediaActions source={props.actionsSource}>
@@ -1785,20 +1803,15 @@ function ChatMarkdownImage(props: {
     );
   }
   if (!props.standalone) {
-    return failed ? (
-      <ChatMarkdownImageFallback
-        alt={props.alt}
-        copyMarkdown={props.copyMarkdown}
-        actionsSource={props.actionsSource}
-      />
-    ) : (
+    return (
       <span
         id={props.imageProps?.id}
         data-markdown-copy={props.copyMarkdown}
         role="status"
-        aria-label="Loading image"
-        className={CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME}
-      />
+        className={cn(CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME, "text-xs text-muted-foreground")}
+      >
+        Loading image: {props.sourcePath ?? props.alt}
+      </span>
     );
   }
   return (
@@ -1812,25 +1825,24 @@ function ChatMarkdownImage(props: {
           "relative",
         )}
         style={props.style}
-        {...(failed
-          ? { role: "alert" as const }
-          : { role: "status" as const, "aria-label": "Loading image" })}
+        role="status"
+        aria-label="Loading image"
       >
-        {failed ? (
-          <span className="flex size-full items-center justify-center p-2 text-center text-xs text-muted-foreground">
-            <ChatMarkdownMediaUnavailableLabel alt={props.alt} />
-          </span>
-        ) : src !== null ? (
+        {src !== null ? (
           <img
             ref={markLoadedIfComplete}
             src={src}
             alt={props.alt}
             decoding="async"
             draggable={false}
-            className="invisible absolute inset-0 size-full"
+            className="absolute inset-0 size-full object-contain"
             {...imageEvents(src)}
           />
-        ) : null}
+        ) : (
+          <span className="p-2 text-xs text-muted-foreground">
+            Loading image: {props.sourcePath ?? props.alt}
+          </span>
+        )}
       </span>
     </MediaActions>
   );
@@ -1957,6 +1969,24 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : {}),
   };
 
+  const unavailableLabel = markdownImageUnavailableLabel({
+    path: path ?? props.originalUrl ?? props.alt,
+    sourceFailed: assetUrl._tag === "Failure" && fallbackSrc === undefined,
+    reason: assetUrl._tag === "Failure" ? assetUrl.reason : undefined,
+    kind: props.kind,
+  });
+  if (unavailableLabel) {
+    return (
+      <ChatMarkdownImageFallback
+        alt={props.alt}
+        copyMarkdown={props.copyMarkdown}
+        kind={props.kind}
+        actionsSource={actionsSource}
+        unavailableLabel={unavailableLabel}
+      />
+    );
+  }
+
   if (props.kind === "video") {
     return (
       <ChatMarkdownVideo
@@ -1977,7 +2007,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     <ChatMarkdownImage
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
-      sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+      sourcePath={path ?? props.originalUrl}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
@@ -3510,6 +3540,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <ChatMarkdownImage
           key={mediaSrc}
           src={mediaSrc}
+          sourcePath={srcString}
           alt={altText}
           copyMarkdown={copyMarkdown}
           standalone={standalone}
@@ -3530,6 +3561,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             _tag: "media-file",
             threadId: threadRef.threadId,
             path: imageSource.path,
+            mediaOnly: true,
           }}
           alt={altText}
           kind={kind}
@@ -3542,7 +3574,24 @@ const CHAT_MARKDOWN_COMPONENTS = {
         />
       );
     }
-    return <ChatMarkdownImageFallback alt={altText} copyMarkdown={copyMarkdown} kind={kind} />;
+    return (
+      <ChatMarkdownImageFallback
+        alt={altText}
+        copyMarkdown={copyMarkdown}
+        kind={kind}
+        unavailableLabel={
+          markdownImageUnavailableLabel({
+            path: srcString,
+            sourceFailed: true,
+            reason:
+              imageSource._tag === "WorkspaceFile"
+                ? "No owning thread is available."
+                : "Unsupported image source.",
+            kind,
+          }) ?? undefined
+        }
+      />
+    );
   },
   table: function MarkdownTableRenderer({ node: _node, ...props }) {
     return <MarkdownTable {...props} />;
