@@ -91,6 +91,7 @@ import { parseComposerContextHref } from "@t3tools/shared/composerContextReferen
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
+import { DOLLAR_MATH_SPAN } from "../markdown-math";
 import {
   artifactTemplateFromHastProperties,
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
@@ -286,6 +287,8 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
 
+const DOLLAR_MATH_SPAN_START = new RegExp(`^${DOLLAR_MATH_SPAN.source}`, "u");
+
 export function normalizeProviderMathDelimiters(
   source: string,
   skillNames: readonly string[] = [],
@@ -362,11 +365,13 @@ export function normalizeProviderMathDelimiters(
         }
         if (
           inlineTicks === 0 &&
-          // Amounts such as $5, $1,200, $5.00, $5k, $5/mo or $5+ are currency, not the start of math.
+          // Amounts such as $5, $1,200, $5.00, $5k, $5/mo or $5+ are currency, not the start of
+          // math, unless they open a complete span such as $2/x$.
           // ponytail: `$1 + 1$` also reads as currency; math starting with a digit and a space is rare.
-          (/^\$(?=\d(?:[\p{L}\p{N}_-]*\p{L}|[\d,]*(?:\.\d+)?)(?=$|[\s.,!?;:)\]]|\/\p{L}|\+(?!\S)))/u.test(
+          ((/^\$(?=\d(?:[\p{L}\p{N}_-]*\p{L}|[\d,]*(?:\.\d+)?)(?=$|[\s.,!?;:)\]]|\/\p{L}|\+(?!\S)))/u.test(
             part.slice(index),
-          ) ||
+          ) &&
+            !DOLLAR_MATH_SPAN_START.test(part.slice(index))) ||
             isSkillReference(part.slice(index), knownSkills))
         ) {
           normalized += "\\$";

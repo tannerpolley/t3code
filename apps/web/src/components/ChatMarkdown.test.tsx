@@ -115,9 +115,17 @@ describe("ChatMarkdown math", () => {
     expect(
       renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Area $2\\pi r$ and $x$."} />),
     ).toContain('<annotation encoding="application/x-tex">2\\pi r</annotation>');
-    expect(
-      renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Half is $1/2$ at $5/mo."} />),
-    ).toContain('<annotation encoding="application/x-tex">1/2</annotation>');
+    for (const [text, formula] of [
+      ["Half is $1/2$ at $5/mo.", "1/2"],
+      ["Slope $2/x$ here.", "2/x"],
+      ["Rate $1/a$ here.", "1/a"],
+      ["$$2/x$$", "2/x"],
+      ["Plans are $5/mo and $x^2$ grows.", "x^2"],
+    ] as const) {
+      const html = renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={text} />);
+      expect(html).toContain(`<annotation encoding="application/x-tex">${formula}</annotation>`);
+      expect(html).not.toContain("katex-error");
+    }
     expect(
       renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Maps $x:y$ here."} />),
     ).toContain('<annotation encoding="application/x-tex">x:y</annotation>');

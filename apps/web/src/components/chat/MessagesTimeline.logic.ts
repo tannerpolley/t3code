@@ -1,4 +1,5 @@
 import { formatElapsedSeconds } from "../../timestampFormat";
+import { DOLLAR_MATH_SPAN } from "../../markdown-math";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import * as Equal from "effect/Equal";
@@ -546,7 +547,24 @@ const SUBSTANTIAL_MARKDOWN =
  */
 export function assistantTextIsSubstantial(text: string): boolean {
   const trimmed = text.trim();
-  return trimmed.length > SUBSTANTIAL_TEXT_LENGTH || SUBSTANTIAL_MARKDOWN.test(trimmed);
+  return (
+    trimmed.length > SUBSTANTIAL_TEXT_LENGTH ||
+    SUBSTANTIAL_MARKDOWN.test(trimmed) ||
+    DOLLAR_MATH_SPAN.test(trimmed)
+  );
+}
+
+const SHORT_CLOSING_LENGTH = 120;
+
+/** A short, unstructured final line such as "Done." or "Waiting on CI." */
+function assistantTextIsShortClosing(text: string): boolean {
+  return text.trim().length <= SHORT_CLOSING_LENGTH && !assistantTextIsSubstantial(text);
+}
+
+/** Codex's commentary/final_answer marker; other providers leave it unset. */
+function assistantMessagePhase(entry: TimelineEntry) {
+  const item = entry.kind === "message" ? entry.projectedItem?.item : undefined;
+  return item?.type === "assistant_message" ? item.phase : undefined;
 }
 
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
@@ -833,6 +851,22 @@ function deriveTurnFolds(input: {
       continue;
     }
     const hiddenEntryIds = new Set<string>();
+    // Before a short closing line ("Done."), the previous message stays visible unless it
+    // is itself a short line: a plain summary under the substantial length still shows.
+    const terminal = group.terminalEntry;
+    const beforeClosing =
+      terminal &&
+      assistantMessagePhase(terminal) === undefined &&
+      assistantTextIsShortClosing(terminal.message.text)
+        ? group.entries.findLast(
+            (entry): entry is Extract<TimelineEntry, { kind: "message" }> =>
+              entry.kind === "message" && entry.id !== terminal.id,
+          )
+        : undefined;
+    const keptBeforeClosingId =
+      beforeClosing && !assistantTextIsShortClosing(beforeClosing.message.text)
+        ? beforeClosing.id
+        : undefined;
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
@@ -855,8 +889,15 @@ function deriveTurnFolds(input: {
         continue;
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
-      // Real answers stay readable in place; only progress notes fold.
-      if (entry.kind === "message" && assistantTextIsSubstantial(entry.message.text)) continue;
+      // Real answers stay readable in place; only progress notes fold. A provider phase
+      // decides when present; otherwise the text does.
+      if (entry.kind === "message") {
+        const phase = assistantMessagePhase(entry);
+        const visible = phase
+          ? phase === "final_answer"
+          : entry.id === keptBeforeClosingId || assistantTextIsSubstantial(entry.message.text);
+        if (visible) continue;
+      }
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
