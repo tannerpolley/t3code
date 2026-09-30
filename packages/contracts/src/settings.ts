@@ -1290,6 +1290,14 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
     "high",
   ),
   modelRole(
+    "bounded-worker",
+    "Bounded worker",
+    "Well-specified, contained tasks and calculations; same results as the Thorough builder there, faster and cheaper",
+    "codex",
+    "gpt-6.1-sol",
+    "medium",
+  ),
+  modelRole(
     "evidence-gatherer",
     "Evidence gatherer",
     "Deterministic work with one clear result; gathering evidence without making decisions",

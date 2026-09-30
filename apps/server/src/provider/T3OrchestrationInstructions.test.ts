@@ -61,8 +61,8 @@ describe("T3 orchestration provider instructions", () => {
       `- Strong reviewer: Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call. Unavailable: ${unavailable}`,
     );
     assert.notInclude(text, "gpt-6-astra");
-    assert.equal(text.split("\n").filter((line) => line.startsWith("- ")).length, 7);
-    assert.isBelow(text.length, 1_700);
+    assert.equal(text.split("\n").filter((line) => line.startsWith("- ")).length, 8);
+    assert.isBelow(text.length, 1_950);
     assert.equal(t3OrchestrationInstructions(roles), T3_CODE_ORCHESTRATION_INSTRUCTIONS + text);
     assert.equal(t3OrchestrationInstructions([]), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
   });

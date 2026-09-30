@@ -64,6 +64,7 @@ describe("model roles", () => {
       "Fast builder",
       "Checker",
       "Thorough builder",
+      "Bounded worker",
       "Evidence gatherer",
       "Quick Claude",
       "Strong reviewer",
