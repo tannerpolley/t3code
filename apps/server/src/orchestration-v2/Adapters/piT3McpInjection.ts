@@ -14,6 +14,16 @@ import {
   T3_PI_RUNTIME_MODE_ENV,
 } from "./piT3McpExtensionSource.ts";
 
+/**
+ * Pi's bash tool stops tracking a command once it returns, so a job it starts
+ * with `&` survives Stop unseen and nothing wakes the agent when it ends.
+ */
+const PI_FOREGROUND_JOB_INSTRUCTIONS = `
+
+<background_jobs>
+Your bash tool tracks a command only until it returns. A process you start with \`&\`, \`nohup\`, \`setsid\`, or \`disown\` keeps running unseen after the user stops you, and nothing tells you when it ends. Run long jobs in the foreground with bash's timeout instead. If the work does not fit in one call, report what is left and let the agent that delegated to you wait for it.
+</background_jobs>`;
+
 const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
   "--continue",
   "-c",
@@ -296,6 +306,7 @@ export function buildPiRpcLaunch(input: {
         ? {
             [T3_PI_INSTRUCTIONS_ENV]:
               buildRuntimeInstructions({ harness: "Pi" }) +
+              PI_FOREGROUND_JOB_INSTRUCTIONS +
               (hasT3Mcp ? t3OrchestrationInstructions(input.mcpSession?.modelRoles) : ""),
           }
         : {}),
