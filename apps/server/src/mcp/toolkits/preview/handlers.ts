@@ -1,10 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PREVIEW_RECORDING_STOP_TIMEOUT_MS,
+  PreviewAutomationFileUnavailableError,
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
   PreviewAutomationRecordingArtifact,
@@ -27,6 +29,7 @@ import {
   toSafeThreadAttachmentSegment,
 } from "../../../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
+import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../../config.ts";
 import { ServerSettingsService } from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -240,10 +243,46 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
   return { ...recording, id: finalId, path: finalPath };
 });
 
+/**
+ * Serves a local file the agent names through a signed asset URL. The URL is
+ * relative so each client resolves it against its own connection to this server.
+ */
+const issuePreviewFileUrl = Effect.fn("PreviewToolkit.issuePreviewFileUrl")(function* (
+  filePath: string,
+) {
+  const scope = yield* McpInvocationContext.requireMcpCapability("preview");
+  const path = yield* Path.Path;
+  if (!path.isAbsolute(filePath)) {
+    return yield* new PreviewAutomationFileUnavailableError({
+      path: filePath,
+      reason: "pass an absolute path.",
+    });
+  }
+  // ponytail: served as a single file, so an HTML page's relative sibling assets
+  // don't load; issue a workspace-file asset from the thread's workspace if that matters.
+  const asset = yield* issueAssetUrl({
+    resource: { _tag: "media-file", threadId: scope.threadId, path: filePath },
+  }).pipe(
+    Effect.mapError(
+      (error) => new PreviewAutomationFileUnavailableError({ path: filePath, reason: error.message }),
+    ),
+  );
+  return asset.relativeUrl;
+});
+
+/** `preview_open`; a file `path` reaches the client as an asset URL. */
+export const openPreview = ({ path: filePath, ...input }: PreviewAutomationOpenInput) =>
+  Effect.gen(function* () {
+    const url = filePath === undefined ? input.url : yield* issuePreviewFileUrl(filePath);
+    return yield* invokeTargeted<PreviewAutomationStatus>(
+      "open",
+      normalizePreviewOpenInput({ ...input, ...(url === undefined ? {} : { url }) }),
+    );
+  });
+
 const handlers = {
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
-  preview_open: (input) =>
-    invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
+  preview_open: openPreview,
   preview_navigate: (input) =>
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   preview_resize: (input) =>

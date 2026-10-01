@@ -82,6 +82,10 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   url: Schema.optional(BoundedUrl).annotate({
     description: `Optional initial page URL. ${URL_GUIDANCE} Omit to open a blank tab.`,
   }),
+  path: Schema.optional(BoundedUrl).annotate({
+    description:
+      "Absolute path of a local file to show the user instead of a URL, such as a PDF or HTML report you produced.",
+  }),
   open: Schema.optional(
     Schema.Boolean.annotate({
       description:
@@ -106,6 +110,12 @@ export const PreviewAutomationOpenInput = Schema.Struct({
       (input) =>
         !(input.tabId !== undefined && input.reuseExistingTab === false) ||
         "tabId cannot be combined with reuseExistingTab=false.",
+    ),
+  )
+  .check(
+    Schema.makeFilter(
+      (input) =>
+        input.url === undefined || input.path === undefined || "Pass url or path, not both.",
     ),
   )
   .annotate({
@@ -925,7 +935,17 @@ export class PreviewAutomationRecordingDeadlineExpiredError extends Schema.Tagge
   }
 }
 
+export class PreviewAutomationFileUnavailableError extends Schema.TaggedError<PreviewAutomationFileUnavailableError>()(
+  "PreviewAutomationFileUnavailableError",
+  { path: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `${this.path} cannot be shown: ${this.reason}`;
+  }
+}
+
 export const PreviewAutomationError = Schema.Union([
+  PreviewAutomationFileUnavailableError,
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
   PreviewAutomationRecordingTooLargeError,

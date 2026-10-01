@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import {
   EnvironmentId,
+  PreviewAutomationFileUnavailableError,
   PreviewAutomationTimeoutError,
   PreviewTabId,
   ProviderInstanceId,
@@ -16,11 +18,20 @@ import {
   createPendingAttachmentId,
   parseThreadSegmentFromAttachmentId,
 } from "../../../attachmentStore.ts";
+import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
+import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
+import * as T3ProjectFileLoader from "../../../project/T3ProjectFileLoader.ts";
+import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
-import { claimPreviewRecording, invoke, normalizePreviewOpenInput } from "./handlers.ts";
+import {
+  claimPreviewRecording,
+  invoke,
+  normalizePreviewOpenInput,
+  openPreview,
+} from "./handlers.ts";
 
 describe("stuck tab recovery", () => {
   const scope = {
@@ -115,6 +126,71 @@ describe("stuck tab recovery", () => {
       expect(result._tag).toBe("Failure");
       expect(calls).toHaveLength(1);
     }),
+  );
+});
+
+describe("openPreview with a file path", () => {
+  const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+    prefix: "t3-preview-open-file-test-",
+  });
+  const assetLayer = Layer.mergeAll(
+    NodeHttpPlatform.layer,
+    configLayer,
+    WorkspacePaths.layer,
+    ProjectFaviconResolver.layer.pipe(
+      Layer.provide(WorkspacePaths.layer),
+      Layer.provide(T3ProjectFileLoader.layer),
+    ),
+    ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+  const scope = {
+    environmentId: EnvironmentId.make("environment-1"),
+    threadId: ThreadId.make("thread-1"),
+    providerSessionId: "provider-session-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    capabilities: new Set(["preview"] as const),
+    issuedAt: 1,
+  };
+
+  const run = (input: { path: string }) => {
+    const opened: Array<unknown> = [];
+    const broker = {
+      invoke: (request: PreviewAutomationBroker.PreviewAutomationInvokeInput) => {
+        opened.push(request.input);
+        return Effect.succeed({ tabId: "tab_1" });
+      },
+    } as unknown as PreviewAutomationBroker.PreviewAutomationBroker["Service"];
+    return openPreview(input).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+      Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
+      Effect.result,
+      Effect.map((result) => ({ result, opened })),
+    );
+  };
+
+  it.effect("sends the client a server-relative asset URL instead of the path", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-open-file-" });
+      const filePath = path.join(dir, "deck.pdf");
+      yield* fs.writeFileString(filePath, "%PDF-1.4");
+      const { result, opened } = yield* run({ path: filePath });
+      expect(result._tag).toBe("Success");
+      expect(opened).toEqual([
+        { url: expect.stringMatching(/^\/api\/assets\/[^/]+\/deck\.pdf$/), reuseExistingTab: true },
+      ]);
+    }).pipe(Effect.provide(assetLayer)),
+  );
+
+  it.effect("rejects a relative path without opening a tab", () =>
+    Effect.gen(function* () {
+      const { result, opened } = yield* run({ path: "deck.pdf" });
+      expect(result._tag === "Failure" && result.failure).toBeInstanceOf(
+        PreviewAutomationFileUnavailableError,
+      );
+      expect(opened).toEqual([]);
+    }).pipe(Effect.provide(assetLayer)),
   );
 });
 
