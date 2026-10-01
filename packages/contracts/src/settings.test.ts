@@ -83,7 +83,7 @@ describe("model roles", () => {
     const decoded = decodeServerSettings({ modelRoles: [legacy] });
     expect(decoded.modelRoles).toEqual([{ ...metadata, targets: [targets[0]] }]);
     expect(encodeServerSettings(decoded).modelRoles).toEqual(decoded.modelRoles);
-    expect(encodeServerSettings(decoded).modelRoles[0]).not.toHaveProperty("target");
+    expect(encodeServerSettings(decoded).modelRoles?.[0]).not.toHaveProperty("target");
     expect(decodeServerSettingsPatch({ modelRoles: [legacy] }).modelRoles).toEqual(decoded.modelRoles);
   });
 

@@ -1239,12 +1239,12 @@ const LegacyModelRole = Schema.Struct({
   id: ModelRole.fields.id,
   name: ModelRole.fields.name,
   description: ModelRole.fields.description,
-  target: ModelRoleTarget,
+  target: Schema.toEncoded(ModelRoleTarget),
 }).pipe(
   Schema.decodeTo(
     ModelRole,
     SchemaTransformation.transform({
-      decode: ({ target, ...role }): ModelRole => ({ ...role, targets: [target] }),
+      decode: ({ target, ...role }): typeof ModelRole.Encoded => ({ ...role, targets: [target] }),
       encode: ({ targets, ...role }) => ({ ...role, target: targets[0] }),
     }),
   ),
