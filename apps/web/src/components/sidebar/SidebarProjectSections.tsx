@@ -689,12 +689,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   return (
     <li
       ref={setDropRef}
-      className={cn(
-        "group/section rounded-md",
-        // The original look already indents under a guide line; Codex style indents subsections.
-        isSubsection && props.codexStyle && "ms-3",
-        highlighted && "bg-sidebar-row-selected/60",
-      )}
+      className={cn("group/section rounded-md", highlighted && "bg-sidebar-row-selected/60")}
     >
       <SortableSectionHeader
         codexStyle={props.codexStyle}
@@ -708,9 +703,7 @@ const ProjectSection = memo(function ProjectSection(props: {
         section={props.section}
       />
       {expanded ? (
-        <ul
-          className={props.codexStyle ? undefined : "ms-3 border-sidebar-border/60 border-s ps-1"}
-        >
+        <ul className={props.codexStyle ? "ps-3" : "ms-3 border-sidebar-border/60 border-s ps-1"}>
           {props.subsections.map((subsection) => (
             <ProjectSection key={subsection.id} {...props} section={subsection} subsections={[]} />
           ))}
@@ -815,8 +808,11 @@ function SortableSectionHeader(props: {
         {...(draggable && codexStyle ? { ...attributes, ...listeners } : {})}
         aria-expanded={expanded}
         className={cn(
-          "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left text-[13px] font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
-          codexStyle ? "gap-2" : "gap-1.5",
+          "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+          // Codex style sets sections apart from the project rows under them: a small uppercase label.
+          codexStyle
+            ? "gap-2 text-[11px] font-semibold uppercase tracking-wide"
+            : "gap-1.5 text-[13px]",
         )}
         onClick={() => {
           props.onSetExpanded(section.id, !expanded);
