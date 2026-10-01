@@ -13,6 +13,9 @@ export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
+export const T3_PI_BACKGROUND_JOB_DIR_ENV = "T3_PI_BACKGROUND_JOB_DIR";
+export const PI_BACKGROUND_JOB_ENTRY_TYPE = "t3_background_job";
+export const PI_BACKGROUND_JOB_TOOL_NAME = "mcp__t3-code__background_job";
 /** T3's system-prompt addition, built by the server's shared instruction builders. */
 export const T3_PI_INSTRUCTIONS_ENV = "T3_PI_INSTRUCTIONS";
 
@@ -23,13 +26,21 @@ export const T3_PI_INSTRUCTIONS_ENV = "T3_PI_INSTRUCTIONS";
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getShellConfig, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { closeSync, mkdirSync, openSync } from "node:fs";
+import { join } from "node:path";
 import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const INSTRUCTIONS_ENV = ${JSON.stringify(T3_PI_INSTRUCTIONS_ENV)};
+const BACKGROUND_JOB_DIR_ENV = ${JSON.stringify(T3_PI_BACKGROUND_JOB_DIR_ENV)};
+const BACKGROUND_JOB_ENTRY_TYPE = ${JSON.stringify(PI_BACKGROUND_JOB_ENTRY_TYPE)};
+const BACKGROUND_JOB_TOOL_NAME = ${JSON.stringify(PI_BACKGROUND_JOB_TOOL_NAME)};
+const backgroundJobs = new Map<string, { pid: number; completion: Promise<void> }>();
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "tool_search"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -68,6 +79,48 @@ function toolInputSummary(input: unknown): string {
     return JSON.stringify(input, null, 2).slice(0, 4_000);
   } catch {
     return String(input).slice(0, 4_000);
+  }
+}
+
+
+// ponytail: shell-token heuristic, not a shell parser; nested scripts can hide operators.
+function backgroundsCommand(command: string): boolean {
+  let unquoted = "";
+  let quote = "";
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    if (char === "\\\\" && quote !== "'") {
+      index += 1;
+      unquoted += " ";
+    } else if (quote) {
+      if (char === quote) quote = "";
+      unquoted += " ";
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      unquoted += " ";
+    } else {
+      unquoted += char;
+    }
+  }
+  return /(^|[;\\n|&])\\s*(?:exec\\s+|sudo\\s+|env\\s+)*(?:[\\w./-]*\\/)?(?:nohup|setsid|disown)\\b/.test(unquoted) ||
+    /(?<![&<>])&(?![&>])/.test(unquoted);
+}
+
+function killBackgroundJob(pid: number, allowExited = false): void {
+  if (process.platform === "win32") {
+    const result = spawnSync(
+      join(process.env.SystemRoot ?? "C:\\\\Windows", "System32", "taskkill.exe"),
+      ["/PID", String(pid), "/T", "/F"],
+      { stdio: "ignore", windowsHide: true, timeout: 10_000 },
+    );
+    if (result.error) throw result.error;
+    if (result.status !== 0 && !allowExited) throw new Error("taskkill failed for background job " + pid);
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
   }
 }
 
@@ -207,6 +260,95 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+
+  pi.registerTool({
+    name: BACKGROUND_JOB_TOOL_NAME,
+    label: "background_job",
+    description: "Start tracked long-running shell work. T3 shows its output, supports Stop, and wakes you when it ends.",
+    promptSnippet: "Start tracked background shell work; finish your turn while it runs.",
+    parameters: jsonSchemaToTypebox({
+      type: "object",
+      properties: {
+        command: { type: "string", minLength: 1 },
+        cwd: { type: "string", minLength: 1 },
+        description: { type: "string" },
+      },
+      required: ["command"],
+      additionalProperties: false,
+    }),
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const input = params as { command: string; cwd?: string; description?: string };
+      if (!input.command.trim()) throw new Error("Background job command cannot be empty.");
+      if (backgroundsCommand(input.command)) {
+        throw new Error("Keep the background_job command in the foreground; this tool tracks it for you.");
+      }
+      signal?.throwIfAborted();
+      const directory = env(BACKGROUND_JOB_DIR_ENV);
+      if (!directory) throw new Error("T3 background job directory is unavailable.");
+      const taskId = randomUUID();
+      const outputDir = join(directory, "tasks");
+      mkdirSync(outputDir, { recursive: true });
+      const outputPath = join(outputDir, taskId + ".output");
+      const config = getShellConfig();
+      const fd = openSync(outputPath, "wx", 0o600);
+      let finish!: () => void;
+      const completion = new Promise<void>((resolve) => { finish = resolve; });
+      try {
+        const child = spawn(
+          config.shell,
+          config.commandTransport === "stdin" ? config.args : [...config.args, input.command],
+          {
+            cwd: input.cwd ?? ctx.cwd,
+            detached: true,
+            stdio: [config.commandTransport === "stdin" ? "pipe" : "ignore", fd, fd],
+            windowsHide: true,
+          },
+        );
+        child.once("close", (exitCode, signal) => {
+          const job = backgroundJobs.get(taskId);
+          try {
+            if (job) {
+              // Reap descendants if the shell exited before them.
+              try {
+                killBackgroundJob(job.pid, true);
+              } catch (error) {
+                ctx.ui.notify("Failed to clean up background task " + taskId + ": " + String(error), "error");
+              }
+              backgroundJobs.delete(taskId);
+              pi.appendEntry(BACKGROUND_JOB_ENTRY_TYPE, { status: "ended", taskId, exitCode, signal });
+            }
+          } finally {
+            finish();
+          }
+        });
+        await new Promise<void>((resolve, reject) => {
+          child.once("error", reject);
+          child.once("spawn", () => {
+            backgroundJobs.set(taskId, { pid: child.pid!, completion });
+            pi.appendEntry(BACKGROUND_JOB_ENTRY_TYPE, {
+              status: "started", taskId, pid: child.pid!,
+              description: input.description?.trim() || input.command,
+              command: input.command, startedAt: new Date().toISOString(),
+            });
+            if (config.commandTransport === "stdin") child.stdin!.end(input.command);
+            resolve();
+          });
+        });
+      } finally {
+        closeSync(fd);
+      }
+      return {
+        content: [{ type: "text", text: "Background task " + taskId + " started.\\nOutput is being written to: " + outputPath }],
+        details: { taskId, outputPath },
+      };
+    },
+  });
+  pi.on("session_shutdown", async () => {
+    const jobs = [...backgroundJobs.values()];
+    for (const job of jobs) killBackgroundJob(job.pid);
+    await Promise.all(jobs.map((job) => job.completion));
+  });
+
   // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
   // previous response's usage even when a fork's instructions/tools differ,
   // then reserves almost all remaining context for output. OpenRouter can
@@ -232,6 +374,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // bridge uses Pi's public blocking tool hook so the shared runtime modes
   // keep their normal meaning without replacing or shadowing Pi's runtime.
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "bash" &&
+      typeof event.input.command === "string" && backgroundsCommand(event.input.command)) {
+      return { block: true, reason: "Use " + BACKGROUND_JOB_TOOL_NAME + " for background work so T3 can show output, Stop it, and wake you when it ends." };
+    }
     const mode = runtimeMode();
     if (mode === "full-access" || READ_ONLY_TOOLS.has(event.toolName)) return;
     if (mode === "auto-accept-edits" && FILE_CHANGE_TOOLS.has(event.toolName)) {

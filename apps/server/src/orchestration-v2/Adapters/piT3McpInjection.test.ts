@@ -10,9 +10,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import {
+  PI_BACKGROUND_JOB_TOOL_NAME,
   PI_T3_MCP_EXTENSION_FILENAME,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
+  T3_PI_BACKGROUND_JOB_DIR_ENV,
   T3_PI_INSTRUCTIONS_ENV,
   T3_PI_RUNTIME_MODE_ENV,
 } from "./piT3McpExtensionSource.ts";
@@ -116,8 +118,14 @@ describe("pi T3 MCP injection", () => {
     assert.include(instructions, "<pull_request_linking>");
     assert.include(instructions, "## T3 Code orchestration");
     assert.include(instructions, "- Checker: Read-only review of a build");
-    assert.include(instructions, '"model":"openai-codex/gpt-6.1-sol","options":{"thinking":"medium"}');
+    assert.include(
+      instructions,
+      '"model":"openai-codex/gpt-6.1-sol","options":{"thinking":"medium"}',
+    );
     assert.notInclude(instructions, "stale parent instructions");
+    assert.include(instructions, PI_BACKGROUND_JOB_TOOL_NAME);
+    assert.include(instructions, "T3 wakes you when it ends");
+    assert.include(instructions, "do not poll with sleep");
 
     // Without MCP the agent still gets runtime context, but no orchestration tools to use.
     const permissionOnly = buildPiRpcLaunch({
@@ -128,6 +136,30 @@ describe("pi T3 MCP injection", () => {
     });
     assert.include(permissionOnly.env[T3_PI_INSTRUCTIONS_ENV], "<showing_images>");
     assert.notInclude(permissionOnly.env[T3_PI_INSTRUCTIONS_ENV], "T3 Code orchestration");
+  });
+
+  it("sets the job directory only for the current extension session", () => {
+    for (const disableExtensions of [false, true]) {
+      const launch = buildPiRpcLaunch({
+        launchArgs: [],
+        environment: { [T3_PI_BACKGROUND_JOB_DIR_ENV]: "/stale/parent" },
+        mcpSession: undefined,
+        extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+        backgroundJobDir: "/tmp/current-jobs",
+        disableExtensions,
+      });
+      assert.equal(
+        launch.env[T3_PI_BACKGROUND_JOB_DIR_ENV],
+        disableExtensions ? undefined : "/tmp/current-jobs",
+      );
+    }
+    const noDirectory = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: { [T3_PI_BACKGROUND_JOB_DIR_ENV]: "/stale/parent" },
+      mcpSession: undefined,
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+    });
+    assert.isUndefined(noDirectory.env[T3_PI_BACKGROUND_JOB_DIR_ENV]);
   });
 
   it("falls back to Pi's first supported mode for legacy auto threads", () => {

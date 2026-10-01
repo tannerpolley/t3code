@@ -1,4 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
+// Native processes exercise process-group ownership and termination.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodePath from "node:path";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
@@ -41,8 +48,18 @@ import {
   type ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
 import { handoffBudget } from "../ContextHandoffBudget.ts";
+import {
+  ProviderContinuationRequests,
+  type ProviderContinuationRequest,
+} from "../ProviderContinuationRequests.ts";
 import { makePiAdapterV2, PI_PROVIDER } from "./PiAdapterV2.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./PiRpc.ts";
+import {
+  PI_BACKGROUND_JOB_ENTRY_TYPE,
+  PI_BACKGROUND_JOB_TOOL_NAME,
+  T3_PI_BACKGROUND_JOB_DIR_ENV,
+} from "./piT3McpExtensionSource.ts";
+import { backgroundTaskOutputPath } from "../../orchestration/backgroundTaskOutput.ts";
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-pi-v2-adapter-",
@@ -89,7 +106,7 @@ interface FakePi {
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
   /** Reject the next `get_state` request. */
   readonly failNextState: () => void;
-  readonly deferNextLifecycle: (type: "switch_session" | "new_session") => void;
+  readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "abort") => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
   /** Every request received by the fake process. */
@@ -304,6 +321,7 @@ const makeAdapter = Effect.fnUntraced(function* (fake: FakePi, launchArgs = "", 
   const idAllocator = yield* IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
+  const continuationRequests = yield* ProviderContinuationRequests;
   return makePiAdapterV2({
     instanceId: PI_INSTANCE_ID,
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
@@ -319,6 +337,7 @@ const makeAdapter = Effect.fnUntraced(function* (fake: FakePi, launchArgs = "", 
     fileSystem,
     idAllocator,
     serverConfig,
+    continuationRequests,
   });
 });
 
@@ -451,6 +470,333 @@ const expectModelFailure = (errorMessage: string) =>
   }).pipe(Effect.scoped, Effect.provide(testLayer));
 
 describe("PiAdapterV2", () => {
+  const jobEntry = (data: unknown): PiRpcRecord => ({
+    type: "entry_appended",
+    entry: { type: "custom", customType: PI_BACKGROUND_JOB_ENTRY_TYPE, data },
+  });
+  const startedJob = (taskId = "job_test", pid = FAKE_PID) => ({
+    status: "started",
+    taskId,
+    pid,
+    description: "Build project",
+    command: "make build",
+    startedAt: "2026-10-01T12:00:00.000Z",
+  });
+  const endedJob = (
+    taskId = "job_test",
+    exitCode: number | null = 0,
+    signal: string | null = null,
+  ) => ({
+    status: "ended",
+    taskId,
+    exitCode,
+    signal,
+  });
+  const takeRoster = (
+    takeEvent: (
+      predicate: (event: ProviderAdapterV2Event) => boolean,
+    ) => Effect.Effect<ProviderAdapterV2Event>,
+    count: number,
+  ) =>
+    takeEvent(
+      (event) =>
+        event.type === "provider_thread.updated" &&
+        event.providerThread.pendingBackgroundTasks?.length === count,
+    );
+
+  it.effect("tracks jobs across turn settlement and wakes idle Pi through a real prompt", () =>
+    Effect.gen(function* () {
+      const offered: ProviderContinuationRequest[] = [];
+      const wakes = yield* Queue.unbounded<ProviderContinuationRequest>();
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake).pipe(
+        Effect.provideService(ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.sync(() => offered.push(request)).pipe(
+              Effect.andThen(Queue.offer(wakes, request)),
+              Effect.asVoid,
+            ),
+          take: Queue.take(wakes),
+        }),
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* takeRoster(takeEvent, 0);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit(jobEntry(startedJob()));
+      const roster = yield* takeRoster(takeEvent, 1);
+      assert.isTrue(roster.type === "provider_thread.updated");
+      if (roster.type !== "provider_thread.updated") return;
+      assert.deepEqual(roster.providerThread.pendingBackgroundTasks, [
+        {
+          taskId: "job_test",
+          description: "Build project",
+          taskType: "local_bash",
+          startedAt: DateTime.makeUnsafe("2026-10-01T12:00:00.000Z"),
+          commandKind: "make",
+        },
+      ]);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      assert.isFalse(
+        yield* runtime.hasPendingBackgroundWorkForThread!({
+          ...providerThread,
+          id: ProviderThreadId.make("unrelated"),
+        }),
+      );
+      const jobDir = fake.lastSpawn().env[T3_PI_BACKGROUND_JOB_DIR_ENV]!;
+      const outputPath = NodePath.join(jobDir, "tasks", "job_test.output");
+      assert.equal(
+        yield* runtime.backgroundTaskOutputDir!({ providerThread }),
+        NodePath.dirname(outputPath),
+      );
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "job_tool",
+        toolName: PI_BACKGROUND_JOB_TOOL_NAME,
+        args: { command: "make build" },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "job_tool",
+        toolName: PI_BACKGROUND_JOB_TOOL_NAME,
+        result: {
+          content: [
+            { type: "text", text: `Task ID: job_test\nOutput is being written to: ${outputPath}` },
+          ],
+        },
+        isError: false,
+      });
+      const item = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.status === "completed",
+      );
+      assert.isTrue(
+        item.type === "turn_item.updated" && item.turnItem.type === "command_execution",
+      );
+      if (item.type === "turn_item.updated" && item.turnItem.type === "command_execution") {
+        assert.equal(item.turnItem.input, "make build");
+        assert.equal(backgroundTaskOutputPath(item.turnItem.output ?? "", "job_test"), outputPath);
+      }
+      yield* fake.emit(jobEntry(startedJob("job_active")));
+      yield* takeRoster(takeEvent, 2);
+      yield* fake.emit(jobEntry(endedJob("job_active", 2)));
+      yield* takeRoster(takeEvent, 1);
+      assert.lengthOf(offered, 0);
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* fake.emit(jobEntry(endedJob()));
+      yield* takeRoster(takeEvent, 0);
+      const wake = yield* Queue.take(wakes);
+      assert.equal(wake.delivery, "message_text");
+      assert.equal(wake.providerThreadId, providerThread.id);
+      assert.equal(wake.notification?.source.kind, "background_task");
+      assert.equal(wake.notification?.outcome, "completed");
+      assert.include(wake.detail!, "exit code 0");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* startTurn(runtime, providerThread, "default", [], wake.detail!, undefined, 2);
+      assert.equal((yield* fake.takeRequest("prompt"))["message"], wake.detail);
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit(jobEntry(endedJob()));
+      yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      assert.lengthOf(offered, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("delivers a completion received while Pi's idle confirmation is in flight", () =>
+    Effect.gen(function* () {
+      const wakes = yield* Queue.unbounded<ProviderContinuationRequest>();
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake).pipe(
+        Effect.provideService(ProviderContinuationRequests, {
+          offer: (request) => Queue.offer(wakes, request).pipe(Effect.asVoid),
+          take: Queue.take(wakes),
+        }),
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* takeRoster(takeEvent, 0);
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit(jobEntry(startedJob()));
+      yield* takeRoster(takeEvent, 1);
+      fake.deferNextState();
+      yield* fake.emit({ type: "agent_settled" });
+      yield* fake.takeRequest("get_state");
+      yield* fake.emit(jobEntry(endedJob("job_test", 7)));
+      yield* takeRoster(takeEvent, 0);
+      assert.equal(yield* Queue.size(wakes), 0, "settlement must be confirmed before dispatch");
+      yield* fake.resolveDeferredState({
+        isStreaming: false,
+        isCompacting: false,
+        pendingMessageCount: 0,
+      });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      const wake = yield* Queue.take(wakes);
+      assert.include(wake.detail!, "exit code 7");
+      assert.equal(wake.notification?.outcome, "failed");
+      assert.equal(wake.delivery, "message_text");
+      assert.equal(yield* Queue.size(wakes), 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  // A real detached process proves Stop reaches the group, without a timer or a live Pi session.
+  it.effect("keeps a Windows job tracked when taskkill fails", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const jobPid = FAKE_PID + 1;
+      const spawner = ChildProcessSpawner.make((command) =>
+        fake.spawner.spawn(command).pipe(
+          Effect.map((handle) =>
+            ChildProcess.isStandardCommand(command) && command.command === "taskkill"
+              ? {
+                  ...handle,
+                  exitCode: Effect.succeed(
+                    ChildProcessSpawner.ExitCode(command.args.includes(String(jobPid)) ? 5 : 0),
+                  ),
+                }
+              : handle,
+          ),
+        ),
+      );
+      const { runtime, takeEvent } = yield* openRuntime({ ...fake, spawner }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* takeRoster(takeEvent, 0);
+      yield* fake.emit(jobEntry(startedJob("job_windows", jobPid)));
+      yield* takeRoster(takeEvent, 1);
+      const stopped = yield* Effect.exit(
+        runtime.stopBackgroundTask!({ providerThread, taskId: "job_windows" }),
+      );
+      assert.equal(stopped._tag, "Failure");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* fake.emit(jobEntry(endedJob("job_windows")));
+      yield* takeRoster(takeEvent, 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  const runningJob = Effect.acquireRelease(
+    Effect.promise(async () => {
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        ["-e", "process.stdout.write('ready'); process.stdin.resume();"],
+        { detached: true, stdio: ["pipe", "pipe", "ignore"] },
+      );
+      const exited = NodeEvents.EventEmitter.once(child, "exit");
+      await NodeEvents.EventEmitter.once(child.stdout, "data");
+      return { child, exited };
+    }),
+    ({ child }) =>
+      Effect.sync(() => {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        try {
+          process.kill(-child.pid!, "SIGKILL");
+        } catch {
+          /* Already exited. */
+        }
+      }),
+  );
+
+  it.effect("kills a job whose start receipt arrives after Stop requests a restart", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+      const job = yield* runningJob;
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (running.type !== "provider_turn.updated") return;
+      fake.deferNextLifecycle("abort");
+      const stopped = yield* runtime
+        .interruptTurn({
+          providerThread,
+          providerTurnId: running.providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.forkScoped);
+      yield* fake.takeRequest("abort");
+      yield* fake.emit(jobEntry(startedJob("job_late", job.child.pid!)));
+      const [code, signal] = yield* Effect.promise(() => job.exited);
+      assert.isNull(code);
+      assert.equal(signal, "SIGKILL");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* fake.closeStdout;
+      yield* Fiber.join(stopped);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  for (const action of ["stop", "transport loss", "scope close"] as const) {
+    it.effect(`kills tracked process groups and clears pending work on ${action}`, () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const job = yield* runningJob;
+        const fake = yield* makeFakePi;
+        let observedRuntime: ProviderAdapterV2SessionRuntime | undefined;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const { runtime, takeEvent } = yield* openRuntime(fake);
+            observedRuntime = runtime;
+            const providerThread = yield* runtime.ensureThread({
+              threadId: THREAD_ID,
+              modelSelection: modelSelection("default"),
+              runtimePolicy,
+            });
+            yield* takeRoster(takeEvent, 0);
+            yield* fake.emit(jobEntry(startedJob("job_real", job.child.pid!)));
+            yield* takeRoster(takeEvent, 1);
+            if (action === "stop") {
+              const wrongThread = { ...providerThread, id: ProviderThreadId.make("unrelated") };
+              const rejected = yield* Effect.exit(
+                runtime.stopBackgroundTask!({ providerThread: wrongThread, taskId: "job_real" }),
+              );
+              assert.equal(rejected._tag, "Failure");
+              assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+              yield* runtime.stopBackgroundTask!({ providerThread, taskId: "job_real" });
+              yield* takeRoster(takeEvent, 0);
+              yield* fake.emit(jobEntry(endedJob("job_real", null, "SIGKILL")));
+            } else if (action === "transport loss") {
+              yield* fake.closeStdout;
+              yield* takeRoster(takeEvent, 0);
+            }
+          }),
+        );
+        const [code, signal] = yield* Effect.promise(() => job.exited);
+        assert.isNull(code);
+        assert.equal(signal, "SIGKILL");
+        assert.isFalse(yield* observedRuntime!.hasPendingBackgroundWork!);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
+
   it.effect("stops provider-initiated work that has no T3 turn owner", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

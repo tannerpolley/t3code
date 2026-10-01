@@ -23,8 +23,11 @@
  * Terminal-only decoration such as status, widget, title, and editor-text
  * updates has no matching T3 surface and is ignored.
  */
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { classifyShellCommand } from "@t3tools/shared/shellCommand";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodePath from "node:path";
 import {
   defaultInstanceIdForDriver,
   PiSettings,
@@ -58,7 +61,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -103,6 +106,10 @@ import {
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
+  ProviderContinuationRequests,
+  type ProviderContinuationRequest,
+} from "../ProviderContinuationRequests.ts";
+import {
   makePiRpcConnection,
   parsePiModelSlug,
   piRecordField as recordField,
@@ -116,7 +123,11 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./piT3McpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS } from "./piT3McpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_BACKGROUND_JOB_ENTRY_TYPE,
+  PI_BACKGROUND_JOB_TOOL_NAME,
+} from "./piT3McpExtensionSource.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -251,7 +262,28 @@ export interface PiAdapterV2Options {
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig["Service"];
+  readonly continuationRequests?: {
+    readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
+  };
 }
+
+const PiBackgroundJobEntry = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("started"),
+    taskId: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/)),
+    pid: Schema.Int.check(Schema.isGreaterThan(1)),
+    description: Schema.NonEmptyString,
+    command: Schema.NonEmptyString,
+    startedAt: Schema.DateTimeUtcFromString,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("ended"),
+    taskId: Schema.String,
+    exitCode: Schema.NullOr(Schema.Int),
+    signal: Schema.NullOr(Schema.String),
+  }),
+]);
+const decodeBackgroundJobEntry = Schema.decodeUnknownOption(PiBackgroundJobEntry);
 
 /** Concatenate the `text` fields of a Pi content-block array. */
 function contentText(content: unknown): string {
@@ -419,6 +451,7 @@ interface ActivePiTurn {
   settleProbeGeneration: number;
   /** An extension may start compaction immediately after Pi emits agent_settled. */
   settleWhenIdle: boolean;
+  readonly backgroundCompletions: Array<ProviderContinuationRequest>;
   sawCompaction: boolean;
   /** RPC compact is in flight; Pi abort does not cancel it. */
   manualCompactInFlight: boolean;
@@ -476,9 +509,10 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       input: ProviderAdapterV2OpenSessionInput,
     ) {
       const scope = yield* Effect.scope;
+      const platform = yield* HostProcessPlatform;
       const cwd = input.runtimePolicy.cwd ?? options.serverConfig.cwd;
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-      const provideCacheFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
+      const provideCacheFs = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         effect.pipe(
           Effect.provideService(FileSystem.FileSystem, options.fileSystem),
           Effect.mapError(
@@ -500,12 +534,16 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       if (!resolvedLaunchArgs.ok) {
         return yield* protocolError(resolvedLaunchArgs.message);
       }
+      const backgroundJobDir = yield* provideCacheFs(
+        options.fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-jobs-" }),
+      );
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
         environment: options.environment,
         mcpSession,
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
+        backgroundJobDir,
       });
       const connection: PiRpcConnection = yield* makePiRpcConnection({
         command: options.settings.binaryPath || "pi",
@@ -557,6 +595,10 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       // dialog's own resolution updates.
       const sessionEventPermit = yield* Semaphore.make(1);
       let threadState: PiThreadState | null = null;
+      const backgroundJobs = new Map<
+        string,
+        Extract<typeof PiBackgroundJobEntry.Type, { status: "started" }>
+      >();
       let registrationAttempted = false;
       let lastNativeThreadId: string | null = null;
       // User Stop intentionally tears down this RPC process after aborting.
@@ -642,6 +684,63 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           });
         });
 
+      const emitBackgroundJobRoster = () =>
+        Effect.suspend(() =>
+          threadState === null
+            ? Effect.void
+            : updateProviderThread(threadState, {
+                pendingBackgroundTasks: [...backgroundJobs.values()].map((job) => ({
+                  taskId: job.taskId,
+                  description: job.description,
+                  taskType: "local_bash",
+                  startedAt: job.startedAt,
+                  commandKind: classifyShellCommand(job.command),
+                })),
+              }),
+        );
+
+      const killBackgroundJob = Effect.fnUntraced(function* (pid: number) {
+        if (platform === "win32") {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const child = yield* options.spawner.spawn(
+                ChildProcess.make("taskkill", ["/PID", String(pid), "/T", "/F"]),
+              );
+              const exitCode = yield* child.exitCode;
+              if (Number(exitCode) !== 0) {
+                return yield* protocolError(
+                  `taskkill failed for Pi background job ${pid} with exit code ${exitCode}`,
+                );
+              }
+            }),
+          ).pipe(
+            Effect.mapError((cause) => protocolError("Failed to stop Pi background job", cause)),
+          );
+          return;
+        }
+        yield* Effect.try({
+          try: () => {
+            try {
+              process.kill(-pid, "SIGKILL");
+            } catch (cause) {
+              // The exit entry can still be queued after the process group is gone.
+              if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH"))
+                throw cause;
+            }
+          },
+          catch: (cause) => protocolError("Failed to stop Pi background job", cause),
+        });
+      });
+
+      const clearBackgroundJobs = Effect.fnUntraced(function* () {
+        for (const job of backgroundJobs.values()) {
+          yield* killBackgroundJob(job.pid).pipe(Effect.catch((error) => Effect.logWarning(error)));
+        }
+        backgroundJobs.clear();
+        yield* emitBackgroundJobRoster();
+      });
+      yield* Effect.addFinalizer(() => clearBackgroundJobs());
+
       const itemOrdinal = (turn: ActivePiTurn, nativeItemId: string): number => {
         const existing = turn.itemOrdinals.get(nativeItemId);
         if (existing !== undefined) return existing;
@@ -670,7 +769,8 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       };
 
       const lifecycleRequest = (record: PiRpcRecord) =>
-        request(record, PI_SESSION_TIMEOUT_MS).pipe(
+        clearBackgroundJobs().pipe(
+          Effect.andThen(request(record, PI_SESSION_TIMEOUT_MS)),
           // A local timeout does not cancel Pi's lifecycle hook. Retire the
           // process before fallback can race its eventual switch/new-session.
           Effect.tapError((error) =>
@@ -1056,7 +1156,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           status,
           completedAt: completed ? emittedAt : null,
         } as const;
-        if (toolName === "bash") {
+        if (toolName === "bash" || toolName === PI_BACKGROUND_JOB_TOOL_NAME) {
           const exitCode = recordNumber(recordField(resultRecord, "details"), "exitCode");
           yield* emit({
             type: "turn_item.updated",
@@ -1595,6 +1695,16 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             threadDisposition: "reusable",
           });
         }
+        if (
+          readUsage &&
+          !turn.interrupted &&
+          !stopRequested &&
+          options.continuationRequests !== undefined
+        ) {
+          for (const completion of turn.backgroundCompletions) {
+            yield* options.continuationRequests.offer(completion);
+          }
+        }
       });
 
       // ── event pump ────────────────────────────────────────
@@ -1639,6 +1749,55 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         const state = threadState;
         const turn = state?.activeTurn ?? null;
         switch (event["type"]) {
+          case "entry_appended": {
+            const entry = event["entry"];
+            if (recordString(entry, "customType") !== PI_BACKGROUND_JOB_ENTRY_TYPE) return;
+            const decoded = decodeBackgroundJobEntry(recordField(entry, "data"));
+            if (Option.isNone(decoded)) return;
+            const jobEvent = decoded.value;
+            if (jobEvent.status === "started") {
+              // A start already in flight when Stop or a session switch wins still owns a PID.
+              if (stopRequested || state === null) {
+                yield* killBackgroundJob(jobEvent.pid);
+                return;
+              }
+              if (backgroundJobs.has(jobEvent.taskId)) return;
+              backgroundJobs.set(jobEvent.taskId, jobEvent);
+              yield* emitBackgroundJobRoster();
+              return;
+            }
+            if (state === null || stopRequested) return;
+            const job = backgroundJobs.get(jobEvent.taskId);
+            if (job === undefined) return;
+            backgroundJobs.delete(jobEvent.taskId);
+            yield* emitBackgroundJobRoster();
+            if (
+              (turn === null || turn.settleWhenIdle) &&
+              options.continuationRequests !== undefined
+            ) {
+              const status =
+                jobEvent.signal !== null
+                  ? `signal ${jobEvent.signal}`
+                  : `exit code ${jobEvent.exitCode ?? "unknown"}`;
+              const detail = `${job.description} finished with ${status}. Output is being written to: ${NodePath.join(backgroundJobDir, "tasks", `${job.taskId}.output`)}`;
+              const completion: ProviderContinuationRequest = {
+                threadId: state.providerThread.appThreadId ?? input.threadId,
+                providerThreadId: state.providerThread.id,
+                driver: PI_PROVIDER,
+                detail,
+                delivery: "message_text",
+                notification: {
+                  source: { kind: "background_task", nativeRef: providerRef(job.taskId) },
+                  outcome: jobEvent.exitCode === 0 ? "completed" : "failed",
+                  summary: `${job.description} finished with ${status}`,
+                  detail,
+                },
+              };
+              if (turn === null) yield* options.continuationRequests.offer(completion);
+              else turn.backgroundCompletions.push(completion);
+            }
+            return;
+          }
           case "agent_start": {
             if (turn === null) {
               unsolicitedActivityDetected = true;
@@ -2027,6 +2186,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
               // closes the provider stream cleanly; only an unexpected death
               // is surfaced as an event-stream failure.
               const state = threadState;
+              yield* clearBackgroundJobs();
               const interrupted = state?.activeTurn?.interrupted === true;
               if (state?.activeTurn != null) {
                 state.activeTurn.failure = interrupted
@@ -2151,6 +2311,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
                 nativeThreadRef: providerRef(nativeId),
                 ...(needsNewSession ? { nativeConversationHeadRef: null, contextUsage: null } : {}),
                 status: "idle",
+                pendingBackgroundTasks: [],
                 updatedAt: createdAt,
               }
             : {
@@ -2300,6 +2461,30 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
+        hasPendingBackgroundWork: Effect.sync(() => backgroundJobs.size > 0),
+        hasPendingBackgroundWorkForThread: (providerThread) =>
+          Effect.sync(
+            () => threadState?.providerThread.id === providerThread.id && backgroundJobs.size > 0,
+          ),
+        backgroundTaskOutputDir: ({ providerThread }) =>
+          Effect.sync(() =>
+            threadState?.providerThread.id === providerThread.id
+              ? NodePath.join(backgroundJobDir, "tasks")
+              : null,
+          ),
+        stopBackgroundTask: ({ providerThread, taskId }) =>
+          Effect.gen(function* () {
+            if (threadState?.providerThread.id !== providerThread.id) {
+              return yield* protocolError("Pi session does not host the background job's thread");
+            }
+            const job = backgroundJobs.get(taskId);
+            if (job === undefined)
+              return yield* protocolError(`Pi has no running background job ${taskId}`);
+            yield* killBackgroundJob(job.pid);
+            // An explicit Stop clears ownership; the later exit entry must not wake the agent.
+            backgroundJobs.delete(taskId);
+            yield* emitBackgroundJobRoster();
+          }).pipe(sessionEventPermit.withPermits(1)),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
           const slug =
@@ -2430,6 +2615,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
               lastLiveUsedTokens: null,
               settleProbeGeneration: 0,
               settleWhenIdle: false,
+              backgroundCompletions: [],
               sawCompaction: false,
               manualCompactInFlight: compactCommand !== null,
               activeCompaction: null,
@@ -3040,6 +3226,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocatorV2;
       const serverConfig = yield* ServerConfig;
+      const continuationRequests = yield* ProviderContinuationRequests;
       return makePiAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
@@ -3048,6 +3235,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
         fileSystem,
         idAllocator,
         serverConfig,
+        continuationRequests,
       });
     },
     (effect, input) =>
@@ -3073,6 +3261,7 @@ const layer: Layer.Layer<ProviderAdapterV2, never, PiAdapterV2DriverEnv> = Layer
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocatorV2;
     const serverConfig = yield* ServerConfig;
+    const continuationRequests = yield* ProviderContinuationRequests;
     return makePiAdapterV2({
       instanceId: PI_DEFAULT_INSTANCE_ID,
       settings: DEFAULT_PI_SETTINGS,
@@ -3081,6 +3270,7 @@ const layer: Layer.Layer<ProviderAdapterV2, never, PiAdapterV2DriverEnv> = Layer
       fileSystem,
       idAllocator,
       serverConfig,
+      continuationRequests,
     });
   }),
 );
