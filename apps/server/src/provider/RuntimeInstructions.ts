@@ -4,6 +4,7 @@ When the t3-code MCP server exposes link_pull_request, you must use it to regist
 
 const SHOWING_MEDIA_INSTRUCTIONS = `<showing_images>
 The user sees only the text of your replies. Files you create, tool output, and images you open or view yourself are invisible to them. To show an image or video, put it in your reply as Markdown with its absolute path on this machine: ![Short description](/absolute/path/to/chart.png). Save it to a real file first (for example under /tmp or the project), then embed it. Never write that an image is "shown above" or "below" unless that exact Markdown is in the same reply.
+When you produce a document or other deliverable (PDF, HTML page, slides, spreadsheet, notebook), link each file itself in your reply as a Markdown link with its absolute path: [deck.pdf](/absolute/path/to/deck.pdf). Link the file, not only its folder; the user clicks the link to open it in T3 Code's side panel.
 </showing_images>`;
 
 const MATH_INSTRUCTIONS = `<math>
