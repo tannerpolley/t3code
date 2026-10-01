@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -191,6 +192,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       case "switch_session": {
         const cancelled = vetoSwitch;
         vetoSwitch = false;
+        if (!cancelled) sessionFile = String(record["sessionPath"]);
         return { ...base, data: { cancelled } };
       }
       case "get_entries":
@@ -368,6 +370,15 @@ const openRuntime = Effect.fnUntraced(function* (
       }
     });
   return { runtime, takeEvent };
+});
+
+const anotherNativeSession = (providerThread: OrchestrationV2ProviderThread) => ({
+  ...providerThread,
+  nativeThreadRef: {
+    driver: PI_PROVIDER,
+    nativeId: FAKE_SESSION_FILE + ".other",
+    strength: "strong" as const,
+  },
 });
 
 const makeAppThread = Effect.fnUntraced(function* (model: string, threadId = THREAD_ID) {
@@ -593,6 +604,9 @@ describe("PiAdapterV2", () => {
       assert.lengthOf(offered, 0);
       yield* fake.emit({ type: "agent_settled" });
       yield* takeEvent((event) => event.type === "turn.terminal");
+      const midTurnWake = yield* Queue.take(wakes);
+      assert.include(midTurnWake.detail!, "exit code 2");
+      assert.equal(midTurnWake.delivery, "message_text");
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       yield* fake.emit(jobEntry(endedJob()));
       yield* takeRoster(takeEvent, 0);
@@ -610,7 +624,40 @@ describe("PiAdapterV2", () => {
       yield* fake.emit({ type: "agent_settled" });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
-      assert.lengthOf(offered, 1);
+      assert.lengthOf(offered, 2);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("wakes after a job finishes during a normally running turn", () =>
+    Effect.gen(function* () {
+      const wakes = yield* Queue.unbounded<ProviderContinuationRequest>();
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake).pipe(
+        Effect.provideService(ProviderContinuationRequests, {
+          offer: (request) => Queue.offer(wakes, request).pipe(Effect.asVoid),
+          take: Queue.take(wakes),
+        }),
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* takeRoster(takeEvent, 0);
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit(jobEntry(startedJob()));
+      yield* takeRoster(takeEvent, 1);
+      yield* fake.emit(jobEntry(endedJob()));
+      yield* takeRoster(takeEvent, 0);
+      assert.equal(yield* Queue.size(wakes), 0);
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      const wake = yield* Queue.take(wakes);
+      assert.equal(wake.delivery, "message_text");
+      assert.include(wake.detail!, "exit code 0");
+      assert.equal(yield* Queue.size(wakes), 0);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -715,6 +762,224 @@ describe("PiAdapterV2", () => {
           /* Already exited. */
         }
       }),
+  );
+
+  it.effect(
+    "resumes the loaded session with a new model and thinking level without killing jobs",
+    () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcessPlatform) === "win32") return;
+        const job = yield* runningJob;
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* takeRoster(takeEvent, 0);
+        yield* fake.emit(jobEntry(startedJob("job_selection", job.child.pid!)));
+        const roster = yield* takeRoster(takeEvent, 1);
+        if (roster.type !== "provider_thread.updated") return;
+        const selection = {
+          ...modelSelection("anthropic/claude-sonnet"),
+          options: [{ id: "thinking", value: "high" }],
+        };
+        const resumed = yield* runtime.resumeThread({ providerThread, modelSelection: selection });
+        assert.deepEqual(
+          resumed.pendingBackgroundTasks,
+          roster.providerThread.pendingBackgroundTasks,
+        );
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        assert.isTrue(process.kill(-job.child.pid!, 0));
+        assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
+        yield* startTurn(runtime, resumed, selection.model, [], "Continue", selection);
+        const selectedModel = yield* fake.takeRequest("set_model");
+        assert.equal(selectedModel["provider"], "anthropic");
+        assert.equal(selectedModel["modelId"], "claude-sonnet");
+        assert.equal((yield* fake.takeRequest("set_thinking_level"))["level"], "high");
+        yield* fake.takeRequest("prompt");
+        assert.isTrue(process.kill(-job.child.pid!, 0));
+        yield* runtime.stopBackgroundTask!({ providerThread: resumed, taskId: "job_selection" });
+        yield* Effect.promise(() => job.exited);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("stops pending jobs when interrupting a completed turn", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) === "win32") return;
+      const job = yield* runningJob;
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* takeRoster(takeEvent, 0);
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit(jobEntry(startedJob("job_idle", job.child.pid!)));
+      yield* takeRoster(takeEvent, 1);
+      yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      if (terminal.type !== "turn.terminal") return;
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: terminal.providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* takeRoster(takeEvent, 0);
+      const [code, signal] = yield* Effect.promise(() => job.exited);
+      assert.isNull(code);
+      assert.equal(signal, "SIGKILL");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "retains output after session release and keeps restarted sessions' logs separate",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig;
+        const outputPath = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const fake = yield* makeFakePi;
+            const { runtime } = yield* openRuntime(fake);
+            const providerThread = yield* runtime.ensureThread({
+              threadId: THREAD_ID,
+              modelSelection: modelSelection("default"),
+              runtimePolicy,
+            });
+            const directory = yield* runtime.backgroundTaskOutputDir!({ providerThread });
+            assert.isNotNull(directory);
+            assert.isTrue(
+              directory!.startsWith(NodePath.join(config.logsDir, "background-tasks", "pi")),
+            );
+            yield* fs.makeDirectory(directory!, { recursive: true });
+            const path = NodePath.join(directory!, "job_output.output");
+            yield* fs.writeFileString(path, "output survives session closure");
+            return path;
+          }),
+        );
+        assert.equal(yield* fs.readFileString(outputPath), "output survives session closure");
+        const next = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(next);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        assert.notEqual(
+          yield* runtime.backgroundTaskOutputDir!({ providerThread }),
+          NodePath.dirname(outputPath),
+        );
+        assert.equal(yield* fs.readFileString(outputPath), "output survives session closure");
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("does not wake from a completion received while idle Stop is terminating its job", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const jobPid = FAKE_PID + 1;
+      const killStarted = yield* Deferred.make<void>();
+      const killExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const wakes = yield* Queue.unbounded<ProviderContinuationRequest>();
+      const spawner = ChildProcessSpawner.make((command) =>
+        fake.spawner.spawn(command).pipe(
+          Effect.map((handle) =>
+            ChildProcess.isStandardCommand(command) && command.command === "taskkill"
+              ? {
+                  ...handle,
+                  exitCode: command.args.includes(String(jobPid))
+                    ? Deferred.succeed(killStarted, undefined).pipe(
+                        Effect.andThen(Deferred.await(killExit)),
+                      )
+                    : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                }
+              : handle,
+          ),
+        ),
+      );
+      const { runtime, takeEvent } = yield* openRuntime({ ...fake, spawner }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(ProviderContinuationRequests, {
+          offer: (request) => Queue.offer(wakes, request).pipe(Effect.asVoid),
+          take: Queue.take(wakes),
+        }),
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* takeRoster(takeEvent, 0);
+      yield* fake.emit(jobEntry(startedJob("job_stopping", jobPid)));
+      yield* takeRoster(takeEvent, 1);
+      const stop = yield* runtime
+        .interruptTurn({
+          providerThread,
+          providerTurnId: ProviderTurnId.make("completed-turn"),
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(killStarted);
+      yield* fake.emit(jobEntry(endedJob("job_stopping", null, "SIGKILL")));
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "after-stop",
+        method: "confirm",
+        title: "After Stop",
+        message: "Completion has been consumed",
+      });
+      // This RPC response follows both records on stdout, so the reader has consumed them.
+      yield* runtime.readThreadSnapshot({ providerThread });
+      yield* Deferred.succeed(killExit, ChildProcessSpawner.ExitCode(0));
+      yield* Fiber.join(stop);
+      yield* takeEvent((event) => event.type === "runtime_request.updated");
+      assert.equal(yield* Queue.size(wakes), 0);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps the event pump alive when a late unowned job cannot be killed", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const spawner = ChildProcessSpawner.make((command) =>
+        fake.spawner.spawn(command).pipe(
+          Effect.map((handle) =>
+            ChildProcess.isStandardCommand(command) && command.command === "taskkill"
+              ? {
+                  ...handle,
+                  exitCode: Effect.succeed(
+                    ChildProcessSpawner.ExitCode(
+                      command.args.includes(String(FAKE_PID + 1)) ? 5 : 0,
+                    ),
+                  ),
+                }
+              : handle,
+          ),
+        ),
+      );
+      const { takeEvent } = yield* openRuntime({ ...fake, spawner }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+      );
+      yield* fake.emit(jobEntry(startedJob("job_unowned", FAKE_PID + 1)));
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "after-cleanup-error",
+        method: "confirm",
+        title: "Continue?",
+        message: "Event pump is still running",
+      });
+      const next = yield* takeEvent((event) => event.type === "runtime_request.updated");
+      assert.isTrue(
+        next.type === "runtime_request.updated" &&
+          next.runtimeRequest.nativeRequestRef?.nativeId === "after-cleanup-error",
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("kills a job whose start receipt arrives after Stop requests a restart", () =>
@@ -864,10 +1129,14 @@ describe("PiAdapterV2", () => {
       assert.isFalse(fake.lastSpawn().args.includes("--no-extensions"));
 
       yield* runtime.resumeThread({ providerThread });
+      assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
+      const switched = yield* runtime.resumeThread({
+        providerThread: anotherNativeSession(providerThread),
+      });
       const switchRequest = yield* fake.takeRequest("switch_session");
-      assert.equal(switchRequest["sessionPath"], FAKE_SESSION_FILE);
+      assert.equal(switchRequest["sessionPath"], FAKE_SESSION_FILE + ".other");
 
-      yield* startTurn(runtime, providerThread, "anthropic/claude-sonnet");
+      yield* startTurn(runtime, switched, "anthropic/claude-sonnet");
       const setModel = yield* fake.takeRequest("set_model");
       assert.equal(setModel["provider"], "anthropic");
       assert.equal(runtime.providerSession.model, "anthropic/claude-sonnet");
@@ -887,8 +1156,11 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      fake.queueState({ sessionFile: FAKE_SESSION_FILE + ".other" });
       fake.deferNextLifecycle("switch_session");
-      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      const resumed = yield* runtime
+        .resumeThread({ providerThread: anotherNativeSession(providerThread) })
+        .pipe(Effect.forkChild);
       const request = yield* fake.takeRequest("switch_session");
       yield* TestClock.adjust(Duration.millis(16_820));
       yield* fake.emit({
@@ -898,9 +1170,10 @@ describe("PiAdapterV2", () => {
         success: true,
         data: { cancelled: false },
       });
-      assert.equal((yield* Fiber.join(resumed)).nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+      const switched = yield* Fiber.join(resumed);
+      assert.equal(switched.nativeThreadRef?.nativeId, FAKE_SESSION_FILE + ".other");
       assert.isFalse(fake.allRequests().some((request) => request.type === "new_session"));
-      yield* startTurn(runtime, providerThread, "default");
+      yield* startTurn(runtime, switched, "default");
       yield* fake.takeRequest("prompt");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
@@ -915,7 +1188,9 @@ describe("PiAdapterV2", () => {
         runtimePolicy,
       });
       fake.vetoNextSwitch();
-      yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
+      yield* runtime
+        .resumeThread({ providerThread: anotherNativeSession(providerThread) })
+        .pipe(Effect.flip);
       const replacement = yield* runtime.ensureThread({
         threadId: THREAD_ID,
         modelSelection: modelSelection("default"),
@@ -978,7 +1253,7 @@ describe("PiAdapterV2", () => {
       });
       fake.deferNextLifecycle("switch_session");
       const resumed = yield* runtime
-        .resumeThread({ providerThread })
+        .resumeThread({ providerThread: anotherNativeSession(providerThread) })
         .pipe(Effect.flip, Effect.forkChild);
       const request = yield* fake.takeRequest("switch_session");
       yield* TestClock.adjust(Duration.seconds(60));
@@ -1096,7 +1371,9 @@ describe("PiAdapterV2", () => {
         runtimePolicy,
       });
       fake.deferNextLifecycle("switch_session");
-      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      const resumed = yield* runtime
+        .resumeThread({ providerThread: anotherNativeSession(providerThread) })
+        .pipe(Effect.forkChild);
       yield* fake.takeRequest("switch_session");
       yield* Fiber.interrupt(resumed);
       yield* takeEvent(
@@ -1623,8 +1900,7 @@ describe("PiAdapterV2", () => {
       assert.equal(rollbackSnapshot.providerThread.id, providerThread.id);
       assert.equal(rollbackSnapshot.providerThread.nativeThreadRef?.nativeId, forkFile);
       yield* runtime.resumeThread({ providerThread: rollbackSnapshot.providerThread });
-      const resume = yield* fake.takeRequest("switch_session");
-      assert.equal(resume["sessionPath"], forkFile);
+      assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

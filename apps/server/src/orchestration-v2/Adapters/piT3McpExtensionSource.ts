@@ -98,12 +98,15 @@ function backgroundsCommand(command: string): boolean {
     } else if (char === "'" || char === '"') {
       quote = char;
       unquoted += " ";
+    } else if (char === "#" && (index === 0 || /[\\s;|&()<>]/.test(command[index - 1]!))) {
+      while (index + 1 < command.length && command[index + 1] !== "\\n") index += 1;
+      unquoted += " ";
     } else {
       unquoted += char;
     }
   }
   return /(^|[;\\n|&])\\s*(?:exec\\s+|sudo\\s+|env\\s+)*(?:[\\w./-]*\\/)?(?:nohup|setsid|disown)\\b/.test(unquoted) ||
-    /(?<![&<>])&(?![&>])/.test(unquoted);
+    /(?<![&<>|])&(?![&>])/.test(unquoted);
 }
 
 function killBackgroundJob(pid: number, allowExited = false): void {
@@ -289,7 +292,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       const outputDir = join(directory, "tasks");
       mkdirSync(outputDir, { recursive: true });
       const outputPath = join(outputDir, taskId + ".output");
-      const config = getShellConfig();
+      const config = getShellConfig(pi.getSettings().shellPath);
       const fd = openSync(outputPath, "wx", 0o600);
       let finish!: () => void;
       const completion = new Promise<void>((resolve) => { finish = resolve; });

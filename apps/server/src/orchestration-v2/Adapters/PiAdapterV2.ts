@@ -534,8 +534,16 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       if (!resolvedLaunchArgs.ok) {
         return yield* protocolError(resolvedLaunchArgs.message);
       }
+      const backgroundJobRoot = NodePath.join(
+        options.serverConfig.logsDir,
+        "background-tasks",
+        "pi",
+      );
+      yield* provideCacheFs(
+        options.fileSystem.makeDirectory(backgroundJobRoot, { recursive: true }),
+      );
       const backgroundJobDir = yield* provideCacheFs(
-        options.fileSystem.makeTempDirectoryScoped({ prefix: "t3-pi-jobs-" }),
+        options.fileSystem.makeTempDirectory({ directory: backgroundJobRoot, prefix: "session-" }),
       );
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
@@ -1758,7 +1766,9 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             if (jobEvent.status === "started") {
               // A start already in flight when Stop or a session switch wins still owns a PID.
               if (stopRequested || state === null) {
-                yield* killBackgroundJob(jobEvent.pid);
+                yield* killBackgroundJob(jobEvent.pid).pipe(
+                  Effect.catch((error) => Effect.logWarning(error)),
+                );
                 return;
               }
               if (backgroundJobs.has(jobEvent.taskId)) return;
@@ -1771,10 +1781,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             if (job === undefined) return;
             backgroundJobs.delete(jobEvent.taskId);
             yield* emitBackgroundJobRoster();
-            if (
-              (turn === null || turn.settleWhenIdle) &&
-              options.continuationRequests !== undefined
-            ) {
+            if (options.continuationRequests !== undefined) {
               const status =
                 jobEvent.signal !== null
                   ? `signal ${jobEvent.signal}`
@@ -2245,6 +2252,16 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         }
         const existing = threadInput.existingProviderThread;
         const resumeId = existing?.nativeThreadRef?.nativeId;
+        // Selection changes are applied by startTurn; reloading the same session kills its jobs.
+        if (resumeId != null && threadState !== null && resumeId === lastNativeThreadId) {
+          if (publish)
+            yield* emit({
+              type: "provider_thread.updated",
+              driver: PI_PROVIDER,
+              providerThread: threadState.providerThread,
+            });
+          return threadState.providerThread;
+        }
         const needsNewSession = resumeId == null && registrationAttempted;
         registrationAttempted = true;
         if (resumeId != null || needsNewSession) {
@@ -2746,6 +2763,19 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         interruptTurn: (interruptInput) =>
           Effect.gen(function* () {
             const turn = threadState?.activeTurn ?? null;
+            if (turn === null && interruptInput.requestRuntimeRestart === true) {
+              yield* sessionEventPermit.withPermits(1)(
+                Effect.gen(function* () {
+                  if (threadState?.activeTurn != null) {
+                    return yield* protocolError(
+                      "Pi started a turn before idle Stop acquired the session",
+                    );
+                  }
+                  yield* clearBackgroundJobs();
+                }),
+              );
+              return;
+            }
             if (turn === null || turn.providerTurn.id !== interruptInput.providerTurnId) {
               return yield* protocolError(`Pi turn ${interruptInput.providerTurnId} is not active`);
             }

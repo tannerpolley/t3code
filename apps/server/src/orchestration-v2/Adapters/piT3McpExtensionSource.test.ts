@@ -49,7 +49,7 @@ async function loadHooks(
     mkdirSync: NodeFS.mkdirSync,
     openSync: NodeFS.openSync,
     join: NodePath.join,
-    getShellConfig: () => ({ shell: "/bin/sh", args: ["-c"] }),
+    getShellConfig: (shellPath?: string) => ({ shell: shellPath ?? "/bin/sh", args: ["-c"] }),
     ...bindings,
     process: {
       env,
@@ -58,6 +58,7 @@ async function loadHooks(
     },
     pi: {
       registerTool: () => undefined,
+      getSettings: () => ({}),
       ...bindings.pi,
       on: (name: string, handler: RequestHook) => handlers.set(name, handler),
     },
@@ -268,7 +269,7 @@ type BackgroundJobTool = {
 };
 
 describe("Pi tracked background jobs", () => {
-  it("announces a real shell job and retains combined output and exit status", async () => {
+  it("uses the configured shell and retains combined output and exit status", async () => {
     const directory = await NodeFSP.mkdtemp(
       NodePath.join(NodeOS.tmpdir(), "t3-pi-background-test-"),
     );
@@ -282,6 +283,7 @@ describe("Pi tracked background jobs", () => {
       { [T3_PI_BACKGROUND_JOB_DIR_ENV]: directory },
       {
         pi: {
+          getSettings: () => ({ shellPath: "/bin/bash" }),
           registerTool: (registered: BackgroundJobTool) => {
             tool = registered;
           },
@@ -310,7 +312,8 @@ describe("Pi tracked background jobs", () => {
       const result = await tool.execute(
         "call",
         {
-          command: "pwd; printf stdout; printf stderr >&2; exit 7",
+          command:
+            '[[ -n "$BASH_VERSION" ]] || exit 99; pwd; printf stdout; printf stderr >&2; exit 7',
           cwd: directory,
           description: "Focused check",
         },
@@ -412,6 +415,8 @@ describe("Pi tracked background jobs", () => {
         "sudo nohup build",
         "/usr/bin/setsid build",
         "build && nohup test",
+        "build # commented &\nnohup test",
+        "echo word#value &",
       ]) {
         const result = await hook({ toolName: "bash", input: { command } }, ctx);
         assert.isTrue(result?.block, command);
@@ -419,6 +424,14 @@ describe("Pi tracked background jobs", () => {
       }
       for (const command of [
         "build && test",
+        "build |& cat",
+        "build |& cat && test",
+        "build # comment with & nohup setsid disown",
+        "# nohup test &\nbuild",
+        "build;# setsid test &\ntest",
+        "echo word#value",
+        "echo \\#value",
+
         "echo '&'",
         'echo "&"',
         "echo nohup",

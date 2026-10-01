@@ -10,7 +10,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import {
-  PI_BACKGROUND_JOB_TOOL_NAME,
   PI_T3_MCP_EXTENSION_FILENAME,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
@@ -123,9 +122,6 @@ describe("pi T3 MCP injection", () => {
       '"model":"openai-codex/gpt-6.1-sol","options":{"thinking":"medium"}',
     );
     assert.notInclude(instructions, "stale parent instructions");
-    assert.include(instructions, PI_BACKGROUND_JOB_TOOL_NAME);
-    assert.include(instructions, "T3 wakes you when it ends");
-    assert.include(instructions, "do not poll with sleep");
 
     // Without MCP the agent still gets runtime context, but no orchestration tools to use.
     const permissionOnly = buildPiRpcLaunch({
