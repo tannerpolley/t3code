@@ -100,7 +100,13 @@ describe("pi T3 MCP injection", () => {
       environment: { [T3_PI_INSTRUCTIONS_ENV]: "stale parent instructions" },
       mcpSession: {
         ...mcpSession,
-        modelRoles: DEFAULT_MODEL_ROLES.map((role) => ({ ...role, unavailableReason: null })),
+        modelRoles: DEFAULT_MODEL_ROLES.map((role) => ({
+          ...role,
+          targets: [
+            { ...role.targets[0], unavailableReason: null },
+            ...role.targets.slice(1).map((target) => ({ ...target, unavailableReason: null })),
+          ] as const,
+        })),
       },
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
     });
@@ -110,6 +116,7 @@ describe("pi T3 MCP injection", () => {
     assert.include(instructions, "<pull_request_linking>");
     assert.include(instructions, "## T3 Code orchestration");
     assert.include(instructions, "- Checker: Read-only review of a build");
+    assert.include(instructions, '"model":"openai-codex/gpt-6.1-sol","options":{"thinking":"medium"}');
     assert.notInclude(instructions, "stale parent instructions");
 
     // Without MCP the agent still gets runtime context, but no orchestration tools to use.

@@ -13,6 +13,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -30,6 +31,7 @@ import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts"
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import { modelRoleStatuses } from "./delegateTaskTarget.ts";
 
 describe("OrchestratorMcpService", () => {
   it.effect("retries terminal acknowledgement with a fresh command id", () =>
@@ -568,6 +570,49 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it("checks Pi thinking selections independently for choices on the same model", () => {
+    const pi = ProviderInstanceId.make("pi");
+    const model = "openai-codex/gpt-6.1-sol";
+    const role: ModelRole = {
+      id: "builder",
+      name: "Builder",
+      description: "",
+      targets: [
+        { providerInstanceId: pi, model, options: [{ id: "thinking", value: "medium" }] },
+        { providerInstanceId: pi, model, options: [{ id: "thinking", value: "invalid" }] },
+      ],
+    };
+    const provider: ServerProvider = {
+      ...providerSnapshot({ instanceId: pi, driver: ProviderDriverKind.make("pi"), model }),
+      models: [
+        {
+          slug: model,
+          name: model,
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "thinking",
+                label: "Thinking",
+                type: "select",
+                options: [
+                  { id: "medium", label: "Medium" },
+                  { id: "high", label: "High" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const statuses = modelRoleStatuses([role], [provider], new Set([pi]));
+    assert.deepEqual(statuses[0]!.targets[0], { ...role.targets[0], unavailableReason: null });
+    assert.equal(
+      statuses[0]!.targets[1]!.unavailableReason,
+      `Model ${model} on provider pi rejected options: Option thinking must be one of: medium, high.`,
+    );
+  });
+
   it.effect("lists the user's model roles, marking targets delegate_task would reject", () => {
     const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
     const role = (
@@ -578,13 +623,20 @@ describe("OrchestratorMcpService provider resolution", () => {
       id,
       name: id,
       description: "",
-      target: { providerInstanceId, model, options: [{ id: "reasoningEffort", value: "high" }] },
+      targets: [{ providerInstanceId, model, options: [{ id: "reasoningEffort", value: "high" }] }],
     });
-    const modelRoles = [
-      role("ready", codexInstanceId, "gpt-5.4"),
-      role("retired-model", codexInstanceId, "gpt-0"),
-      role("missing-provider", ProviderInstanceId.make("ghost"), "gpt-5.4"),
-      role("signed-out", claudeInstanceId, "claude-sonnet-4-6"),
+    const modelRoles: ReadonlyArray<ModelRole> = [
+      {
+        id: "builder",
+        name: "Builder",
+        description: "Pick a suitable choice",
+        targets: [
+          role("ready", codexInstanceId, "gpt-5.4").targets[0],
+          role("retired-model", codexInstanceId, "gpt-0").targets[0],
+          role("missing-provider", ProviderInstanceId.make("ghost"), "gpt-5.4").targets[0],
+          role("signed-out", claudeInstanceId, "claude-sonnet-4-6").targets[0],
+        ],
+      },
     ];
     const providers: ReadonlyArray<ServerProvider> = [
       providerSnapshot({
@@ -606,14 +658,17 @@ describe("OrchestratorMcpService provider resolution", () => {
       const capabilities = yield* service.capabilities(scope);
       assert.deepEqual(
         capabilities.modelRoles,
-        modelRoles.map((entry, index) => ({
+        modelRoles.map((entry) => ({
           ...entry,
-          unavailableReason: [
-            null,
-            "Model gpt-0 is not advertised by provider codex.",
-            "Provider instance ghost is not registered.",
-            "Provider claudeAgent cannot run a child task: Provider is not authenticated.",
-          ][index]!,
+          targets: Arr.map(entry.targets, (target, index) => ({
+            ...target,
+            unavailableReason: [
+              null,
+              "Model gpt-0 is not advertised by provider codex.",
+              "Provider instance ghost is not registered.",
+              "Provider claudeAgent cannot run a child task: Provider is not authenticated.",
+            ][index]!,
+          })),
         })),
       );
     }).pipe(

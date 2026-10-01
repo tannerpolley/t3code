@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
+import * as Arr from "effect/Array";
 import {
   DEFAULT_MODEL_ROLES,
   MAX_MODEL_ROLE_DESCRIPTION_LENGTH,
@@ -8,6 +9,7 @@ import {
   MAX_MODEL_ROLE_OPTION_LENGTH,
   MAX_MODEL_ROLE_OPTIONS,
   MAX_MODEL_ROLES,
+  MAX_MODEL_ROLE_TARGETS,
   ModelRoles,
 } from "@t3tools/contracts";
 
@@ -43,28 +45,56 @@ describe("T3 orchestration provider instructions", () => {
     const unavailable = "Provider codex cannot run a child task: Provider is not authenticated.";
     const roles = DEFAULT_MODEL_ROLES.map((role) => ({
       ...role,
-      unavailableReason: role.id === "strong-reviewer" ? unavailable : null,
+      targets: Arr.map(role.targets, (target) => ({
+        ...target,
+        unavailableReason: role.id === "strong-reviewer" ? unavailable : null,
+      })),
     }));
     const text = t3ModelRolesInstructions(roles);
     assert.include(text, "Use them at your discretion; explicit user instructions win.");
     assert.include(
       text,
-      '- Checker: Read-only review of a build: missed places, weak tests, edge cases; budget review and sanity checks. Target: `{"providerInstanceId":"codex","model":"gpt-6.1-sol","options":{"reasoningEffort":"high"}}`',
+      '- Checker: Read-only review of a build: missed places, weak tests, edge cases; budget review and sanity checks. gpt-6.1-sol high (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-6.1-sol","options":{"reasoningEffort":"high"}}`',
     );
     assert.include(
       text,
-      '- Quick Claude: Quick, well-specified Claude-side work. Target: `{"providerInstanceId":"claudeAgent","model":"claude-sonnet-5-5","options":{"effort":"medium"}}`',
+      '- Quick Claude: Quick, well-specified Claude-side work. claude-sonnet-5-5 medium (claudeAgent). Target JSON: `{"providerInstanceId":"claudeAgent","model":"claude-sonnet-5-5","options":{"effort":"medium"}}`',
     );
-    // An unavailable role keeps its line but offers no target to delegate to.
+    assert.include(text, "The first choice is the default; you may pick another by your judgment.");
+    const fastBuilder = text.split("\n").find((line) => line.startsWith("- Fast builder:"))!;
+    assert.include(
+      fastBuilder,
+      'claude-opus-5-5 medium (claudeAgent). Target JSON: `{"providerInstanceId":"claudeAgent","model":"claude-opus-5-5","options":{"effort":"medium"}}` or openai-codex/gpt-6.1-sol medium (pi). Target JSON: `{"providerInstanceId":"pi","model":"openai-codex/gpt-6.1-sol","options":{"thinking":"medium"}}`',
+    );
+    // An unavailable choice keeps its label but offers no target JSON to delegate to.
     assert.include(
       text,
-      `- Strong reviewer: Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call. Unavailable: ${unavailable}`,
+      `- Strong reviewer: Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call. gpt-6-astra xhigh (codex) Unavailable: ${unavailable}`,
     );
-    assert.notInclude(text, "gpt-6-astra");
+    assert.notInclude(text, '"model":"gpt-6-astra"');
     assert.equal(text.split("\n").filter((line) => line.startsWith("- ")).length, 8);
-    assert.isBelow(text.length, 1_950);
+    assert.isAtMost(text.length, MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH);
     assert.equal(t3OrchestrationInstructions(roles), T3_CODE_ORCHESTRATION_INSTRUCTIONS + text);
     assert.equal(t3OrchestrationInstructions([]), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
+  });
+
+  it("keeps a usable alternative when the default choice is unavailable", () => {
+    const role = DEFAULT_MODEL_ROLES[1]!;
+    const text = t3ModelRolesInstructions([
+      {
+        ...role,
+        targets: Arr.map(role.targets, (target, index) => ({
+          ...target,
+          unavailableReason: index === 0 ? "Provider is disabled." : null,
+        })),
+      },
+    ]);
+    assert.include(text, "claude-opus-5-5 medium (claudeAgent) Unavailable: Provider is disabled. or");
+    assert.notInclude(text, '"providerInstanceId":"claudeAgent"');
+    assert.include(
+      text,
+      '"providerInstanceId":"pi","model":"openai-codex/gpt-6.1-sol","options":{"thinking":"medium"}',
+    );
   });
 
   it.each([
@@ -77,16 +107,19 @@ describe("T3 orchestration provider instructions", () => {
         id: `role-${index}`,
         name: text(MAX_MODEL_ROLE_NAME_LENGTH),
         description: text(MAX_MODEL_ROLE_DESCRIPTION_LENGTH),
-        target: {
+        targets: Array.from({ length: MAX_MODEL_ROLE_TARGETS }, () => ({
           providerInstanceId: "codex",
           model: text(MAX_MODEL_ROLE_MODEL_LENGTH),
           options: Array.from({ length: MAX_MODEL_ROLE_OPTIONS }, (___, option) => ({
             id: `${option}${text(MAX_MODEL_ROLE_OPTION_LENGTH - 1)}`,
             value: text(MAX_MODEL_ROLE_OPTION_LENGTH),
           })),
-        },
+        })),
       })),
-    ).map((role) => ({ ...role, unavailableReason: null }));
+    ).map((role) => ({
+      ...role,
+      targets: Arr.map(role.targets, (target) => ({ ...target, unavailableReason: null })),
+    }));
     const rendered = t3ModelRolesInstructions(largest);
     assert.isAtMost(rendered.length, MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH);
     assert.match(rendered, /- \d+ more roles not shown; call `orchestrator_capabilities`/);

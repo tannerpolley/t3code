@@ -12,6 +12,7 @@ import {
   MAX_MODEL_ROLE_MODEL_LENGTH,
   MAX_MODEL_ROLE_OPTION_LENGTH,
   MAX_MODEL_ROLE_OPTIONS,
+  MAX_MODEL_ROLE_TARGETS,
   MAX_MODEL_ROLES,
   resolveProviderInstanceEnabled,
   ServerSettings,
@@ -69,18 +70,44 @@ describe("model roles", () => {
       "Quick Claude",
       "Strong reviewer",
     ]);
-    expect(roles[2]!.target).toEqual({
+    expect(roles[2]!.targets[0]).toEqual({
       providerInstanceId: "codex",
       model: "gpt-6.1-sol",
       options: [{ id: "reasoningEffort", value: "high" }],
     });
   });
 
+  it("decodes saved single-target roles and encodes only the new shape", () => {
+    const { targets, ...metadata } = role;
+    const legacy = { ...metadata, target: targets[0] };
+    const decoded = decodeServerSettings({ modelRoles: [legacy] });
+    expect(decoded.modelRoles).toEqual([{ ...metadata, targets: [targets[0]] }]);
+    expect(encodeServerSettings(decoded).modelRoles).toEqual(decoded.modelRoles);
+    expect(encodeServerSettings(decoded).modelRoles[0]).not.toHaveProperty("target");
+    expect(decodeServerSettingsPatch({ modelRoles: [legacy] }).modelRoles).toEqual(decoded.modelRoles);
+  });
+
+  it("seeds Fast builder with Claude medium and Pi Sol medium, in default order", () => {
+    expect(decodeServerSettings({}).modelRoles[1]!.targets).toEqual([
+      {
+        providerInstanceId: "claudeAgent",
+        model: "claude-opus-5-5",
+        options: [{ id: "effort", value: "medium" }],
+      },
+      {
+        providerInstanceId: "pi",
+        model: "openai-codex/gpt-6.1-sol",
+        options: [{ id: "thinking", value: "medium" }],
+      },
+    ]);
+  });
+
   it("keeps a saved list, including an empty one, and replaces it through a patch", () => {
     expect(decodeServerSettings({ modelRoles: [] }).modelRoles).toEqual([]);
-    const saved = encodeServerSettings({ ...DEFAULT_SERVER_SETTINGS, modelRoles: [role] });
-    expect(decodeServerSettings(saved).modelRoles).toEqual([role]);
-    expect(decodeServerSettingsPatch({ modelRoles: [role] })).toEqual({ modelRoles: [role] });
+    const roles = [role, DEFAULT_MODEL_ROLES[1]!];
+    const saved = encodeServerSettings({ ...DEFAULT_SERVER_SETTINGS, modelRoles: roles });
+    expect(decodeServerSettings(saved).modelRoles).toEqual(roles);
+    expect(decodeServerSettingsPatch({ modelRoles: roles })).toEqual({ modelRoles: roles });
   });
 
   it("bounds the role count and description length", () => {
@@ -96,9 +123,20 @@ describe("model roles", () => {
     ).toThrow();
   });
 
+  it("requires one to four choices per role", () => {
+    const withCount = (count: number) => ({
+      modelRoles: [{ ...role, targets: Array.from({ length: count }, () => role.targets[0]) }],
+    });
+    expect(decodeServerSettingsPatch(withCount(MAX_MODEL_ROLE_TARGETS))).toEqual(
+      withCount(MAX_MODEL_ROLE_TARGETS),
+    );
+    expect(() => decodeServerSettingsPatch(withCount(0))).toThrow();
+    expect(() => decodeServerSettingsPatch(withCount(MAX_MODEL_ROLE_TARGETS + 1))).toThrow();
+  });
+
   it("bounds the target at its limits and rejects duplicate option ids", () => {
     const withTarget = (target: object) => ({
-      modelRoles: [{ ...role, target: { ...role.target, ...target } }],
+      modelRoles: [{ ...role, targets: [{ ...role.targets[0], ...target }] }],
     });
     const options = (count: number, length: number) =>
       Array.from({ length: count }, (_, index) => ({

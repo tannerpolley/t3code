@@ -38,7 +38,7 @@ const MODEL_ROLES_HEADER = `
 
 ### Model roles
 
-The user's defaults for delegated work. Use them at your discretion; explicit user instructions win. Pass a role's JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists them again.
+The user's defaults for delegated work. Use them at your discretion; explicit user instructions win. The first choice is the default; you may pick another by your judgment. Pass a choice's Target JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists all choices and their availability again.
 
 `;
 // Room for the closing "more roles" line, so the block never passes the cap.
@@ -52,23 +52,27 @@ const oneLine = (text: string, maxLength: number) => {
 function modelRoleLine(role: OrchestratorMcpModelRole): string {
   const description = oneLine(role.description, 200);
   const head = `- ${oneLine(role.name, 60)}${description.length > 0 ? `: ${description}` : ""}.`;
-  if (role.unavailableReason !== null) {
-    return `${head} Unavailable: ${oneLine(role.unavailableReason, 200)}`;
-  }
-  const { providerInstanceId, model, options } = role.target;
-  const target = {
-    providerInstanceId,
-    model,
-    ...(options === undefined || options.length === 0
-      ? {}
-      : { options: Object.fromEntries(options.map((option) => [option.id, option.value])) }),
-  };
-  return `${head} Target: \`${JSON.stringify(target)}\``;
+  const choices = role.targets.map(({ providerInstanceId, model, options, unavailableReason }) => {
+    const traits = options?.map((option) => oneLine(String(option.value), 60)).join(" ");
+    const label = `${oneLine(model, 100)}${traits ? ` ${traits}` : ""} (${providerInstanceId})`;
+    if (unavailableReason !== null) {
+      return `${label} Unavailable: ${oneLine(unavailableReason, 200)}`;
+    }
+    const target = {
+      providerInstanceId,
+      model,
+      ...(options === undefined || options.length === 0
+        ? {}
+        : { options: Object.fromEntries(options.map((option) => [option.id, option.value])) }),
+    };
+    return `${label}. Target JSON: \`${JSON.stringify(target)}\``;
+  });
+  return `${head} ${choices.join(" or ")}`;
 }
 
 /**
- * The user's model roles as one line each: name, when to use it, and the
- * exact `delegate_task` target, or why that target is unavailable. Roles that
+ * The user's model roles as one line each: name, when to use it, and
+ * each exact `delegate_task` target, or why that choice is unavailable. Roles that
  * would push the block past its cap are counted instead of listed.
  */
 export function t3ModelRolesInstructions(roles: ReadonlyArray<OrchestratorMcpModelRole>): string {

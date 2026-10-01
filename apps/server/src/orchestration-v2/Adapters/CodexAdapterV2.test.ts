@@ -536,8 +536,19 @@ describe("CodexAdapterV2 runtime policy", () => {
             id: "checker",
             name: "Checker",
             description: "Read-only review",
-            target: { providerInstanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-            unavailableReason: null,
+            targets: [
+              {
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.4",
+                unavailableReason: null,
+              },
+              {
+                providerInstanceId: ProviderInstanceId.make("pi"),
+                model: "openai-codex/gpt-6.1-sol",
+                options: [{ id: "thinking", value: "medium" }],
+                unavailableReason: null,
+              },
+            ],
           },
         ],
       });
@@ -546,7 +557,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       // Plan mode delegates research and review too, so it sees the roles.
       assert.include(
         params.collaborationMode?.settings.developer_instructions ?? "",
-        '- Checker: Read-only review. Target: `{"providerInstanceId":"codex","model":"gpt-5.4"}`',
+        '- Checker: Read-only review. gpt-5.4 (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-5.4"}` or openai-codex/gpt-6.1-sol medium (pi)',
       );
       assert.include(
         params.collaborationMode?.settings.developer_instructions ?? "",

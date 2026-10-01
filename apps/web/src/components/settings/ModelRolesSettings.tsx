@@ -3,7 +3,8 @@ import {
   MAX_MODEL_ROLE_DESCRIPTION_LENGTH,
   MAX_MODEL_ROLE_NAME_LENGTH,
   MAX_MODEL_ROLES,
-  type ModelRole,
+  MAX_MODEL_ROLE_TARGETS,
+  type ModelRoleTarget,
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
@@ -68,12 +69,12 @@ export function ModelRolesSection() {
     updateSettings({ modelRoles: next.roles });
   };
   const roles = draft.roles;
-  const unavailableReason = (role: ModelRole): string | null => {
+  const unavailableReason = (target: ModelRoleTarget): string | null => {
     const entry = entries.find(
-      (candidate) => candidate.instanceId === role.target.providerInstanceId,
+      (candidate) => candidate.instanceId === target.providerInstanceId,
     );
     if (!entry?.enabled) {
-      return `Provider ${role.target.providerInstanceId} isn't enabled on this environment.`;
+      return `Provider ${target.providerInstanceId} isn't enabled on this environment.`;
     }
     if (!entry.installed) return `${entry.displayName} isn't installed.`;
     if (entry.snapshot.auth.status === "unauthenticated") {
@@ -83,9 +84,9 @@ export function ModelRolesSection() {
       return entry.snapshot.message ?? `${entry.displayName} isn't ready.`;
     }
     const models = modelOptionsByInstance.get(entry.instanceId) ?? [];
-    return models.some((option) => option.slug === role.target.model && !option.isUnavailable)
+    return models.some((option) => option.slug === target.model && !option.isUnavailable)
       ? null
-      : `${entry.displayName} doesn't offer ${role.target.model} right now.`;
+      : `${entry.displayName} doesn't offer ${target.model} right now.`;
   };
 
   return (
@@ -94,7 +95,7 @@ export function ModelRolesSection() {
         serverScoped
         settingKeys={MODEL_ROLE_KEYS}
         {...searchableSetting("model-roles")}
-        description="Defaults orchestrating agents see for delegated work: which model and effort suits each kind of task. Agents choose among them at their discretion, and your explicit instructions win. Codex: next turn. Claude: next session. Agents can re-read them anytime via orchestrator_capabilities."
+        description="Model and effort choices for each kind of delegated work. The first choice is the default; add alternatives and make any choice the default. Agents choose among them at their discretion, and your explicit instructions win. Codex: next turn. Claude: next session. Agents can re-read them anytime via orchestrator_capabilities."
         resetAction={
           Equal.equals(roles, DEFAULT_MODEL_ROLES) ? null : (
             <SettingResetButton
@@ -115,7 +116,7 @@ export function ModelRolesSection() {
                   id: `role-${randomUUID().slice(0, 8)}`,
                   name: "New role",
                   description: "",
-                  target: (draftRef.current.roles[0] ?? DEFAULT_MODEL_ROLES[0]!).target,
+                  targets: [(draftRef.current.roles[0] ?? DEFAULT_MODEL_ROLES[0]!).targets[0]],
                 },
               })
             }
@@ -126,10 +127,6 @@ export function ModelRolesSection() {
         }
       />
       {roles.map((role, index) => {
-        const entry = entries.find(
-          (candidate) => candidate.instanceId === role.target.providerInstanceId,
-        );
-        const reason = unavailableReason(role);
         return (
           <SettingsRow
             key={role.id}
@@ -164,68 +161,121 @@ export function ModelRolesSection() {
                 }}
               />
             }
-            status={reason ? <span className="text-warning">{reason}</span> : null}
             control={
-              <div className="flex flex-wrap items-center justify-end gap-1.5">
-                <ProviderModelPicker
-                  activeInstanceId={role.target.providerInstanceId}
-                  model={role.target.model}
-                  lockedProvider={null}
-                  instanceEntries={entries}
-                  modelOptionsByInstance={modelOptionsByInstance}
-                  triggerVariant="outline"
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  onInstanceModelChange={(providerInstanceId, model) =>
-                    edit({
-                      type: "update",
-                      id: role.id,
-                      patch: { target: { providerInstanceId, model } },
-                    })
-                  }
-                />
-                {entry ? (
-                  <TraitsPicker
-                    provider={entry.driverKind}
-                    models={entry.models}
-                    model={role.target.model}
-                    prompt=""
-                    onPromptChange={() => {}}
-                    modelOptions={role.target.options ?? null}
-                    allowPromptInjectedEffort={false}
-                    planModeEnabled={settings.planModeEnabled}
-                    triggerVariant="outline"
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    onModelOptionsChange={(options) =>
-                      edit({ type: "options", id: role.id, options })
+              <div className="flex flex-col items-end gap-2">
+                {role.targets.map((target, targetIndex) => {
+                  const entry = entries.find(
+                    (candidate) => candidate.instanceId === target.providerInstanceId,
+                  );
+                  const reason = unavailableReason(target);
+                  return (
+                    <div key={targetIndex} className="flex flex-col items-end gap-1">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={targetIndex === 0}
+                          aria-label={`Make choice ${targetIndex + 1} the default for ${role.name}`}
+                          onClick={() =>
+                            edit({ type: "target-default", id: role.id, index: targetIndex })
+                          }
+                        >
+                          {targetIndex === 0 ? "Default" : "Make default"}
+                        </Button>
+                        <ProviderModelPicker
+                          activeInstanceId={target.providerInstanceId}
+                          model={target.model}
+                          lockedProvider={null}
+                          instanceEntries={entries}
+                          modelOptionsByInstance={modelOptionsByInstance}
+                          triggerVariant="outline"
+                          triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                          onInstanceModelChange={(providerInstanceId, model) =>
+                            edit({
+                              type: "target-update",
+                              id: role.id,
+                              index: targetIndex,
+                              target: { providerInstanceId, model },
+                            })
+                          }
+                        />
+                        {entry ? (
+                          <TraitsPicker
+                            provider={entry.driverKind}
+                            models={entry.models}
+                            model={target.model}
+                            prompt=""
+                            onPromptChange={() => {}}
+                            modelOptions={target.options ?? null}
+                            allowPromptInjectedEffort={false}
+                            planModeEnabled={settings.planModeEnabled}
+                            triggerVariant="outline"
+                            triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                            onModelOptionsChange={(options) =>
+                              edit({ type: "options", id: role.id, index: targetIndex, options })
+                            }
+                          />
+                        ) : null}
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label={`Remove choice ${targetIndex + 1} from ${role.name}`}
+                          disabled={role.targets.length === 1}
+                          onClick={() =>
+                            edit({ type: "target-remove", id: role.id, index: targetIndex })
+                          }
+                        >
+                          <Trash2Icon className="size-3.5" />
+                        </Button>
+                      </div>
+                      {reason ? <span className="text-xs text-warning">{reason}</span> : null}
+                    </div>
+                  );
+                })}
+                <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={role.targets.length >= MAX_MODEL_ROLE_TARGETS}
+                    onClick={() =>
+                      edit({
+                        type: "target-add",
+                        id: role.id,
+                        target: draftRef.current.roles.find((candidate) => candidate.id === role.id)!
+                          .targets[0],
+                      })
                     }
-                  />
-                ) : null}
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Move ${role.name} up`}
-                  disabled={index === 0}
-                  onClick={() => edit({ type: "move", id: role.id, offset: -1 })}
-                >
-                  <ArrowUpIcon className="size-3.5" />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Move ${role.name} down`}
-                  disabled={index === roles.length - 1}
-                  onClick={() => edit({ type: "move", id: role.id, offset: 1 })}
-                >
-                  <ArrowDownIcon className="size-3.5" />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={`Remove ${role.name}`}
-                  onClick={() => edit({ type: "remove", id: role.id })}
-                >
-                  <Trash2Icon className="size-3.5" />
-                </Button>
+                  >
+                    <PlusIcon className="size-3.5" />
+                    Add choice
+                  </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={`Move ${role.name} up`}
+                    disabled={index === 0}
+                    onClick={() => edit({ type: "move", id: role.id, offset: -1 })}
+                  >
+                    <ArrowUpIcon className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={`Move ${role.name} down`}
+                    disabled={index === roles.length - 1}
+                    onClick={() => edit({ type: "move", id: role.id, offset: 1 })}
+                  >
+                    <ArrowDownIcon className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={`Remove ${role.name}`}
+                    onClick={() => edit({ type: "remove", id: role.id })}
+                  >
+                    <Trash2Icon className="size-3.5" />
+                  </Button>
+                </div>
               </div>
             }
           />

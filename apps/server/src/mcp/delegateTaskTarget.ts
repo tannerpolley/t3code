@@ -9,6 +9,7 @@ import {
   type ProviderOptionSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Arr from "effect/Array";
 
 export function providerConstraints(
   provider: ServerProvider | undefined,
@@ -143,21 +144,24 @@ export function checkDelegateTarget(input: {
   return model;
 }
 
-/** Each role with why `delegate_task` would reject its target right now, or null. */
+/** Each role's choices with why `delegate_task` would reject each right now, or null. */
 export function modelRoleStatuses(
   roles: ReadonlyArray<ModelRole>,
   providers: ReadonlyArray<ServerProvider>,
   orchestrationCapableInstanceIds: ReadonlySet<ProviderInstanceId>,
 ): ReadonlyArray<OrchestratorMcpModelRole> {
-  return roles.map((role) => {
-    const checked = checkDelegateTarget({
-      providers,
-      orchestrationCapableInstanceIds,
-      instanceId: role.target.providerInstanceId,
-      requestedModel: role.target.model,
-      inheritedModel: undefined,
-      options: role.target.options,
-    });
-    return { ...role, unavailableReason: typeof checked === "string" ? null : checked.message };
-  });
+  return roles.map((role) => ({
+    ...role,
+    targets: Arr.map(role.targets, (target) => {
+      const checked = checkDelegateTarget({
+        providers,
+        orchestrationCapableInstanceIds,
+        instanceId: target.providerInstanceId,
+        requestedModel: target.model,
+        inheritedModel: undefined,
+        options: target.options,
+      });
+      return { ...target, unavailableReason: typeof checked === "string" ? null : checked.message };
+    }),
+  }));
 }

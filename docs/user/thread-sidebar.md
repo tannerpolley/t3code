@@ -173,10 +173,14 @@ a detached HEAD, delegated agents share that checkout instead.
 
 To tell agents which model and effort suit each kind of delegated work, edit
 **Model roles** in **Settings → Customizations** on web and desktop. Agents use
-these roles as defaults at their own discretion; your explicit instructions in a
-thread win. Codex agents see changes on their next turn and Claude agents in their
-next session, and any agent can re-read the current roles at any time. A role whose
-provider or model isn't available is marked as unavailable.
+these roles at their own discretion; your explicit instructions in a thread win.
+Each role can hold up to four model and effort choices. The first is the default;
+agents may choose an alternative when it fits the task. Add or remove choices, or
+make a choice the default, in the role's settings. Codex agents see changes on their
+next turn and Claude agents in their next session, and any agent can re-read the
+current roles at any time. Each unavailable choice is marked individually.
+Existing saved roles keep their choices; reset model roles to use the latest defaults
+(replacing your customizations), or add alternatives to your existing roles.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

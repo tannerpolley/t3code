@@ -1,4 +1,5 @@
-import type { ModelRole } from "@t3tools/contracts";
+import { MAX_MODEL_ROLE_TARGETS, type ModelRole, type ModelRoleTarget } from "@t3tools/contracts";
+import * as Arr from "effect/Array";
 import * as Equal from "effect/Equal";
 
 export type ModelRoleEdit =
@@ -6,8 +7,17 @@ export type ModelRoleEdit =
   | {
       readonly type: "options";
       readonly id: string;
-      readonly options: ModelRole["target"]["options"];
+      readonly index: number;
+      readonly options: ModelRoleTarget["options"];
     }
+  | {
+      readonly type: "target-update";
+      readonly id: string;
+      readonly index: number;
+      readonly target: ModelRoleTarget;
+    }
+  | { readonly type: "target-add"; readonly id: string; readonly target: ModelRoleTarget }
+  | { readonly type: "target-remove" | "target-default"; readonly id: string; readonly index: number }
   | { readonly type: "move"; readonly id: string; readonly offset: -1 | 1 }
   | { readonly type: "add"; readonly role: ModelRole }
   | { readonly type: "remove"; readonly id: string }
@@ -23,11 +33,41 @@ function applyModelRoleEdit(
     case "options":
       return roles.map((role) => {
         if (role.id !== edit.id) return role;
-        const { options: _previous, ...target } = role.target;
         return {
           ...role,
-          target: edit.options === undefined ? target : { ...target, options: edit.options },
+          targets: Arr.map(role.targets, (target, index) => {
+            if (index !== edit.index) return target;
+            const { options: _previous, ...base } = target;
+            return edit.options === undefined ? base : { ...base, options: edit.options };
+          }),
         };
+      });
+    case "target-update":
+      return roles.map((role) =>
+        role.id === edit.id
+          ? {
+              ...role,
+              targets: Arr.map(role.targets, (target, index) =>
+                index === edit.index ? edit.target : target,
+              ),
+            }
+          : role,
+      );
+    case "target-add":
+      return roles.map<ModelRole>((role) =>
+        role.id === edit.id && role.targets.length < MAX_MODEL_ROLE_TARGETS
+          ? { ...role, targets: [...role.targets, edit.target] }
+          : role,
+      );
+    case "target-remove":
+    case "target-default":
+      return roles.map<ModelRole>((role) => {
+        if (role.id !== edit.id || edit.index < 0 || edit.index >= role.targets.length) return role;
+        if (edit.type === "target-remove" && role.targets.length === 1) return role;
+        const targets = [...role.targets];
+        const [chosen] = targets.splice(edit.index, 1);
+        if (edit.type === "target-default") targets.unshift(chosen!);
+        return { ...role, targets: [targets[0]!, ...targets.slice(1)] };
       });
     case "move": {
       const from = roles.findIndex((role) => role.id === edit.id);

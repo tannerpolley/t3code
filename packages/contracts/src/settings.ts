@@ -1195,6 +1195,7 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const MAX_MODEL_ROLES = 20;
+export const MAX_MODEL_ROLE_TARGETS = 4;
 export const MAX_MODEL_ROLE_NAME_LENGTH = 60;
 export const MAX_MODEL_ROLE_DESCRIPTION_LENGTH = 200;
 export const MAX_MODEL_ROLE_MODEL_LENGTH = 100;
@@ -1205,38 +1206,52 @@ const ModelRoleOptionText = TrimmedNonEmptyString.check(
   Schema.isMaxLength(MAX_MODEL_ROLE_OPTION_LENGTH),
 );
 
-/**
- * A named default for delegated work. Orchestrating agents read these from
- * their T3 instructions and `orchestrator_capabilities`, and pass `target`
- * to `delegate_task` unchanged. Every field is bounded because the roles are
- * sent with every turn.
- */
+export const ModelRoleTarget = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_MODEL_LENGTH)),
+  options: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        id: ModelRoleOptionText,
+        value: Schema.Union([ModelRoleOptionText, Schema.Boolean]),
+      }),
+    ).check(
+      Schema.isMaxLength(MAX_MODEL_ROLE_OPTIONS),
+      Schema.makeFilter(
+        (options) => new Set(options.map((option) => option.id)).size === options.length,
+        { expected: "option ids that are each used once" },
+      ),
+    ),
+  ),
+});
+export type ModelRoleTarget = typeof ModelRoleTarget.Type;
+
+/** Ordered delegation choices; the first is the default. Bounded for per-turn instructions. */
 export const ModelRole = Schema.Struct({
   id: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_NAME_LENGTH)),
   description: TrimmedString.check(Schema.isMaxLength(MAX_MODEL_ROLE_DESCRIPTION_LENGTH)),
-  target: Schema.Struct({
-    providerInstanceId: ProviderInstanceId,
-    model: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_MODEL_LENGTH)),
-    options: Schema.optionalKey(
-      Schema.Array(
-        Schema.Struct({
-          id: ModelRoleOptionText,
-          value: Schema.Union([ModelRoleOptionText, Schema.Boolean]),
-        }),
-      ).check(
-        Schema.isMaxLength(MAX_MODEL_ROLE_OPTIONS),
-        Schema.makeFilter(
-          (options) => new Set(options.map((option) => option.id)).size === options.length,
-          { expected: "option ids that are each used once" },
-        ),
-      ),
-    ),
-  }),
+  targets: Schema.NonEmptyArray(ModelRoleTarget).check(Schema.isMaxLength(MAX_MODEL_ROLE_TARGETS)),
 });
 export type ModelRole = typeof ModelRole.Type;
 
-export const ModelRoles = Schema.Array(ModelRole).check(Schema.isMaxLength(MAX_MODEL_ROLES));
+const LegacyModelRole = Schema.Struct({
+  id: ModelRole.fields.id,
+  name: ModelRole.fields.name,
+  description: ModelRole.fields.description,
+  target: ModelRoleTarget,
+}).pipe(
+  Schema.decodeTo(
+    ModelRole,
+    SchemaTransformation.transform({
+      decode: ({ target, ...role }): ModelRole => ({ ...role, targets: [target] }),
+      encode: ({ targets, ...role }) => ({ ...role, target: targets[0] }),
+    }),
+  ),
+);
+// Try the current shape first so encoding never writes the legacy `target` key.
+const ModelRoleSetting = Schema.Union([ModelRole, LegacyModelRole]);
+export const ModelRoles = Schema.Array(ModelRoleSetting).check(Schema.isMaxLength(MAX_MODEL_ROLES));
 
 const modelRole = (
   id: string,
@@ -1245,15 +1260,19 @@ const modelRole = (
   providerInstanceId: "claudeAgent" | "codex",
   model: string,
   effort: string,
+  alternatives: ReadonlyArray<ModelRoleTarget> = [],
 ): ModelRole => ({
   id,
   name,
   description,
-  target: {
-    providerInstanceId: ProviderInstanceId.make(providerInstanceId),
-    model,
-    options: [{ id: providerInstanceId === "codex" ? "reasoningEffort" : "effort", value: effort }],
-  },
+  targets: [
+    {
+      providerInstanceId: ProviderInstanceId.make(providerInstanceId),
+      model,
+      options: [{ id: providerInstanceId === "codex" ? "reasoningEffort" : "effort", value: effort }],
+    },
+    ...alternatives,
+  ],
 });
 
 export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
@@ -1271,7 +1290,14 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
     "Bounded changes where speed matters; a Checker reviews afterwards",
     "claudeAgent",
     "claude-opus-5-5",
-    "high",
+    "medium",
+    [
+      {
+        providerInstanceId: ProviderInstanceId.make("pi"),
+        model: "openai-codex/gpt-6.1-sol",
+        options: [{ id: "thinking", value: "medium" }],
+      },
+    ],
   ),
   modelRole(
     "checker",
