@@ -142,18 +142,21 @@ function BackgroundProcessOutputView(props: BackgroundProcessTarget) {
  * How long a background shell has run. Past the possibly-stuck threshold it turns amber with a
  * hint; one timer flips it there, while `AgentElapsed` keeps its own ticking.
  */
-export function BackgroundShellElapsed(props: { readonly startedAt: string }) {
+export function BackgroundShellElapsed(props: {
+  readonly startedAt: string;
+  readonly commandKind?: string | undefined;
+}) {
   // Rows are keyed by task, so a shell's start never changes under this state.
   const [stuck, setStuck] = useState(() => msUntilPossiblyStuck(props.startedAt, Date.now()) === 0);
   useEffect(() => {
-    if (stuck) return;
+    if (stuck || props.commandKind === "server") return;
     const id = setTimeout(() => setStuck(true), msUntilPossiblyStuck(props.startedAt, Date.now()));
     return () => clearTimeout(id);
-  }, [props.startedAt, stuck]);
+  }, [props.startedAt, props.commandKind, stuck]);
   const elapsed = (
     <AgentElapsed agent={{ status: "running", startedAt: props.startedAt, completedAt: null }} />
   );
-  if (!stuck) return elapsed;
+  if (!stuck || props.commandKind === "server") return elapsed;
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="text-amber-600 dark:text-amber-400" />}>

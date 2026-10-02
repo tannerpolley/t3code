@@ -1,7 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ClockIcon, TerminalIcon } from "lucide-react";
+import { ClockIcon, ServerIcon, TerminalIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -39,6 +39,7 @@ import { resolveSubagentModelLabel } from "./SubagentTooltipContent";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
 
 const COMMAND_KIND_LABELS: Record<string, string> = {
+  server: "Running server",
   bash: "Bash",
   python: "Python",
   pytest: "pytest",
@@ -107,7 +108,9 @@ export function BackgroundProcessKindIcon(props: {
         : syntheticFileNameForLanguageId(COMMAND_KIND_LANGUAGE[props.commandKind]!)))
     : null;
   const icon =
-    props.taskType === "monitor" || props.commandKind === "watcher" ? (
+    props.commandKind === "server" ? (
+      <ServerIcon aria-hidden className={cn(iconClassName, "text-muted-foreground")} />
+    ) : props.taskType === "monitor" || props.commandKind === "watcher" ? (
       <ClockIcon aria-hidden className={cn(iconClassName, "text-muted-foreground")} />
     ) : fileName !== null ? (
       <PierreEntryIcon
@@ -132,9 +135,9 @@ export function BackgroundProcessKindIcon(props: {
 }
 
 /** Shells turn amber once they may be stuck; agents show plain elapsed time. */
-function elapsed(kind: BackgroundWorkTaskRow["kind"], startedAt: string) {
-  return kind === "process" ? (
-    <BackgroundShellElapsed startedAt={startedAt} />
+function elapsed(row: BackgroundWorkTaskRow, startedAt: string) {
+  return row.kind === "process" ? (
+    <BackgroundShellElapsed startedAt={startedAt} commandKind={row.commandKind} />
   ) : (
     <AgentElapsed agent={{ status: "running", startedAt, completedAt: null }} />
   );
@@ -202,7 +205,12 @@ export function BackgroundWorkTaskList(props: {
       }
     >
       {[...agents, ...processes].map((row) => {
-        const kindLabel = row.kind === "subagent" ? "Subagent" : "Background process";
+        const kindLabel =
+          row.kind === "subagent"
+            ? "Subagent"
+            : row.commandKind === "server"
+              ? "Running server"
+              : "Background process";
         const processKindLabel = backgroundProcessKindLabel(row.taskType, row.commandKind);
         const taskThreadId = row.ownerThreadId ?? props.threadId;
         const toggle = props.columns ? (props.nestedToggle?.(row) ?? null) : null;
@@ -241,7 +249,7 @@ export function BackgroundWorkTaskList(props: {
             ) : null}
             <SidebarTrailingColumns
               count={toggle && !toggle.open ? toggle.count : undefined}
-              time={row.startedAt ? elapsed(row.kind, row.startedAt) : null}
+              time={row.startedAt ? elapsed(row, row.startedAt) : null}
               status={<ThreadStatusMark status={row.status ?? "working"} />}
             />
           </>
@@ -264,7 +272,7 @@ export function BackgroundWorkTaskList(props: {
               </span>
             ) : row.startedAt ? (
               <span className="w-12 shrink-0 text-right text-muted-foreground">
-                {elapsed(row.kind, row.startedAt)}
+                {elapsed(row, row.startedAt)}
               </span>
             ) : null}
           </>

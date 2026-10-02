@@ -27,6 +27,7 @@ import {
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { classifyShellCommand } from "@t3tools/shared/shellCommand";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -5309,6 +5310,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
             for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
               if (subagent.task.status === "running") {
+                return true;
+              }
+            }
+            return false;
+          }),
+          hasRunningServers: Effect.gen(function* () {
+            for (const items of (yield* Ref.get(runningCommandItemsByTurn)).values()) {
+              if (
+                [...items.values()].some((item) => classifyShellCommand(item.command) === "server")
+              ) {
                 return true;
               }
             }

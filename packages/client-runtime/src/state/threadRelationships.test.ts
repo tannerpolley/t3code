@@ -429,6 +429,25 @@ describe("subagent current activation", () => {
       pendingBackgroundTasks: [{ taskId: "watch-1", taskType: "monitor" }],
     } as never;
     expect(resolveSubagentStatus(record, monitor)).toBe("completed");
+    const server = {
+      ...child,
+      id: ThreadId.make("child-server"),
+      status: "completed" as const,
+      pendingBackgroundTasks: [
+        { taskId: "preview", taskType: "local_bash", commandKind: "server" },
+      ],
+    };
+    expect(resolveSubagentStatus(record, server)).toBe("completed");
+    expect(
+      resolveSubagentStatus(record, { ...server, pendingBackgroundTasks: [] }, [
+        {
+          taskId: "preview",
+          taskType: "local_bash",
+          commandKind: "server",
+          childThreadId: server.id,
+        },
+      ]),
+    ).toBe("completed");
     // So does a shell it started that runs on its parent's roster.
     const finished = {
       ...child,

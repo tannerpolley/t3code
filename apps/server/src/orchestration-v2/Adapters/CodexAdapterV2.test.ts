@@ -3130,94 +3130,98 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   const BG_COMMAND = "sleep 20 && echo CODEX_BG_WAKE_DONE";
   const BG_PROMPT = "Start the sleep in the background and reply STARTED.";
 
-  const backgroundCommandItem = (status: "inProgress" | "completed"): Record<string, unknown> => ({
+  const backgroundCommandItem = (
+    status: "inProgress" | "completed",
+    command = BG_COMMAND,
+  ): Record<string, unknown> => ({
     type: "commandExecution",
     id: BG_COMMAND_ITEM,
-    command: BG_COMMAND,
+    command,
     cwd: "/workspace",
     processId: "4242",
     source: "unifiedExecStartup",
     status,
-    commandActions: [{ type: "unknown", command: BG_COMMAND }],
+    commandActions: [{ type: "unknown", command }],
     aggregatedOutput: status === "completed" ? "CODEX_BG_WAKE_DONE\n" : null,
     exitCode: status === "completed" ? 0 : null,
     durationMs: status === "completed" ? 25_000 : null,
   });
 
-  const backgroundExecTranscript = makeCodexReplayTranscript({
-    scenario: BG_SCENARIO,
-    entries: [
-      ...codexReplayPreamble({
-        nativeThreadId: BG_NATIVE_THREAD,
-        nativeTurnId: BG_NATIVE_TURN,
-        prompt: BG_PROMPT,
-      }),
-      {
-        type: "emit_inbound",
-        label: "item/started/command",
-        frame: {
-          method: "item/started",
-          params: {
-            item: backgroundCommandItem("inProgress"),
-            threadId: BG_NATIVE_THREAD,
-            turnId: BG_NATIVE_TURN,
-            startedAtMs: 1782622440500,
-          },
-        },
-      },
-      {
-        type: "emit_inbound",
-        label: "item/completed/root-answer",
-        frame: {
-          method: "item/completed",
-          params: {
-            item: {
-              type: "agentMessage",
-              id: "root-answer-bg",
-              text: "STARTED",
-              phase: "final_answer",
-              memoryCitation: null,
+  const backgroundExecTranscript = (command = BG_COMMAND) =>
+    makeCodexReplayTranscript({
+      scenario: BG_SCENARIO,
+      entries: [
+        ...codexReplayPreamble({
+          nativeThreadId: BG_NATIVE_THREAD,
+          nativeTurnId: BG_NATIVE_TURN,
+          prompt: BG_PROMPT,
+        }),
+        {
+          type: "emit_inbound",
+          label: "item/started/command",
+          frame: {
+            method: "item/started",
+            params: {
+              item: backgroundCommandItem("inProgress", command),
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              startedAtMs: 1782622440500,
             },
-            threadId: BG_NATIVE_THREAD,
-            turnId: BG_NATIVE_TURN,
-            completedAtMs: 1782622441000,
           },
         },
-      },
-      {
-        type: "emit_inbound",
-        label: "turn/completed",
-        frame: {
-          method: "turn/completed",
-          params: {
-            threadId: BG_NATIVE_THREAD,
-            turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "completed" }),
+        {
+          type: "emit_inbound",
+          label: "item/completed/root-answer",
+          frame: {
+            method: "item/completed",
+            params: {
+              item: {
+                type: "agentMessage",
+                id: "root-answer-bg",
+                text: "STARTED",
+                phase: "final_answer",
+                memoryCitation: null,
+              },
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              completedAtMs: 1782622441000,
+            },
           },
         },
-      },
-      {
-        type: "emit_inbound",
-        label: "item/completed/command-late",
-        afterMs: 30_000,
-        frame: {
-          method: "item/completed",
-          params: {
-            item: backgroundCommandItem("completed"),
-            threadId: BG_NATIVE_THREAD,
-            turnId: BG_NATIVE_TURN,
-            completedAtMs: 1782622465500,
+        {
+          type: "emit_inbound",
+          label: "turn/completed",
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: BG_NATIVE_THREAD,
+              turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "completed" }),
+            },
           },
         },
-      },
-    ],
-  });
+        {
+          type: "emit_inbound",
+          label: "item/completed/command-late",
+          afterMs: 30_000,
+          frame: {
+            method: "item/completed",
+            params: {
+              item: backgroundCommandItem("completed", command),
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              completedAtMs: 1782622465500,
+            },
+          },
+        },
+      ],
+    });
 
-  it.effect(
-    "projects a post-settle background command completion and requests a continuation",
-    () =>
+  it.effect.each([BG_COMMAND, "npm run dev"])(
+    "projects post-settle completion and releases the session pin: %s",
+    (command) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const harness = yield* makeCodexReplayHarness(backgroundExecTranscript);
+          const harness = yield* makeCodexReplayHarness(backgroundExecTranscript(command));
           const now = yield* DateTime.now;
 
           yield* harness.runtime.startTurn(
@@ -3232,6 +3236,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
           assert.equal(harness.terminalEvents()[0]?.status, "completed");
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          assert.equal(yield* harness.runtime.hasRunningServers!, command === "npm run dev");
           assert.isTrue(
             yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
           );
@@ -3251,11 +3256,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             source: { kind: "background_command" },
             outcome: "completed",
             summary: "Background command finished",
-            detail: BG_COMMAND,
+            detail: command,
           });
           assert.equal(
             request?.detail,
-            `Background command completed (exit 0): ${BG_COMMAND}\n\n` +
+            `Background command completed (exit 0): ${command}\n\n` +
               "Output tail:\nCODEX_BG_WAKE_DONE",
           );
 
@@ -3275,6 +3280,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
           assert.lengthOf(harness.terminalEvents(), 1);
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          assert.isFalse(yield* harness.runtime.hasRunningServers!);
         }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
       ),
   );
@@ -3286,7 +3292,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           makeCodexReplayTranscript({
             scenario: "codex-bg-stop-one",
             entries: [
-              ...backgroundExecTranscript.entries.slice(0, -1),
+              ...backgroundExecTranscript("npm run dev").entries.slice(0, -1),
               {
                 type: "expect_outbound",
                 label: "terminate-background-command",
@@ -3301,6 +3307,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 label: "terminate-background-command",
                 frame: { id: 4, result: { terminated: true } },
               },
+              {
+                type: "emit_inbound",
+                label: "item/completed/stopped-server",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    item: backgroundCommandItem("completed", "npm run dev"),
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                  },
+                },
+              },
             ],
           }),
         );
@@ -3314,6 +3332,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }),
         );
         yield* harness.firstTerminal;
+        assert.isTrue(yield* harness.runtime.hasRunningServers!);
         const stop = harness.runtime.stopBackgroundTask;
         if (stop === undefined) return yield* Effect.die("Codex must stop background commands.");
         // An id Codex is not running is refused before anything reaches Codex.
@@ -3323,6 +3342,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isTrue(Exit.isFailure(unknown));
         // The replay only accepts terminate for the command's own process id.
         yield* stop({ providerThread: harness.providerThread, taskId: BG_COMMAND_ITEM });
+        yield* awaitUntil(
+          () =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "command_execution" &&
+                event.turnItem.status === "completed",
+            ),
+          "stopped server completion",
+        );
+        assert.isFalse(yield* harness.runtime.hasRunningServers!);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );
@@ -3332,7 +3362,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     const transcript = makeCodexReplayTranscript({
       scenario: `codex-bg-stop-${terminated}`,
       entries: [
-        ...backgroundExecTranscript.entries.slice(0, -1),
+        ...backgroundExecTranscript().entries.slice(0, -1),
         {
           type: "expect_outbound",
           label: "terminate-background-command",
@@ -3406,7 +3436,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             ]
           : []),
-        backgroundExecTranscript.entries.at(-1)!,
+        backgroundExecTranscript().entries.at(-1)!,
       ],
     });
 

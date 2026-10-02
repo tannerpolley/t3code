@@ -115,6 +115,7 @@ import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import {
   derivePendingBackgroundWork,
   heldBackgroundWork,
+  isServerBackgroundTask,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
@@ -6792,8 +6793,14 @@ export default function ChatView(props: ChatViewProps) {
       return null;
     }
     const count = activeBackgroundTasks.length;
-    // Monitors stay listed with Stop, but the thread is not waiting on them.
+    // Servers and monitors stay listed with Stop without holding the thread waiting.
     const held = heldBackgroundWork(activeBackgroundTasks).length;
+    const servers = activeBackgroundTasks.filter(isServerBackgroundTask).length;
+    const monitors = count - servers;
+    const runningLabel = [
+      ...(servers > 0 ? [servers === 1 ? "Server" : `${servers} servers`] : []),
+      ...(monitors > 0 ? [monitors === 1 ? "Monitor" : `${monitors} monitors`] : []),
+    ].join(" and ");
     return {
       id: `background-work:${activeThread.id}`,
       variant: "default",
@@ -6806,9 +6813,7 @@ export default function ChatView(props: ChatViewProps) {
       ),
       title:
         held === 0
-          ? count === 1
-            ? "Monitor running"
-            : `${count} monitors running`
+          ? `${runningLabel} running`
           : held === 1
             ? "Waiting on background task"
             : `Waiting on ${held} background tasks`,

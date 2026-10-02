@@ -1489,6 +1489,21 @@ describe("resolveThreadStatusPill", () => {
     ).toBeNull();
   });
 
+  it("finishes a thread while its preview server remains listed", () => {
+    const thread = presentThreadShell(localEnvironmentId, {
+      ...makeThreadFixture().source,
+      status: "completed",
+      latestRunId: RunId.make("preview-run"),
+      activeRunId: null,
+      activityRunStatus: null,
+      pendingBackgroundTasks: [
+        { taskId: "preview", taskType: "command_execution", commandKind: "server" },
+      ],
+    });
+    expect(resolveThreadStatusPill({ thread })).toBeNull();
+    expect(resolveSidebarThreadStatus(thread)).toBe("ready");
+  });
+
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({

@@ -247,11 +247,25 @@ export function isMonitorBackgroundTask(
   return task.taskType === "monitor";
 }
 
-/** The pending tasks that are work in progress: everything but monitors. */
-export function heldBackgroundWork<Task extends Pick<PendingBackgroundWorkTask, "taskType">>(
+/** Servers stay listed and keep their session alive, without holding the thread waiting. */
+export function isServerBackgroundTask(
+  task: Pick<PendingBackgroundWorkTask, "commandKind">,
+): boolean {
+  return task.commandKind === "server";
+}
+
+/** Processes and work whose session must remain connected; monitors may disconnect. */
+export function sessionBackgroundWork<Task extends Pick<PendingBackgroundWorkTask, "taskType">>(
   tasks: ReadonlyArray<Task> | undefined,
 ): ReadonlyArray<Task> {
   return (tasks ?? []).filter((task) => !isMonitorBackgroundTask(task));
+}
+
+/** Work the thread waits for; servers and monitors continue independently of its result. */
+export function heldBackgroundWork<
+  Task extends Pick<PendingBackgroundWorkTask, "taskType" | "commandKind">,
+>(tasks: ReadonlyArray<Task> | undefined): ReadonlyArray<Task> {
+  return sessionBackgroundWork(tasks).filter((task) => !isServerBackgroundTask(task));
 }
 
 /**

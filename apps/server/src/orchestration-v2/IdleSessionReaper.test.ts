@@ -22,6 +22,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
@@ -134,7 +135,7 @@ describe("threadIdleSinceMs with provider background work", () => {
   });
 
   it("holds background work and counts its end as activity; a monitor holds nothing", () => {
-    const records = (providerThreads: ReadonlyArray<ReturnType<typeof rootThread>>) =>
+    const records = (providerThreads: Parameters<typeof threadIdleSinceMs>[0]["providerThreads"]) =>
       threadIdleSinceMs({
         thread,
         runs: [finishedRun(16)],
@@ -146,6 +147,17 @@ describe("threadIdleSinceMs with provider background work", () => {
     // The roster emptied 3 seconds ago: the clock restarts there, not at the run's end.
     assert.equal(records([rootThread(0.05)]), NOW_MS - 0.05 * MINUTE_MS);
     assert.equal(records([rootThread(16, ["monitor"])]), NOW_MS - 16 * MINUTE_MS);
+    assert.equal(
+      records([
+        {
+          ...rootThread(16),
+          pendingBackgroundTasks: [
+            { taskId: "preview", taskType: "local_bash", commandKind: "server" },
+          ],
+        },
+      ]),
+      NOW_MS - 16 * MINUTE_MS,
+    );
   });
 });
 
@@ -159,6 +171,8 @@ interface ThreadFixture {
   readonly pendingBackgroundTasks?: number;
   /** Claude monitors on the shell's pending list. */
   readonly pendingMonitors?: number;
+  readonly pendingServers?: number;
+  readonly runtimeServer?: boolean;
   /** Minutes since the root provider thread last changed (its roster emptying, for example). */
   readonly rootProviderThreadUpdated?: number;
 }
@@ -233,6 +247,11 @@ const makeHarness = Effect.fn("makeIdleSessionReaperHarness")(function* (
               taskId: `monitor-${index}`,
               taskType: "monitor",
             })),
+            ...Array.from({ length: fixture(threadId).pendingServers ?? 0 }, (_, index) => ({
+              taskId: `server-${index}`,
+              taskType: "command_execution",
+              commandKind: "server",
+            })),
           ],
         } as never),
     }),
@@ -246,6 +265,15 @@ const makeHarness = Effect.fn("makeIdleSessionReaperHarness")(function* (
     }),
     Layer.mock(ServerSettingsService)({ getSettings: Ref.get(settingsRef) }),
     Layer.mock(ProviderSessionManagerV2)({
+      get: (providerSessionId) =>
+        Effect.succeed(
+          Object.entries(fixtures).some(
+            ([threadId, fixture]) =>
+              fixture.runtimeServer && providerSessionId === sessionId(ThreadId.make(threadId), 0),
+          )
+            ? Option.some({ hasRunningServers: Effect.succeed(true) } as never)
+            : Option.none(),
+        ),
       unloadProviderThread: (providerThread: OrchestrationV2ProviderThread) =>
         Ref.update(unloaded, (ids) => [...ids, providerThread.id]).pipe(Effect.as(true)),
     }),
@@ -255,6 +283,36 @@ const makeHarness = Effect.fn("makeIdleSessionReaperHarness")(function* (
 });
 
 describe("IdleSessionReaper sweep", () => {
+  it.effect("keeps server sessions and native subagents loaded until the server stops", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixtures = {
+        preview: { runs: [finishedRun(120)], pendingServers: 1 },
+        "native-preview": { runs: [finishedRun(120)], runtimeServer: true },
+        "parent-preview": {
+          runs: [finishedRun(5)],
+          nativeSubagents: [["completed", 40]] as const,
+          pendingServers: 1,
+        },
+      };
+      const harness = yield* makeHarness(fixtures, {
+        ...DEFAULT_SERVER_SETTINGS,
+        idleAgentSessionMinutes: 30,
+      });
+      yield* harness.sweep();
+      assert.deepEqual(yield* Ref.get(harness.commands), []);
+      assert.deepEqual(yield* Ref.get(harness.unloaded), []);
+      fixtures.preview.pendingServers = 0;
+      fixtures["native-preview"].runtimeServer = false;
+      fixtures["parent-preview"].pendingServers = 0;
+      yield* harness.sweep();
+      assert.deepEqual(
+        (yield* Ref.get(harness.commands)).map((command) => command.threadId),
+        [ThreadId.make("preview"), ThreadId.make("native-preview")],
+      );
+      assert.deepEqual(yield* Ref.get(harness.unloaded), [nativeThreadId("parent-preview", 0)]);
+    }),
+  );
   it.effect(
     "disconnects only idle threads, including finished children, through the manual detach",
     () =>
@@ -527,6 +585,40 @@ it.effect("an idle detach loses to activity recorded after the sweep read the th
         createdAt,
         resolvedAt: createdAt,
       },
+    });
+    const previewThread: OrchestrationV2ProviderThread = {
+      id: ProviderThreadId.make("provider-thread:idle-detach"),
+      driver: adapter.driver,
+      providerInstanceId: instanceId,
+      providerSessionId: sessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: null,
+      lastRunOrdinal: null,
+      handoffIds: [],
+      forkedFrom: null,
+      pendingBackgroundTasks: [
+        { taskId: "preview", taskType: "local_bash", commandKind: "server" },
+      ],
+      createdAt,
+      updatedAt: createdAt,
+    };
+    const updatePreview = (id: string, providerThread: OrchestrationV2ProviderThread) =>
+      projections.apply({
+        id: EventId.make(id),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: createdAt,
+        payload: providerThread,
+      });
+    yield* updatePreview("preview-idle-detach", previewThread);
+    assert.equal((yield* detach("detach-preview", createdAt))._tag, "Failure");
+    yield* updatePreview("preview-idle-detach-stopped", {
+      ...previewThread,
+      pendingBackgroundTasks: [],
     });
     const accepted = yield* detach("detach-idle", createdAt);
     assert.equal(accepted._tag, "Success");

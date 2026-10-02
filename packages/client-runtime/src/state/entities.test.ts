@@ -165,6 +165,26 @@ describe("V2 client presentation", () => {
     expect(shell.pendingBackgroundTasks).toEqual([{ taskId: "bg-1", description: "sleep 20" }]);
   });
 
+  it.each(["server", "monitor"])("keeps a finished thread finished with a running %s", (kind) => {
+    const tasks = [
+      {
+        taskId: "preview",
+        taskType: kind === "server" ? "local_bash" : "monitor",
+        commandKind: kind === "server" ? "server" : "watcher",
+      },
+    ];
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("run-completed"),
+      activeRunId: null,
+      activityRunStatus: null,
+      status: "completed",
+      pendingBackgroundTasks: tasks,
+    });
+    expect(shell.runtime?.status).toBe("completed");
+    expect(shell.pendingBackgroundTasks).toEqual(tasks);
+  });
+
   it("times a working thread from its activity and a waiting one from its run, not an idle one", () => {
     const runId = RunId.make("run-waiting-clock");
     const runStartedAt = DateTime.makeUnsafe("2026-06-20T01:00:02.000Z");

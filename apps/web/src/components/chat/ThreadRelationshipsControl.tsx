@@ -284,7 +284,7 @@ function ThreadBackgroundTaskRows(props: {
             ) : null}
             {row.startedAt ? (
               <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-                <BackgroundShellElapsed startedAt={row.startedAt} />
+                <BackgroundShellElapsed startedAt={row.startedAt} commandKind={row.commandKind} />
               </span>
             ) : null}
             <ThreadStatusMark status="working" />

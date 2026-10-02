@@ -130,6 +130,16 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(true);
+    expect(
+      isAutoSettlementCandidate(
+        shell({
+          pendingBackgroundTasks: [
+            { taskId: "preview", taskType: "command_execution", commandKind: "server" },
+          ],
+        }),
+        NOW_MS,
+      ),
+    ).toBe(true);
   });
 
   it("keeps snoozed threads parked until they wake early on error or completion", () => {

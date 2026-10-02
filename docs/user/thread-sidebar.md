@@ -108,10 +108,14 @@ sending an answer or restarting the agent.
 
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
-thread. Work in progress, pending questions or approvals, and live background work
+thread. Work in progress, pending questions or approvals, and unfinished background tasks
 prevent automatic settlement. An open pull request does not prevent inactivity
 settlement, but an old closed or merged pull request does not settle work you
 resumed after it closed.
+
+Running servers and monitors stay listed with output, elapsed time and **Stop**,
+without keeping the thread waiting or preventing settlement. Running servers prevent
+idle session disconnection; use **Stop** when you no longer need the server.
 
 Change these rules in **Settings → General** on web and desktop, or **Settings → Thread behavior** on mobile.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
