@@ -2567,7 +2567,11 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             }
             // The orchestrator adopts a fork under its already-allocated row.
             // Future session updates must retain that authoritative identity.
-            state.providerThread = turnInput.providerThread;
+            // The session owns the live roster; a wake's input can predate the job's completion.
+            state.providerThread = {
+              ...turnInput.providerThread,
+              pendingBackgroundTasks: state.providerThread.pendingBackgroundTasks,
+            };
             yield* applySelection(turnInput.modelSelection);
             // Mirror the thread title into pi's session name so the session
             // stays identifiable in pi's own /resume listing. Best-effort:

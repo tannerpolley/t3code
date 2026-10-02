@@ -1013,7 +1013,13 @@ const make = Effect.gen(function* () {
       });
       const childRun = delegatedTaskRun(childControls, task);
       const terminalRun = latestTerminalResultRun(childControls, childRun);
-      const progress = delegatedTaskProgress(childControls);
+      const childShell = yield* threadManagement
+        .getThreadShell(task.childThreadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      const progress = delegatedTaskProgress({
+        ...childControls,
+        pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
+      });
       const resultRunIds = [
         ...new Set(
           [progress.resultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
