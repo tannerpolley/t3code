@@ -248,9 +248,11 @@ const compactCopiedDatabase = Effect.fn("compactCopiedSqliteDatabase")(function*
     yield* sql`VACUUM`;
     const checkpoint = yield* sql<{ readonly busy: number }>`PRAGMA wal_checkpoint(TRUNCATE)`;
     if ((checkpoint[0]?.busy ?? 0) !== 0) {
-      return yield* Effect.fail(
-        new Error("SQLite remained busy while checkpointing the compacted copy."),
-      );
+      return yield* new SqliteStateDatabaseError({
+        operation: "compact",
+        databasePath,
+        cause: "SQLite remained busy while checkpointing the compacted copy.",
+      });
     }
 
     const after = yield* maintenance.verify;
@@ -287,7 +289,8 @@ const compactCopiedDatabase = Effect.fn("compactCopiedSqliteDatabase")(function*
   return yield* program.pipe(
     Effect.provide(compactLayer),
     Effect.mapError((cause) =>
-      cause instanceof SqliteStateCompactionVerificationError
+      Schema.is(SqliteStateCompactionVerificationError)(cause) ||
+      Schema.is(SqliteStateDatabaseError)(cause)
         ? cause
         : new SqliteStateDatabaseError({ operation: "compact", databasePath, cause }),
     ),

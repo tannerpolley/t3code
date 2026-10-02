@@ -158,6 +158,7 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
 
         yield* fs.writeFileString(
           path.join(baseDir, "userdata", "server-runtime.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - fixture file content.
           JSON.stringify({
             version: 1,
             pid: process.pid,
@@ -182,6 +183,7 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
       const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       const timestamp = "2026-10-02T00:00:00.000Z";
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - fixture payload.
       const payload = JSON.stringify({ body: "x".repeat(10 * 1024) });
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;

@@ -80,7 +80,7 @@ describe("OrchestratorMcpService", () => {
               pendingBackgroundTasks: hasBackgroundWork
                 ? [{ taskId: "background-build", taskType: "command_execution" }]
                 : [],
-            } as OrchestrationV2ThreadShell),
+            } as unknown as OrchestrationV2ThreadShell),
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
@@ -191,7 +191,7 @@ describe("OrchestratorMcpService", () => {
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(undefined),
+          getThreadShell: () => Effect.succeed(null),
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           dispatch: (command) =>
@@ -261,7 +261,7 @@ describe("OrchestratorMcpService", () => {
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(undefined),
+          getThreadShell: () => Effect.succeed(null),
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           dispatch: (command) =>
@@ -334,7 +334,7 @@ describe("OrchestratorMcpService", () => {
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(undefined),
+          getThreadShell: () => Effect.succeed(null),
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           dispatch: (command) =>
@@ -527,7 +527,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const dependencies = Layer.mergeAll(
           NodeServices.layer,
           Layer.mock(ThreadManagementService)({
-            getThreadShell: () => Effect.succeed(undefined),
+            getThreadShell: () => Effect.succeed(null),
             getThreadRecords: () => Effect.succeed(parentProjection([])),
           }),
           Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
@@ -694,7 +694,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mergeAll(
               NodeServices.layer,
               Layer.mock(ThreadManagementService)({
-                getThreadShell: () => Effect.succeed(undefined),
+                getThreadShell: () => Effect.succeed(null),
                 getThreadRecords: () => Effect.succeed(parentProjection([])),
               }),
               Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
@@ -740,7 +740,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const dependencies = Layer.mergeAll(
           NodeServices.layer,
           Layer.mock(ThreadManagementService)({
-            getThreadShell: () => Effect.succeed(undefined),
+            getThreadShell: () => Effect.succeed(null),
             getThreadRecords: (threadId) =>
               Effect.succeed(
                 threadId === parentThreadId
@@ -835,7 +835,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(undefined),
+          getThreadShell: () => Effect.succeed(null),
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
@@ -912,7 +912,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(undefined),
+          getThreadShell: () => Effect.succeed(null),
           getThreadRecords: () => Effect.succeed(parentProjection([])),
         }),
         Layer.mock(ProviderRegistry)({
@@ -1048,7 +1048,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           const dependencies = Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(ThreadManagementService)({
-              getThreadShell: () => Effect.succeed(undefined),
+              getThreadShell: () => Effect.succeed(null),
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId

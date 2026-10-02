@@ -551,12 +551,5 @@ it.effect("reduces shell projections for streaming items while retaining final s
     const afterProjections = yield* Fiber.join(after);
     expect(afterProjections.length).toBeLessThan(beforeProjections.length / 10);
     expect(afterProjections.at(-1)?.sequence).toBe(201);
-    yield* Effect.sync(() =>
-      console.info("streaming item shell projection measurement", {
-        updates: 201,
-        beforeProjections: beforeProjections.length,
-        afterProjections: afterProjections.length,
-      }),
-    );
   }),
 );

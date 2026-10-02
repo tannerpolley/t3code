@@ -297,7 +297,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(undefined),
+          getThreadShell: () => Effect.succeed(null),
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);
@@ -431,7 +431,7 @@ it("taskStatus reports a child waiting on the user, but not an auth refresh", as
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService)({
-          getThreadShell: () => Effect.succeed(undefined),
+          getThreadShell: () => Effect.succeed(null),
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);

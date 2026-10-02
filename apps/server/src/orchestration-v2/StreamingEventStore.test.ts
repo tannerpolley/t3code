@@ -141,13 +141,6 @@ for (const status of ["completed", "cancelled"] as const) {
       assert.equal(retained[0]!.count, 2);
       beforeBytes += retained[0]!.bytes - firstBytes;
       assert.isBelow(retained[0]!.bytes, beforeBytes / 50);
-      yield* Effect.sync(() =>
-        console.info("streaming item payload measurement", {
-          updates: 201,
-          beforeBytes,
-          afterBytes: retained[0]!.bytes,
-        }),
-      );
       const beforeReplay = yield* projections.getThreadProjection(threadId);
       assert.deepEqual(
         beforeReplay.turnItems.map((entry) => entry.ordinal),

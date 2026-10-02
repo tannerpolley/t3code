@@ -471,7 +471,7 @@ const makeEventStore = Effect.gen(function* () {
             input.commandId === undefined &&
             sequence !== undefined
           ) {
-            const key = JSON.stringify([event.threadId, event.payload.id]);
+            const key = `${event.threadId}\u0000${event.payload.id}`;
             const previous = streamingSnapshots.get(key);
             if (
               previous !== undefined &&
