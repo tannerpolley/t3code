@@ -230,7 +230,7 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
         `;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: databasePath })));
 
-      const beforeBytes = (yield* fs.stat(databasePath)).size;
+      const beforeBytes = Number((yield* fs.stat(databasePath)).size);
       const result = yield* runSqliteState({ operation: "compact", baseDir });
       assert.equal(result.operation, "compact");
       if (result.operation === "compact") {
@@ -238,7 +238,7 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
         assert.equal(result.deletedEventCount, 200);
         assert.equal(result.after.expectedSequence, 0);
         assert.isTrue(result.databaseBytes > 0);
-        assert.isBelow((yield* fs.stat(databasePath)).size, beforeBytes);
+        assert.isBelow(Number((yield* fs.stat(databasePath)).size), beforeBytes);
       }
     }),
   );
