@@ -8,6 +8,8 @@ import type {
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   archivedShellStreamItemFromThreadShell,
@@ -21,6 +23,7 @@ import {
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
   toShellApplicationEvent,
+  SHELL_COALESCE_WINDOW,
 } from "./ShellStream.ts";
 
 function project(sequence: number, id: string): ApplicationStoredEvent {
@@ -517,3 +520,43 @@ describe("dedupeShellEnrichment", () => {
       }),
   );
 });
+
+it.effect("reduces shell projections for streaming items while retaining final state", () =>
+  Effect.gen(function* () {
+    const source = Stream.fromIterable(Array.from({ length: 201 }, (_, index) => index + 1)).pipe(
+      Stream.mapEffect((sequence) =>
+        Effect.sleep("20 millis").pipe(
+          Effect.as(
+            toShellApplicationEvent({
+              sequence,
+              event: {
+                type: "turn-item.updated",
+                threadId: ThreadId.make("thread:shell-streaming"),
+              },
+            } as OrchestrationV2StoredEvent),
+          ),
+        ),
+      ),
+    );
+    const collect = (window: "50 millis" | typeof SHELL_COALESCE_WINDOW) =>
+      source.pipe(
+        Stream.groupedWithin(512, window),
+        Stream.flatMap((batch) => Stream.fromIterable(coalesceShellApplicationEvents(batch))),
+        Stream.runCollect,
+      );
+    const before = yield* collect("50 millis").pipe(Effect.forkScoped);
+    const after = yield* collect(SHELL_COALESCE_WINDOW).pipe(Effect.forkScoped);
+    yield* TestClock.adjust("10 seconds");
+    const beforeProjections = yield* Fiber.join(before);
+    const afterProjections = yield* Fiber.join(after);
+    expect(afterProjections.length).toBeLessThan(beforeProjections.length / 10);
+    expect(afterProjections.at(-1)?.sequence).toBe(201);
+    yield* Effect.sync(() =>
+      console.info("streaming item shell projection measurement", {
+        updates: 201,
+        beforeProjections: beforeProjections.length,
+        afterProjections: afterProjections.length,
+      }),
+    );
+  }),
+);

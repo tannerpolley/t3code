@@ -127,6 +127,7 @@ import {
   shellStreamItemsFromInitialSnapshot,
   shellStreamItemsFromResumeSnapshot,
   toShellApplicationEvent,
+  SHELL_COALESCE_WINDOW,
   type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
@@ -937,7 +938,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
 
     const toShellStream = <E, R>(stream: Stream.Stream<ShellApplicationEvent, E, R>) =>
       stream.pipe(
-        Stream.groupedWithin(512, Duration.millis(50)),
+        Stream.groupedWithin(512, SHELL_COALESCE_WINDOW),
         Stream.mapEffect((events) => projectShellItems(Array.from(events))),
         Stream.flatMap(Stream.fromIterable),
       );
@@ -1693,7 +1694,7 @@ const makeWsRpcLayer = (
         const live = threadManagement
           .streamStoredEventsFrom({ afterSequence: snapshot.snapshotSequence })
           .pipe(
-            Stream.groupedWithin(512, Duration.millis(50)),
+            Stream.groupedWithin(512, SHELL_COALESCE_WINDOW),
             Stream.mapEffect((events) =>
               Effect.forEach(
                 coalesceStoredThreadEvents(Array.from(events)),

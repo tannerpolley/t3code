@@ -11,6 +11,10 @@ import type {
 import { OrchestrationProjectShell as ProjectShellSchema } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Duration from "effect/Duration";
+
+// Shells refetch aggregate state, so token cadence only repeats the same expensive read.
+export const SHELL_COALESCE_WINDOW = Duration.seconds(1);
 
 /** Build the regular navigation shell without duplicating the archive dataset. */
 export function buildActiveShellSnapshot(input: {

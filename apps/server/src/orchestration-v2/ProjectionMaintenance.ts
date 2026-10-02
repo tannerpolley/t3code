@@ -238,7 +238,8 @@ export const layer: Layer.Layer<
      * Scan newest first to retain the newest state for each entity.
      * Page every event, including non-candidates: filtering before LIMIT could
      * still scan the entire history when superseded events are sparse.
-     * turn-item.updated stays intact because replay assigns positions on first write.
+     * Keep the first and newest turn-item update: partial client catch-up must introduce the item
+     * before newer ordinals arrive. SQL replay uses the newest payload's already-stable ordinal.
      */
     const compactEventStore = Effect.gen(function* () {
       const bounds = yield* sql<{
@@ -253,6 +254,8 @@ export const layer: Layer.Layer<
       let throughReceiptRowId = bounds[0]?.receipt_row_id ?? 0;
       const retainedThreadIds = new Set<string>();
       const retainedEntityKeys = new Set<string>();
+      const retainedTurnItemKeys = new Set<string>();
+      const olderTurnItemCandidates = new Map<string, number>();
       let deletedEventCount = 0;
       let deletedReceiptCount = 0;
 
@@ -274,7 +277,7 @@ export const layer: Layer.Layer<
             event.event_type,
             CASE
               WHEN event.application_event_version = 2
-                AND event.event_type IN ('message.updated', 'node.updated')
+                AND event.event_type IN ('message.updated', 'node.updated', 'turn-item.updated')
               THEN json_extract(event.payload_json, '$.id')
               ELSE NULL
             END AS entity_id,
@@ -303,6 +306,15 @@ export const layer: Layer.Layer<
             ) {
               if (retainedThreadIds.has(row.stream_id)) obsolete.push(row.sequence);
               else retainedThreadIds.add(row.stream_id);
+            } else if (row.event_type === "turn-item.updated") {
+              const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
+              if (retainedTurnItemKeys.has(key)) {
+                const previousCandidate = olderTurnItemCandidates.get(key);
+                if (previousCandidate !== undefined) obsolete.push(previousCandidate);
+                olderTurnItemCandidates.set(key, row.sequence);
+              } else {
+                retainedTurnItemKeys.add(key);
+              }
             } else if (row.event_type === "message.updated" || row.event_type === "node.updated") {
               const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
               if (retainedEntityKeys.has(key)) obsolete.push(row.sequence);

@@ -8,6 +8,7 @@ import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -15,8 +16,15 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { layer as eventStoreLayer } from "../src/orchestration-v2/EventStore.ts";
+import {
+  ProjectionMaintenanceV2,
+  layer as projectionMaintenanceLayer,
+} from "../src/orchestration-v2/ProjectionMaintenance.ts";
+import { layer as projectionStoreLayer } from "../src/orchestration-v2/ProjectionStore.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../src/serverRuntimeState.ts";
 
-export const SqliteStateOperation = Schema.Literals(["query", "exec"]);
+export const SqliteStateOperation = Schema.Literals(["query", "exec", "compact"]);
 export type SqliteStateOperation = typeof SqliteStateOperation.Type;
 
 export class SqliteStateMultipleSqlSourcesError extends Schema.TaggedError<SqliteStateMultipleSqlSourcesError>()(
@@ -62,7 +70,29 @@ export class SqliteStateSharedHomeMutationError extends Schema.TaggedError<Sqlit
   {},
 ) {
   override get message(): string {
-    return "Refusing to mutate the shared ~/.t3 database. Use an isolated --base-dir.";
+    return "Refusing to mutate live T3 userdata. Stop its server and use a copied database under an isolated --base-dir.";
+  }
+}
+
+export class SqliteStateUnexpectedSqlSourceError extends Schema.TaggedError<SqliteStateUnexpectedSqlSourceError>()(
+  "SqliteStateUnexpectedSqlSourceError",
+  {},
+) {
+  override get message(): string {
+    return "The compact operation does not accept --sql or --file.";
+  }
+}
+
+export class SqliteStateCompactionVerificationError extends Schema.TaggedError<SqliteStateCompactionVerificationError>()(
+  "SqliteStateCompactionVerificationError",
+  {
+    phase: Schema.Literals(["before", "after"]),
+    expectedSequence: Schema.Number,
+    projectionSequence: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Projection verification failed ${this.phase} compaction (event sequence ${this.expectedSequence}, projection sequence ${this.projectionSequence}).`;
   }
 }
 
@@ -108,7 +138,26 @@ const SqliteStateExecResult = Schema.Struct({
   database: Schema.String,
   backup: Schema.String,
 });
-const SqliteStateResult = Schema.Union([SqliteStateQueryResult, SqliteStateExecResult]);
+const SqliteStateCompactionVerification = Schema.Struct({
+  schemaVersion: Schema.Number,
+  expectedSequence: Schema.Number,
+  projectionSequence: Schema.Number,
+});
+const SqliteStateCompactResult = Schema.Struct({
+  operation: Schema.Literal("compact"),
+  database: Schema.String,
+  before: SqliteStateCompactionVerification,
+  deletedEventCount: Schema.Number,
+  deletedReceiptCount: Schema.Number,
+  reclaimableBytes: Schema.Number,
+  after: SqliteStateCompactionVerification,
+  databaseBytes: Schema.Number,
+});
+const SqliteStateResult = Schema.Union([
+  SqliteStateQueryResult,
+  SqliteStateExecResult,
+  SqliteStateCompactResult,
+]);
 const encodeSqliteStateResult = Schema.encodeEffect(fromJsonStringPretty(SqliteStateResult));
 
 export type SqliteStateResult = typeof SqliteStateResult.Type;
@@ -126,6 +175,124 @@ export interface RunSqliteStateInput {
 export interface RunSqliteStateOptions {
   readonly sharedHome?: string | undefined;
 }
+
+const ensureCopiedDatabaseIsNotLive = Effect.fn("ensureCopiedDatabaseIsNotLive")(function* (
+  databasePath: string,
+  options: RunSqliteStateOptions,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const canonicalDatabasePath = yield* fs.realPath(databasePath);
+  const runtimeState = yield* readPersistedServerRuntimeState(
+    path.join(path.dirname(databasePath), "server-runtime.json"),
+  );
+  if (Option.isSome(runtimeState) && isProcessAlive(runtimeState.value.pid)) {
+    return yield* new SqliteStateSharedHomeMutationError();
+  }
+
+  const liveHomes = new Set([
+    path.join(NodeOS.homedir(), ".t3"),
+    ...(process.env.T3CODE_HOME?.trim() ? [process.env.T3CODE_HOME.trim()] : []),
+    ...(options.sharedHome === undefined ? [] : [options.sharedHome]),
+  ]);
+
+  for (const liveHome of liveHomes) {
+    const resolvedHome = path.resolve(liveHome);
+    const canonicalHome = yield* fs
+      .realPath(resolvedHome)
+      .pipe(Effect.orElseSucceed(() => resolvedHome));
+    for (const liveDatabasePath of [
+      path.join(canonicalHome, "userdata", "statev2.sqlite"),
+      path.join(canonicalHome, "dev", "userdata", "statev2.sqlite"),
+    ]) {
+      const canonicalLiveDatabasePath = yield* fs
+        .realPath(liveDatabasePath)
+        .pipe(Effect.orElseSucceed(() => liveDatabasePath));
+      if (canonicalDatabasePath === canonicalLiveDatabasePath) {
+        return yield* new SqliteStateSharedHomeMutationError();
+      }
+    }
+  }
+});
+
+const compactCopiedDatabase = Effect.fn("compactCopiedSqliteDatabase")(function* (
+  databasePath: string,
+  options: RunSqliteStateOptions,
+) {
+  yield* ensureCopiedDatabaseIsNotLive(databasePath, options);
+
+  const databaseLayer = NodeSqliteClient.layer({ filename: databasePath });
+  const storesLayer = Layer.mergeAll(
+    databaseLayer,
+    eventStoreLayer.pipe(Layer.provide(databaseLayer)),
+    projectionStoreLayer.pipe(Layer.provide(databaseLayer)),
+  );
+  const maintenanceLayer = projectionMaintenanceLayer.pipe(Layer.provide(storesLayer));
+  const compactLayer = Layer.merge(storesLayer, maintenanceLayer);
+
+  const program = Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const maintenance = yield* ProjectionMaintenanceV2;
+    yield* sql`PRAGMA busy_timeout = 5000`;
+
+    const before = yield* maintenance.verify;
+    if (!before.valid) {
+      return yield* new SqliteStateCompactionVerificationError({
+        phase: "before",
+        expectedSequence: before.expectedSequence,
+        projectionSequence: before.projectionSequence,
+      });
+    }
+
+    const summary = yield* maintenance.compactEventStore;
+    yield* sql`VACUUM`;
+    const checkpoint = yield* sql<{ readonly busy: number }>`PRAGMA wal_checkpoint(TRUNCATE)`;
+    if ((checkpoint[0]?.busy ?? 0) !== 0) {
+      return yield* Effect.fail(
+        new Error("SQLite remained busy while checkpointing the compacted copy."),
+      );
+    }
+
+    const after = yield* maintenance.verify;
+    if (!after.valid) {
+      return yield* new SqliteStateCompactionVerificationError({
+        phase: "after",
+        expectedSequence: after.expectedSequence,
+        projectionSequence: after.projectionSequence,
+      });
+    }
+    const pageCount = yield* sql<{ readonly page_count: number }>`PRAGMA page_count`;
+    const pageSize = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
+
+    return {
+      operation: "compact",
+      database: databasePath,
+      before: {
+        schemaVersion: before.schemaVersion,
+        expectedSequence: before.expectedSequence,
+        projectionSequence: before.projectionSequence,
+      },
+      deletedEventCount: summary.deletedEventCount,
+      deletedReceiptCount: summary.deletedReceiptCount,
+      reclaimableBytes: summary.reclaimableBytes,
+      after: {
+        schemaVersion: after.schemaVersion,
+        expectedSequence: after.expectedSequence,
+        projectionSequence: after.projectionSequence,
+      },
+      databaseBytes: (pageCount[0]?.page_count ?? 0) * (pageSize[0]?.page_size ?? 0),
+    } as const;
+  });
+
+  return yield* program.pipe(
+    Effect.provide(compactLayer),
+    Effect.mapError((cause) =>
+      cause instanceof SqliteStateCompactionVerificationError
+        ? cause
+        : new SqliteStateDatabaseError({ operation: "compact", databasePath, cause }),
+    ),
+  );
+});
 
 const resolveSqlSource = Effect.fn("resolveSqliteStateSqlSource")(function* (
   sql: string | undefined,
@@ -181,21 +348,25 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = path.resolve(input.baseDir);
-  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
   const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
+
+  if (input.operation === "compact") {
+    if (input.sql !== undefined || input.file !== undefined) {
+      return yield* new SqliteStateUnexpectedSqlSourceError();
+    }
+    if (!(yield* fs.exists(databasePath))) {
+      return yield* new SqliteStateDatabaseMissingError({ databasePath });
+    }
+    return yield* compactCopiedDatabase(databasePath, options);
+  }
+
   const source = yield* resolveSqlSource(input.sql, input.file);
 
   if (!(yield* fs.exists(databasePath))) {
     return yield* new SqliteStateDatabaseMissingError({ databasePath });
   }
   if (input.operation === "exec") {
-    const [canonicalBaseDir, canonicalSharedHome] = yield* Effect.all([
-      fs.realPath(baseDir),
-      fs.realPath(sharedHome).pipe(Effect.orElseSucceed(() => sharedHome)),
-    ]);
-    if (canonicalBaseDir === canonicalSharedHome) {
-      return yield* new SqliteStateSharedHomeMutationError();
-    }
+    yield* ensureCopiedDatabaseIsNotLive(databasePath, options);
   }
 
   const program = Effect.gen(function* () {
@@ -249,7 +420,7 @@ const t3SqliteStateCommand = Command.make(
   "t3-sqlite-state",
   {
     operation: Argument.Literals("operation", SqliteStateOperation.literals).pipe(
-      Argument.withDescription("Run a read-only query or a backed-up fixture mutation."),
+      Argument.withDescription("Query, seed, or compact an isolated T3 SQLite database."),
     ),
     baseDir: Flag.String("base-dir").pipe(
       Flag.withDescription("Explicit T3 base directory containing userdata/statev2.sqlite."),
@@ -272,7 +443,7 @@ const t3SqliteStateCommand = Command.make(
     }).pipe(Effect.flatMap(encodeSqliteStateResult), Effect.flatMap(Console.log)),
 ).pipe(
   Command.withDescription(
-    "Inspect or seed an isolated T3 SQLite database with automatic backups for writes.",
+    "Inspect or seed an isolated T3 SQLite database; compact operates on a copied offline database.",
   ),
 );
 

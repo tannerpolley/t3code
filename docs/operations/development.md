@@ -35,6 +35,24 @@ Read ports from the `[dev-runner]` output. Worktrees derive stable preferences f
 but occupied ports can shift them. `T3CODE_PORT_OFFSET` or `T3CODE_DEV_INSTANCE` can select a
 different preference when needed.
 
+### Reclaim orchestration event-store space
+
+The server compacts superseded orchestration events at startup and hourly. To reclaim file space
+from an existing install, stop the server cleanly and compact an isolated copy first. Keep the
+original database as the rollback copy. Copy `statev2.sqlite` and any `-wal` or `-shm` siblings
+into `<copy-home>/userdata/`, then run from the repository root:
+
+```sh
+node apps/server/scripts/t3-sqlite-state.ts compact --base-dir /path/to/copy-home
+```
+
+The command requires an explicit base directory, refuses known live userdata paths, verifies the
+projection before and after compaction, runs `VACUUM`, checkpoints the copied database, and prints
+the deleted rows and compacted database size. While the server remains stopped, move the original
+database and its sidecars together into a backup directory, then install the checkpointed copy.
+Do not leave an original WAL beside the replacement database. Keep the backup until the updated
+install has started successfully.
+
 ### Sharing and remote debugging
 
 `vp run dev --share` publishes the web port over the machine's tailnet and prints a pairing URL
