@@ -8456,7 +8456,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
-      const progress = delegatedTaskProgress(childControls);
+      const childShell = yield* projectionStore.getThreadShell(childThreadId);
+      const progress = delegatedTaskProgress({
+        ...childControls,
+        pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
+      });
       if (progress.state !== "result_available") return;
       const childRun = progress.resultRun;
       if (childRun === undefined) return;

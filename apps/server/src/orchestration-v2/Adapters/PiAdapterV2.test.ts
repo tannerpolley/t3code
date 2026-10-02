@@ -9,8 +9,11 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
+  CommandId,
   EnvironmentId,
+  MessageId,
   NodeId,
+  ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
@@ -43,6 +46,14 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import { EventSinkV2 } from "../EventSink.ts";
+import { OrchestratorV2 } from "../Orchestrator.ts";
+import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
+import { makeSingleLayer } from "../ProviderAdapterRegistry.ts";
+import { workerLive as continuationWorker } from "../ProviderContinuationService.ts";
+import { ThreadManagementService } from "../ThreadManagementService.ts";
+import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
@@ -617,8 +628,19 @@ describe("PiAdapterV2", () => {
       assert.equal(wake.notification?.outcome, "completed");
       assert.include(wake.detail!, "exit code 0");
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-      yield* startTurn(runtime, providerThread, "default", [], wake.detail!, undefined, 2);
+      // The wake can start before the prior run persists the empty roster. Its
+      // input then still lists the job that the adapter has already finished.
+      yield* startTurn(runtime, roster.providerThread, "default", [], wake.detail!, undefined, 2);
       assert.equal((yield* fake.takeRequest("prompt"))["message"], wake.detail);
+      const wakeThread = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.status === "active" &&
+          event.providerThread.lastRunOrdinal === 2,
+      );
+      assert.isTrue(wakeThread.type === "provider_thread.updated");
+      if (wakeThread.type !== "provider_thread.updated") return;
+      assert.deepEqual(wakeThread.providerThread.pendingBackgroundTasks, []);
       yield* fake.emit({ type: "agent_start" });
       yield* fake.emit(jobEntry(endedJob()));
       yield* fake.emit({ type: "agent_settled" });
@@ -660,6 +682,268 @@ describe("PiAdapterV2", () => {
       assert.equal(yield* Queue.size(wakes), 0);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+
+  for (const parentState of ["idle", "stopped"] as const) {
+    it.effect(`delivers a delegated background wake result once to its ${parentState} parent`, () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace(`pi-delegated-background-${parentState}`);
+        const parentThreadId = ThreadId.make(`thread:pi-background-parent-${parentState}`);
+        const parent = yield* makeFakePi;
+        const resumedParent = yield* makeFakePi;
+        const child = yield* makeFakePi;
+        const requests = yield* Queue.unbounded<ProviderContinuationRequest>();
+        const offered: ProviderContinuationRequest[] = [];
+        const replayChecked = yield* Deferred.make<void>();
+        let replaying = false;
+        const continuations = {
+          offer: (request: ProviderContinuationRequest) =>
+            Effect.sync(() => offered.push(request)).pipe(
+              Effect.andThen(Queue.offer(requests, request)),
+              Effect.asVoid,
+            ),
+          take: Queue.take(requests),
+        };
+        const childAdapter = yield* makeAdapter(child).pipe(
+          Effect.provideService(ProviderContinuationRequests, continuations),
+        );
+        const parentAdapter = yield* makeAdapter(parent);
+        const resumedAdapter = yield* makeAdapter(resumedParent);
+        let parentOpens = 0;
+        let dropEmptyRoster = false;
+        const adapter = {
+          ...childAdapter,
+          openSession: (input: Parameters<typeof childAdapter.openSession>[0]) =>
+            Effect.gen(function* () {
+              if (input.threadId === parentThreadId) {
+                return yield* (parentOpens++ === 0 ? parentAdapter : resumedAdapter).openSession(
+                  input,
+                );
+              }
+              const runtime = yield* childAdapter.openSession(input);
+              return {
+                ...runtime,
+                events: runtime.events.pipe(
+                  Stream.filter((event) => {
+                    // A wake run can claim lastRunOrdinal before the old run
+                    // writes its clear; the ownership gate rejects that clear.
+                    if (
+                      dropEmptyRoster &&
+                      event.type === "provider_thread.updated" &&
+                      event.providerThread.pendingBackgroundTasks?.length === 0
+                    ) {
+                      dropEmptyRoster = false;
+                      return false;
+                    }
+                    return true;
+                  }),
+                ),
+              };
+            }),
+        };
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          const sink = yield* EventSinkV2;
+          const worker = yield* OrchestrationEffectWorkerV2;
+          yield* Layer.build(
+            continuationWorker.pipe(
+              Layer.provide(
+                Layer.mock(ThreadManagementService)({
+                  dispatch: orchestrator.dispatch,
+                  getThreadRecords: (...args) =>
+                    orchestrator
+                      .getThreadRecords(...args)
+                      .pipe(
+                        Effect.tap(() =>
+                          replaying ? Deferred.succeed(replayChecked, undefined) : Effect.void,
+                        ),
+                      ),
+                }),
+              ),
+              Layer.provide(testLayer),
+            ),
+          );
+          const completed = (threadId: ThreadId, afterSequence: number) =>
+            Effect.gen(function* () {
+              yield* sink.stream({ threadId, afterSequence, eventType: "run.updated" }).pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "run.updated" &&
+                    stored.event.payload.status === "waiting",
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+              );
+              yield* worker.drain();
+              yield* sink.stream({ threadId, afterSequence, eventType: "run.updated" }).pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "run.updated" &&
+                    stored.event.payload.status === "completed",
+                ),
+                Stream.take(1),
+                Stream.runDrain,
+              );
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create-parent"),
+            threadId: parentThreadId,
+            projectId: ProjectId.make("project:pi-background"),
+            title: "Parent",
+            modelSelection: modelSelection("default"),
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("start-parent"),
+            threadId: parentThreadId,
+            messageId: MessageId.make("message:parent"),
+            text: "Delegate the build",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain();
+          yield* parent.takeRequest("prompt");
+          const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+          yield* orchestrator.dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make("delegate-build"),
+            parentThreadId,
+            parentRunId: parentRun.id,
+            parentNodeId: parentRun.rootNodeId!,
+            task: "Build the project",
+            modelSelection: modelSelection("default"),
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "always",
+            createdBy: "agent",
+            creationSource: "provider",
+          });
+          const childThreadId = (yield* orchestrator.getThreadProjection(parentThreadId))
+            .subagents[0]!.childThreadId!;
+          yield* worker.drain();
+          yield* child.takeRequest("prompt");
+          const before = yield* sink.latestSequence();
+          yield* child.emit({ type: "agent_start" });
+          yield* child.emit(jobEntry(startedJob()));
+          yield* child.emit({ type: "agent_settled" });
+          yield* completed(childThreadId, before);
+          yield* parent.emit({ type: "agent_start" });
+          yield* parent.emit({ type: "agent_settled" });
+          yield* completed(parentThreadId, before);
+          yield* orchestrator.recoverDelegatedResults;
+          assert.lengthOf(offered, 0, "the result must wait for the background job");
+          if (parentState === "stopped") {
+            const session = (yield* orchestrator.getThreadProjection(
+              parentThreadId,
+            )).providerSessions.at(-1)!;
+            yield* orchestrator.dispatch({
+              type: "provider-session.detach",
+              commandId: CommandId.make("stop-idle-parent"),
+              threadId: parentThreadId,
+              providerSessionId: session.id,
+            });
+            yield* worker.drain();
+            assert.isEmpty(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).providerSessions,
+            );
+          }
+          const beforeWake = yield* sink.latestSequence();
+          dropEmptyRoster = true;
+          yield* child.emit(jobEntry(endedJob("job_test", 1)));
+          yield* sink
+            .stream({
+              threadId: childThreadId,
+              afterSequence: beforeWake,
+              eventType: "run.created",
+            })
+            .pipe(Stream.take(1), Stream.runDrain);
+          yield* worker.drain();
+          yield* child.takeRequest("prompt");
+          yield* child.emit({ type: "agent_start" });
+          yield* child.emit({ type: "message_start", message: { role: "assistant" } });
+          yield* child.emit({
+            type: "message_update",
+            assistantMessageEvent: {
+              type: "text_end",
+              contentIndex: 0,
+              content: "Build failed; final result.",
+            },
+          });
+          yield* child.emit({
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Build failed; final result." }],
+              stopReason: "stop",
+            },
+          });
+          yield* child.emit({ type: "agent_settled" });
+          yield* completed(childThreadId, beforeWake);
+          assert.isEmpty(
+            (yield* orchestrator.getThreadShell(childThreadId))?.pendingBackgroundTasks,
+          );
+          yield* sink
+            .stream({
+              threadId: parentThreadId,
+              afterSequence: beforeWake,
+              eventType: "context-transfer.created",
+            })
+            .pipe(Stream.take(1), Stream.runDrain);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.result,
+            "Build failed; final result.",
+          );
+          yield* sink
+            .stream({
+              threadId: parentThreadId,
+              afterSequence: beforeWake,
+              eventType: "run.created",
+            })
+            .pipe(Stream.take(1), Stream.runDrain);
+          yield* worker.drain();
+          yield* (parentState === "stopped" ? resumedParent : parent).takeRequest("prompt");
+          // Replaying the completion offer and recovering again must not create another run.
+          const completion = offered.find((request) => request.delegatedCompletion !== undefined)!;
+          replaying = true;
+          yield* continuations.offer(completion);
+          yield* Deferred.await(replayChecked);
+          yield* orchestrator.recoverDelegatedResults;
+          yield* worker.drain();
+          const delivered = yield* orchestrator.getThreadProjection(parentThreadId);
+          assert.equal(delivered.runs.length, 2);
+          assert.equal(delivered.runs.at(-1)?.status, "running");
+          assert.equal(parentOpens, parentState === "stopped" ? 2 : 1);
+          assert.equal(
+            delivered.contextTransfers.filter((transfer) => transfer.type === "subagent_result")
+              .length,
+            1,
+          );
+          assert.equal(delivered.subagents[0]?.result, "Build failed; final result.");
+          assert.lengthOf(
+            delivered.messages.filter((message) => message.delegatedCompletion !== undefined),
+            1,
+          );
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              { name: `pi-delegated-background-${parentState}` },
+              makeSingleLayer(adapter),
+              { runEffectWorker: false },
+            ).pipe(Layer.provide(Layer.succeed(ProviderContinuationRequests, continuations))),
+          ),
+          Effect.provideService(ProviderContinuationRequests, continuations),
+        );
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
 
   it.effect("delivers a completion received while Pi's idle confirmation is in flight", () =>
     Effect.gen(function* () {

@@ -7,6 +7,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2CreationSource,
   OrchestrationV2ProviderRef,
+  OrchestrationV2PendingBackgroundTask,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
@@ -213,9 +214,7 @@ export function delegatedTaskProgress(projection: {
   readonly subagents: ReadonlyArray<
     Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
   >;
-  readonly providerThreads: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
-  >;
+  readonly pendingBackgroundTasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
 }) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
@@ -238,9 +237,7 @@ export function delegatedTaskProgress(projection: {
         task.completionDelivery?.state === "claimed",
     ) ||
     // Monitors are watchers: the result never waits on them.
-    projection.providerThreads.some(
-      (thread) => heldBackgroundWork(thread.pendingBackgroundTasks).length > 0,
-    );
+    heldBackgroundWork(projection.pendingBackgroundTasks).length > 0;
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
     .toSorted((a, b) => b.ordinal - a.ordinal)[0];

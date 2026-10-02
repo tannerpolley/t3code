@@ -163,7 +163,7 @@ function taskFixture() {
     checkpointId: null,
     contextHandoffId: null,
   };
-  return { projection: { ...projection, runs: [run] }, run };
+  return { projection: { ...projection, runs: [run], pendingBackgroundTasks: [] }, run };
 }
 
 it("waits for nested work and retains the report across monitor acknowledgements", () => {
@@ -201,7 +201,7 @@ it("waits for nested work and retains the report across monitor acknowledgements
   assert.equal(
     delegatedTaskProgress({
       ...projection,
-      providerThreads: [{ pendingBackgroundTasks: [{ taskId: "background-audit" }] }],
+      pendingBackgroundTasks: [{ taskId: "background-audit" }],
     }).state,
     "waiting_for_children",
   );
@@ -209,7 +209,7 @@ it("waits for nested work and retains the report across monitor acknowledgements
   assert.equal(
     delegatedTaskProgress({
       ...projection,
-      providerThreads: [{ pendingBackgroundTasks: [{ taskId: "bfscpwrr6", taskType: "monitor" }] }],
+      pendingBackgroundTasks: [{ taskId: "bfscpwrr6", taskType: "monitor" }],
     }).state,
     "result_available",
   );
