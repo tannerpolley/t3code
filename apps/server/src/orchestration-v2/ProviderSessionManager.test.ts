@@ -253,6 +253,7 @@ function makeProviderAdapter(
       readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+    readonly hasRunningServers?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
     readonly eventStreamEnded?: Deferred.Deferred<void>;
   } = {},
@@ -328,6 +329,9 @@ function makeProviderAdapter(
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+          ...(options.hasRunningServers === undefined
+            ? {}
+            : { hasRunningServers: options.hasRunningServers }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
@@ -370,6 +374,7 @@ function makeTestLayer(input: {
   }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  readonly hasRunningServers?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly eventStreamEnded?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
@@ -387,6 +392,9 @@ function makeTestLayer(input: {
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+      ...(input.hasRunningServers === undefined
+        ? {}
+        : { hasRunningServers: input.hasRunningServers }),
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
@@ -1777,58 +1785,70 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
   }),
 );
 
-it.effect("ProviderSessionManagerV2 defers idle release while background work is pending", () =>
-  Effect.gen(function* () {
-    const state = yield* Ref.make(emptyState);
-    const pendingWork = yield* Ref.make(true);
-    const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
-      const manager = yield* ProviderSessionManagerV2;
-      const now = yield* DateTime.now;
-      const threadId = yield* idAllocator.allocate.thread({
-        fixtureName: "provider-session-manager-idle-pin",
-        projectId: yield* idAllocator.allocate.project({
+it.effect.each([false, true])(
+  "ProviderSessionManagerV2 defers idle release (running server: %s)",
+  (server) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const pendingWork = yield* Ref.make(true);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSinkV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const manager = yield* ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = yield* idAllocator.allocate.thread({
           fixtureName: "provider-session-manager-idle-pin",
-        }),
-      });
-      const providerSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-        threadId,
+          projectId: yield* idAllocator.allocate.project({
+            fixtureName: "provider-session-manager-idle-pin",
+          }),
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        yield* TestClock.adjust("3 seconds");
+        yield* Effect.yieldNow;
+        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        if (server) {
+          assert.isFalse(
+            yield* manager.unloadProviderThread({
+              ...makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+              appThreadId: null,
+            }),
+          );
+          assert.deepEqual((yield* Ref.get(state)).unloadedProviderThreadIds, []);
+        }
+        yield* Ref.set(pendingWork, false);
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
       });
 
-      yield* eventSink.write({
-        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
-      });
-      yield* manager.open({
-        threadId,
-        providerSessionId,
-        modelSelection,
-        runtimePolicy,
-      });
-
-      yield* TestClock.adjust("3 seconds");
-      yield* Effect.yieldNow;
-      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
-      assert.equal((yield* Ref.get(state)).closeCount, 0);
-
-      yield* Ref.set(pendingWork, false);
-      yield* TestClock.adjust("1 second");
-      yield* Effect.yieldNow;
-      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
-      assert.equal((yield* Ref.get(state)).closeCount, 1);
-    });
-
-    yield* effect.pipe(
-      Effect.provide(
-        makeTestLayer({
-          state,
-          idleTimeoutMs: 1000,
-          hasPendingBackgroundWork: Ref.get(pendingWork),
-        }),
-      ),
-    );
-  }),
+      yield* effect.pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 1000,
+            ...(server ? { maxIdlePinMs: 2000, hasRunningServers: Ref.get(pendingWork) } : {}),
+            hasPendingBackgroundWork: Ref.get(pendingWork),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 releases pinned idle sessions once the pin cap expires", () =>

@@ -1,9 +1,10 @@
 import { CommandId, type ProviderThreadId, type ThreadId } from "@t3tools/contracts";
-import { heldBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { sessionBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -53,7 +54,22 @@ export const makeSweep = Effect.gen(function* () {
     if (idleSinceMs === null) return;
     // Provider background work (for example a Claude background Bash) outlives the run.
     const shell = yield* projections.getThreadShell(threadId);
-    if (heldBackgroundWork(shell?.pendingBackgroundTasks).length > 0) return;
+    if (
+      sessionBackgroundWork(shell?.pendingBackgroundTasks).length > 0 ||
+      records.providerThreads.some(
+        (thread) => sessionBackgroundWork(thread.pendingBackgroundTasks).length > 0,
+      )
+    )
+      return;
+    // Native Codex children can have running terminals without a shell roster of their own.
+    for (const session of records.providerSessions) {
+      const runtime = yield* sessions.get(session.id);
+      if (
+        Option.isSome(runtime) &&
+        (yield* runtime.value.hasRunningServers ?? Effect.succeed(false))
+      )
+        return;
+    }
     if (nowMs - idleSinceMs < thresholdMinutes * MINUTE_MS) {
       // The thread stays connected, but a shared runtime (Codex) keeps each
       // settled native subagent loaded, MCP servers included, until unloaded.

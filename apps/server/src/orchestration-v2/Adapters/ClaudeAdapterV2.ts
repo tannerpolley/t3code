@@ -27,8 +27,9 @@ import type {
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
-  heldBackgroundWork,
+  sessionBackgroundWork,
   isMonitorBackgroundTask,
+  isServerBackgroundTask,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { classifyShellCommand } from "@t3tools/shared/shellCommand";
 import {
@@ -6323,7 +6324,7 @@ export function makeClaudeAdapterV2(
             // Session capability: any native thread with pending work pins idle. A monitor alone
             // is a watcher, not work, so it does not keep an idle session loaded.
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {
-              if (heldBackgroundWork([...roster.values()]).length > 0) {
+              if (sessionBackgroundWork([...roster.values()]).length > 0) {
                 return true;
               }
             }
@@ -6341,6 +6342,12 @@ export function makeClaudeAdapterV2(
               ) {
                 return true;
               }
+            }
+            return false;
+          }),
+          hasRunningServers: Effect.gen(function* () {
+            for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {
+              if ([...roster.values()].some(isServerBackgroundTask)) return true;
             }
             return false;
           }),

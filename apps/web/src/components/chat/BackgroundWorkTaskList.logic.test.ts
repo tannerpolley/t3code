@@ -171,9 +171,9 @@ describe("describeSidebarBackgroundWork", () => {
         taskId: "bash-child",
         description: "npm run dev",
         taskType: "local_bash",
-        childThreadId: "child-thread",
+        childThreadId: ThreadId.make("child-thread"),
       },
-    ] as never;
+    ];
     const parentRows = describeSidebarBackgroundWork(parentRoster, [finishedChild as never]);
     expect(parentRows.map((row) => [row.label, row.status])).toEqual([
       ["Start the dev server", "waiting"],
@@ -188,6 +188,25 @@ describe("describeSidebarBackgroundWork", () => {
       [],
     );
     expect(childRows.map((row) => [row.label, row.kind])).toEqual([["npm run dev", "process"]]);
+    const serverRoster = parentRoster.map((task) => ({
+      ...task,
+      ...(task.taskId === "bash-child" ? { commandKind: "server" } : {}),
+    }));
+    expect(
+      describeSidebarBackgroundWork(serverRoster, [finishedChild as never]).map((row) => [
+        row.label,
+        row.status,
+      ]),
+    ).toEqual([
+      ["Start the dev server", "ready"],
+      ["vp test", undefined],
+    ]);
+    expect(
+      describeBackgroundWorkTasks(pendingBackgroundWorkOfThread("child-thread", [], serverRoster), {
+        turnItems: [],
+        subagents: [],
+      }),
+    ).toMatchObject([{ label: "npm run dev", kind: "process", commandKind: "server" }]);
     // Lineage's own rows for the parent leave the child's shell to the child.
     expect(
       pendingBackgroundWorkOfThread("parent-thread", parentRoster).map((task) => task.taskId),

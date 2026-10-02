@@ -1,4 +1,5 @@
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import { heldBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type {
   ThreadLinkedPullRequest,
   EnvironmentId,
@@ -158,7 +159,7 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
   );
 }
 
-// Park runtime at idle when the post-settlement background roster is nonempty
+// Park runtime at idle while post-settlement background work holds the thread
 // so #4415 waiting-presentation Waiting (session.idle) can consume CTM runtime.
 // The server suppresses the roster while an interruptible activity run exists,
 // so a remaining roster is stronger than checkpoint-oriented waiting.
@@ -172,7 +173,7 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
     thread.status === "idle"
   )
     return null;
-  const hasPendingBackgroundTasks = (thread.pendingBackgroundTasks?.length ?? 0) > 0;
+  const hasPendingBackgroundTasks = heldBackgroundWork(thread.pendingBackgroundTasks).length > 0;
   const status = hasPendingBackgroundTasks ? "idle" : (thread.activityRunStatus ?? thread.status);
   return {
     status,

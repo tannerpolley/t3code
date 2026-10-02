@@ -39,7 +39,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  derivePendingBackgroundWork,
+  sessionBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -3115,7 +3118,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ),
           );
         const idleSinceMs = threadIdleSinceMs(activity);
-        if (idleSinceMs === null || idleSinceMs > DateTime.toEpochMillis(command.ifIdleSince)) {
+        const shell = yield* projectionStore
+          .getThreadShell(command.threadId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        const runtime = yield* providerSessions.get(command.providerSessionId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        );
+        const hasRunningServers =
+          Option.isSome(runtime) &&
+          (yield* runtime.value.hasRunningServers ?? Effect.succeed(false));
+        if (
+          idleSinceMs === null ||
+          idleSinceMs > DateTime.toEpochMillis(command.ifIdleSince) ||
+          sessionBackgroundWork(shell?.pendingBackgroundTasks).length > 0 ||
+          activity.providerThreads.some(
+            (thread) => sessionBackgroundWork(thread.pendingBackgroundTasks).length > 0,
+          ) ||
+          hasRunningServers
+        ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,

@@ -5544,12 +5544,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               taskId: WAKE_TASK_ID,
               description: "npm run dev",
               taskType: "local_bash",
-              commandKind: "node",
+              commandKind: "server",
               childThreadId,
               startedAt,
             },
           ]);
 
+          assert.isTrue(yield* harness.runtime.hasRunningServers!);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
           // The shell runs in the parent's session, so the parent's query stops it.
           const stop = harness.runtime.stopBackgroundTask;
           if (stop === undefined) return yield* Effect.die("Claude must stop background tasks.");

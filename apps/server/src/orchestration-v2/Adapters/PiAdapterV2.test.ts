@@ -1104,8 +1104,15 @@ describe("PiAdapterV2", () => {
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
       yield* fake.emit({ type: "agent_start" });
-      yield* fake.emit(jobEntry(startedJob("job_idle", job.child.pid!)));
+      yield* fake.emit(
+        jobEntry({
+          ...startedJob("job_idle", job.child.pid!),
+          command: "npm run dev",
+          description: "Preview",
+        }),
+      );
       yield* takeRoster(takeEvent, 1);
+      assert.isTrue(yield* runtime.hasRunningServers!);
       yield* fake.emit({ type: "agent_settled" });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       if (terminal.type !== "turn.terminal") return;
@@ -1119,6 +1126,7 @@ describe("PiAdapterV2", () => {
       assert.isNull(code);
       assert.equal(signal, "SIGKILL");
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasRunningServers!);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

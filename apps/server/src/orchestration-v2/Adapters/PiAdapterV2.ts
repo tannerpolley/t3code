@@ -2479,6 +2479,11 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         },
         events: Stream.fromQueue(events),
         hasPendingBackgroundWork: Effect.sync(() => backgroundJobs.size > 0),
+        hasRunningServers: Effect.sync(() =>
+          [...backgroundJobs.values()].some(
+            (job) => classifyShellCommand(job.command) === "server",
+          ),
+        ),
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
             () => threadState?.providerThread.id === providerThread.id && backgroundJobs.size > 0,

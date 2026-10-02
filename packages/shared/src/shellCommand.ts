@@ -236,6 +236,7 @@ export function shellCommandWaitPids(command: string): Array<number> | null {
 
 /** What a background shell mostly runs; `shell` when nothing more specific is recognized. */
 export type ShellCommandKind =
+  | "server"
   | "python"
   | "pytest"
   | "bash"
@@ -423,8 +424,37 @@ function programKind(
     const flag = args.findIndex((arg) => /^-[a-z]*c[a-z]*$/.test(arg));
     return flag < 0 || args[flag + 1] === undefined ? "bash" : nested(args[flag + 1]!);
   }
+  // ponytail: command names and listen flags are a heuristic; custom scripts can fool it.
+  // Add an explicit provider server hint if command inspection stops being sufficient.
+  if (
+    args.some((arg) => /^--(?:port|host)(?:=|$)/.test(arg)) ||
+    ["uvicorn", "gunicorn", "http.server"].includes(name) ||
+    (name === "vite" && !["build", "optimize"].includes(args[0] ?? "")) ||
+    (["next", "astro"].includes(name) && ["dev", "start", "preview"].includes(args[0] ?? "")) ||
+    (name === "flask" && args.includes("run")) ||
+    (name === "jupyter" && ["lab", "notebook"].includes(args[0] ?? "")) ||
+    (name === "quarto" && args[0] === "preview") ||
+    (name === "hugo" && args[0] === "server") ||
+    (name === "mkdocs" && args[0] === "serve") ||
+    (["npm", "pnpm", "yarn", "bun", "vp", "vpr"].includes(name) &&
+      /^(?:run\s+)?(?:dev|serve|preview|start)$/.test(
+        args.slice(0, args[0] === "run" ? 2 : 1).join(" "),
+      ))
+  ) {
+    return "server";
+  }
+  if (["npx", "bunx"].includes(name)) {
+    return programKind(skipOptions(args, "p"), nested) === "server"
+      ? "server"
+      : (PROGRAM_KINDS[name] ?? null);
+  }
+  if (["npm", "pnpm", "yarn", "bun"].includes(name) && args[0] === "exec") {
+    return programKind(args.slice(1), nested) === "server"
+      ? "server"
+      : (PROGRAM_KINDS[name] ?? null);
+  }
   if (name === "python" && args[0] === "-m" && args[1] !== undefined) {
-    return PROGRAM_KINDS[args[1]] === "pytest" ? "pytest" : "python";
+    return programKind(args.slice(1), nested) ?? "python";
   }
   if (
     name === "kill" &&
@@ -470,14 +500,16 @@ export function classifyShellCommand(command: string): ShellCommandKind {
   const weak: Array<ShellCommandKind> = [];
   let hasLoop = false;
   const scan = (source: string): ShellCommandKind | null => {
+    let firstKind: ShellCommandKind | null = null;
     for (const words of shellCommandWords(source)) {
       if (words.some((word) => word === "while" || word === "until")) hasLoop = true;
       const kind = programKind(words, scan);
       if (kind === null || kind === "shell") continue;
-      if (!WEAK_KINDS.includes(kind)) return kind;
-      weak.push(kind);
+      if (kind === "server") return kind;
+      if (!WEAK_KINDS.includes(kind)) firstKind ??= kind;
+      else weak.push(kind);
     }
-    return null;
+    return firstKind;
   };
   return (
     scan(command) ??

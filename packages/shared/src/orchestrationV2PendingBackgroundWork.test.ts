@@ -3,11 +3,69 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   derivePendingBackgroundWork,
   formatPendingBackgroundWorkLabel,
+  heldBackgroundWork,
+  sessionBackgroundWork,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
 const SHELL_STARTED_AT = DateTime.makeUnsafe("2026-09-29T08:00:00.000Z");
 
 describe("derivePendingBackgroundWork", () => {
+  it("lists Codex servers and Claude/Pi roster servers without holding the thread", () => {
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+      providerThreads: [
+        {
+          id: "pt-1" as never,
+          pendingBackgroundTasks: [
+            {
+              taskId: "claude",
+              taskType: "local_bash",
+              commandKind: "server",
+              startedAt: SHELL_STARTED_AT,
+            },
+            { taskId: "pi", taskType: "local_bash", commandKind: "server" },
+            { taskId: "monitor", taskType: "monitor", commandKind: "watcher" },
+          ],
+        },
+      ],
+      turnItems: [
+        {
+          id: "codex",
+          type: "command_execution",
+          status: "running",
+          title: "Preview",
+          input: "npm run dev",
+          startedAt: SHELL_STARTED_AT,
+        },
+        {
+          id: "tests",
+          type: "command_execution",
+          status: "running",
+          title: "Tests",
+          input: "npm test",
+        },
+        {
+          id: "stopped",
+          type: "command_execution",
+          status: "interrupted",
+          title: "Stopped preview",
+          input: "npm run dev",
+        },
+      ],
+    });
+    expect(tasks.map((task) => task.taskId)).toEqual(["claude", "pi", "monitor", "codex", "tests"]);
+    expect(tasks.find((task) => task.taskId === "codex")).toMatchObject({
+      commandKind: "server",
+      startedAt: SHELL_STARTED_AT,
+    });
+    expect(heldBackgroundWork(tasks).map((task) => task.taskId)).toEqual(["tests"]);
+    expect(sessionBackgroundWork(tasks).map((task) => task.taskId)).toEqual([
+      "claude",
+      "pi",
+      "codex",
+      "tests",
+    ]);
+  });
   it("returns empty while the latest run is not settled", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "running" },
