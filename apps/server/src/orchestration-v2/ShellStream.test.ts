@@ -530,3 +530,13 @@ it.effect("reduces shell projections for streaming items while retaining final s
     expect(afterProjections.at(-1)?.sequence).toBe(201);
   }),
 );
+
+// A native child's lifecycle is stored on its parent, but its navigation row must refresh.
+it("refreshes native child shells without retaining the parent's subagent body", () => {
+  const stored = (origin: "provider_native" | "app_owned") => ({
+    sequence: 7,
+    event: { threadId: "thread-parent", type: "subagent.updated", payload: { origin, childThreadId: "thread-child" } },
+  }) as unknown as ApplicationStoredEvent;
+  expect(toShellApplicationEvent(stored("provider_native"))).toEqual({ sequence: 7, event: { threadId: "thread-child" } });
+  expect(toShellApplicationEvent(stored("app_owned"))).toEqual({ sequence: 7, event: { threadId: "thread-parent" } });
+});
