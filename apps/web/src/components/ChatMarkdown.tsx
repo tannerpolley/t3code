@@ -82,8 +82,10 @@ import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
+import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
+import remarkMath from "remark-math";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
@@ -91,6 +93,7 @@ import remarkGfm from "remark-gfm";
 import type { Processor } from "unified";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
+import { normalizeProviderMathDelimiters, remarkProviderMath } from "../markdown-math";
 import {
   artifactTemplateFromHastProperties,
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
@@ -474,9 +477,22 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    code: [
+      ...(defaultSchema.attributes?.code ?? []).filter(
+        (attribute) => !(Array.isArray(attribute) && attribute[0] === "className"),
+      ),
+      // Math classes must survive to rehype-katex, which reads them for display mode.
+      ["className", /^language-./, "math-inline", "math-display"],
+      "dataCodeMeta",
+      "dataInlineCode",
+    ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
-    div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
+    div: [
+      ...(defaultSchema.attributes?.div ?? []),
+      ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
+      ["className", "math", "math-display"],
+    ],
+    span: [...(defaultSchema.attributes?.span ?? []), ["className", "math", "math-inline"]],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
     img: [
       ...(defaultSchema.attributes?.img ?? []),
@@ -492,9 +508,84 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
+/** Admits KaTeX's generated HTML and MathML after it renders sanitized math. */
+const CHAT_MARKDOWN_KATEX_SANITIZE_SCHEMA = {
+  ...CHAT_MARKDOWN_SANITIZE_SCHEMA,
+  tagNames: [
+    ...(CHAT_MARKDOWN_SANITIZE_SCHEMA.tagNames ?? []),
+    "annotation",
+    "math",
+    "menclose",
+    "mglyph",
+    "mi",
+    "mn",
+    "mo",
+    "mover",
+    "mpadded",
+    "mphantom",
+    "mroot",
+    "mrow",
+    "mspace",
+    "msqrt",
+    "mstyle",
+    "msub",
+    "msubsup",
+    "msup",
+    "mtable",
+    "mtd",
+    "mtext",
+    "mtr",
+    "munder",
+    "munderover",
+    "path",
+    "semantics",
+    "svg",
+  ],
+  attributes: {
+    ...CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes,
+    span: [
+      ...(CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes?.span ?? []),
+      "ariaHidden",
+      "className",
+      "style",
+    ],
+    math: ["display", "xmlns"],
+    annotation: ["encoding"],
+    mi: ["mathvariant"],
+    mo: [
+      "accent",
+      "fence",
+      "largeop",
+      "lspace",
+      "maxsize",
+      "minsize",
+      "rspace",
+      "separator",
+      "stretchy",
+    ],
+    mspace: ["height", "linebreak", "width"],
+    mstyle: [
+      "displaystyle",
+      "mathbackground",
+      "mathcolor",
+      "mathsize",
+      "mathvariant",
+      "scriptlevel",
+    ],
+    mtable: ["columnalign", "columnlines", "columnspacing", "rowlines", "rowspacing"],
+    mtd: ["columnspan", "rowspan"],
+    menclose: ["notation"],
+    mpadded: ["depth", "height", "lspace", "voffset", "width"],
+    svg: ["ariaHidden", "height", "preserveAspectRatio", "style", "viewBox", "width"],
+    path: ["d"],
+  },
+} satisfies Parameters<typeof rehypeSanitize>[0];
+
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
   remarkKeepWindowsPathDestinations,
+  remarkMath,
+  remarkProviderMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -505,6 +596,8 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
   remarkKeepWindowsPathDestinations,
+  remarkMath,
+  remarkProviderMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -513,11 +606,29 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
-const CHAT_MARKDOWN_REHYPE_PLUGINS = [
+// Without rehype-raw, HTML in the source stays inert text; sanitizing here would drop those
+// nodes and blank the message. KaTeX output is generated, not taken from the source.
+const CHAT_MARKDOWN_REHYPE_PLUGINS = [rehypeKatex] satisfies NonNullable<
+  ReactMarkdownOptions["rehypePlugins"]
+>;
+
+// With the "Math in chat" setting off, markdown renders without any math plugin.
+const CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW_NO_MATH = [
   rehypeRaw,
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW = [
+  ...CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW_NO_MATH,
+  rehypeKatex,
+  [rehypeSanitize, CHAT_MARKDOWN_KATEX_SANITIZE_SCHEMA],
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const notMathPlugin = (plugin: unknown) => plugin !== remarkMath && plugin !== remarkProviderMath;
+const CHAT_MARKDOWN_REMARK_PLUGINS_NO_MATH = CHAT_MARKDOWN_REMARK_PLUGINS.filter(notMathPlugin);
+const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS_NO_MATH =
+  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS.filter(notMathPlugin);
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -3492,17 +3603,34 @@ function ChatMarkdown({
     localMediaPreview,
     setLocalMediaPreview,
   } = useChatMarkdownState({ text, ...props });
+  const chatMath = useClientSettings((settings) => settings.chatMath);
+  const renderedText = useMemo(
+    () =>
+      chatMath
+        ? normalizeProviderMathDelimiters(
+            text,
+            props.skills?.map((skill) => skill.name),
+          )
+        : text,
+    [chatMath, props.skills, text],
+  );
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
   const remarkPlugins = useMemo(
     () => [
-      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      ...(lineBreaks
+        ? chatMath
+          ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS
+          : CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS_NO_MATH
+        : chatMath
+          ? CHAT_MARKDOWN_REMARK_PLUGINS
+          : CHAT_MARKDOWN_REMARK_PLUGINS_NO_MATH),
       ...extraRemarkPlugins,
       ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
     ],
-    [extraRemarkPlugins, incrementalParsing, lineBreaks],
+    [chatMath, extraRemarkPlugins, incrementalParsing, lineBreaks],
   );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
@@ -3522,12 +3650,20 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+          rehypePlugins={
+            parseRawHtml
+              ? chatMath
+                ? CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW
+                : CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW_NO_MATH
+              : chatMath
+                ? CHAT_MARKDOWN_REHYPE_PLUGINS
+                : undefined
+          }
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
-          {text}
+          {renderedText}
         </ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
