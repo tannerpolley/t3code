@@ -229,7 +229,7 @@ export function IssueBrowser({
   readonly repositories: ReturnType<typeof useIssueRepositoryTargets>;
   readonly search: IssueBrowserSearch;
   readonly onSearchChange: (patch: IssueBrowserSearch) => void;
-  /** Clears a repository link's scope; only the page takes one. */
+  /** Clears a repository scope. */
   readonly onShowAllRepositories?: () => void;
   readonly selectedIssue?: IssueTarget | null;
   readonly onSelectIssue: (target: IssueTarget) => void;
@@ -859,11 +859,18 @@ export function IssueBrowser({
 
 /**
  * The issue list as a right-panel surface beside a thread; an issue opens in a tab next to it.
+ * The tab's saved scope narrows it to one repository until "Show all repositories" widens it.
  * The newest issue tab stays selected, so returning to the list reopens the tree where it was.
  */
 export function IssueListPanel({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const repositories = useIssueRepositoryTargets();
   const [search, setSearch] = useState<IssueBrowserSearch>({});
+  const scope = useRightPanelStore(
+    (state) =>
+      selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces.find(
+        (surface) => surface.kind === "issues",
+      )?.scope ?? null,
+  );
   const lastIssue = useRightPanelStore(
     (state) =>
       selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces.findLast(
@@ -874,8 +881,14 @@ export function IssueListPanel({ threadRef }: { readonly threadRef: ScopedThread
     <IssueBrowser
       variant="panel"
       repositories={repositories}
-      search={search}
+      search={scope === null ? search : { ...search, ...scope }}
       onSearchChange={(patch) => setSearch((current) => ({ ...current, ...patch }))}
+      {...(scope === null
+        ? {}
+        : {
+            onShowAllRepositories: () =>
+              useRightPanelStore.getState().openIssueList(threadRef, null),
+          })}
       selectedIssue={lastIssue?.kind === "issue" ? lastIssue : null}
       onSelectIssue={(target) => useRightPanelStore.getState().openIssue(threadRef, target)}
     />

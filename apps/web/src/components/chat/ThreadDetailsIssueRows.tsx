@@ -244,7 +244,9 @@ function IssueRowsBody({
       <ThreadDetailsControl
         tone="muted"
         onClick={() =>
-          useRightPanelStore.getState().open(scopeThreadRef(environmentId, threadId), "issues")
+          useRightPanelStore
+            .getState()
+            .openIssueList(scopeThreadRef(environmentId, threadId), { host, repository })
         }
       >
         <ListIcon aria-hidden className="-mx-0.5 size-4 shrink-0" />
