@@ -54,7 +54,9 @@ export function SidebarProjectSettings() {
       serverScoped
       settingKeys={["projectFolderRoot"]}
       {...searchableSetting("organize-by-folder")}
-      description="Mirror this folder's layout in the Projects view. Leave empty to use Add project starts in when it is a full path."
+      description={
+        'Mirror a folder\'s layout as sections: root/A/B/project goes to section A, subsection B. Projects inside another project stay with it; projects elsewhere keep their place. Safe to run again. Leave empty to use "Add project starts in" when that is a full path.'
+      }
       control={
         <div className="flex w-full items-center gap-2 sm:w-96">
           <DraftInput
@@ -70,7 +72,7 @@ export function SidebarProjectSettings() {
             spellCheck={false}
             value={projectFolderRoot}
           />
-          <Button disabled={folderRoot.length === 0} onClick={organize} size="sm">
+          <Button disabled={folderRoot.length === 0} onClick={organize} size="sm" variant="outline">
             Organize
           </Button>
         </div>

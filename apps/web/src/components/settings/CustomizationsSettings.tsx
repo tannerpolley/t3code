@@ -12,6 +12,7 @@ import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { ModelRolesSection } from "./ModelRolesSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { SidebarProjectSettings } from "./SidebarProjectSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -20,8 +21,10 @@ type CustomizationSwitchKey = {
   [Key in keyof ClientSettings]: ClientSettings[Key] extends boolean ? Key : never;
 }[keyof ClientSettings];
 
+// "folders" holds the automatic organization switch, rendered beside its root folder.
 type CustomizationSection =
   | "sidebar"
+  | "folders"
   | "lineage"
   | "composer"
   | "versionControl"
@@ -63,7 +66,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
   {
     key: "autoOrganizeByFolder",
     searchId: "auto-organize-by-folder",
-    section: "sidebar",
+    section: "folders",
     description:
       "Put projects that are in no section yet into their folder's section automatically, using the Organize by folder root. Projects you move by hand stay where you put them.",
   },
@@ -209,6 +212,27 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
   },
 ];
 
+function CustomizationSwitchRows({ section }: { readonly section: CustomizationSection }) {
+  const settings = useClientSettings();
+  const updateSettings = useUpdateClientSettings();
+  return CUSTOMIZATION_SWITCHES.filter((entry) => entry.section === section).map(
+    ({ key, searchId, description }) => (
+      <SettingsRow
+        key={key}
+        {...searchableSetting(searchId)}
+        description={description}
+        control={
+          <Switch
+            aria-label={searchableSetting(searchId).title}
+            checked={settings[key]}
+            onCheckedChange={(checked) => updateSettings({ [key]: checked })}
+          />
+        }
+      />
+    ),
+  );
+}
+
 function CustomizationsGroup({
   title,
   section,
@@ -218,26 +242,9 @@ function CustomizationsGroup({
   readonly section: CustomizationSection;
   readonly children?: ReactNode;
 }) {
-  const settings = useClientSettings();
-  const updateSettings = useUpdateClientSettings();
   return (
     <SettingsSection title={title}>
-      {CUSTOMIZATION_SWITCHES.filter((entry) => entry.section === section).map(
-        ({ key, searchId, description }) => (
-          <SettingsRow
-            key={key}
-            {...searchableSetting(searchId)}
-            description={description}
-            control={
-              <Switch
-                aria-label={searchableSetting(searchId).title}
-                checked={settings[key]}
-                onCheckedChange={(checked) => updateSettings({ [key]: checked })}
-              />
-            }
-          />
-        ),
-      )}
+      <CustomizationSwitchRows section={section} />
       {children}
     </SettingsSection>
   );
@@ -359,6 +366,8 @@ function ProviderPluginsSection() {
   );
 }
 
+const PROJECT_ICON_FALLBACK_LABELS = { folder: "Folder", initials: "Initials" } as const;
+const SIDEBAR_TOGGLE_POSITION_LABELS = { left: "Left", right: "Right" } as const;
 const LINEAGE_AUTO_CLEAR_MINUTES = [0, 30, 60] as const;
 const lineageAutoClearLabel = (minutes: number) =>
   minutes === 0 ? "Off" : minutes === 60 ? "1 hour" : `${minutes} minutes`;
@@ -369,6 +378,68 @@ export function CustomizationsSettings() {
   return (
     <SettingsPageContainer>
       <CustomizationsGroup title="Sidebar & projects" section="sidebar">
+        <SettingsRow
+          {...searchableSetting("sidebar-toggle-position")}
+          description="Which top corner of the open sidebar holds its toggle. A collapsed sidebar keeps it at the left. Left is the original."
+          control={
+            <Select
+              value={settings.sidebarTogglePosition}
+              onValueChange={(value) => {
+                if (value === "left" || value === "right") {
+                  updateSettings({ sidebarTogglePosition: value });
+                }
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="Toggle button position"
+              >
+                <SelectValue>
+                  {SIDEBAR_TOGGLE_POSITION_LABELS[settings.sidebarTogglePosition]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="left">
+                  {SIDEBAR_TOGGLE_POSITION_LABELS.left}
+                </SelectItem>
+                <SelectItem hideIndicator value="right">
+                  {SIDEBAR_TOGGLE_POSITION_LABELS.right}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("project-icon-fallback")}
+          description="Shown for projects without a favicon or custom icon. Initials is the original."
+          control={
+            <Select
+              value={settings.projectIconFallback}
+              onValueChange={(value) => {
+                if (value === "folder" || value === "initials") {
+                  updateSettings({ projectIconFallback: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Default project icon">
+                <SelectValue>
+                  {PROJECT_ICON_FALLBACK_LABELS[settings.projectIconFallback]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="folder">
+                  {PROJECT_ICON_FALLBACK_LABELS.folder}
+                </SelectItem>
+                <SelectItem hideIndicator value="initials">
+                  {PROJECT_ICON_FALLBACK_LABELS.initials}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <CustomizationSwitchRows section="folders" />
+        <SidebarProjectSettings />
         <ServerSwitchRow
           settingKey="keepThreadTitlesCurrent"
           searchId="keep-thread-titles-current"

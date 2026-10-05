@@ -1,4 +1,3 @@
-import { SidebarProjectSettings } from "./SidebarProjectSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
@@ -2261,59 +2260,6 @@ export function GeneralSettingsPanel() {
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
-        <SidebarProjectSettings />
-        <SettingsRow
-          {...searchableSetting("project-icon-fallback")}
-          control={
-            <Select
-              value={settings.projectIconFallback}
-              onValueChange={(value) => {
-                if (value === "folder" || value === "initials")
-                  updateSettings({ projectIconFallback: value });
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Default project icon">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup align="end">
-                <SelectItem value="folder" key="folder">
-                  Folder
-                </SelectItem>
-                <SelectItem value="initials" key="initials">
-                  Initials
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("sidebar-toggle-position")}
-          control={
-            <Select
-              value={settings.sidebarTogglePosition}
-              onValueChange={(value) => {
-                if (value === "left" || value === "right")
-                  updateSettings({ sidebarTogglePosition: value });
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                className="w-full sm:w-44"
-                aria-label="Sidebar toggle position"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup align="end">
-                <SelectItem value="left" key="left">
-                  Left
-                </SelectItem>
-                <SelectItem value="right" key="right">
-                  Right
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."
