@@ -266,7 +266,7 @@ describe("limitReadouts", () => {
   const readouts = (now: string, weeklyUsed: number) =>
     limitReadouts({
       session: { usedPercent: 38, resetsAt: Date.parse("2026-10-05T18:00:00Z") },
-      weekly: { usedPercent: weeklyUsed, span },
+      weekly: { usedPercent: weeklyUsed, members: [{ usedPercent: weeklyUsed, span }] },
       now: Date.parse(now),
       timeZone,
     });
@@ -274,23 +274,68 @@ describe("limitReadouts", () => {
   it("reports the five-hour, daily and weekly quota left", () => {
     const { session, daily, weekly } = readouts("2026-10-05T16:00:00Z", 31);
     expect(session?.leftPercent).toBe(62);
-    // Budget ≈ 51.67 points, 31 used: (51.67 - 31) / 51.67 ≈ 40% of the budget left.
-    expect(daily).toEqual({ usedPercent: 31, budgetPercent: 52, leftPercent: 40 });
+    // Budget ≈ 51.67 points, 31 used: (51.67 - 31) / 51.67 ≈ 40% of the budget left. The budget
+    // grows at Tuesday's local midnight; usage restarts only with the weekly window.
+    expect(daily).toEqual({
+      usedPercent: 31,
+      budgetPercent: 52,
+      leftPercent: 40,
+      nextStepAt: Date.parse("2026-10-06T04:00:00Z"),
+      resetsAt: span.end,
+    });
     expect(weekly).toEqual({ usedPercent: 31, leftPercent: 69, resetsAt: span.end });
+  });
+
+  it("paces staggered accounts each on their own window", () => {
+    // A second account opened Monday 10:00, so its Monday is worth 20 * 14/24. Averaged with the
+    // first account's 51.67, the pooled budget is 31.67 against 31 used: about 2% left, not the
+    // 40% the earliest window alone would give. The account with no clock has no budget, so its
+    // usage stays out of the day.
+    const { daily } = limitReadouts({
+      session: null,
+      weekly: {
+        usedPercent: 51,
+        members: [
+          { usedPercent: 31, span },
+          {
+            usedPercent: 31,
+            span: {
+              start: Date.parse("2026-10-05T14:00:00Z"),
+              end: Date.parse("2026-10-12T14:00:00Z"),
+            },
+          },
+          { usedPercent: 90, span: null },
+        ],
+      },
+      now: Date.parse("2026-10-05T16:00:00Z"),
+      timeZone,
+    });
+    expect(daily).toMatchObject({ usedPercent: 31, budgetPercent: 32, leftPercent: 2 });
+    expect(daily?.resetsAt).toBe(span.end);
   });
 
   it("goes negative over pace", () => {
     expect(readouts("2026-10-05T16:00:00Z", 62).daily?.leftPercent).toBe(-20);
   });
 
-  it("has no daily share left on a day off", () => {
-    expect(readouts("2026-10-03T16:00:00Z", 10).daily?.leftPercent).toBeNull();
+  it("has no daily share left on a day off, and grows again on Monday", () => {
+    const { daily } = readouts("2026-10-03T16:00:00Z", 10);
+    expect(daily?.leftPercent).toBeNull();
+    expect(daily?.nextStepAt).toBe(Date.parse("2026-10-05T04:00:00Z"));
+  });
+
+  it("has no next step once the window resets first", () => {
+    // Wednesday night: Thursday's midnight is still inside the window, Friday's is not.
+    expect(readouts("2026-10-08T03:00:00Z", 10).daily?.nextStepAt).toBe(
+      Date.parse("2026-10-08T04:00:00Z"),
+    );
+    expect(readouts("2026-10-08T13:00:00Z", 10).daily?.nextStepAt).toBeNull();
   });
 
   it("skips the day without a weekly reset clock", () => {
     const result = limitReadouts({
       session: null,
-      weekly: { usedPercent: 25, span: null },
+      weekly: { usedPercent: 25, members: [{ usedPercent: 25, span: null }] },
       now: Date.parse("2026-10-05T16:00:00Z"),
       timeZone,
     });

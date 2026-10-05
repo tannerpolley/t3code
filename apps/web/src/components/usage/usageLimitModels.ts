@@ -54,6 +54,17 @@ function nextDay(day: string): string {
   return new Date(Date.parse(`${day}T00:00:00Z`) + DAY_MS).toISOString().slice(0, 10);
 }
 
+/** When one account's window opened (clamped to now) and resets, or null without a clock. */
+export function memberWindowSpan(
+  window: LimitPoolWindow["members"][number]["window"],
+  now: number,
+): { readonly start: number; readonly end: number } | null {
+  if (window.resetsAt === undefined || window.windowDurationMins === undefined) return null;
+  const end = Date.parse(window.resetsAt);
+  const start = Math.min(end - window.windowDurationMins * 60_000, now);
+  return Number.isFinite(start) ? { start, end } : null;
+}
+
 /**
  * When the pooled window opened and resets: the earliest-opening member's
  * span (its start clamped to now), or null when no member has a clock.
@@ -62,12 +73,10 @@ export function poolWindowSpan(
   pool: LimitPoolWindow,
   now: number,
 ): { readonly start: number; readonly end: number } | null {
-  let span: { start: number; end: number } | null = null;
+  let span: { readonly start: number; readonly end: number } | null = null;
   for (const { window } of pool.members) {
-    if (window.resetsAt === undefined || window.windowDurationMins === undefined) continue;
-    const end = Date.parse(window.resetsAt);
-    const start = Math.min(end - window.windowDurationMins * 60_000, now);
-    if (Number.isFinite(start) && (span === null || start < span.start)) span = { start, end };
+    const member = memberWindowSpan(window, now);
+    if (member && (span === null || member.start < span.start)) span = member;
   }
   return span;
 }
@@ -118,23 +127,46 @@ export interface WindowReadout {
   readonly resetsAt: number | null;
 }
 
-/** Today's pace budget; `leftPercent` is the budget's share left, negative over pace, null on a day off. */
+/**
+ * Today's pace budget; `leftPercent` is the budget's share left, negative over pace, null on a day
+ * off. The budget grows at `nextStepAt`, the next workday's local midnight (null once nothing more
+ * accrues), while usage only restarts when the weekly window resets at `resetsAt`.
+ */
 export interface DailyReadout {
   readonly usedPercent: number;
   readonly budgetPercent: number;
   readonly leftPercent: number | null;
+  readonly nextStepAt: number | null;
+  readonly resetsAt: number;
+}
+
+/** One account's weekly window: what it used and its clock, if it reports one. */
+export interface WeeklyMember {
+  readonly usedPercent: number;
+  readonly span: { readonly start: number; readonly end: number } | null;
+}
+
+/** Local midnight starting the first Monday–Friday after the day `now` falls on. */
+function nextWorkdayStart(now: number, timeZone: string): number {
+  let day = nextDay(localDay(now, timeZone));
+  while ([0, 6].includes(new Date(`${day}T00:00:00Z`).getUTCDay())) day = nextDay(day);
+  return dayStartMs(day, timeZone);
 }
 
 /**
  * The sidebar's per-provider readouts: the five-hour window left, today's
- * pace budget left as a share of the budget, and the weekly limit left. The
- * day needs the weekly window's span; without it there is no daily readout.
+ * pace budget left as a share of the budget, and the weekly limit left.
+ *
+ * Accounts' weekly windows can open on different days, so the day is paced
+ * per account and then averaged, budget and usage over the same accounts:
+ * only those with a clock, since without one there is no budget. With none,
+ * there is no daily readout.
  */
 export function limitReadouts(input: {
   readonly session: { readonly usedPercent: number; readonly resetsAt: number | null } | null;
   readonly weekly: {
     readonly usedPercent: number;
-    readonly span: { readonly start: number; readonly end: number } | null;
+    readonly members: readonly WeeklyMember[];
   } | null;
   readonly now: number;
   readonly timeZone: string;
@@ -143,35 +175,53 @@ export function limitReadouts(input: {
   readonly daily: DailyReadout | null;
   readonly weekly: WindowReadout | null;
 } {
-  const { session, weekly } = input;
-  const span = weekly?.span ?? null;
-  const pace =
-    weekly && span
-      ? dailyPaceBudget({
-          windowStart: span.start,
-          windowEnd: span.end,
-          now: input.now,
-          timeZone: input.timeZone,
-        })
-      : null;
+  const { session, weekly, now, timeZone } = input;
+  const timed = (weekly?.members ?? []).flatMap((member) =>
+    member.span
+      ? [
+          {
+            usedPercent: member.usedPercent,
+            end: member.span.end,
+            pace: dailyPaceBudget({
+              windowStart: member.span.start,
+              windowEnd: member.span.end,
+              now,
+              timeZone,
+            }),
+          },
+        ]
+      : [],
+  );
+  const mean = (values: readonly number[]) =>
+    values.reduce((sum, value) => sum + value, 0) / values.length;
+  const resetsAt = timed.length > 0 ? Math.min(...timed.map((member) => member.end)) : null;
+  let daily: DailyReadout | null = null;
+  if (resetsAt !== null) {
+    const budget = mean(timed.map((member) => member.pace.budgetPercent));
+    const used = mean(timed.map((member) => member.usedPercent));
+    const step = nextWorkdayStart(now, timeZone);
+    daily = {
+      usedPercent: Math.round(used),
+      budgetPercent: Math.round(budget),
+      // The day is the same local day for every account.
+      leftPercent: !timed[0]!.pace.isWorkday
+        ? null
+        : budget > 0
+          ? Math.round(((budget - used) / budget) * 100)
+          : 0,
+      nextStepAt: timed.some((member) => step < member.end && member.pace.budgetPercent < 100)
+        ? step
+        : null,
+      resetsAt,
+    };
+  }
   return {
     session: session && { ...session, leftPercent: 100 - session.usedPercent },
-    daily:
-      weekly && pace
-        ? {
-            usedPercent: weekly.usedPercent,
-            budgetPercent: Math.round(pace.budgetPercent),
-            leftPercent: !pace.isWorkday
-              ? null
-              : pace.budgetPercent > 0
-                ? Math.round(((pace.budgetPercent - weekly.usedPercent) / pace.budgetPercent) * 100)
-                : 0,
-          }
-        : null,
+    daily,
     weekly: weekly && {
       usedPercent: weekly.usedPercent,
       leftPercent: 100 - weekly.usedPercent,
-      resetsAt: span?.end ?? null,
+      resetsAt,
     },
   };
 }

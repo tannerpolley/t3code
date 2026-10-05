@@ -6,7 +6,7 @@ import {
   collectLimitPools,
   formatDuration,
 } from "@t3tools/shared/usageLimits";
-import { Fragment, useMemo, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -16,7 +16,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { limitReadouts, poolWindowSpan } from "../usage/usageLimitModels";
+import { limitReadouts, memberWindowSpan, poolWindowSpan } from "../usage/usageLimitModels";
 import { readUsagePagePreferences, saveUsagePagePreferences } from "../usage/usagePagePreferences";
 
 const READOUT_DRIVERS = ["claudeAgent", "codex"] as const;
@@ -57,7 +57,13 @@ function useLimitReadoutRows(enabled: {
             }
           : null,
         weekly: weekly
-          ? { usedPercent: weekly.usedPercent, span: poolWindowSpan(weekly, now) }
+          ? {
+              usedPercent: weekly.usedPercent,
+              members: weekly.members.map(({ window }) => ({
+                usedPercent: window.usedPercent,
+                span: memberWindowSpan(window, now),
+              })),
+            }
           : null,
         now,
         timeZone,
@@ -99,9 +105,10 @@ function leftClass(leftPercent: number): string {
 }
 
 /**
- * The footer's Usage button, shown as each provider's quota left (`5h 62%`, `1d 40%`, `7d 75%`)
- * for the readouts that are switched on. Renders `fallback`, the plain button, when none is on
- * and until a limit is known.
+ * The footer's Usage readouts, each provider's quota left (`5h 62%`, `1d 40%`, `7d 75%`) for the
+ * readouts that are switched on. They take their own row above the footer's icon buttons, one
+ * button per provider that wraps when the sidebar is too narrow for both. Renders `fallback`, the
+ * plain button, when none is on and until a limit is known.
  */
 export function SidebarUsageItem(props: { readonly fallback: ReactNode }) {
   const session = useClientSettings((settings) => settings.sidebarFiveHourUsage);
@@ -122,46 +129,39 @@ function UsageReadoutItem(props: {
   const openLimits = useOpenUsageLimits();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   if (rows.length === 0) return props.fallback;
-  const resets = (at: number | null) =>
-    at === null
-      ? ""
-      : ` · resets ${formatUpcomingTimestamp(new Date(at).toISOString(), timestampFormat, now)}${
-          at > now ? ` · in ${formatDuration(at - now)}` : ""
-        }`;
-  const summary = rows
-    .map((row) => {
-      const { session, daily, weekly } = row.readouts;
-      const parts = [
-        session ? `${session.leftPercent}% of 5 hours left` : null,
-        daily
-          ? daily.leftPercent === null
-            ? "day off"
-            : `${daily.leftPercent}% of today's budget left`
-          : null,
-        weekly ? `${weekly.leftPercent}% of weekly left` : null,
-      ];
-      return `${row.label} ${parts.filter(Boolean).join(", ")}`;
-    })
-    .join("; ");
+  const when = (at: number) =>
+    `${formatUpcomingTimestamp(new Date(at).toISOString(), timestampFormat, now)}${
+      at > now ? ` · in ${formatDuration(at - now)}` : ""
+    }`;
+  const resets = (at: number | null) => (at === null ? "" : ` · resets ${when(at)}`);
   return (
-    <SidebarMenuItem className="shrink-0">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarMenuButton
-              aria-label={`Usage: ${summary}`}
-              onClick={openLimits}
-              size="sm"
-              className="w-auto"
-            />
-          }
-        >
-          <span className="flex items-center gap-1.5 text-2xs font-medium tabular-nums">
-            {rows.map(({ driver, label, readouts: { session, daily, weekly } }, index) => (
-              <Fragment key={driver}>
-                {index > 0 ? (
-                  <span aria-hidden className="h-3 w-px shrink-0 bg-sidebar-border" />
-                ) : null}
+    // The parent menu wraps; `order-first w-full` puts this row above its icon buttons.
+    <SidebarMenuItem className="order-first flex w-full flex-wrap">
+      {rows.map(({ driver, label, readouts: { session, daily, weekly } }) => {
+        const summary = [
+          session ? `${session.leftPercent}% of 5 hours left` : null,
+          daily
+            ? daily.leftPercent === null
+              ? "day off"
+              : `${daily.leftPercent}% of today's budget left`
+            : null,
+          weekly ? `${weekly.leftPercent}% of weekly left` : null,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        return (
+          <Tooltip key={driver}>
+            <TooltipTrigger
+              render={
+                <SidebarMenuButton
+                  aria-label={`${label} usage: ${summary}`}
+                  onClick={openLimits}
+                  size="sm"
+                  className="w-auto"
+                />
+              }
+            >
+              <span className="flex items-center gap-1.5 text-2xs font-medium tabular-nums">
                 <ProviderInstanceIcon
                   driverKind={driver}
                   displayName={label}
@@ -181,14 +181,10 @@ function UsageReadoutItem(props: {
                 {weekly ? (
                   <span className={leftClass(weekly.leftPercent)}>7d {weekly.leftPercent}%</span>
                 ) : null}
-              </Fragment>
-            ))}
-          </span>
-        </TooltipTrigger>
-        <TooltipPopup side="top" className="max-w-80">
-          <div className="flex flex-col gap-1.5 tabular-nums">
-            {rows.map(({ driver, label, readouts: { session, daily, weekly } }) => (
-              <div key={driver} className="flex flex-col gap-0.5">
+              </span>
+            </TooltipTrigger>
+            <TooltipPopup side="top" className="max-w-80">
+              <div className="flex flex-col gap-0.5 tabular-nums">
                 <span className="font-medium text-foreground">{label}</span>
                 {session ? (
                   <span className="text-muted-foreground">
@@ -206,7 +202,9 @@ function UsageReadoutItem(props: {
                           daily.leftPercent >= 0
                             ? `${daily.budgetPercent - daily.usedPercent}% left`
                             : `${daily.usedPercent - daily.budgetPercent}% over pace`
-                        } · resets at midnight`}
+                        }`}
+                    {daily.nextStepAt === null ? "" : ` · budget grows ${when(daily.nextStepAt)}`}
+                    {` · usage restarts when the weekly limit resets ${when(daily.resetsAt)}`}
                   </span>
                 ) : null}
                 {weekly ? (
@@ -216,10 +214,10 @@ function UsageReadoutItem(props: {
                   </span>
                 ) : null}
               </div>
-            ))}
-          </div>
-        </TooltipPopup>
-      </Tooltip>
+            </TooltipPopup>
+          </Tooltip>
+        );
+      })}
     </SidebarMenuItem>
   );
 }
