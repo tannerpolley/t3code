@@ -650,6 +650,7 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
       "thread_not_found",
       "run_not_found",
       "thread_not_sendable",
+      "ancestor_send_denied",
       "thread_not_interruptible",
       "invalid_request",
       "orchestration_error",

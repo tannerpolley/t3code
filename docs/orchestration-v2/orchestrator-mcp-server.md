@@ -394,6 +394,11 @@ Sends a message to an ordinary or delegated thread in the calling project:
   interrupt-and-restart path.
 
 The target runtime and interaction modes may not be broader than the caller's.
+A delegated child cannot send to its parent or any ancestor
+(`ancestor_send_denied`): each message would start a turn there and interrupt
+it. The child's final message already reaches the parent through completion
+delivery, and decisions go through the question tool. This also applies to
+`t3_thread_send_attachments`.
 Stable command and message IDs are derived from `clientRequestId` for
 idempotent retries.
 
@@ -477,6 +482,7 @@ task_not_cancellable
 thread_not_found
 run_not_found
 thread_not_sendable
+ancestor_send_denied
 thread_not_interruptible
 invalid_request
 orchestration_error

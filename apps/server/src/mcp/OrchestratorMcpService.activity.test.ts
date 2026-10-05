@@ -650,3 +650,90 @@ it("taskStatus reports a child waiting on the user, but not an auth refresh", as
     });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
+
+it("sendToThread refuses a delegated child messaging its parent or an ancestor", async () => {
+  const rootId = ThreadId.make("thread-mcp-lineage-root");
+  const childId = ThreadId.make("thread-mcp-lineage-child");
+  const grandchildId = ThreadId.make("thread-mcp-lineage-grandchild");
+  const unrelatedId = ThreadId.make("thread-mcp-lineage-unrelated");
+  const subagentOf = (parentId: ThreadId) => ({
+    parentThreadId: parentId,
+    relationshipToParent: "subagent" as const,
+    rootThreadId: rootId,
+  });
+  const projections = new Map(
+    (
+      [
+        [rootId, null],
+        [childId, subagentOf(rootId)],
+        [grandchildId, subagentOf(childId)],
+        [unrelatedId, null],
+      ] as const
+    ).map(([threadId, lineage]) => {
+      const thread = baseThread({
+        threadId,
+        title: threadId,
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      });
+      return [
+        threadId,
+        {
+          thread: lineage === null ? thread : { ...thread, lineage },
+          runs: [makeRun({ id: RunId.make(`run-${threadId}`), ordinal: 1, status: "running" })],
+          runtimeRequests: [],
+          messages: [],
+          contextTransfers: [],
+          subagents: [],
+        } as unknown as OrchestrationV2ThreadProjection,
+      ] as const;
+    }),
+  );
+  const scopeFor = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
+    ...makeScope(),
+    thread: { ...makeScope().thread!, threadId },
+  });
+
+  const layer = OrchestratorMcpService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) => Effect.succeed(projections.get(threadId)!),
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              (projections.get(threadId)?.thread ?? null) as OrchestrationV2ThreadShell | null,
+            ),
+          getProjectThreadRecords: (input) => Effect.succeed(projections.get(input.threadId)!),
+          sendToThread: (input) =>
+            Effect.succeed({
+              run: { id: `run-sent-${input.threadId}`, status: "queued" },
+              delivery: "started",
+            } as unknown as ThreadManagementService.ThreadManagementSendResult),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const send = (from: ThreadId, to: ThreadId) =>
+      service.sendToThread(scopeFor(from), { threadId: to, message: "progress update" });
+
+    const toParent = yield* send(childId, rootId).pipe(Effect.flip);
+    expect(toParent.code).toBe("ancestor_send_denied");
+    expect(toParent.message).toContain("final message");
+    expect(toParent.message).toContain("t3_request_user_input");
+    const toGrandparent = yield* send(grandchildId, rootId).pipe(Effect.flip);
+    expect(toGrandparent.code).toBe("ancestor_send_denied");
+
+    expect((yield* send(childId, unrelatedId)).threadId).toBe(unrelatedId);
+    expect((yield* send(rootId, childId)).threadId).toBe(childId);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
