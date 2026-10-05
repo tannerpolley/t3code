@@ -13,7 +13,9 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "vite-plus/test";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -21,8 +23,16 @@ import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import type * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
+import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import { AttachmentHandlersLive } from "./toolkits/attachment/handlers.ts";
+import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");
 const projectId = ProjectId.make("project-mcp-orchestrator-detail");
@@ -651,7 +661,7 @@ it("taskStatus reports a child waiting on the user, but not an auth refresh", as
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
-it("sendToThread refuses a delegated child messaging its parent or an ancestor", async () => {
+it("refuses delegated child messages, attachments, and queue sends to ancestors", async () => {
   const rootId = ThreadId.make("thread-mcp-lineage-root");
   const childId = ThreadId.make("thread-mcp-lineage-child");
   const grandchildId = ThreadId.make("thread-mcp-lineage-grandchild");
@@ -679,7 +689,7 @@ it("sendToThread refuses a delegated child messaging its parent or an ancestor",
       return [
         threadId,
         {
-          thread: lineage === null ? thread : { ...thread, lineage },
+          thread: { ...thread, activeRunId, ...(lineage === null ? {} : { lineage }) },
           runs: [makeRun({ id: RunId.make(`run-${threadId}`), ordinal: 1, status: "running" })],
           runtimeRequests: [],
           messages: [],
@@ -694,10 +704,15 @@ it("sendToThread refuses a delegated child messaging its parent or an ancestor",
     thread: { ...makeScope().thread!, threadId },
   });
 
+  let dispatches = 0;
   const layer = OrchestratorMcpService.layer.pipe(
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          dispatch: () => {
+            dispatches++;
+            return Effect.succeed({ sequence: 1, storedEvents: [] });
+          },
           getThreadRecords: (threadId) => Effect.succeed(projections.get(threadId)!),
           getThreadShell: (threadId) =>
             Effect.succeed(
@@ -716,6 +731,14 @@ it("sendToThread refuses a delegated child messaging its parent or an ancestor",
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
+        Layer.mock(ThreadSearch.ThreadSearch)({}),
+        Layer.mock(Orchestrator.OrchestratorV2)({}),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-ancestor-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+        Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+        NodeServices.layer,
+        Layer.succeed(McpInvocationContext.McpInvocationContext, scopeFor(childId)),
         NodeCrypto.layer,
       ),
     ),
@@ -735,5 +758,48 @@ it("sendToThread refuses a delegated child messaging its parent or an ancestor",
 
     expect((yield* send(childId, unrelatedId)).threadId).toBe(unrelatedId);
     expect((yield* send(rootId, childId)).threadId).toBe(childId);
+
+    const toolkit = yield* ThreadToolkit.pipe(Effect.provide(ThreadToolkitHandlersLive));
+    const queueTarget = { threadId: rootId, queuedRunId: RunId.make("run-parent-queued") };
+    const edited = yield* toolkit
+      .handle("t3_queue_edit", { ...queueTarget, text: "child-injected text" })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(edited.at(-1)?.result).toMatchObject({ code: "ancestor_send_denied" });
+    const promoted = yield* toolkit
+      .handle("t3_queue_promote_to_steer", { ...queueTarget, targetRunId: activeRunId })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(promoted.at(-1)?.result).toMatchObject({ code: "ancestor_send_denied" });
+    expect(dispatches).toBe(0);
+
+    const attachments = yield* AttachmentToolkit.pipe(Effect.provide(AttachmentHandlersLive));
+    const attachmentSend = yield* attachments
+      .handle("t3_thread_send_attachments", {
+        threadId: rootId,
+        message: "child-injected attachment",
+        attachments: [
+          {
+            type: "file",
+            id: "attachment-1",
+            name: "report.txt",
+            mimeType: "text/plain",
+            sizeBytes: 1,
+          },
+        ],
+      })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(attachmentSend.at(-1)?.result).toMatchObject({ code: "ancestor_send_denied" });
+    expect(dispatches).toBe(0);
+
+    const unrelatedEdit = yield* toolkit
+      .handle("t3_queue_edit", { ...queueTarget, threadId: unrelatedId, text: "allowed message" })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(unrelatedEdit.at(-1)?.result).toEqual({ sequence: 1 });
+    expect(dispatches).toBe(1);
+
+    // Corrupt lineage must terminate even when the target is outside the cycle.
+    const root = projections.get(rootId)!;
+    projections.set(rootId, { ...root, thread: { ...root.thread, lineage: subagentOf(childId) } });
+    expect((yield* send(childId, unrelatedId)).threadId).toBe(unrelatedId);
+    expect((yield* send(grandchildId, rootId).pipe(Effect.flip)).code).toBe("ancestor_send_denied");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
