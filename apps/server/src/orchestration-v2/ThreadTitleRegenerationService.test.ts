@@ -9,6 +9,7 @@ import {
   ThreadId,
   TextGenerationError,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -257,6 +258,12 @@ describe("ThreadTitleRegenerationService", () => {
         const renamed = yield* threads.getThreadProjection(threadId);
         assert.equal(renamed.thread.title, "Manual title");
         assert.isNotOk(renamed.thread.titleRegeneration);
+        assert.equal(renamed.thread.titleSource, "user");
+
+        // Regenerate hands a typed title back to generation.
+        yield* armRegeneration({ command: "command:title:arm:3", threadId });
+        const regenerated = yield* threads.getThreadProjection(threadId);
+        assert.equal(regenerated.thread.titleSource, "generated");
       }).pipe(Effect.provide(harness.layer));
     }),
   );
@@ -309,6 +316,8 @@ describe("ThreadTitleRegenerationService", () => {
           text: "Investigate the flaky login test",
         });
         const requestId = yield* armRegeneration({ command: "command:title:landing:1", threadId });
+        const armedAt = (yield* threads.getThreadProjection(threadId)).thread.titleRegeneration
+          ?.startedAt;
 
         yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
 
@@ -316,9 +325,16 @@ describe("ThreadTitleRegenerationService", () => {
         assert.equal(call?.previousTitle, "Seed title");
         assert.equal(call?.cwd, "/repo");
         assert.include(call?.message, "USER:\nInvestigate the flaky login test");
+        assert.deepEqual(
+          call?.modelSelection,
+          ThreadTitleRegeneration.TITLE_REFRESH_MODEL_SELECTION,
+        );
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Fresh title");
         assert.isNotOk(projection.thread.titleRegeneration);
+        assert.equal(projection.thread.titleEvaluation?.requestId, requestId);
+        assert.equal(projection.thread.titleEvaluation?.outcome, "changed");
+        assert.equal(projection.thread.titleEvaluation?.evaluatedAt, DateTime.formatIso(armedAt!));
       }).pipe(Effect.provide(harness.layer));
     }),
   );
@@ -378,6 +394,7 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+        assert.equal(projection.thread.titleEvaluation?.outcome, "unchanged");
       }).pipe(Effect.provide(harness.layer));
     }),
   );
@@ -407,6 +424,7 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+        assert.equal(projection.thread.titleEvaluation?.outcome, "failed");
       }).pipe(Effect.provide(harness.layer));
     }),
   );

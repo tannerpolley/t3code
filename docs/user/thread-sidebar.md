@@ -103,9 +103,14 @@ If dragging is unavailable for one environment, update the T3 Code server runnin
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
 
-To generate a fresh title from the conversation, open a thread's menu and choose
-**Regenerate title**. The action is unavailable while title generation is in progress
-or when the connected environment needs a server update.
+To retitle a thread after what it is working on now, open its menu and choose
+**Regenerate title**. It uses GPT-6 Luna through the server's Codex provider, tells you when the
+current title still fits, and makes a title you typed automatic again. The action is unavailable
+while title generation is in progress or when the connected environment needs a server update.
+
+**Keep thread titles current** in **Settings → General** (on by default) does the same about
+every ten minutes for top-level threads with new messages. Titles you typed are never changed
+automatically, and nothing runs when the server has no Codex provider.
 
 Agents connected through T3 Code can use the same server-owned metadata workflow to
 rename a thread, regenerate its title, or link and unlink a pull request. These changes

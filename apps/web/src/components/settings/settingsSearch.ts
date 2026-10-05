@@ -494,6 +494,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "keep-thread-titles-current",
+    title: "Keep thread titles current",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["thread title rename regenerate automatic refresh luna sidebar names"],
+  },
+  {
     id: "model-roles",
     title: "Model roles",
     to: "/settings/general",
