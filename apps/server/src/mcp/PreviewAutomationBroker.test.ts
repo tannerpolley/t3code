@@ -1609,6 +1609,95 @@ it.effect.each([
   ),
 );
 
+it.effect("stops after the retry of a timed-out open also times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const tabId = PreviewTabId.make("tab-stuck");
+      const firstReceived = yield* Deferred.make<void>();
+      const retryReceived = yield* Deferred.make<void>();
+      const requests: RoutedRequest[] = [];
+      yield* Stream.runForEach(
+        requestsFrom(yield* broker.connect(makeHost({ clientId: "stuck" }))),
+        (request) => {
+          requests.push(request);
+          return Deferred.succeed(firstReceived, undefined);
+        },
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const opened = yield* broker
+        .invoke<void>({ scope, tabId, operation: "open", input: { url: "http://localhost:8791/" } })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(firstReceived);
+
+      yield* Stream.runForEach(
+        requestsFrom(yield* broker.connect(makeHost({ clientId: "healthy" }))),
+        (request) => {
+          requests.push(request);
+          return request.operation === "navigate"
+            ? broker.respond({
+                clientId: "healthy",
+                connectionId: request.connectionId,
+                requestId: request.requestId,
+                ok: true,
+                result: { tabId },
+              })
+            : Deferred.succeed(retryReceived, undefined);
+        },
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(15_000);
+      yield* Deferred.await(retryReceived);
+      yield* TestClock.adjust(15_000);
+      expect(yield* Fiber.join(opened)).toMatchObject({
+        _tag: "PreviewAutomationTimeoutError",
+        operation: "open",
+        requestId: requests[2]!.requestId,
+      });
+      expect(requests.map(({ operation, input, tabId }) => ({ operation, input, tabId }))).toEqual([
+        { operation: "open", input: { url: "http://localhost:8791/" }, tabId },
+        { operation: "navigate", input: { reload: "bypassCache", readiness: "none" }, tabId },
+        { operation: "open", input: { url: "http://localhost:8791/" }, tabId },
+      ]);
+    }),
+  ),
+);
+
+it.effect("recovers from a host-reported navigation timeout on the same connection", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const tabId = PreviewTabId.make("tab-navigation-timeout");
+      const requests: RoutedRequest[] = [];
+      yield* Stream.runForEach(requestsFrom(yield* broker.connect(makeHost())), (request) => {
+        requests.push(request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ...(requests.length === 1
+            ? {
+                ok: false,
+                error: { _tag: "PreviewAutomationTimeoutError", message: "Navigation timed out" },
+              }
+            : { ok: true, result: { tabId } }),
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const input = { url: "http://localhost:8791/" };
+      expect(yield* broker.invoke({ scope, tabId, operation: "navigate", input })).toEqual({
+        tabId,
+      });
+      expect(requests.map(({ operation, input, tabId }) => ({ operation, input, tabId }))).toEqual([
+        { operation: "navigate", input, tabId },
+        { operation: "navigate", input: { reload: "bypassCache", readiness: "none" }, tabId },
+        { operation: "navigate", input, tabId },
+      ]);
+      expect(new Set(requests.map((request) => request.connectionId)).size).toBe(1);
+    }),
+  ),
+);
+
 it.effect.each([
   { name: "sends the client a server-relative asset URL instead of the path", relative: false },
   { name: "rejects a relative path without opening a tab", relative: true },

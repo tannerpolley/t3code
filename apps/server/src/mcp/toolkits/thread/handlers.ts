@@ -23,6 +23,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
+import { assertNotSendingToAncestor } from "../../OrchestratorMcpService.ts";
 
 function queueEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -43,10 +44,18 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   threadId: ThreadId | undefined,
   command: (common: { commandId: CommandId; threadId: ThreadId }) => OrchestrationV2Command,
 ) {
-  const { threads, projection } = yield* readWritableThread(threadId);
-  const result = yield* threads
-    .dispatch(command({ commandId: yield* newCommandId(), threadId: projection.thread.id }))
-    .pipe(Effect.mapError(unavailable));
+  const { threads, caller, projection } = yield* readWritableThread(threadId);
+  const resolvedCommand = command({
+    commandId: yield* newCommandId(),
+    threadId: projection.thread.id,
+  });
+  if (
+    resolvedCommand.type === "queued-run.edit" ||
+    resolvedCommand.type === "queued-message.promote-to-steer"
+  ) {
+    yield* assertNotSendingToAncestor(threads, caller, projection.thread.id);
+  }
+  const result = yield* threads.dispatch(resolvedCommand).pipe(Effect.mapError(unavailable));
   return { sequence: result.sequence };
 });
 
