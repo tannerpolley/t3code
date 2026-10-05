@@ -39,6 +39,7 @@ describe("V2 preview upgrade", () => {
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
         [56, "RemoveRedundantProjectionIndexes"],
         [57, "ProjectionMessagesLatestAssistant"],
+        [58, "ProjectionTurnItemCounts"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -126,9 +127,10 @@ describe("V2 preview upgrade", () => {
       yield* sql`DROP TRIGGER fail_fork_upgrade`;
       assert.deepStrictEqual(yield* runMigrations(), [
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
+        [58, "ProjectionTurnItemCounts"],
       ]);
       assert.deepStrictEqual(
-        yield* sql`SELECT name, created_at FROM effect_sql_migrations WHERE migration_id >= 55 ORDER BY migration_id`,
+        yield* sql`SELECT name, created_at FROM effect_sql_migrations WHERE migration_id BETWEEN 55 AND 57 ORDER BY migration_id`,
         original,
       );
       const ledger = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
@@ -203,6 +205,7 @@ describe("V2 preview upgrade", () => {
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
         [56, "RemoveRedundantProjectionIndexes"],
         [57, "ProjectionMessagesLatestAssistant"],
+        [58, "ProjectionTurnItemCounts"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
