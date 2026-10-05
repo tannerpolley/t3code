@@ -789,14 +789,41 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       const messageId = MessageId.make("message:foundation-compact");
       const threadStateEvent = (
         suffix: string,
-        type: "thread.visited" | "thread.metadata-updated",
+        type: "thread.visited" | "thread.metadata-updated" | "thread.pull-request-synced",
       ): OrchestrationV2DomainEvent => ({
         id: EventId.make(`event:foundation-compact:${suffix}`),
         type,
         threadId,
         providerInstanceId,
         occurredAt: now,
-        payload: { ...thread, lastVisitedAt: now },
+        payload: {
+          ...thread,
+          lastVisitedAt: now,
+          ...(type === "thread.pull-request-synced"
+            ? {
+                pullRequests: [
+                  {
+                    host: "github.com",
+                    repository: "owner/repo",
+                    number: 1,
+                    url: "https://github.com/owner/repo/pull/1",
+                    source: "manual",
+                    linkedAt: nowIso,
+                    snapshot: {
+                      state: "open",
+                      title: `PR snapshot ${suffix}`,
+                      headBranch: "feature",
+                      baseBranch: "main",
+                      isDraft: false,
+                      updatedAt: nowIso,
+                      syncedAt: nowIso,
+                    },
+                    stack: null,
+                  },
+                ],
+              }
+            : {}),
+        },
       });
       const messageEvent = (suffix: string, text: string): OrchestrationV2DomainEvent => ({
         id: EventId.make(`event:foundation-compact:${suffix}`),
@@ -845,13 +872,18 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           completedAt: status === "completed" ? now : null,
         },
       });
-      const itemEvent = (suffix: string, text: string): OrchestrationV2DomainEvent => ({
+      const itemEvent = (
+        suffix: string,
+        text: string,
+        item: "a" | "b" | "c",
+        ordinal = item === "a" ? 1 : item === "b" ? 2 : 0,
+      ): OrchestrationV2DomainEvent => ({
         id: EventId.make(`event:foundation-compact:${suffix}`),
         type: "turn-item.updated",
         threadId,
         occurredAt: now,
         payload: {
-          id: TurnItemId.make("turn-item:foundation-compact"),
+          id: TurnItemId.make(`turn-item:foundation-compact:${item}`),
           threadId,
           runId: null,
           nodeId: null,
@@ -859,14 +891,13 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           providerTurnId: null,
           nativeItemRef: null,
           parentItemId: null,
-          ordinal: 1,
+          ordinal,
           status: "completed",
           title: null,
           startedAt: now,
           completedAt: now,
           updatedAt: now,
-          type: "assistant_message",
-          messageId,
+          type: "reasoning",
           text,
           streaming: false,
         },
@@ -879,17 +910,35 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           threadStateEvent("visit-1", "thread.visited"),
           messageEvent("message-1", "streaming"),
           nodeEvent("node-1", "running"),
-          itemEvent("item-1", "streaming"),
+          itemEvent("item-a-1", "A streaming", "a"),
+          itemEvent("item-b-1", "B streaming", "b"),
           ...Array.from({ length: 501 }, (_, index) =>
-            threadStateEvent(`history-${index}`, "thread.visited"),
+            threadStateEvent(`pr-sync-${index}`, "thread.pull-request-synced"),
           ),
-          threadStateEvent("visit-2", "thread.visited"),
+          threadStateEvent("pr-sync-latest", "thread.pull-request-synced"),
+          itemEvent("item-a-2", "A updated", "a", 99),
+          itemEvent("item-b-2", "B final", "b", 100),
           messageEvent("message-2", "final"),
           nodeEvent("node-2", "completed"),
-          itemEvent("item-2", "final"),
+          itemEvent("item-a-3", "A final", "a", 101),
         ],
       });
       const beforeCompaction = yield* projections.getThreadProjection(threadId);
+      assert.deepEqual(
+        beforeCompaction.turnItems.map((item) => [
+          item.id,
+          item.ordinal,
+          item.type === "reasoning" ? item.text : null,
+        ]),
+        [
+          [TurnItemId.make("turn-item:foundation-compact:a"), 1, "A final"],
+          [TurnItemId.make("turn-item:foundation-compact:b"), 2, "B final"],
+        ],
+      );
+      assert.equal(
+        beforeCompaction.thread.pullRequests?.[0]?.snapshot?.title,
+        "PR snapshot pr-sync-latest",
+      );
 
       // A fully imported legacy thread: its v1 events and pre-migration
       // receipts are dead weight; a still-pending import keeps its rows.
@@ -929,8 +978,8 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       `;
 
       const summary = yield* maintenance.compactEventStore;
-      // Superseded state spans several discovery pages. Both turn-item updates stay.
-      assert.isAtLeast(summary.deletedEventCount, 507);
+      // Superseded state spans several discovery pages; middle item updates are removable.
+      assert.isAtLeast(summary.deletedEventCount, 508);
       assert.isAtLeast(summary.deletedReceiptCount, 1);
 
       const remaining = yield* sql<{ readonly event_id: string }>`
@@ -944,11 +993,13 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
         remaining.map((row) => row.event_id),
         [
           "event:foundation-compact:create",
-          "event:foundation-compact:item-1",
-          "event:foundation-compact:visit-2",
+          "event:foundation-compact:item-a-1",
+          "event:foundation-compact:item-b-1",
+          "event:foundation-compact:pr-sync-latest",
+          "event:foundation-compact:item-b-2",
           "event:foundation-compact:message-2",
           "event:foundation-compact:node-2",
-          "event:foundation-compact:item-2",
+          "event:foundation-compact:item-a-3",
         ],
       );
 
@@ -977,6 +1028,15 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue((yield* maintenance.verify).valid);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeCompaction);
+
+      yield* eventSink.write({ events: [itemEvent("item-c-1", "C after rebuild", "c", 99)] });
+      const afterNewItem = yield* projections.getThreadProjection(threadId);
+      assert.equal(
+        afterNewItem.turnItems.find(
+          (item) => item.id === TurnItemId.make("turn-item:foundation-compact:c"),
+        )?.ordinal,
+        3,
+      );
     }),
   );
 

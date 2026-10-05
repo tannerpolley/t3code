@@ -1,3 +1,4 @@
+import * as EventStoreCompaction from "./EventStoreCompaction.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -317,6 +318,7 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   UsageLimitRecoveryWorker.workerLive.pipe(
     Layer.provide(Layer.mergeAll(projectionStoreLayer, threadManagementProvided)),
   ),
+  EventStoreCompaction.workerLive.pipe(Layer.provide(projectionMaintenanceProvided)),
   providerContinuationWorkerProvided,
   agentSessionImporterProvided,
 ).pipe(
