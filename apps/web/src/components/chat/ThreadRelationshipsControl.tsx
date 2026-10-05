@@ -1,6 +1,9 @@
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { SidebarBackgroundWorkRows } from "../sidebar/SidebarBackgroundWorkRows";
-import { describeSidebarBackgroundWork } from "../sidebar/SidebarBackgroundWork.logic";
+import { ChildWorktreeIcon, SidebarBackgroundWorkRows } from "../sidebar/SidebarBackgroundWorkRows";
+import {
+  childWorktreeLabel,
+  describeSidebarBackgroundWork,
+} from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -55,7 +58,7 @@ import {
   PlusIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -71,6 +74,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useUiStateStore } from "../../uiStateStore";
 import { AgentElapsed } from "./AgentElapsed";
+import { useThreadContextPointerDrag } from "./threadContextDrag";
 import { shortModelName } from "./providerIconUtils";
 import {
   groupThreadLineageRows,
@@ -295,6 +299,21 @@ export function ThreadRelationshipsPanel(props: {
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
+  // Drag a row onto the composer to add its thread as context, as from Projects.
+  const draggedRow = useRef<{ readonly threadId: ThreadId; readonly title: string } | null>(null);
+  const rowDrag = useThreadContextPointerDrag(() => ({
+    threads: draggedRow.current
+      ? [scopeThreadRef(props.environmentId, draggedRow.current.threadId)]
+      : [],
+    title: draggedRow.current?.title ?? "Thread",
+  }));
+  const rowDragProps = (threadId: ThreadId, title: string) => ({
+    onPointerDown: (event: PointerEvent) => {
+      draggedRow.current = { threadId, title };
+      rowDrag.onPointerDown(event);
+    },
+    onClickCapture: rowDrag.onClickCapture,
+  });
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = useMemo(
@@ -583,6 +602,10 @@ export function ThreadRelationshipsPanel(props: {
                         result: agent.result,
                       })
                     : null;
+                  const worktree =
+                    isSubagent && !isParent && node?.thread
+                      ? childWorktreeLabel(node.thread, currentThread)
+                      : null;
                   const relationshipHint = node?.missing
                     ? "This related thread is unavailable"
                     : `Open ${relationship.toLowerCase()} in this chat`;
@@ -603,11 +626,18 @@ export function ThreadRelationshipsPanel(props: {
                       parentProject={currentProject}
                       childProject={project}
                     />
+                  ) : worktree ? (
+                    <>
+                      {relationshipHint}
+                      <br />
+                      Worktree: {worktree}
+                    </>
                   ) : (
                     relationshipHint
                   );
                   const relationshipContent = (
                     <>
+                      {worktree ? <ChildWorktreeIcon /> : null}
                       <ThreadRelationshipIcon
                         driver={isSubagent && !isParent ? providerDriver : undefined}
                         provider={provider}
@@ -674,6 +704,7 @@ export function ThreadRelationshipsPanel(props: {
                                     aria-label={`${threadTitle} ${threadRelationshipStatusLabel(status)}`}
                                     disabled={node?.missing === true}
                                     onClick={() => openThread(threadId)}
+                                    {...rowDragProps(threadId, threadTitle)}
                                   />
                                 }
                               >
@@ -733,6 +764,7 @@ export function ThreadRelationshipsPanel(props: {
                                   disabled={node?.missing === true}
                                   onClick={() => openThread(threadId)}
                                   part="row"
+                                  {...rowDragProps(threadId, threadTitle)}
                                 />
                               }
                             >

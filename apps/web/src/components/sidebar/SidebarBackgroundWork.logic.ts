@@ -44,6 +44,21 @@ export type BackgroundWorkTaskRow =
     });
 
 /**
+ * The branch a child thread works on in its own worktree, for its worktree icon and tooltip; null
+ * when it shares its parent's checkout. A null `worktreePath` is the project root, and an unknown
+ * parent counts as the root.
+ */
+export function childWorktreeLabel(
+  child: Pick<SidebarThreadSummary, "branch" | "worktreePath">,
+  parent: Pick<SidebarThreadSummary, "worktreePath"> | null | undefined,
+): string | null {
+  if (child.worktreePath === null || child.worktreePath === (parent?.worktreePath ?? null)) {
+    return null;
+  }
+  return child.branch ?? child.worktreePath;
+}
+
+/**
  * A thread's stored model selection and effort, with no model fallback to its parent. `short`
  * is the shortModelNames switch.
  */
