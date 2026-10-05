@@ -19,6 +19,10 @@ const setup = Layer.effectDiscard(
     yield* sql`PRAGMA busy_timeout = 5000;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
+    // In WAL mode NORMAL syncs at checkpoints instead of on every commit (~0.1 ms vs ~2.4 ms per
+    // event on the main thread). Still corruption-safe; only an OS crash or power loss can drop the
+    // last committed events.
+    yield* sql`PRAGMA synchronous = NORMAL;`;
     // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
