@@ -125,6 +125,8 @@ export interface MergedUsage {
   readonly models: readonly ModelTotals[];
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
+  /** Every bucket that survived de-duplication, for views that need model and hour together. */
+  readonly buckets: readonly UsageBucket[];
   readonly costQuality: CostQuality;
   readonly categoryCost: CategoryCost;
   readonly speedCost: SpeedCost;
@@ -332,6 +334,7 @@ const EMPTY_MERGED: MergedUsage = {
   models: [],
   daily: [],
   hourly: [],
+  buckets: [],
   costQuality: {
     providerReportedShare: 0,
     modelPricedShare: 0,
@@ -435,6 +438,7 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  const ownedBuckets: UsageBucket[] = [];
 
   for (const environment of current) {
     const { buckets, sessionsByProvider } = ownedContribution(
@@ -444,6 +448,7 @@ export function mergeUsage(
       sessionsByFingerprint,
     );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    ownedBuckets.push(...buckets);
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {
       sessions += providerSessions;
@@ -615,6 +620,7 @@ export function mergeUsage(
     models,
     daily,
     hourly,
+    buckets: ownedBuckets,
     costQuality: {
       providerReportedShare: records === 0 ? 0 : providerReportedRecords / records,
       unpricedShare: records === 0 ? 0 : unpricedRecords / records,

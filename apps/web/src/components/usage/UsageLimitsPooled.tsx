@@ -69,7 +69,7 @@ function AccountChip({ email }: { readonly email: string }) {
  * The same mark the model picker uses for a native instance (provider glyph,
  * initials badge, accent); hub accounts have no instance, so they get the chip.
  */
-function AccountAvatar({
+export function AccountAvatar({
   account,
   className,
 }: {
@@ -597,7 +597,21 @@ export function UsageLimitsPooled({
         </Fragment>
       ))}
       {cursorPromptAt === pools.length ? cursorPrompt : null}
-      {externalLinks.map((link) => (
+      <ExternalUsageLinks links={externalLinks} />
+      <LimitNotices notices={notices} />
+    </div>
+  );
+}
+
+/** Providers whose usage lives on an external page, such as ChatGPT's shared usage. */
+export function ExternalUsageLinks({
+  links,
+}: {
+  readonly links: ReturnType<typeof collectExternalUsageLinks>;
+}) {
+  return (
+    <>
+      {links.map((link) => (
         <section
           key={link.url}
           className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
@@ -627,13 +641,12 @@ export function UsageLimitsPooled({
           </Button>
         </section>
       ))}
-      <LimitNotices notices={notices} />
-    </div>
+    </>
   );
 }
 
 /** Sources and providers that could not be read, so a missing bar is not mistaken for a full one. */
-function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
+export function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (
     <Alert variant="warning" controlAlignment="first-line">

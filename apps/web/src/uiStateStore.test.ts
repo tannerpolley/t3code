@@ -45,6 +45,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     pullRequestMergeMethod: "merge",
     lineageDetailsExpandedById: {},
     lineageAgentsClearedAtById: {},
+    issueMilestoneCollapsedById: {},
     ...overrides,
   };
 }
@@ -301,6 +302,7 @@ describe("parsePersistedState", () => {
       pullRequestMergeMethod: "merge",
       lineageDetailsExpandedById: {},
       lineageAgentsClearedAtById: {},
+      issueMilestoneCollapsedById: {},
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -438,6 +440,7 @@ describe("uiStateStore persistence", () => {
       pullRequestMergeMethod: "merge",
       lineageDetailsExpandedById: {},
       lineageAgentsClearedAtById: {},
+      issueMilestoneCollapsedById: {},
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,

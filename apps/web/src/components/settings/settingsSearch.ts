@@ -23,7 +23,8 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/archived"
+  | "/settings/customizations";
 
 /**
  * Where a setting can be edited. Device-local rows have no scope: they render
@@ -96,6 +97,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
+  "/settings/customizations": "Customizations",
 };
 
 /** Anchor id of the first row bound to `command` on the Keybindings page. */
@@ -413,6 +415,60 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Time format",
     to: "/settings/general",
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
+  },
+  {
+    id: "version-control-issues",
+    title: "Issues in thread details",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork github issues thread details version control milestones"],
+  },
+  {
+    id: "issues-page",
+    title: "Issues page",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork github issues page browser sidebar repositories filters pin"],
+  },
+  {
+    id: "composer-code-formatting",
+    title: "Code blocks in the composer",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork composer code block fenced backticks inline code monospace"],
+  },
+  {
+    id: "chat-math",
+    title: "Math in chat",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork latex katex math formulas equations markdown dollar"],
+  },
+  {
+    id: "plugin-skills",
+    title: "Plugin skills in the composer",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork plugin skills claude code dollar menu composer badge"],
+  },
+  {
+    id: "usage-limit-model-breakdown",
+    title: "Limits page like Cost and Tokens",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork usage limits window models breakdown weekly session estimate chart",
+    ],
+  },
+  {
+    id: "daily-usage-meter",
+    title: "Daily usage meter",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork usage limits weekly daily budget pace workday sidebar meter claude codex",
+    ],
+  },
+  {
+    id: "sidebar-weekly-usage",
+    title: "Weekly usage in the sidebar",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork usage limits weekly quota left sidebar footer claude codex 7d",
+    ],
   },
   {
     id: "response-streaming",
@@ -976,6 +1032,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
+  "/settings/customizations": null,
 };
 
 /** Search keeps the selected target. A missing row can explain its owning scope instead. */

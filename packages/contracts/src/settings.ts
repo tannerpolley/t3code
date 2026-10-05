@@ -506,6 +506,23 @@ export const ClientSettingsSchema = Schema.Struct({
   autoOrganizeByFolder: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   revealOpenThreadInSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   lineageAutoClearMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  // Fork customizations, each switchable back to the original behavior in Settings → Customizations.
+  /** Show the Issues page in the sidebar. */
+  issuesPage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** List the thread repository's issues in thread details. */
+  versionControlIssues: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Offer Claude Code plugin skills in the composer menus, labeled Plugin. */
+  pluginSkills: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Usage page Limits laid out like Cost and Tokens (one window kind at a time,
+   * provider rows, an estimated by-provider or by-model chart); off shows the
+   * per-provider window cards.
+   */
+  usageLimitModelBreakdown: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** A sidebar meter pacing each Monday–Friday at 20% of each provider's weekly limit. */
+  dailyUsageMeter: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** The sidebar footer's Usage icon shows each provider's weekly quota left instead. */
+  sidebarWeeklyUsage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -2003,6 +2020,12 @@ export const ClientSettingsPatch = Schema.Struct({
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
   revealOpenThreadInSidebar: Schema.optionalKey(Schema.Boolean),
   lineageAutoClearMinutes: Schema.optionalKey(NonNegativeInt),
+  issuesPage: Schema.optionalKey(Schema.Boolean),
+  versionControlIssues: Schema.optionalKey(Schema.Boolean),
+  pluginSkills: Schema.optionalKey(Schema.Boolean),
+  usageLimitModelBreakdown: Schema.optionalKey(Schema.Boolean),
+  dailyUsageMeter: Schema.optionalKey(Schema.Boolean),
+  sidebarWeeklyUsage: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

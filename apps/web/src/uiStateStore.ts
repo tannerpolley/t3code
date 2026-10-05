@@ -52,6 +52,7 @@ export interface PersistedUiState {
   pullRequestMergeMethod?: string;
   lineageDetailsExpandedById?: Record<string, boolean>;
   lineageAgentsClearedAtById?: Record<string, string>;
+  issueMilestoneCollapsedById?: Record<string, boolean>;
 }
 
 export interface UiProjectState {
@@ -77,6 +78,11 @@ export interface UiEndpointState {
 
 export interface UiPullRequestState {
   pullRequestMergeMethod: PullRequestMergeMethod;
+  /**
+   * Issue milestone groups collapsed by hand in the thread details panel, keyed by repository and
+   * milestone. Groups without an entry default expanded.
+   */
+  issueMilestoneCollapsedById: Record<string, boolean>;
 }
 
 export interface UiLineageState {
@@ -98,6 +104,7 @@ const initialState: UiState = {
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
+  issueMilestoneCollapsedById: {},
   lineageDetailsExpandedById: {},
   lineageAgentsClearedAtById: {},
 };
@@ -270,6 +277,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     lineageAgentsClearedAtById: sanitizeLineageAgentsClearedAtRecord(
       parsed.lineageAgentsClearedAtById,
     ),
+    issueMilestoneCollapsedById: sanitizeBooleanRecord(parsed.issueMilestoneCollapsedById),
   };
 }
 
@@ -349,6 +357,7 @@ export function persistState(state: UiState): void {
         pullRequestMergeMethod: state.pullRequestMergeMethod,
         lineageDetailsExpandedById: state.lineageDetailsExpandedById,
         lineageAgentsClearedAtById: state.lineageAgentsClearedAtById,
+        issueMilestoneCollapsedById: state.issueMilestoneCollapsedById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -655,6 +664,19 @@ export function setLineageAgentsClearedAt(
   return { ...state, lineageAgentsClearedAtById };
 }
 
+/** Collapses or expands one issue milestone group by hand; other groups keep their default. */
+export function setIssueMilestoneCollapsed(
+  state: UiState,
+  key: string,
+  collapsed: boolean,
+): UiState {
+  if ((state.issueMilestoneCollapsedById[key] ?? false) === collapsed) return state;
+  return {
+    ...state,
+    issueMilestoneCollapsedById: { ...state.issueMilestoneCollapsedById, [key]: collapsed },
+  };
+}
+
 function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMethod): UiState {
   return state.pullRequestMergeMethod === method
     ? state
@@ -762,6 +784,7 @@ interface UiStateStore extends UiState {
   reorderSidebarProjectSections: (sectionIds: readonly string[]) => void;
   setLineageDetailsExpanded: (keys: readonly string[], expanded: boolean) => void;
   setLineageAgentsClearedAt: (key: string, clearedAt: string | null) => void;
+  setIssueMilestoneCollapsed: (key: string, collapsed: boolean) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -825,6 +848,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setLineageDetailsExpanded(state, keys, expanded)),
   setLineageAgentsClearedAt: (key, clearedAt) =>
     set((state) => setLineageAgentsClearedAt(state, key, clearedAt)),
+  setIssueMilestoneCollapsed: (key, collapsed) =>
+    set((state) => setIssueMilestoneCollapsed(state, key, collapsed)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
