@@ -2315,97 +2315,91 @@ describe("delegate_task workspace", () => {
       ),
     );
 
-  for (const workspaceChoice of [
+  it.effect.each([
     { workspace: "worktree" },
     { role: "implementation" },
     { role: "test" },
-  ] as const) {
-    it.effect(
-      `prepares an isolated child before its first turn (${JSON.stringify(workspaceChoice)})`,
-      () =>
+  ] as const)("prepares an isolated child before its first turn (%j)", (workspaceChoice) =>
+    Effect.gen(function* () {
+      const setupEntered = yield* Deferred.make<string>();
+      const allowSetup = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        providers: [codexProvider],
+        runSetup: (input) =>
+          Deferred.succeed(setupEntered, input.worktreePath).pipe(
+            Effect.andThen(Deferred.await(allowSetup)),
+            Effect.as({ status: "no-script" as const }),
+          ),
+      });
+      yield* withDelegatingParent(harness, (service) =>
         Effect.gen(function* () {
-          const setupEntered = yield* Deferred.make<string>();
-          const allowSetup = yield* Deferred.make<void>();
-          const harness = makeHarness({
-            providers: [codexProvider],
-            runSetup: (input) =>
-              Deferred.succeed(setupEntered, input.worktreePath).pipe(
-                Effect.andThen(Deferred.await(allowSetup)),
-                Effect.as({ status: "no-script" as const }),
-              ),
-          });
-          yield* withDelegatingParent(harness, (service) =>
-            Effect.gen(function* () {
-              const threads = yield* ThreadManagement.ThreadManagementService;
-              const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-              const request = {
-                task: "Implement the parser",
-                title: "Parser",
-                ...workspaceChoice,
-                clientRequestId: "parser",
-              } as const;
-              const task = yield* service.delegateTask(scope, request);
-              const created = yield* threads.getThreadProjection(task.childThreadId);
-              assert.equal(created.runs[0]?.status, "preparing");
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+          const request = {
+            task: "Implement the parser",
+            title: "Parser",
+            ...workspaceChoice,
+            clientRequestId: "parser",
+          } as const;
+          const task = yield* service.delegateTask(scope, request);
+          const created = yield* threads.getThreadProjection(task.childThreadId);
+          assert.equal(created.runs[0]?.status, "preparing");
 
-              // Setup runs in the bound worktree while the child's run still waits to start.
-              assert.equal(yield* Deferred.await(setupEntered), "/repo-worktrees/feature");
-              const worktree = harness.createWorktree.mock.calls[0]![0];
-              assert.equal(worktree.cwd, "/repo");
-              assert.equal(worktree.refName, "feature/parent");
-              assert.match(worktree.newRefName ?? "", /^t3code\/parser-[0-9a-f]{8}$/);
-              const preparing = yield* threads.getThreadProjection(task.childThreadId);
-              assert.equal(preparing.thread.worktreePath, "/repo-worktrees/feature");
-              assert.equal(preparing.thread.branch, worktree.newRefName);
-              assert.equal(preparing.runs[0]?.status, "preparing");
+          // Setup runs in the bound worktree while the child's run still waits to start.
+          assert.equal(yield* Deferred.await(setupEntered), "/repo-worktrees/feature");
+          const worktree = harness.createWorktree.mock.calls[0]![0];
+          assert.equal(worktree.cwd, "/repo");
+          assert.equal(worktree.refName, "feature/parent");
+          assert.match(worktree.newRefName ?? "", /^t3code\/parser-[0-9a-f]{8}$/);
+          const preparing = yield* threads.getThreadProjection(task.childThreadId);
+          assert.equal(preparing.thread.worktreePath, "/repo-worktrees/feature");
+          assert.equal(preparing.thread.branch, worktree.newRefName);
+          assert.equal(preparing.runs[0]?.status, "preparing");
 
-              // Retries with the same clientRequestId, during and after preparation, reuse it.
-              assert.equal((yield* service.delegateTask(scope, request)).taskId, task.taskId);
-              yield* Deferred.succeed(allowSetup, undefined);
-              yield* tracker.stream(task.childThreadId).pipe(
-                Stream.filter((snapshot) => snapshot?.phase === "done"),
-                Stream.runHead,
-              );
-              const retried = yield* service.delegateTask(scope, request);
-              assert.equal(retried.taskId, task.taskId);
-              assert.equal(harness.createWorktree.mock.calls.length, 1);
-              assert.equal(retried.worktreePath, "/repo-worktrees/feature");
-              assert.equal(retried.branch, worktree.newRefName);
-              const started = yield* threads.getThreadProjection(task.childThreadId);
-              assert.equal(started.runs.length, 1);
-              assert.equal(started.runs[0]?.status, "starting");
-            }),
+          // Retries with the same clientRequestId, during and after preparation, reuse it.
+          assert.equal((yield* service.delegateTask(scope, request)).taskId, task.taskId);
+          yield* Deferred.succeed(allowSetup, undefined);
+          yield* tracker.stream(task.childThreadId).pipe(
+            Stream.filter((snapshot) => snapshot?.phase === "done"),
+            Stream.runHead,
           );
+          const retried = yield* service.delegateTask(scope, request);
+          assert.equal(retried.taskId, task.taskId);
+          assert.equal(harness.createWorktree.mock.calls.length, 1);
+          assert.equal(retried.worktreePath, "/repo-worktrees/feature");
+          assert.equal(retried.branch, worktree.newRefName);
+          const started = yield* threads.getThreadProjection(task.childThreadId);
+          assert.equal(started.runs.length, 1);
+          assert.equal(started.runs[0]?.status, "starting");
         }),
-    );
-  }
+      );
+    }),
+  );
 
-  for (const workspaceChoice of [
+  it.effect.each([
     {},
     { role: "research" },
     { role: "review" },
     { role: "design" },
     { role: "implementation", workspace: "inherit" },
     { role: "test", workspace: "inherit" },
-  ] as const) {
-    it.effect(`keeps a child in the parent's checkout (${JSON.stringify(workspaceChoice)})`, () => {
-      const harness = makeHarness({ providers: [codexProvider] });
-      return withDelegatingParent(harness, (service) =>
-        Effect.gen(function* () {
-          const threads = yield* ThreadManagement.ThreadManagementService;
-          const task = yield* service.delegateTask(scope, {
-            task: "Review the parser",
-            ...workspaceChoice,
-          });
-          assert.equal(task.branch, "feature/parent");
-          assert.equal(task.worktreePath, "/repo-worktrees/parent");
-          assert.equal(harness.createWorktree.mock.calls.length, 0);
-          const child = yield* threads.getThreadProjection(task.childThreadId);
-          assert.equal(child.runs[0]?.status, "starting");
-        }),
-      );
-    });
-  }
+  ] as const)("keeps a child in the parent's checkout (%j)", (workspaceChoice) => {
+    const harness = makeHarness({ providers: [codexProvider] });
+    return withDelegatingParent(harness, (service) =>
+      Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const task = yield* service.delegateTask(scope, {
+          task: "Review the parser",
+          ...workspaceChoice,
+        });
+        assert.equal(task.branch, "feature/parent");
+        assert.equal(task.worktreePath, "/repo-worktrees/parent");
+        assert.equal(harness.createWorktree.mock.calls.length, 0);
+        const child = yield* threads.getThreadProjection(task.childThreadId);
+        assert.equal(child.runs[0]?.status, "starting");
+      }),
+    );
+  });
 
   // A thread started in the project root records no branch; its checkout says where it is.
   const rootParent = { branch: null, worktreePath: null };
@@ -2534,37 +2528,35 @@ describe("delegate_task workspace", () => {
     );
   });
 
-  for (const workspaceChoice of [{ role: "implementation" }, { workspace: "worktree" }] as const) {
-    it.effect(
-      `keeps an accepted worktree child when a retry finds the checkout detached (${JSON.stringify(workspaceChoice)})`,
-      () => {
-        const checkout = switchableCheckout("main");
-        const harness = makeHarness({ providers: [codexProvider], ...checkout });
-        return withDelegatingParent(
-          harness,
-          (service) =>
-            Effect.gen(function* () {
-              const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-              const request = {
-                task: "Implement the parser",
-                ...workspaceChoice,
-                clientRequestId: "detached-retry",
-              };
-              const task = yield* service.delegateTask(scope, request);
-              yield* tracker.stream(task.childThreadId).pipe(
-                Stream.filter((snapshot) => snapshot?.phase === "done"),
-                Stream.runHead,
-              );
-              checkout.switchTo(null);
-              const retried = yield* service.delegateTask(scope, request);
-              assert.equal(retried.taskId, task.taskId);
-              assert.isUndefined(retried.workspaceNote);
-              assert.equal(retried.worktreePath, "/repo-worktrees/feature");
-              assert.equal(harness.createWorktree.mock.calls.length, 1);
-            }),
-          rootParent,
-        );
-      },
-    );
-  }
+  it.effect.each([{ role: "implementation" }, { workspace: "worktree" }] as const)(
+    "keeps an accepted worktree child when a retry finds the checkout detached (%j)",
+    (workspaceChoice) => {
+      const checkout = switchableCheckout("main");
+      const harness = makeHarness({ providers: [codexProvider], ...checkout });
+      return withDelegatingParent(
+        harness,
+        (service) =>
+          Effect.gen(function* () {
+            const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+            const request = {
+              task: "Implement the parser",
+              ...workspaceChoice,
+              clientRequestId: "detached-retry",
+            };
+            const task = yield* service.delegateTask(scope, request);
+            yield* tracker.stream(task.childThreadId).pipe(
+              Stream.filter((snapshot) => snapshot?.phase === "done"),
+              Stream.runHead,
+            );
+            checkout.switchTo(null);
+            const retried = yield* service.delegateTask(scope, request);
+            assert.equal(retried.taskId, task.taskId);
+            assert.isUndefined(retried.workspaceNote);
+            assert.equal(retried.worktreePath, "/repo-worktrees/feature");
+            assert.equal(harness.createWorktree.mock.calls.length, 1);
+          }),
+        rootParent,
+      );
+    },
+  );
 });
