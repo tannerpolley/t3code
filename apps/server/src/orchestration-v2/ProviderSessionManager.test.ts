@@ -55,6 +55,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { makeProviderFailure } from "./ProviderFailure.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
 const TestStoresLayer = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -294,6 +295,7 @@ function makeProviderAdapter(
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly eventStreamEnded?: Deferred.Deferred<void>;
   } = {},
 ): ProviderAdapterV2Shape {
   return {
@@ -354,7 +356,15 @@ function makeProviderAdapter(
                   cause: "process exited",
                 }),
               )
-            : Stream.fromQueue(events),
+            : Stream.fromQueue(events).pipe(
+                Stream.concat(
+                  Stream.fromEffectDrain(
+                    options.eventStreamEnded === undefined
+                      ? Effect.void
+                      : Deferred.succeed(options.eventStreamEnded, undefined),
+                  ),
+                ),
+              ),
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
@@ -410,6 +420,7 @@ function makeTestLayer(input: {
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly eventStreamEnded?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -432,6 +443,7 @@ function makeTestLayer(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.eventStreamEnded === undefined ? {} : { eventStreamEnded: input.eventStreamEnded }),
     }),
   );
   const providerEventIngestorTestLayer = ProviderEventIngestor.layer.pipe(
@@ -973,6 +985,78 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
     });
 
     yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 ignores provider exits after SIGTERM", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const eventStreamEnded = yield* Deferred.make<void>();
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-sigterm");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const subscription = yield* runtime.subscribeEvents!;
+      const collected = yield* subscription.events.pipe(
+        Stream.catchCause(() => Stream.empty),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterQueue);
+
+      // Provider CLIs receive SIGTERM with the server and may report a failed
+      // turn before the server finishes shutting down.
+      process.emit("SIGTERM");
+      yield* Queue.offer(adapterQueue!, {
+        type: "turn.terminal",
+        driver: CODEX_DRIVER,
+        providerThreadId: idAllocator.derive.providerThread({
+          driver: CODEX_DRIVER,
+          nativeThreadId: "sigterm-thread",
+        }),
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: "sigterm-turn",
+        }),
+        runOrdinal: 1,
+        failureItemOrdinal: 1,
+        status: "failed",
+        failure: makeProviderFailure({ class: "transport_error" }),
+        threadDisposition: "broken",
+      });
+      yield* Queue.end(adapterQueue!);
+      yield* Deferred.await(eventStreamEnded);
+
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(-1)?.status,
+        "ready",
+      );
+      yield* manager.release({ providerSessionId, reason: "idle_timeout" });
+
+      assert.isEmpty(yield* Fiber.join(collected));
+    });
+
+    yield* effect.pipe(
+      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000, eventStreamEnded })),
+    );
   }),
 );
 
