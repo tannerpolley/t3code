@@ -85,6 +85,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
+import { makeBackgroundTaskLogWriter } from "../backgroundTaskOutput.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   buildCodexAdditionalContext,
@@ -4124,6 +4125,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           });
         });
 
+        const commandOutputLogs = yield* makeBackgroundTaskLogWriter(serverConfig.logsDir);
+        yield* client.handleServerNotification("item/commandExecution/outputDelta", (payload) =>
+          Effect.gen(function* () {
+            const resolved = yield* resolveItemEventContext(payload.turnId);
+            if (resolved === undefined) return;
+            yield* commandOutputLogs.append(
+              resolved.context.projectionThreadId,
+              payload.itemId,
+              payload.delta,
+            );
+          }),
+        );
+
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
@@ -4297,6 +4311,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
 
             if (payload.item.type === "commandExecution") {
+              yield* commandOutputLogs.remove(context.projectionThreadId, payload.item.id);
               const turnDrained = yield* clearRunningCommandItem(payload.turnId, payload.item.id);
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
               yield* emitProviderEvent({
@@ -6181,6 +6196,35 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                       requestId: requestInput.requestId,
                       cause,
                     }),
+              ),
+            ),
+          stopBackgroundTask: (stopInput) =>
+            Effect.gen(function* () {
+              // A background command's task id is its native item id; Codex names its process.
+              const nativeThreadId = yield* getNativeThreadId(stopInput.providerThread);
+              let tracked: TrackedRunningCommandItem | undefined;
+              for (const [turnId, items] of yield* Ref.get(runningCommandItemsByTurn)) {
+                const resolved = yield* resolveItemEventContext(turnId);
+                if (resolved?.context.providerThread.id === stopInput.providerThread.id) {
+                  tracked = items.get(stopInput.taskId);
+                  if (tracked !== undefined) break;
+                }
+              }
+              if (tracked?.processId === undefined) {
+                return yield* toProtocolError(
+                  `Codex has no running background command ${stopInput.taskId}.`,
+                );
+              }
+              // Codex then completes the command item, which ends its pending work.
+              yield* terminateBackgroundTerminal(nativeThreadId, tracked.processId);
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterProtocolError({
+                    driver: CODEX_PROVIDER,
+                    detail: `Failed to stop Codex background command ${stopInput.taskId}.`,
+                    payload: cause,
+                  }),
               ),
             ),
           uploadFeedback: (feedbackInput) =>

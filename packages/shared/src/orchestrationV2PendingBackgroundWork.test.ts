@@ -1,9 +1,12 @@
+import * as DateTime from "effect/DateTime";
+import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
   turnItemUpdateCanEndBackgroundWork,
+  pendingBackgroundWorkOfThread,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
 describe("turnItemUpdateCanEndBackgroundWork", () => {
@@ -89,7 +92,9 @@ describe("derivePendingBackgroundWork", () => {
         },
       ],
     });
-    expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
+    expect(tasks).toEqual([
+      { taskId: "cmd-1", description: "npm test", kind: "command", commandKind: "node" },
+    ]);
   });
 
   it("still returns empty when the latest run is running even with background items", () => {
@@ -149,6 +154,7 @@ describe("derivePendingBackgroundWork", () => {
         taskId: "cmd-new",
         description: "still pending",
         kind: "command",
+        commandKind: "node",
       },
     ]);
   });
@@ -193,7 +199,9 @@ describe("derivePendingBackgroundWork", () => {
         },
       ],
     });
-    expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
+    expect(tasks).toEqual([
+      { taskId: "cmd-1", description: "npm test", kind: "command", commandKind: "node" },
+    ]);
   });
 
   it("trims normalized background-work descriptions", () => {
@@ -411,6 +419,7 @@ describe("derivePendingBackgroundWork", () => {
         taskId: "cmd-new",
         description: "still pending",
         kind: "command",
+        commandKind: "node",
       },
     ]);
   });
@@ -466,6 +475,7 @@ describe("derivePendingBackgroundWork", () => {
         taskId: "cmd-null",
         description: "orphan item",
         kind: "command",
+        commandKind: "shell",
       },
     ]);
   });
@@ -514,7 +524,58 @@ describe("derivePendingBackgroundWork kinds", () => {
         kind: "subagent",
         childThreadId: "thread:child",
       },
-      { taskId: "cmd", description: "npm test", kind: "command" },
+      { taskId: "cmd", description: "npm test", kind: "command", commandKind: "node" },
     ]);
+  });
+});
+
+describe("background task metadata and ownership", () => {
+  it("keeps the command start and classifies its executable after settlement", () => {
+    const startedAt = DateTime.makeUnsafe("2026-09-23T10:00:00.000Z");
+    expect(
+      derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [
+          {
+            id: "python",
+            type: "command_execution",
+            status: "running",
+            title: null,
+            input: "python fit.py",
+            startedAt,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        taskId: "python",
+        kind: "command",
+        description: "python fit.py",
+        startedAt,
+        commandKind: "python",
+      },
+    ]);
+  });
+  it("keeps shared-session commands on their child and accepts legacy shell ownership", () => {
+    const parent = ThreadId.make("parent"),
+      child = ThreadId.make("child");
+    const roster = [
+      { taskId: "own", kind: "command" as const },
+      { taskId: "nested", kind: "monitor" as const, ownerThreadId: child },
+      { taskId: "legacy", kind: "background_task" as const, childThreadId: child },
+      { taskId: "agent", kind: "subagent" as const, childThreadId: child },
+    ];
+    expect(pendingBackgroundWorkOfThread(parent, roster).map((task) => task.taskId)).toEqual([
+      "own",
+      "agent",
+    ]);
+    expect(pendingBackgroundWorkOfThread(child, [], roster).map((task) => task.taskId)).toEqual([
+      "nested",
+      "legacy",
+    ]);
+    expect(
+      pendingBackgroundWorkOfThread(child, [roster[1]!], roster).map((task) => task.taskId),
+    ).toEqual(["nested", "legacy"]);
   });
 });

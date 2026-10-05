@@ -43,6 +43,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/unstable/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -933,6 +934,7 @@ describe("ClaudeAdapterV2 fetched model catalog", () => {
                 return {
                   messages: Stream.never,
                   offer: () => Effect.void,
+                  stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
@@ -1074,6 +1076,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                 return {
                   messages: Stream.never,
                   offer: () => Effect.void,
+                  stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
@@ -1227,6 +1230,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             offer: () => Effect.void,
             setModel: () => Effect.void,
             setPermissionMode: () => Effect.void,
+            stopTask: () => Effect.void,
             interrupt: Effect.void,
             close: Effect.void,
           };
@@ -1316,6 +1320,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                 return {
                   messages: Stream.never,
                   offer: () => Effect.void,
+                  stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
@@ -1536,6 +1541,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                   Effect.sync(() => {
                     offeredMessages.push(message);
                   }),
+                stopTask: () => Effect.void,
                 setModel: () => Effect.void,
                 setPermissionMode: () => Effect.void,
                 interrupt: Effect.void,
@@ -1675,6 +1681,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                 return {
                   messages: Stream.never,
                   offer: () => Effect.void,
+                  stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
@@ -1764,6 +1771,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                 return {
                   messages: Stream.empty,
                   offer: () => Effect.void,
+                  stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
@@ -1936,6 +1944,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                 return {
                   messages: Stream.empty,
                   offer: () => Effect.void,
+                  stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
@@ -2194,6 +2203,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         prefix: "t3-claude-v2-wake-",
       });
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      const rosterReceipts =
+        yield* Queue.unbounded<
+          Extract<ProviderAdapterV2Event, { type: "provider_thread.updated" }>
+        >();
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
       const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
         const processed = yield* Deferred.make<void>();
@@ -2202,6 +2215,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Deferred.await(processed);
       });
       const offeredMessages: Array<SDKUserMessage> = [];
+      const stoppedTaskIds: Array<string> = [];
       const permissionModeChanges: Array<string> = [];
       const continuationRequests: Array<ProviderContinuationRequest> = [];
       const continuationReceipts = yield* Queue.unbounded<ProviderContinuationRequest>();
@@ -2255,6 +2269,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   Effect.sync(() => {
                     offeredMessages.push(message);
                   }),
+                stopTask: (taskId) => Effect.sync(() => void stoppedTaskIds.push(taskId)),
                 setModel: () => Effect.void,
                 setPermissionMode: (mode) =>
                   Effect.sync(() => {
@@ -2286,6 +2301,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Stream.runForEach((event) =>
           Effect.gen(function* () {
             events.push(event);
+            if (
+              event.type === "provider_thread.updated" &&
+              (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0
+            )
+              yield* Queue.offer(rosterReceipts, event);
             if (event.type === "runtime_request.updated")
               yield* Queue.offer(requestReceipts, event);
             if (event.type === "turn.terminal") {
@@ -2313,8 +2333,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         threadId,
         sdkMessages,
         offerAndWait,
+        rosterReceipts,
         offeredMessages,
         permissionModeChanges,
+        stoppedTaskIds,
         continuationRequests,
         events,
         terminalReceipts,
@@ -2327,6 +2349,204 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect("learns where the session writes task output from what Claude reports", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-task-output-dir"),
+            text: "Watch the build.",
+            attachments: [],
+          }),
+        );
+        const outputDir = () =>
+          harness.runtime.backgroundTaskOutputDir?.({ providerThread: harness.providerThread }) ??
+          Effect.die("Claude must report its task output directory.");
+        // Each roster change is a receipt that the frames before it were handled.
+        const taskStarted = (taskId: string, uuidSuffix: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: `toolu-${taskId}`,
+            description: taskId,
+            task_type: "local_bash",
+            uuid: `00000000-0000-4000-8000-00000000093${uuidSuffix}`,
+            session_id: WAKE_NATIVE_SESSION,
+          });
+
+        // A Monitor's tool result names no file.
+        yield* harness.offerAndWait(taskStarted("bmonitor1", "1"));
+        assert.isNull(yield* outputDir());
+
+        const tasksDir = `/tmp/claude-1000/-home-me-project/${WAKE_NATIVE_SESSION}/tasks`;
+        for (const frame of [
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "toolu-bshell1",
+                  content: [
+                    {
+                      type: "text",
+                      text: `Command running in background with ID: bshell1. Output is being written to: ${tasksDir}/bshell1.output. You will be notified when it completes.`,
+                    },
+                  ],
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000932",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          taskStarted("bshell1", "3"),
+        ])
+          yield* harness.offerAndWait(frame);
+        assert.equal(yield* outputDir(), tasksDir);
+
+        // A finished task's output_file reports it too, and a later report wins.
+        const movedDir = `/tmp/claude-1000/-home-me-other/${WAKE_NATIVE_SESSION}/tasks`;
+        for (const frame of [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: "bdone1",
+            status: "completed",
+            output_file: `${movedDir}/bdone1.output`,
+            summary: "done",
+            uuid: "00000000-0000-4000-8000-000000000934",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          taskStarted("bshell2", "5"),
+        ])
+          yield* harness.offerAndWait(frame);
+        assert.equal(yield* outputDir(), movedDir);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect(
+    "keeps a subagent shell's tag and start across snapshots and stops it via the parent's query",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const AGENT_TOOL_USE_ID = "toolu-shell-owner-agent";
+          const BASH_TOOL_USE_ID = "toolu-shell-owner-bash";
+          const harness = yield* makeWakeHarness;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-subagent-shell-owner"),
+              text: "Have a subagent start the dev server.",
+              attachments: [],
+            }),
+          );
+          const shellTask = { task_id: WAKE_TASK_ID, description: "npm run dev" };
+          for (const frame of [
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "task-shell-owner-agent",
+              tool_use_id: AGENT_TOOL_USE_ID,
+              description: "Start the dev server",
+              task_type: "local_agent",
+              prompt: "Start the dev server.",
+              uuid: "00000000-0000-4000-8000-000000000921",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: BASH_TOOL_USE_ID,
+                    name: "Bash",
+                    input: { command: "npm run dev", run_in_background: true },
+                  },
+                ],
+              },
+              parent_tool_use_id: AGENT_TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000000922",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              ...shellTask,
+              tool_use_id: BASH_TOOL_USE_ID,
+              task_type: "local_bash",
+              uuid: "00000000-0000-4000-8000-000000000923",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          ])
+            yield* harness.offerAndWait(frame);
+          const rosters = () =>
+            providerThreadRosterEvents(harness.events).flatMap((event) =>
+              (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0
+                ? [event.providerThread.pendingBackgroundTasks]
+                : [],
+            );
+          const firstRoster = yield* Queue.take(harness.rosterReceipts);
+          const startedAt = firstRoster.providerThread.pendingBackgroundTasks?.[0]?.startedAt;
+          assert.isDefined(startedAt);
+          // A later snapshot must not restart the shell's clock.
+          yield* TestClock.adjust("1 hour");
+          // Snapshots carry ids only; the tag must survive the replacement.
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: [{ ...shellTask, task_type: "local_bash" }],
+              uuid: "00000000-0000-4000-8000-000000000924",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+
+          yield* Queue.take(harness.rosterReceipts);
+          const childThreadId =
+            harness.events.find((event) => event.type === "subagent.updated")?.subagent
+              .childThreadId ?? undefined;
+          assert.isString(childThreadId);
+          // The parent's session owns the shell, so it stays on the parent's roster.
+          assert.deepEqual(rosters().at(-1), [
+            {
+              taskId: WAKE_TASK_ID,
+              description: "npm run dev",
+              kind: "command",
+              commandKind: "node",
+              ownerThreadId: childThreadId,
+              startedAt,
+            },
+          ]);
+
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          // The shell runs in the parent's session, so the parent's query stops it.
+          const stop = harness.runtime.stopBackgroundTask;
+          if (stop === undefined) return yield* Effect.die("Claude must stop background tasks.");
+          yield* stop({ providerThread: harness.providerThread, taskId: WAKE_TASK_ID });
+          const unknown = yield* Effect.exit(
+            stop({
+              providerThread: harness.providerThread,
+              taskId: "task-not-on-roster",
+            }),
+          );
+          assert.isTrue(Exit.isFailure(unknown));
+          assert.deepEqual(harness.stoppedTaskIds, [WAKE_TASK_ID]);
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
 
   it.effect.each([
     { isError: false, title: "Check weather" },
@@ -3889,7 +4109,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
           .pendingBackgroundTasks;
         assert.deepEqual(roster, [
-          { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
+          {
+            taskId: longRunning.taskId,
+            kind: "monitor",
+            description: "Monitor 0",
+            commandKind: "watcher",
+            startedAt: now,
+          },
         ]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
@@ -4172,6 +4398,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 return {
                   messages: Stream.fromQueue(sdkMessages),
                   offer: () => Effect.void,
+                  stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
@@ -4422,6 +4649,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   return {
                     messages: Stream.fromQueue(queue),
                     offer: () => Effect.void,
+                    stopTask: () => Effect.void,
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,
@@ -4526,7 +4754,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (event) => event.providerThread.id === providerThreadA.id,
           )?.providerThread.pendingBackgroundTasks;
           assert.deepEqual(rosterAAfterSettle ?? [], [
-            { taskId: taskA, description: "work on A", kind: "command" },
+            {
+              taskId: taskA,
+              description: "work on A",
+              kind: "command",
+              startedAt: DateTime.makeUnsafe(0),
+            },
           ]);
           assert.isTrue(yield* hasPendingBackgroundWork);
           assert.isTrue(yield* hasPendingBackgroundWorkForThread(providerThreadA));
@@ -7578,6 +7811,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 return {
                   messages: Stream.fromQueue(sdkMessages),
                   offer: () => Effect.void,
+                  stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
@@ -7761,6 +7995,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   return {
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
+                    stopTask: () => Effect.void,
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,
@@ -7996,6 +8231,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   return {
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
+                    stopTask: () => Effect.void,
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,
@@ -8183,6 +8419,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 return {
                   messages: Stream.fromQueue(sdkMessages),
                   offer: () => Effect.void,
+                  stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
@@ -8360,6 +8597,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   return {
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
+                    stopTask: () => Effect.void,
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,
@@ -8492,6 +8730,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   return {
                     messages: Stream.fromQueue(sdkMessages),
                     offer: () => Effect.void,
+                    stopTask: () => Effect.void,
                     setModel: () => Effect.void,
                     setPermissionMode: () => Effect.void,
                     interrupt: Effect.void,

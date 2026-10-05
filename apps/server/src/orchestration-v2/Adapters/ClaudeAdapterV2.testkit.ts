@@ -245,6 +245,7 @@ type ClaudeOutboundFrame =
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
   | ClaudeQuerySetPermissionModeFrame
+  | { readonly type: "query.stop_task"; readonly taskId: string }
   | ClaudeQueryInterruptFrame
   | ClaudePermissionResponseFrame
   | ClaudeSessionForkFrame
@@ -823,6 +824,10 @@ function makeReplayQueryRunner(
               type: "query.set_permission_mode",
               mode,
             });
+          }),
+        stopTask: (taskId) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({ type: "query.stop_task", taskId });
           }),
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });

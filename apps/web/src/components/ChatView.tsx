@@ -1,3 +1,5 @@
+import { SidebarBackgroundWorkRows } from "./sidebar/SidebarBackgroundWorkRows";
+import { describeSidebarBackgroundWork } from "./sidebar/SidebarBackgroundWork.logic";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
@@ -7150,6 +7152,7 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, navigate],
   );
 
+  const [backgroundWorkExpanded, setBackgroundWorkExpanded] = useState(false);
   const backgroundWorkBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     const presentation = presentPendingBackgroundWork(activeBackgroundTasks);
     if (presentation === null || !activeThread) {
@@ -7170,7 +7173,23 @@ export default function ChatView(props: ChatViewProps) {
           aria-hidden="true"
         />
       ),
-      title: presentation.title,
+      title: (
+        <button
+          type="button"
+          aria-expanded={backgroundWorkExpanded}
+          className="cursor-pointer text-left"
+          onClick={() => setBackgroundWorkExpanded((expanded) => !expanded)}
+        >
+          {presentation.title} {backgroundWorkExpanded ? "▾" : "▸"}
+        </button>
+      ),
+      children: backgroundWorkExpanded ? (
+        <SidebarBackgroundWorkRows
+          environmentId={environmentId}
+          threadId={activeThread.id}
+          rows={describeSidebarBackgroundWork(activeBackgroundTasks, [])}
+        />
+      ) : undefined,
       // A single named item is already in the title.
       description:
         presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
@@ -7207,6 +7226,8 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [
     activeBackgroundTasks,
+    backgroundWorkExpanded,
+    environmentId,
     activeThread,
     handleStopBackgroundWork,
     isStoppingBackgroundWork,

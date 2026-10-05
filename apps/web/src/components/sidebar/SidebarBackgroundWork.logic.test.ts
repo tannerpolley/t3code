@@ -5,6 +5,8 @@ import {
   RunId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadFixture } from "../../test-fixtures";
@@ -12,6 +14,7 @@ import {
   describeSidebarBackgroundWork,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
+  msUntilPossiblyStuck,
 } from "./SidebarBackgroundWork.logic";
 
 const runningChild = makeThreadFixture({
@@ -187,5 +190,71 @@ describe("resolveSidebarThreadModelLabel", () => {
     } satisfies Pick<ServerProvider, "driver" | "models">;
 
     expect(resolveSidebarThreadModelLabel(thread, provider)).toBe("Codex 6 · High");
+  });
+});
+
+describe("background task metadata", () => {
+  const startedAt = DateTime.makeUnsafe("2026-09-23T10:00:00.000Z");
+  it("keeps task age and command kind without using legacy taskType to override kind", () => {
+    expect(
+      describeSidebarBackgroundWork(
+        [
+          {
+            taskId: "shell",
+            kind: "command",
+            taskType: "local_agent",
+            startedAt,
+            commandKind: "python",
+          },
+          { taskId: "agent", kind: "subagent", taskType: "local_bash", startedAt },
+        ],
+        [],
+      ).map((row) => [row.kind, row.startedAt]),
+    ).toEqual([
+      ["subagent", "2026-09-23T10:00:00.000Z"],
+      ["command", "2026-09-23T10:00:00.000Z"],
+    ]);
+    expect(
+      describeSidebarBackgroundWork(
+        [{ taskId: "shell", kind: "command", startedAt, commandKind: "python" }],
+        [],
+      )[0],
+    ).toMatchObject({ commandKind: "python" });
+  });
+  it("nests a shared-session shell once under its subagent and leaves servers out of waiting", () => {
+    const tasks = [
+      {
+        taskId: "shell",
+        kind: "command" as const,
+        ownerThreadId: runningChild.id,
+        commandKind: "server",
+        startedAt,
+      },
+    ];
+    const child = {
+      ...runningChild,
+      runtime: null,
+      latestRun: null,
+      pendingBackgroundTasks: [],
+      hasPendingUserInput: false,
+    };
+    const parentRows = describeSidebarBackgroundWork(tasks, [child]);
+    expect(parentRows.map((row) => row.taskId)).toEqual([child.id]);
+    expect(parentRows[0]?.status).toBe("ready");
+    const childTasks = pendingBackgroundWorkOfThread(child.id, [], tasks);
+    expect(describeSidebarBackgroundWork(childTasks, [])[0]).toMatchObject({
+      taskId: "shell",
+      ownerThreadId: child.id,
+      commandKind: "server",
+    });
+    expect(pendingBackgroundWorkOfThread(ThreadId.make("sibling"), [], tasks)).toEqual([]);
+  });
+  it("warns about a two-hour shell at the threshold", () => {
+    const start = "2026-09-23T10:00:00.000Z";
+    expect(msUntilPossiblyStuck(start, Date.parse("2026-09-23T11:30:00.000Z"))).toBe(
+      30 * 60 * 1000,
+    );
+    expect(msUntilPossiblyStuck(start, Date.parse("2026-09-23T12:00:00.000Z"))).toBe(0);
+    expect(msUntilPossiblyStuck(start, Date.parse("2026-09-24T12:00:00.000Z"))).toBe(0);
   });
 });
