@@ -22,6 +22,7 @@ import {
   EffectOutboxV2,
   REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS,
   type OrchestrationEffectV2,
+  type EffectWorkerLane,
 } from "./EffectOutbox.ts";
 import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
@@ -433,6 +434,13 @@ export class OrchestrationEffectWorkerError extends Schema.TaggedError<Orchestra
 const isOrchestrationEffectWorkerError = Schema.is(OrchestrationEffectWorkerError);
 
 export interface OrchestrationEffectWorkerV2Shape {
+  readonly runOnceInLane: (
+    lane: EffectWorkerLane,
+  ) => Effect.Effect<boolean, OrchestrationEffectWorkerError>;
+  readonly awaitWorkInLane: (lane: EffectWorkerLane) => Effect.Effect<void>;
+  readonly nextClaimableAtInLane: (
+    lane: EffectWorkerLane,
+  ) => Effect.Effect<Option.Option<DateTime.Utc>, OrchestrationEffectWorkerError>;
   readonly awaitWork: Effect.Effect<void>;
   readonly runOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
   readonly runRecoveryOnce: Effect.Effect<boolean, OrchestrationEffectWorkerError>;
@@ -553,10 +561,15 @@ export const layerWithOptions = (
           ? requeueClaim(effect, cause)
           : terminalizeClaim(effect, cause);
 
-      const runOnce = (excludeRestartContinuations = false) =>
+      const runOnce = (excludeRestartContinuations = false, lane?: EffectWorkerLane) =>
         Effect.gen(function* () {
           const claimExit = yield* Effect.exit(
-            outbox.claimNext({ workerId, leaseDurationMs, excludeRestartContinuations }),
+            outbox.claimNext({
+              workerId,
+              leaseDurationMs,
+              excludeRestartContinuations,
+              ...(lane === undefined ? {} : { lane }),
+            }),
           );
           yield* increment(orchestrationEffectClaimsTotal, {
             result: Exit.isFailure(claimExit)
@@ -672,6 +685,17 @@ export const layerWithOptions = (
         );
 
       return OrchestrationEffectWorkerV2.of({
+        runOnceInLane: (lane) => runOnce(false, lane),
+        awaitWorkInLane: outbox.awaitAvailableInLane,
+        nextClaimableAtInLane: (lane) =>
+          outbox
+            .nextClaimableAtInLane(lane)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectWorkerError({ operation: "next-claimable", cause }),
+              ),
+            ),
         awaitWork: outbox.awaitAvailable,
         runOnce: runOnce(),
         runRecoveryOnce: runOnce(true),
@@ -699,6 +723,7 @@ export const layerWithOptions = (
 export const layer = layerWithOptions();
 
 export interface OrchestrationEffectDaemonOptions {
+  /** Provider lifecycle slots; title generation always has one separate slot. */
   readonly concurrency?: number;
   readonly livenessPollIntervalMs?: number;
 }
@@ -722,9 +747,9 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       // Post-commit notifications are the low-latency path. `availableAt` is the
       // durable retry schedule, and the long liveness poll only recovers from a
       // missed in-process notification or work inserted by another process.
-      const runWorker = Effect.gen(function* () {
+      const runWorker = Effect.fnUntraced(function* (lane: EffectWorkerLane) {
         while (true) {
-          const outcome = yield* worker.runOnce.pipe(
+          const outcome = yield* worker.runOnceInLane(lane).pipe(
             Effect.map((worked) => (worked ? ("worked" as const) : ("idle" as const))),
             Effect.catchCause((cause) =>
               Effect.logWarning("Orchestration effect worker failed", cause).pipe(
@@ -744,14 +769,16 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
             continue;
           }
 
-          const nextClaimableAt = yield* worker.nextClaimableAt.pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning(
-                "Failed to read the next orchestration effect deadline",
-                cause,
-              ).pipe(Effect.as(Option.none<DateTime.Utc>())),
-            ),
-          );
+          const nextClaimableAt = yield* worker
+            .nextClaimableAtInLane(lane)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning(
+                  "Failed to read the next orchestration effect deadline",
+                  cause,
+                ).pipe(Effect.as(Option.none<DateTime.Utc>())),
+              ),
+            );
           const now = DateTime.toEpochMillis(yield* DateTime.now);
           const sleepMs = Option.match(nextClaimableAt, {
             onNone: () => livenessPollIntervalMs,
@@ -761,14 +788,14 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
             },
           });
           yield* Effect.raceFirst(
-            worker.awaitWork.pipe(Effect.as("notified" as const)),
+            worker.awaitWorkInLane(lane).pipe(Effect.as("notified" as const)),
             Effect.sleep(Duration.millis(sleepMs)).pipe(Effect.as("scheduled" as const)),
           );
         }
       });
 
       return yield* Effect.all(
-        Array.from({ length: concurrency }, () => runWorker),
+        [...Array.from({ length: concurrency }, () => runWorker("lifecycle")), runWorker("title")],
         {
           concurrency: "unbounded",
           discard: true,
