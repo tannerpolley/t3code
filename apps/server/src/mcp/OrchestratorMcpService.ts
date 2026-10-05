@@ -51,7 +51,9 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import { WORKTREE_BRANCH_PREFIX, sanitizeBranchFragment } from "@t3tools/shared/git";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -61,11 +63,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { deriveDelegatedTaskNode } from "../orchestration-v2/IdAllocator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
   delegatedTaskProgress,
 } from "../orchestration-v2/SubagentProjection.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
@@ -440,6 +444,15 @@ function stableCommandId(input: {
   );
 }
 
+/**
+ * Branch for a delegated child's own worktree: readable from the task, and
+ * fixed by the delegate command id so a retry never cuts a second branch.
+ */
+function delegatedWorktreeBranch(input: OrchestratorMcpDelegateTaskInput, commandId: CommandId) {
+  const suffix = NodeCrypto.createHash("sha256").update(commandId).digest("hex").slice(0, 8);
+  return `${WORKTREE_BRANCH_PREFIX}/${sanitizeBranchFragment((input.title ?? input.task).slice(0, 40))}-${suffix}`;
+}
+
 function stableThreadId(input: {
   readonly scope: McpInvocationScope;
   readonly requestKey: string;
@@ -708,6 +721,15 @@ const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  // Optional like settings: only worktree delegation needs it, and production always provides it.
+  const threadLaunch = yield* Effect.serviceOption(ThreadLaunchService.ThreadLaunchService);
+  const requireThreadLaunch = Option.match(threadLaunch, {
+    onNone: () =>
+      Effect.fail(
+        failure("orchestration_error", "Worktree delegation is unavailable on this server."),
+      ),
+    onSome: Effect.succeed,
+  });
 
   /** A caller-named project, which must exist before anything is recorded against it. */
   const requireProject = (projectId: ProjectId) =>
@@ -1004,6 +1026,66 @@ const make = Effect.gen(function* () {
       };
     });
 
+  /**
+   * Where a delegated child works. Implementation and test roles default to
+   * their own worktree, cut from the parent's branch or, for a thread in the
+   * project root, the branch its checkout is on. Without a branch, a default
+   * falls back to the parent's checkout with a note; an explicit request fails.
+   */
+  const resolveDelegatedWorkspace = (input: {
+    readonly parent: OrchestrationV2ThreadProjection;
+    readonly input: OrchestratorMcpDelegateTaskInput;
+    readonly commandId: CommandId;
+  }): Effect.Effect<
+    {
+      readonly worktree?: { readonly baseRef: string; readonly branch: string };
+      readonly note?: string;
+    },
+    OrchestratorMcpFailure
+  > =>
+    Effect.gen(function* () {
+      const requested =
+        input.input.workspace ??
+        (input.input.role === "implementation" || input.input.role === "test"
+          ? "worktree"
+          : "inherit");
+      // A retry replays the accepted command, whose decision stands.
+      const accepted = input.parent.subagents.some(
+        (task) => task.id === deriveDelegatedTaskNode({ commandId: input.commandId }),
+      );
+      if (requested === "inherit" || accepted) return {};
+      const baseRef =
+        input.parent.thread.branch ??
+        (yield* (yield* requireThreadLaunch)
+          .readCheckoutBranch({
+            commandId: input.commandId,
+            projectId: input.parent.thread.projectId,
+            worktreePath: input.parent.thread.worktreePath,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to read this thread's checkout branch: ${errorMessage(error)}`,
+              ),
+            ),
+          ));
+      if (baseRef !== null) {
+        return {
+          worktree: { baseRef, branch: delegatedWorktreeBranch(input.input, input.commandId) },
+        };
+      }
+      if (input.input.workspace === "worktree") {
+        return yield* failure(
+          "invalid_request",
+          "workspace \"worktree\" cuts the child's branch from this thread's checkout, but that checkout is on a detached HEAD or is not a git repository.",
+        );
+      }
+      return {
+        note: "This thread's checkout is on a detached HEAD or is not a git repository, so the child shares this checkout instead of getting its own worktree.",
+      };
+    });
+
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined
       ? crypto.randomUUIDv4.pipe(Effect.orDie)
@@ -1116,6 +1198,8 @@ const make = Effect.gen(function* () {
         hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
         providerInstanceId: task.providerInstanceId,
         model: task.model,
+        branch: childControls.thread.branch,
+        worktreePath: childControls.thread.worktreePath,
         summary: derivedResult,
         resultContextTransferId: resultTransfer?.id ?? null,
         latestTerminalRunId: terminalRun?.id ?? null,
@@ -1436,6 +1520,9 @@ const make = Effect.gen(function* () {
           requestKey: key,
           operation: "delegate-task",
         });
+        const workspace = yield* resolveDelegatedWorkspace({ parent, input, commandId });
+        const withNote = (result: OrchestratorMcpDelegateTaskResult) =>
+          workspace.note === undefined ? result : { ...result, workspaceNote: workspace.note };
         const result = yield* threadManagement
           .dispatch({
             type: "delegated_task.request",
@@ -1454,6 +1541,7 @@ const make = Effect.gen(function* () {
             // delegations deliver through the blocking tool call, so a wake is
             // only needed if the parent settled first (timeout, disconnect).
             completionWake: input.mode === "wait" ? "settled_only" : "always",
+            ...(workspace.worktree === undefined ? {} : { worktree: workspace.worktree }),
           })
           .pipe(
             Effect.mapError((error) =>
@@ -1474,9 +1562,37 @@ const make = Effect.gen(function* () {
           );
         }
         const taskId = taskEvent.event.payload.id;
+        const childThreadId = taskEvent.event.payload.childThreadId;
+        if (childThreadId !== null) {
+          // A worktree child's first run waits in "preparing" until the same
+          // preparation a worktree launch uses creates, binds and sets up its
+          // worktree, then releases it; a failure there fails the child's run.
+          // A replay finds the run already released, or prepares it again.
+          const childRun = (yield* loadProjection(childThreadId)).runs.find(
+            (run) => run.status === "preparing" && run.workspacePreparation?.type === "worktree",
+          );
+          if (childRun?.workspacePreparation !== undefined) {
+            yield* (yield* requireThreadLaunch)
+              .prepareDeferredRun({
+                commandId,
+                projectId: parent.thread.projectId,
+                threadId: childThreadId,
+                runId: childRun.id,
+                workspaceStrategy: childRun.workspacePreparation,
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  failure(
+                    "orchestration_error",
+                    `Unable to prepare the delegated task's worktree: ${errorMessage(error)}`,
+                  ),
+                ),
+              );
+          }
+        }
 
         if (input.mode !== "wait") {
-          return yield* readTask(scope, taskId, false, true);
+          return withNote(yield* readTask(scope, taskId, false, true));
         }
         const timeoutMs = Math.min(
           MAX_WAIT_TIMEOUT_MS,
@@ -1484,7 +1600,7 @@ const make = Effect.gen(function* () {
         );
         const waited = yield* waitForTask(scope, taskId, timeoutMs);
         if (Option.isSome(waited)) {
-          return waited.value;
+          return withNote(waited.value);
         }
         // The blocking wait timed out, so it no longer owns delivery: upgrade
         // the task so a later terminal wakes the parent even mid-turn. Best
@@ -1525,7 +1641,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return yield* readTask(scope, taskId, true, true);
+        return withNote(yield* readTask(scope, taskId, true, true));
       }),
     taskStatus: (callerScope, taskId) =>
       Effect.gen(function* () {

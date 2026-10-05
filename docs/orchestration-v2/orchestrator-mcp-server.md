@@ -218,6 +218,7 @@ type DelegateTaskInput = {
   clientRequestId?: string;
   runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
   interactionMode?: "inherit" | "plan" | "default";
+  workspace?: "inherit" | "worktree";
 };
 ```
 
@@ -235,6 +236,19 @@ a distinct `clientRequestId` per round, stable across retries of that round.
 `t3_thread_send`. Ordinary thread messaging remains available for user-requested
 conversations; it does not reopen a completed task. There is no task-level follow-up
 API for preserving the same reviewer session.
+
+An `inherit` child works in the parent's checkout. A `worktree` child gets its
+own worktree, for children that edit code in parallel: its first run starts in
+`preparing`, and the same preparation `t3_thread_launch` uses creates a branch
+from the parent's branch (or, for a thread in the project root, the branch its
+checkout is on; local commits only), binds the child, runs the project's setup
+script, and releases the run. `implementation` and `test` roles default to
+`worktree`; the rest default to `inherit`. Without a branch, a defaulted
+worktree falls back to `inherit` with a `workspaceNote`, and an explicit one
+fails. The branch name derives from the title and the delegate command id, so a
+retry with the same `clientRequestId` keeps the accepted decision. A preparation
+failure fails the child's run, which the user can retry. Nothing merges the
+branch back or removes the worktree automatically.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command
@@ -256,8 +270,11 @@ type DelegateTaskResult = {
   hasPendingChildRuns: boolean;
   providerInstanceId: string;
   model: string | null;
+  branch: string | null;
+  worktreePath: string | null; // null for the project root, or before a worktree child is bound
   summary: string | null;
   resultContextTransferId: string | null;
+  workspaceNote?: string; // only when a defaulted worktree fell back to the parent's checkout
   latestTerminalRunId: string | null;
   latestTerminalStatus: "completed" | "failed" | "cancelled" | "interrupted" | null;
   latestTerminalSummary: string | null;
