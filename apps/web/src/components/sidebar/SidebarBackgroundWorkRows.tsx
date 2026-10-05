@@ -81,9 +81,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
   const owner = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
   const ownerProvider = providers?.find((entry) => entry.instanceId === owner?.providerInstanceId);
   // One drag at a time, so the list shares one drag and notes which subagent row started it.
-  const draggedChild = useRef<{ readonly threadId: ThreadId; readonly title: string } | null>(
-    null,
-  );
+  const draggedChild = useRef<{ readonly threadId: ThreadId; readonly title: string } | null>(null);
   const childDrag = useThreadContextPointerDrag(() => ({
     threads: draggedChild.current
       ? [scopeThreadRef(props.environmentId, draggedChild.current.threadId)]

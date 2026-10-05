@@ -35,6 +35,7 @@ vi.mock("../../state/entities", () => ({
   useThreadShells: () => state.shells,
   useProjects: () => state.projects,
   useServerConfigs: () => state.configs,
+  useThreadShell: () => null,
 }));
 vi.mock("../../lib/archivedThreadsState", () => ({
   useArchivedThreadSnapshots: () => ({ snapshots: [] }),
