@@ -117,18 +117,25 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Lay out the Usage page's Limits view like Cost and Tokens: pick a window (5 hours, weekly, monthly), see what is left per provider, and chart its estimated use by provider or model, from the usage your connected environments recorded. Off shows the per-provider window cards.",
   },
   {
+    key: "sidebarFiveHourUsage",
+    searchId: "sidebar-five-hour-usage",
+    section: "usage",
+    description:
+      "The sidebar's Usage button shows Claude's and Codex's five-hour quota left (5h 62%). Hover for when it resets.",
+  },
+  {
     key: "dailyUsageMeter",
     searchId: "daily-usage-meter",
     section: "usage",
     description:
-      "A daily meter in the sidebar: each Monday–Friday gets 20% of each provider's weekly limit, and unused room carries forward.",
+      "The sidebar's Usage button shows today's budget left (1d 40%): each Monday–Friday gets 20% of each provider's weekly limit, and unused room carries forward. Red when over pace.",
   },
   {
     key: "sidebarWeeklyUsage",
     searchId: "sidebar-weekly-usage",
     section: "usage",
     description:
-      "The sidebar's Usage button shows Claude's and Codex's weekly quota left (7d 75%) instead of the chart icon, green from 70%, amber from 30%, red below. Click opens Limits.",
+      "The sidebar's Usage button shows Claude's and Codex's weekly quota left (7d 75%). With any usage readout on, the button replaces its chart icon, colors each value green from 70%, amber from 30%, red below, and opens Limits.",
   },
 ];
 

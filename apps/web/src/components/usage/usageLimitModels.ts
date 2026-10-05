@@ -112,6 +112,70 @@ export function dailyPaceBudget(input: {
   };
 }
 
+export interface WindowReadout {
+  readonly usedPercent: number;
+  readonly leftPercent: number;
+  readonly resetsAt: number | null;
+}
+
+/** Today's pace budget; `leftPercent` is the budget's share left, negative over pace, null on a day off. */
+export interface DailyReadout {
+  readonly usedPercent: number;
+  readonly budgetPercent: number;
+  readonly leftPercent: number | null;
+}
+
+/**
+ * The sidebar's per-provider readouts: the five-hour window left, today's
+ * pace budget left as a share of the budget, and the weekly limit left. The
+ * day needs the weekly window's span; without it there is no daily readout.
+ */
+export function limitReadouts(input: {
+  readonly session: { readonly usedPercent: number; readonly resetsAt: number | null } | null;
+  readonly weekly: {
+    readonly usedPercent: number;
+    readonly span: { readonly start: number; readonly end: number } | null;
+  } | null;
+  readonly now: number;
+  readonly timeZone: string;
+}): {
+  readonly session: WindowReadout | null;
+  readonly daily: DailyReadout | null;
+  readonly weekly: WindowReadout | null;
+} {
+  const { session, weekly } = input;
+  const span = weekly?.span ?? null;
+  const pace =
+    weekly && span
+      ? dailyPaceBudget({
+          windowStart: span.start,
+          windowEnd: span.end,
+          now: input.now,
+          timeZone: input.timeZone,
+        })
+      : null;
+  return {
+    session: session && { ...session, leftPercent: 100 - session.usedPercent },
+    daily:
+      weekly && pace
+        ? {
+            usedPercent: weekly.usedPercent,
+            budgetPercent: Math.round(pace.budgetPercent),
+            leftPercent: !pace.isWorkday
+              ? null
+              : pace.budgetPercent > 0
+                ? Math.round(((pace.budgetPercent - weekly.usedPercent) / pace.budgetPercent) * 100)
+                : 0,
+          }
+        : null,
+    weekly: weekly && {
+      usedPercent: weekly.usedPercent,
+      leftPercent: 100 - weekly.usedPercent,
+      resetsAt: span?.end ?? null,
+    },
+  };
+}
+
 /**
  * Splits a limit window's used percent across the models that ran in it.
  *
