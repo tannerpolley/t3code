@@ -429,6 +429,43 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
+  it.effect("settles a stalled title request through its failure completion", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        generateTitle: () =>
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titles = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:timeout:create",
+          thread: "thread:title:timeout",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:timeout:message",
+          threadId,
+          text: "Conversation",
+        });
+        const requestId = yield* armRegeneration({
+          command: "command:title:timeout:request",
+          threadId,
+        });
+        const fiber = yield* titles
+          .execute({ threadId, requestId, kind: { type: "regenerate" } })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("2 minutes");
+        yield* Fiber.join(fiber);
+        const projection = yield* threads.getThreadProjection(threadId);
+        assert.equal(projection.thread.title, "Seed title");
+        assert.isNotOk(projection.thread.titleRegeneration);
+        assert.equal(projection.thread.titleEvaluation?.outcome, "failed");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("completes without generating when the initial message is unavailable", () =>
     Effect.gen(function* () {
       const harness = makeHarness();

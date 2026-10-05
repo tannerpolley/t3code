@@ -33,10 +33,12 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -1768,6 +1770,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       });
       const events: Array<ProviderAdapterV2Event> = [];
       const firstTerminal = yield* Deferred.make<void>();
+      const eventStreamEnded = yield* Deferred.make<Exit.Exit<void, unknown>>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) =>
           Effect.sync(() => {
@@ -1781,6 +1784,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Effect.andThen(onEvent(event)),
           ),
         ),
+        Effect.exit,
+        Effect.flatMap((exit) => Deferred.succeed(eventStreamEnded, exit)),
         Effect.forkScoped,
       );
       if (runtime.hasPendingBackgroundWork === undefined) {
@@ -1807,6 +1812,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         subagentUpdates,
         hasPendingBackgroundWork,
         firstTerminal: Deferred.await(firstTerminal),
+        eventStreamExit: Deferred.await(eventStreamEnded),
       };
     });
 
@@ -4321,11 +4327,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
   });
 
-  // The app-server exits after the root turn, before the command's own
-  // item/completed (Codex always sends one, so only a lost notification or a
-  // gone process leaves it running). Nothing tracks the command any more, yet
-  // the thread still shows it, and Stop is the only way to clear it.
-  it.effect("Stop ends a background command no Codex process tracks any more", () =>
+  // An exited app-server cannot finish its retained command. Fail that item
+  // automatically while keeping its already-completed root turn intact.
+  it.effect("fails retained background commands when Codex exits after the root turn", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -4378,11 +4382,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             createdBy: "user",
             creationSource: "web",
           });
-          const settled = yield* orchestrator.streamDomainEvents.pipe(
+          const backgroundFailed = yield* orchestrator.streamDomainEvents.pipe(
             Stream.filter(
               (event) =>
-                event.type === "run.updated" &&
-                (event.payload.status === "waiting" || event.payload.status === "completed"),
+                event.type === "turn-item.updated" &&
+                event.payload.type === "command_execution" &&
+                event.payload.status === "failed",
             ),
             Stream.runHead,
             Effect.forkChild({ startImmediately: true }),
@@ -4399,29 +4404,35 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             dispatchMode: { type: "start_immediately" },
           });
           yield* worker.drain();
-          yield* Fiber.join(settled);
+          yield* Fiber.join(backgroundFailed);
           yield* worker.drain();
           const before = yield* orchestrator.getThreadShell(threadId);
           assert.deepEqual(
-            before?.pendingBackgroundTasks?.map((task) => task.kind),
-            ["command"],
-            "the thread still shows the command the gone process never finished",
+            before?.pendingBackgroundTasks,
+            [],
+            "the exited process must not leave retained work in the thread",
           );
           const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
-          yield* orchestrator.dispatch({
-            type: "run.interrupt",
-            commandId: CommandId.make("stop-background-untracked"),
-            threadId,
-            runId: run.id,
-            holdQueue: true,
-          });
+          const stopExit = yield* orchestrator
+            .dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make("stop-background-untracked"),
+              threadId,
+              runId: run.id,
+              holdQueue: true,
+            })
+            .pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(stopExit));
+          if (Exit.isFailure(stopExit)) {
+            assert.include(Cause.pretty(stopExit.cause), "is not interruptible");
+          }
           yield* worker.drain();
           const projection = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(
             projection.turnItems.flatMap((item) =>
               item.type === "command_execution" ? [item.status] : [],
             ),
-            ["interrupted"],
+            ["failed"],
           );
           assert.equal(projection.runs.at(-1)?.status, "completed");
           assert.deepEqual(
@@ -5047,6 +5058,80 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(childCommandUpdates.at(-1)?.turnItem.status, "interrupted");
         assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
         assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("fails active turns and drains terminal events when a shared request times out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const childStarted = yield* Deferred.make<void>();
+        const unsubscribeSent = yield* Deferred.make<void>();
+        const interruptIndex = interruptSubagentCommandTranscript.entries.findIndex(
+          (entry) => entry.type === "expect_outbound" && entry.label === "turn/interrupt/root",
+        );
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-stalled-shared-request",
+          entries: [
+            ...interruptSubagentCommandTranscript.entries.slice(0, interruptIndex),
+            {
+              type: "expect_outbound",
+              frame: {
+                id: 4,
+                method: "thread/unsubscribe",
+                params: { threadId: INTERRUPT_NATIVE_THREAD },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM &&
+            event.turnItem.status === "running"
+              ? Deferred.succeed(childStarted, undefined)
+              : Effect.void,
+          (method) =>
+            method === "thread/unsubscribe"
+              ? Deferred.succeed(unsubscribeSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-stalled-shared-request"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(childStarted);
+        const detach = yield* harness.runtime.unloadThread!({
+          providerThread: harness.providerThread,
+        }).pipe(Effect.forkScoped);
+        yield* Deferred.await(unsubscribeSent);
+        yield* TestClock.adjust("60 seconds");
+        const detachExit = yield* Fiber.await(detach);
+        assert.isTrue(Exit.isFailure(detachExit));
+        yield* harness.firstTerminal;
+        const streamExit = yield* harness.eventStreamExit;
+        assert.isTrue(Exit.isFailure(streamExit));
+        if (Exit.isFailure(streamExit)) assert.include(Cause.pretty(streamExit.cause), "timed out");
+        assert.equal(harness.terminalEvents()[0]?.status, "failed");
+        const childTerminal = harness.events.findIndex(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.threadId !== harness.threadId &&
+            event.providerTurn.status === "failed",
+        );
+        assert.isAtLeast(childTerminal, 0);
+        assert.isAbove(
+          harness.events.findIndex((event) => event.type === "turn.terminal"),
+          childTerminal,
+        );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
