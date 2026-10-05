@@ -21,7 +21,12 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./index.ts";
+import { ProjectIconOverride } from "./project.ts";
 import {
+  OrchestrationV2AppThreadJson,
+  OrchestrationV2DelegatedCompletionCohort,
+  OrchestrationV2PendingBackgroundTask,
+  OrchestrationV2NotificationSource,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
@@ -40,6 +45,8 @@ import {
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
+
+const decodePendingBackgroundTask = Schema.decodeSync(OrchestrationV2PendingBackgroundTask);
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 const LegacyShellStreamItem = Schema.Union([
@@ -90,6 +97,130 @@ const decodeOrchestrationV2SubscribeThreadInput = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it("preserves persisted fork metadata when decoding and re-encoding", () => {
+    const timestamp = "2026-04-20T00:00:00.000Z";
+    const thread = {
+      createdBy: "user",
+      creationSource: "web",
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      titleSource: "generated",
+      titleEvaluation: { requestId: "title-1", outcome: "unchanged", evaluatedAt: timestamp },
+      providerInstanceId: "claudeAgent",
+      modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: "thread-1" },
+      forkedFrom: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    const task = {
+      taskId: "task-1",
+      taskType: "local_bash",
+      description: "Run checks",
+      childThreadId: "child-1",
+      startedAt: timestamp,
+      commandKind: "python",
+    };
+    const providerThread = {
+      id: "provider-thread-1",
+      driver: "claude",
+      providerInstanceId: "claudeAgent",
+      providerSessionId: null,
+      appThreadId: "thread-1",
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: null,
+      lastRunOrdinal: null,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      contextUsage: null,
+      nativeMetadata: null,
+      pendingBackgroundTasks: [task, { ...task, taskId: "task-2", kind: "command" }],
+    };
+    const assistantItem = {
+      id: "item-1",
+      threadId: "thread-1",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: timestamp,
+      type: "assistant_message",
+      messageId: "message-1",
+      text: "Done",
+      streaming: false,
+      phase: "final_answer",
+    };
+    const payloadSchema = Schema.Struct({
+      thread: OrchestrationV2AppThreadJson,
+      completion: OrchestrationV2DelegatedCompletionCohort,
+      assistantItems: Schema.Array(OrchestrationV2TurnItemJson),
+      projectIcon: ProjectIconOverride,
+      sources: Schema.Array(OrchestrationV2NotificationSource),
+      providerThread: OrchestrationV2ProviderThreadJson,
+    });
+    const nativeRef = { driver: "claude", nativeId: "native-1", strength: "strong" };
+    const payload = {
+      thread,
+      completion: {
+        disposition: "open",
+        nextGeneration: 2,
+        delivery: null,
+        settledDeliveryCount: 1,
+      },
+      assistantItems: [assistantItem, { ...assistantItem, id: "item-2", phase: "commentary" }],
+      projectIcon: { kind: "lucide", name: "folder", color: "blue", folder: true },
+      sources: [
+        { kind: "background_task", nativeRef },
+        { kind: "background_command", nativeRef },
+        { kind: "monitor", nativeRef },
+        { kind: "background_task", work: "subagent", childThreadId: "child-1", nativeRef },
+      ],
+      providerThread,
+    };
+    const decoded = Schema.decodeUnknownSync(payloadSchema)(payload);
+    const encoded = Schema.encodeSync(payloadSchema)(decoded);
+    expect(encoded).toEqual({
+      ...payload,
+      providerThread: {
+        ...providerThread,
+        pendingBackgroundTasks: [
+          { ...task, kind: "background_task" },
+          { ...task, taskId: "task-2", kind: "command" },
+        ],
+      },
+    });
+    // Runtime decoding preserves the same metadata after JSON dates become DateTime values.
+    expect(
+      decodePendingBackgroundTask({
+        ...task,
+        startedAt: now,
+      }),
+    ).toEqual({ ...task, startedAt: now, kind: "background_task" });
+  });
+
   it("carries command failure metadata through runtime and JSON schemas without output text", () => {
     const base = {
       id: "command-item",
@@ -1147,8 +1278,14 @@ describe("background work kinds from older or newer servers", () => {
       return item.type === "notification" ? item.source : undefined;
     };
     expect(
-      sourceOf({ kind: "background_task", nativeRef: { driver: "claude", nativeId: "task-1" } }),
-    ).toEqual({ kind: "background_task" });
+      sourceOf({
+        kind: "background_task",
+        nativeRef: { driver: "claude", nativeId: "task-1", strength: "strong" },
+      }),
+    ).toEqual({
+      kind: "background_task",
+      nativeRef: { driver: "claude", nativeId: "task-1", strength: "strong" },
+    });
     expect(sourceOf({ kind: "background_command" })).toEqual({ kind: "command" });
     expect(sourceOf({ kind: "monitor" })).toEqual({ kind: "monitor" });
   });
@@ -1226,7 +1363,12 @@ describe("background work kinds from older or newer servers", () => {
       ],
     });
     expect(providerThread.pendingBackgroundTasks).toEqual([
-      { taskId: "bg-1", description: "Background sleep", kind: "background_task" },
+      {
+        taskId: "bg-1",
+        description: "Background sleep",
+        taskType: "local_bash",
+        kind: "background_task",
+      },
       { taskId: "bg-2", kind: "background_task" },
       { taskId: "bg-3", description: "Nightly", kind: "background_task" },
       { taskId: "bg-4", description: "npm test", kind: "command" },
