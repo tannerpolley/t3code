@@ -24,6 +24,8 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { useUiStateStore } from "../uiStateStore";
+import { useClientSettings } from "../hooks/useSettings";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
@@ -43,6 +45,7 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
+  buildBranchPickerRefItems,
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
@@ -263,12 +266,25 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     currentGitBranch,
   });
-  const branchNames = useMemo(() => refs.map((refName) => refName.name), [refs]);
   const branchByName = useMemo(
     () => new Map(refs.map((refName) => [refName.name, refName] as const)),
     [refs],
   );
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
+  const branchPickerGroups = useClientSettings((settings) => settings.branchPickerGroups);
+  const branchPickerCollapsedGroups = useUiStateStore((state) => state.branchPickerCollapsedGroups);
+  const setBranchPickerGroupCollapsed = useUiStateStore(
+    (state) => state.setBranchPickerGroupCollapsed,
+  );
+  const { items: branchRefItems, headerByItem: branchGroupHeaderByItem } = useMemo(
+    () =>
+      buildBranchPickerRefItems({
+        refs,
+        collapsedGroups: branchPickerCollapsedGroups,
+        flat: normalizedDeferredBranchQuery.length > 0 || !branchPickerGroups,
+      }),
+    [refs, branchPickerCollapsedGroups, normalizedDeferredBranchQuery, branchPickerGroups],
+  );
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
@@ -284,7 +300,7 @@ export function BranchToolbarBranchSelector({
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
   const branchPickerItems = useMemo(() => {
-    const items = [...branchNames];
+    const items = [...branchRefItems];
     if (createBranchItemValue && !hasExactBranchMatch) {
       items.push(createBranchItemValue);
     }
@@ -292,7 +308,7 @@ export function BranchToolbarBranchSelector({
       items.unshift(checkoutPullRequestItemValue);
     }
     return items;
-  }, [branchNames, checkoutPullRequestItemValue, createBranchItemValue, hasExactBranchMatch]);
+  }, [branchRefItems, checkoutPullRequestItemValue, createBranchItemValue, hasExactBranchMatch]);
   const filteredBranchPickerItems = useMemo(
     () =>
       normalizedDeferredBranchQuery.length === 0
@@ -590,7 +606,18 @@ export function BranchToolbarBranchSelector({
       : `#${prNumber}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
 
   function selectPickerItem(itemValue: string) {
-    if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
+    const groupHeader = branchGroupHeaderByItem.get(itemValue);
+    if (groupHeader) {
+      // Read the live state: a cached row can carry a stale `collapsed`.
+      const collapsed = useUiStateStore
+        .getState()
+        .branchPickerCollapsedGroups.includes(groupHeader.group);
+      setBranchPickerGroupCollapsed(groupHeader.group, !collapsed);
+    } else if (
+      itemValue === checkoutPullRequestItemValue &&
+      prReference &&
+      onCheckoutPullRequestRequest
+    ) {
       handleOpenChange(false);
       onComposerFocusRequest?.();
       onCheckoutPullRequestRequest(prReference);
@@ -603,6 +630,38 @@ export function BranchToolbarBranchSelector({
   }
 
   function renderPickerItem(itemValue: string, index: number) {
+    const groupHeader = branchGroupHeaderByItem.get(itemValue);
+    if (groupHeader) {
+      return (
+        <ComboboxItem
+          hideIndicator
+          key={itemValue}
+          index={index}
+          value={itemValue}
+          aria-expanded={!groupHeader.collapsed}
+          onClick={(event) => {
+            // Toggling a group must neither select the header nor close the popup.
+            event.preventBaseUIHandler();
+            selectPickerItem(itemValue);
+          }}
+          onMouseUp={(event) => event.preventBaseUIHandler()}
+        >
+          <span className="min-w-0 flex-1 truncate font-medium text-muted-foreground text-xs">
+            {groupHeader.label}
+          </span>
+          <span className="shrink-0 text-3xs text-muted-foreground tabular-nums">
+            {groupHeader.count}
+          </span>
+          <ChevronDownIcon
+            aria-hidden
+            className={cn(
+              "size-3.5 shrink-0 transition-transform motion-reduce:transition-none",
+              groupHeader.collapsed && "-rotate-90",
+            )}
+          />
+        </ComboboxItem>
+      );
+    }
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
         <ComboboxItem
@@ -660,6 +719,7 @@ export function BranchToolbarBranchSelector({
       open={isBranchMenuOpen}
       onOpenChange={handleOpenChange}
       onSelectItem={selectPickerItem}
+      extraData={branchPickerCollapsedGroups}
       value={resolvedActiveBranch}
       query={branchQuery}
       resultsQuery={deferredTrimmedBranchQuery}
@@ -670,11 +730,13 @@ export function BranchToolbarBranchSelector({
       statusText={branchStatusText}
       renderItem={renderPickerItem}
       getItemType={(item) =>
-        item === checkoutPullRequestItemValue
-          ? "checkout-pull-request"
-          : item === createBranchItemValue
-            ? "create-branch"
-            : "branch"
+        branchGroupHeaderByItem.has(item)
+          ? "branch-group-header"
+          : item === checkoutPullRequestItemValue
+            ? "checkout-pull-request"
+            : item === createBranchItemValue
+              ? "create-branch"
+              : "branch"
       }
       originControl={
         isSelectingWorktreeBase

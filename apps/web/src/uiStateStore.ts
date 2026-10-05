@@ -19,6 +19,9 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v1",
 ] as const;
 
+export type BranchPickerGroup = "current" | "local" | "remote";
+const BRANCH_PICKER_GROUPS: readonly BranchPickerGroup[] = ["current", "local", "remote"];
+
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
@@ -31,6 +34,7 @@ export interface PersistedUiState {
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
+  branchPickerCollapsedGroups?: string[];
 }
 
 export interface UiProjectState {
@@ -55,8 +59,12 @@ export interface UiPullRequestState {
   pullRequestMergeMethod: PullRequestMergeMethod;
 }
 
+export interface UiBranchPickerState {
+  branchPickerCollapsedGroups: BranchPickerGroup[];
+}
+
 export interface UiState
-  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState {}
+  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState, UiBranchPickerState {}
 
 const initialState: UiState = {
   projectExpandedById: {},
@@ -66,6 +74,7 @@ const initialState: UiState = {
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
+  branchPickerCollapsedGroups: [],
 };
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
@@ -121,6 +130,12 @@ function isPullRequestMergeMethod(value: unknown): value is PullRequestMergeMeth
   return value === "merge" || value === "squash" || value === "rebase";
 }
 
+function sanitizeBranchPickerCollapsedGroups(value: unknown): BranchPickerGroup[] {
+  return Array.isArray(value)
+    ? BRANCH_PICKER_GROUPS.filter((group) => value.includes(group))
+    : initialState.branchPickerCollapsedGroups;
+}
+
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -158,6 +173,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
+    branchPickerCollapsedGroups: sanitizeBranchPickerCollapsedGroups(
+      parsed.branchPickerCollapsedGroups,
+    ),
   };
 }
 
@@ -232,6 +250,7 @@ export function persistState(state: UiState): void {
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
+        branchPickerCollapsedGroups: state.branchPickerCollapsedGroups,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -346,6 +365,20 @@ function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMetho
     : { ...state, pullRequestMergeMethod: method };
 }
 
+export function setBranchPickerGroupCollapsed(
+  state: UiState,
+  group: BranchPickerGroup,
+  collapsed: boolean,
+): UiState {
+  if (state.branchPickerCollapsedGroups.includes(group) === collapsed) return state;
+  return {
+    ...state,
+    branchPickerCollapsedGroups: BRANCH_PICKER_GROUPS.filter((candidate) =>
+      candidate === group ? collapsed : state.branchPickerCollapsedGroups.includes(candidate),
+    ),
+  };
+}
+
 export function resolveProjectExpanded(
   projectExpandedById: Readonly<Record<string, boolean>>,
   preferenceKeys: readonly string[],
@@ -430,6 +463,7 @@ interface UiStateStore extends UiState {
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
+  setBranchPickerGroupCollapsed: (group: BranchPickerGroup, collapsed: boolean) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -451,6 +485,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setSidebarProjectScopeKey: (projectKey) =>
     set((state) => setSidebarProjectScopeKey(state, projectKey)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
+  setBranchPickerGroupCollapsed: (group, collapsed) =>
+    set((state) => setBranchPickerGroupCollapsed(state, group, collapsed)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
