@@ -63,7 +63,8 @@ projects you move by hand stay where you put them. The same page controls projec
 row style, folder colors, default icons, and revealing the thread you open.
 
 Drag a thread from Projects onto the composer to add it as context for your next
-message. Running subagents and background tasks appear beneath their parent
+message; subagent rows in Projects and rows in **Lineage** drag the same way.
+Running subagents and background tasks appear beneath their parent
 thread. A folder icon marks a child working in its own worktree; hover the row
 for its branch. A child's question or approval also appears on the parent. Blue marks
 show work in progress; amber spinners show a thread waiting on background work.

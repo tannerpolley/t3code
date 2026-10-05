@@ -2,7 +2,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CornerDownRightIcon, FolderGit2Icon } from "lucide-react";
-import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import { useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import {
@@ -35,6 +35,7 @@ import {
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "../chat/AgentElapsed";
 import { SidebarThreadTime } from "./SidebarThreadTime";
+import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
   childWorktreeLabel,
   groupBackgroundWorkTaskRows,
@@ -79,6 +80,16 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
   const providers = useServerConfigs().get(props.environmentId)?.providers;
   const owner = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
   const ownerProvider = providers?.find((entry) => entry.instanceId === owner?.providerInstanceId);
+  // One drag at a time, so the list shares one drag and notes which subagent row started it.
+  const draggedChild = useRef<{ readonly threadId: ThreadId; readonly title: string } | null>(
+    null,
+  );
+  const childDrag = useThreadContextPointerDrag(() => ({
+    threads: draggedChild.current
+      ? [scopeThreadRef(props.environmentId, draggedChild.current.threadId)]
+      : [],
+    title: draggedChild.current?.title ?? "Thread",
+  }));
   const { agents, backgroundTasks } = groupBackgroundWorkTaskRows(props.rows);
   const rows = [...agents, ...backgroundTasks];
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
@@ -226,6 +237,12 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   ),
                 });
               }}
+              // Drag the row onto a chat composer to add the subagent's thread as context.
+              onPointerDown={(event) => {
+                draggedChild.current = { threadId: childThreadId, title: row.label };
+                childDrag.onPointerDown(event);
+              }}
+              onClickCapture={childDrag.onClickCapture}
               onContextMenu={(event) => {
                 if (!row.child || !props.onChildContextMenu) return;
                 event.preventDefault();
