@@ -2170,9 +2170,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedProviderEntry],
   );
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
-  const selectedProviderSkills = selectedProviderStatus
+  const providerSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : [];
+  // Claude Code plugin skills are this fork's addition; the pluginSkills switch hides them.
+  const selectedProviderSkills =
+    settings.pluginSkills || selectedProviderStatus?.driver !== "claudeAgent"
+      ? providerSkills
+      : providerSkills.filter((skill) => skill.pluginName === undefined);
   const selectedProviderSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : [];
