@@ -19,8 +19,12 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2UserInputQuestions,
   ProjectId,
+  ProviderSessionId,
+  type ProviderUserInputAnswers,
   RunId,
+  RuntimeRequestId,
   type ScheduledTaskId,
   ThreadId,
   type TurnItemId,
@@ -32,6 +36,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "./Orchestrator.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
@@ -159,6 +164,25 @@ export type ThreadManagementInterruptResult =
       readonly type: "already_terminal";
       readonly run: OrchestrationV2Run & { readonly status: ThreadManagementTerminalRunStatus };
     };
+
+export interface ThreadManagementUserInputInput {
+  /** The asking thread, with the run it is asking from. */
+  readonly thread: Pick<
+    OrchestrationV2ThreadShell,
+    "id" | "projectId" | "activeProviderThreadId"
+  > & { readonly activeRunId: RunId };
+  /** The provider session the question came from; a stale one is refused. */
+  readonly providerSessionId: string;
+  readonly commandId: CommandId;
+  readonly questions: OrchestrationV2UserInputQuestions;
+}
+
+export type ThreadManagementUserInputResult =
+  | { readonly type: "answered"; readonly answers: ProviderUserInputAnswers }
+  | { readonly type: "session_not_active" }
+  /** Dismissed, interrupted, or its run or session ended. */
+  | { readonly type: "dismissed" }
+  | { readonly type: "stream_ended" };
 
 export class ThreadManagementThreadNotFoundError extends Schema.TaggedError<ThreadManagementThreadNotFoundError>()(
   "ThreadManagementThreadNotFoundError",
@@ -323,6 +347,10 @@ export interface ThreadManagementServiceShape {
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
+  /** Asks the user questions on the thread's live run and waits for the answer. */
+  readonly requestUserInput: (
+    input: ThreadManagementUserInputInput,
+  ) => Effect.Effect<ThreadManagementUserInputResult, ThreadManagementFailure>;
   readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
   readonly recoverDelegatedTask: Orchestrator.OrchestratorV2["Service"]["recoverDelegatedTask"];
   readonly delegatedTaskResultPending: Orchestrator.OrchestratorV2["Service"]["delegatedTaskResultPending"];
@@ -721,6 +749,49 @@ const make = Effect.gen(function* () {
       return { type: "interrupt_requested", run: interruptibleRun, dispatch } as const;
     });
 
+  const requestUserInput: ThreadManagementServiceShape["requestUserInput"] = Effect.fn(
+    "orchestrationV2.threadManagement.requestUserInput",
+  )(function* ({ thread, providerSessionId, commandId, questions }) {
+    // A stale session is refused here; the orchestrator checks the live turn itself.
+    const { providerThreads } = yield* getProjectThreadRecords(
+      { projectId: thread.projectId, threadId: thread.id },
+      ["providerThreads"],
+    );
+    const activeProviderThread = providerThreads.find(
+      (providerThread) => providerThread.id === thread.activeProviderThreadId,
+    );
+    if (activeProviderThread?.providerSessionId !== providerSessionId)
+      return { type: "session_not_active" } as const;
+    const requestId = RuntimeRequestId.make(`${commandId}:user-input`);
+    const created = yield* dispatch({
+      type: "runtime-request.create-user-input",
+      commandId,
+      threadId: thread.id,
+      requestId,
+      runId: thread.activeRunId,
+      providerSessionId: ProviderSessionId.make(providerSessionId),
+      questions,
+    });
+    const resolution = yield* orchestrator
+      .streamStoredEventsFrom({ threadId: thread.id, afterSequence: created.sequence })
+      .pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "runtime-request.updated" &&
+            stored.event.payload.id === requestId &&
+            stored.event.payload.status !== "pending",
+        ),
+        Stream.runHead,
+      );
+    const event = Option.getOrUndefined(resolution)?.event;
+    if (event?.type !== "runtime-request.updated") return { type: "stream_ended" } as const;
+    return event.payload.status === "resolved" &&
+      event.payload.decision === undefined &&
+      event.payload.answers !== undefined
+      ? ({ type: "answered", answers: event.payload.answers } as const)
+      : ({ type: "dismissed" } as const);
+  });
+
   return ThreadManagementService.of({
     ensureLegacyTranscript,
     dispatch,
@@ -753,6 +824,7 @@ const make = Effect.gen(function* () {
     sendToThread,
     waitForThread,
     interruptThread,
+    requestUserInput,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,
     delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
