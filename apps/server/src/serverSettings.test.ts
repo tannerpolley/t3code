@@ -97,6 +97,17 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("loads a saved agentBrowserTabLimits off", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(config.settingsPath, `{ "agentBrowserTabLimits": false }`);
+
+      assert.isFalse((yield* service.getSettings).agentBrowserTabLimits);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

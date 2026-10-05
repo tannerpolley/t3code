@@ -45,7 +45,7 @@ it.effect.each([
         capabilities: new Set(effective.enableAgentBrowserAccess ? ["preview"] : []),
         issuedAt: 0,
       };
-      const manager = yield* Preview.make;
+      const manager = yield* Preview.make.pipe(Effect.provide(ServerSettings.layerTest()));
       const tab = yield* manager.open({ threadId, url: "http://localhost:3000" });
       const dependencies = Layer.mergeAll(
         Layer.succeed(Preview.PreviewManager, manager),

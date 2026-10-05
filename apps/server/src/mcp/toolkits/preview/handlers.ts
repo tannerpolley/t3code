@@ -1,11 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PREVIEW_RECORDING_STOP_TIMEOUT_MS,
-  PreviewAutomationFileUnavailableError,
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
   PreviewAutomationRecordingArtifact,
@@ -28,7 +26,6 @@ import {
   toSafeThreadAttachmentSegment,
 } from "../../../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
-import { issueAssetUrl } from "../../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -53,7 +50,7 @@ export function normalizePreviewOpenInput(
   };
 }
 
-export const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
+const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   operation: PreviewAutomationOperation,
   input: unknown,
   timeoutMs?: number,
@@ -66,45 +63,16 @@ export const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   let targetTabId = tabId;
-  const request = {
+  const result = yield* broker.invoke<A>({
+    onTargetTab: (resolvedTabId) => {
+      targetTabId = resolvedTabId;
+    },
     scope,
     operation,
     input,
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
-  };
-  const result = yield* broker
-    .invoke<A>({
-      ...request,
-      onTargetTab: (resolvedTabId) => {
-        targetTabId = resolvedTabId;
-      },
-      ...(tabId === undefined ? {} : { tabId }),
-    })
-    .pipe(
-      Effect.catchTag("PreviewAutomationTimeoutError", (error) => {
-        const stuckTabId = targetTabId;
-        const reusesTab =
-          operation === "navigate" ||
-          (operation === "open" &&
-            (input as PreviewAutomationOpenInput).reuseExistingTab !== false);
-        if (!reusesTab || stuckTabId === undefined) {
-          return Effect.fail(error);
-        }
-        // A page that never finishes loading usually recovers from a hard
-        // reload. Heal the same tab once, then retry; never loop.
-        return broker
-          .invoke({
-            scope,
-            operation: "navigate",
-            input: { reload: "bypassCache", readiness: "none" },
-            tabId: stuckTabId,
-          })
-          .pipe(
-            Effect.mapError(() => error),
-            Effect.andThen(broker.invoke<A>({ ...request, tabId: stuckTabId })),
-          );
-      }),
-    );
+    ...(tabId === undefined ? {} : { tabId }),
+  });
   if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
   const statusTabId =
     (operation !== "evaluate" && typeof result === "object" && result !== null
@@ -219,46 +187,14 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
   return { ...recording, id: finalId, path: finalPath };
 });
 
-/**
- * Serves a local file the agent names through a signed asset URL. The URL is
- * relative so each client resolves it against its own connection to this server.
- */
-const issuePreviewFileUrl = Effect.fn("PreviewToolkit.issuePreviewFileUrl")(function* (
-  filePath: string,
-) {
-  const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
-  const path = yield* Path.Path;
-  if (!path.isAbsolute(filePath)) {
-    return yield* new PreviewAutomationFileUnavailableError({
-      path: filePath,
-      reason: "pass an absolute path.",
-    });
-  }
-  // ponytail: served as a single file, so an HTML page's relative sibling assets
-  // don't load; issue a workspace-file asset from the thread's workspace if that matters.
-  const asset = yield* issueAssetUrl({
-    resource: { _tag: "media-file", threadId: scope.thread.threadId, path: filePath },
-  }).pipe(
-    Effect.mapError(
-      (error) => new PreviewAutomationFileUnavailableError({ path: filePath, reason: error.message }),
-    ),
-  );
-  return asset.relativeUrl;
-});
-
-/** `preview_open`; a file `path` reaches the client as an asset URL. */
-export const openPreview = ({ path: filePath, ...input }: PreviewAutomationOpenInput) =>
-  Effect.gen(function* () {
-    const url = filePath === undefined ? input.url : yield* issuePreviewFileUrl(filePath);
-    return yield* invokeTargeted<PreviewAutomationStatus>(
-      "open",
-      normalizePreviewOpenInput({ ...input, ...(url === undefined ? {} : { url }) }),
-    );
-  });
-
 const handlers = {
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
-  preview_open: openPreview,
+  preview_open: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      return yield* broker.open({ scope, input: normalizePreviewOpenInput(input) });
+    }),
   preview_navigate: (input) =>
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   preview_resize: (input) =>

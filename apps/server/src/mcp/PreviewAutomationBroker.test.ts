@@ -1,9 +1,11 @@
+import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
   EnvironmentId,
   PreviewAutomationClientDisconnectedError,
+  PreviewAutomationFileUnavailableError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
@@ -18,10 +20,12 @@ import {
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
@@ -30,9 +34,24 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import * as RpcTest from "effect/unstable/rpc/RpcTest";
 
 import { rpcScopeAuthorizationLayer } from "../auth/RpcAuthorization.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
-const makeBroker = PreviewAutomationBroker.make.pipe(Effect.provide(NodeServices.layer));
+/** Asset signing is only reached by `open` with a file path; other tests never touch it. */
+const brokerDependencies = (settings: Parameters<typeof ServerSettings.layerTest>[0] = {}) =>
+  Layer.mergeAll(
+    ServerSettings.layerTest(settings),
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-preview-broker-test-" }),
+    Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
+    Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+    Layer.mock(WorkspacePaths.WorkspacePaths)({}),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+const makeBroker = PreviewAutomationBroker.make.pipe(Effect.provide(brokerDependencies()));
 
 const scope = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -1505,3 +1524,151 @@ it.effect("keeps a host that responds with an operation timeout", () =>
     }),
   ),
 );
+
+it.effect.each([
+  { name: "heals a stuck reused tab once, then retries", limits: true, reuse: true },
+  { name: "returns the timeout when agent browser tab limits are off", limits: false, reuse: true },
+  { name: "does not retry an open that was creating a new tab", limits: true, reuse: false },
+])("timed-out open: $name", ({ limits, reuse }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* PreviewAutomationBroker.make.pipe(
+        Effect.provide(brokerDependencies({ agentBrowserTabLimits: limits })),
+      );
+      const stuckTab = PreviewTabId.make("tab-stuck");
+      // The session's host answers its first open, then stops answering.
+      const stuckReceived = yield* Deferred.make<void>();
+      let stuckRequests = 0;
+      yield* Stream.runForEach(
+        requestsFrom(yield* broker.connect(makeHost({ clientId: "stuck" }))),
+        (request) =>
+          stuckRequests++ === 0
+            ? broker.respond({
+                clientId: "stuck",
+                connectionId: request.connectionId,
+                requestId: request.requestId,
+                ok: true,
+                result: { tabId: stuckTab },
+              })
+            : Deferred.succeed(stuckReceived, undefined),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+
+      const healthyRequests: RoutedRequest[] = [];
+      yield* Stream.runForEach(
+        requestsFrom(yield* broker.connect(makeHost({ clientId: "healthy" }))),
+        (request) => {
+          healthyRequests.push(request);
+          return broker.respond({
+            clientId: "healthy",
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: { tabId: request.tabId },
+          });
+        },
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const opened = yield* broker
+        .invoke({
+          scope,
+          operation: "open",
+          input: { url: "http://localhost:8791/", reuseExistingTab: reuse },
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* Deferred.await(stuckReceived);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(15_000);
+      const result = yield* Fiber.join(opened);
+
+      if (limits && reuse) {
+        expect(result._tag).toBe("Success");
+        expect(
+          healthyRequests.map(({ operation, input, tabId }) => ({ operation, input, tabId })),
+        ).toEqual([
+          {
+            operation: "navigate",
+            input: { reload: "bypassCache", readiness: "none" },
+            tabId: stuckTab,
+          },
+          {
+            operation: "open",
+            input: { url: "http://localhost:8791/", reuseExistingTab: true },
+            tabId: stuckTab,
+          },
+        ]);
+      } else {
+        expect(result._tag === "Failure" && result.failure._tag).toBe(
+          "PreviewAutomationTimeoutError",
+        );
+        expect(healthyRequests).toEqual([]);
+      }
+    }),
+  ),
+);
+
+it.effect.each([
+  { name: "sends the client a server-relative asset URL instead of the path", relative: false },
+  { name: "rejects a relative path without opening a tab", relative: true },
+])("open with a file path $name", ({ relative }) => {
+  const configLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
+    prefix: "t3-preview-open-file-test-",
+  });
+  const assetLayer = Layer.mergeAll(
+    NodeHttpPlatform.layer,
+    configLayer,
+    WorkspacePaths.layer,
+    ProjectFaviconResolver.layer.pipe(
+      Layer.provide(WorkspacePaths.layer),
+      Layer.provide(T3ProjectFileLoader.layer),
+    ),
+    ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
+    ServerSettings.layerTest(),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* PreviewAutomationBroker.make;
+      const opened: unknown[] = [];
+      yield* Stream.runForEach(requestsFrom(yield* broker.connect(makeHost())), (request) => {
+        opened.push(request.input);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: { tabId: "tab_1" },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-open-file-" });
+      const filePath = path.join(dir, "deck.pdf");
+      yield* fs.writeFileString(filePath, "%PDF-1.4");
+
+      const result = yield* broker
+        .open({
+          scope,
+          input: { path: relative ? "deck.pdf" : filePath, reuseExistingTab: true },
+        })
+        .pipe(Effect.result);
+
+      if (relative) {
+        expect(result._tag === "Failure" && result.failure).toBeInstanceOf(
+          PreviewAutomationFileUnavailableError,
+        );
+        expect(opened).toEqual([]);
+      } else {
+        expect(result._tag).toBe("Success");
+        expect(opened).toEqual([
+          {
+            url: expect.stringMatching(/^\/api\/assets\/[^/]+\/deck\.pdf$/),
+            reuseExistingTab: true,
+          },
+        ]);
+      }
+    }),
+  ).pipe(Effect.provide(assetLayer));
+});

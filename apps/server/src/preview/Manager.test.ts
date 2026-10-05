@@ -1,9 +1,10 @@
 import { it } from "@effect/vitest";
 import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
 import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
-import { Effect, PubSub } from "effect";
+import { Effect, Layer, PubSub } from "effect";
 import { expect } from "vite-plus/test";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as PreviewManager from "./Manager.ts";
 
 const DRAIN_LIMIT = 100;
@@ -35,7 +36,27 @@ const collectEvents = Effect.gen(function* () {
   return collector;
 }).pipe(Effect.withSpan("preview.test.collectEvents"));
 
-it.layer(PreviewManager.layer)("PreviewManager", (it) => {
+const managerLayer = PreviewManager.layer.pipe(Layer.provide(ServerSettings.layerTest()));
+
+it.effect("keeps every agent tab while agent browser tab limits are off", () =>
+  Effect.gen(function* () {
+    const threadId = freshThreadId();
+    const manager = yield* PreviewManager.PreviewManager;
+    for (let index = 0; index <= PreviewManager.MAX_AGENT_TABS_PER_THREAD; index += 1) {
+      yield* manager.open({ threadId, openedByAgent: true });
+    }
+    const { sessions } = yield* manager.list({ threadId });
+    expect(sessions).toHaveLength(PreviewManager.MAX_AGENT_TABS_PER_THREAD + 1);
+  }).pipe(
+    Effect.provide(
+      PreviewManager.layer.pipe(
+        Layer.provide(ServerSettings.layerTest({ agentBrowserTabLimits: false })),
+      ),
+    ),
+  ),
+);
+
+it.layer(managerLayer)("PreviewManager", (it) => {
   it.effect("closes the oldest agent tab past the cap and never a user tab", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
