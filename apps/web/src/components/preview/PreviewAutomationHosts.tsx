@@ -32,12 +32,6 @@ import {
   updatePreviewServerSnapshot,
   useActivePreviewSessions,
 } from "~/previewStateStore";
-import {
-  browserMiniPlayerSource,
-  selectThreadPreviewMiniPlayerTabId,
-  usePreviewMiniPlayerStore,
-} from "~/previewMiniPlayerStore";
-import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import {
   readActiveBrowserRecordingTargets,
@@ -64,6 +58,7 @@ import { previewEnvironment } from "~/state/preview";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { hideAgentBrowser, presentAgentBrowser } from "./agentBrowserPresentation";
 import { previewBridge } from "./previewBridge";
 import {
   PreviewAutomationOperationError,
@@ -283,18 +278,6 @@ const currentStatus = async (
     loading: navStatus?._tag === "Loading",
     ...viewportStatus,
   };
-};
-
-/**
- * Shows a tab an agent is using: in the right panel, or in the floating mini player when the
- * user turned "Agent browser opens in the side panel" off.
- */
-const presentAgentBrowser = (threadRef: ScopedThreadRef, tabId: string, inPanel: boolean) => {
-  if (inPanel) {
-    useRightPanelStore.getState().openBrowser(threadRef, tabId);
-    return;
-  }
-  usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
 };
 
 const raiseAtomCommandFailure = (result: Parameters<typeof squashAtomCommandFailure>[0]): never => {
@@ -560,13 +543,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   new Set([activeRuntimeTabId]),
                 );
               }
-              const miniPlayerTabId = selectThreadPreviewMiniPlayerTabId(
-                usePreviewMiniPlayerStore.getState().byThreadKey,
-                threadRef,
-              );
-              if (miniPlayerTabId === activeTabId) {
-                usePreviewMiniPlayerStore.getState().close(threadRef);
-              }
+              hideAgentBrowser(threadRef, activeTabId);
             } else if (shouldPresentPreview) {
               suppressedTabs?.delete(activeRuntimeTabId);
               if (suppressedTabs?.size === 0) {
