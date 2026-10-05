@@ -1,4 +1,10 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
+import { formatElapsedSeconds } from "../timestampFormat";
+import {
+  threadRuntimeIsActive,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -775,6 +781,19 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+/**
+ * The right-side mark a thread row shows, in the sidebar and in Lineage: its sidebar status, or
+ * `done` (the green dot) for a ready thread that finished since it was last opened.
+ */
+export function resolveThreadStatusMark(
+  thread: SidebarThreadStatusInput & ThreadStatusInput,
+  localLastVisitedAt: string | undefined,
+  status: SidebarThreadStatus = resolveSidebarThreadStatus(thread),
+): SidebarThreadStatus | "done" {
+  const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
+  return status === "ready" && hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "done" : status;
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
@@ -940,8 +959,7 @@ export function resolveThreadRowClassName(input: {
 // unlabeled resting state — the agent stopped and is waiting on the user,
 // whether it finished, asked a question, or proposed a plan. Waiting
 // (runtime status "idle") is the agent stopped with background work that will
-// wake it (subagents, monitors): not the user's turn yet, so it renders grey
-// like working, not as a false Done. Commands it left running, such as a dev
+// wake it (subagents, monitors): not the user's turn yet, so it renders amber. Commands it left running, such as a dev
 // server, do not hold the thread; it reads as ready.
 // Unread completion is tracked separately: it describes whether a ready
 // thread needs attention, not what the thread is currently doing.
@@ -972,7 +990,8 @@ export function shouldRecedeSidebarThread(input: {
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
->;
+> &
+  Partial<Pick<SidebarThreadSummary, "latestRun">>;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals) {
@@ -987,13 +1006,88 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   ) {
     return "working";
   }
-  if (thread.runtime?.status === "idle") {
-    return "waiting";
+  // A completed turn may park at idle while background work continues. Keep its failure visible.
+  if (
+    thread.runtime?.status === "failed" ||
+    (thread.runtime?.status === "idle" && thread.latestRun?.status === "failed")
+  ) {
+    return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
-  if (thread.runtime?.status === "failed") {
-    return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
-  }
+  if (thread.runtime?.status === "idle") return "waiting";
   return "ready";
+}
+
+/**
+ * Running subagent child threads keyed by their parent's scoped thread key. The Projects view
+ * hides subagent threads, so this is how a parent row lists the ones still working, including
+ * ones whose turn ended while their own background work, or their parent's task for them, is
+ * still pending.
+ */
+export function groupRunningSubagentsByParent<
+  TThread extends Pick<
+    SidebarThreadSummary,
+    | "id"
+    | "environmentId"
+    | "lineage"
+    | "runtime"
+    | "archivedAt"
+    | "hasPendingUserInput"
+    | "hasPendingApprovals"
+    | "pendingBackgroundTasks"
+  >,
+>(threads: readonly TThread[]): ReadonlyMap<string, TThread[]> {
+  const pendingTaskChildIds = new Set(
+    threads.flatMap((thread) =>
+      thread.pendingBackgroundTasks.flatMap((task) =>
+        task.kind === "subagent" && task.childThreadId !== undefined
+          ? [scopedThreadKey(scopeThreadRef(thread.environmentId, task.childThreadId))]
+          : [],
+      ),
+    ),
+  );
+  const byParent = new Map<string, TThread[]>();
+  for (const thread of threads) {
+    const parentThreadId = thread.lineage.parentThreadId;
+    if (
+      parentThreadId === null ||
+      thread.lineage.relationshipToParent !== "subagent" ||
+      thread.archivedAt !== null ||
+      // A child waiting on the user stays listed so its question is one click away.
+      !(
+        threadRuntimeIsActive(thread.runtime) ||
+        backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks) ||
+        pendingTaskChildIds.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))) ||
+        thread.hasPendingUserInput ||
+        thread.hasPendingApprovals
+      )
+    ) {
+      continue;
+    }
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
+    const siblings = byParent.get(key);
+    if (siblings) siblings.push(thread);
+    else byParent.set(key, [thread]);
+  }
+  return byParent;
+}
+
+/**
+ * A parent shows its children's questions as its own, so a subagent asking the user is visible
+ *  without opening the parent. Its own urgent states win. A settled
+ * parent with children still at work reads as waiting on them, like its own background work.
+ */
+export function withChildNeeds(
+  status: SidebarThreadStatus,
+  children: ReadonlyArray<
+    Pick<SidebarThreadSummary, "hasPendingApprovals" | "hasPendingUserInput">
+  >,
+): SidebarThreadStatus {
+  if (status === "approval" || status === "input" || status === "failed" || status === "limited") {
+    return status;
+  }
+  if (children.some((child) => child.hasPendingApprovals)) return "approval";
+  if (children.some((child) => child.hasPendingUserInput)) return "input";
+  return status === "ready" && children.length > 0 ? "waiting" : status;
 }
 
 export type SidebarV2TopStatusKind =
@@ -1153,6 +1247,15 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+export function formatStoppedThreadDuration(
+  thread: Pick<SidebarThreadSummary, "latestRun" | "source">,
+): string | null {
+  // Older shells synthesize completedAt from updatedAt; that is age, not a known finish.
+  if (!thread.latestRun || thread.source.latestRunCompletedAt == null) return null;
+  const elapsedMs = deriveSubagentElapsedMs({ ...thread.latestRun, status: "completed" }, 0);
+  return elapsedMs === null ? null : formatElapsedSeconds(elapsedMs / 1000);
 }
 
 export function resolveThreadStatusPill(input: {

@@ -15,6 +15,8 @@ const spinnerVariants = cva("motion-safe:visible-animate-spin", {
     tone: {
       current: "",
       muted: "text-muted-foreground",
+      working: "text-info-foreground",
+      waiting: "text-warning motion-safe:[animation-duration:2s]",
     },
   },
   defaultVariants: { tone: "current" },

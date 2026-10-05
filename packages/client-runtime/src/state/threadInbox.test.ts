@@ -1,7 +1,11 @@
 import { EnvironmentId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createInboxReturnTracker, sortWorkingThreadsBySend } from "./threadInbox.ts";
+import {
+  createInboxReturnTracker,
+  isThreadWorking,
+  sortWorkingThreadsBySend,
+} from "./threadInbox.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -83,4 +87,28 @@ describe("sortWorkingThreadsBySend", () => {
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
   });
+});
+
+it("returns an idle failed turn to the inbox while background work continues", () => {
+  const running = thread("failed", true);
+  const idle = {
+    ...running,
+    runtime: { ...running.runtime!, status: "idle" as const },
+    latestRun: {
+      runId: RunId.make("failed-run"),
+      status: "failed" as const,
+      requestedAt: null,
+      startedAt: null,
+      completedAt: null,
+      assistantMessageId: null,
+    },
+  };
+  const tracker = createInboxReturnTracker();
+  tracker.observe([running]);
+  expect(isThreadWorking(idle)).toBe(false);
+  tracker.observe([idle]);
+  expect(tracker.returnedAt(idle)).toBeDefined();
+  expect(isThreadWorking({ ...idle, latestRun: { ...idle.latestRun, status: "completed" } })).toBe(
+    true,
+  );
 });

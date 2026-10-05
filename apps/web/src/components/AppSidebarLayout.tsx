@@ -25,7 +25,11 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useEnvironmentIdentificationMode,
+  useLegacySidebarEnabled,
+} from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -83,8 +87,10 @@ function readInitialThreadSidebarWidth(): number {
 function SidebarControl() {
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { toggleSidebar } = useSidebar();
+  const { toggleSidebar, isMobile } = useSidebar();
   const isSidebarVisible = useSidebarVisibility();
+  const atSidebarRight =
+    useClientSettings((s) => s.sidebarTogglePosition === "right") && isSidebarVisible && !isMobile;
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
@@ -132,7 +138,12 @@ function SidebarControl() {
     // the panel), so the trigger mirrors it: both clusters sit one extra pixel
     // off their edge and the titlebar reads symmetric.
     <div
-      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center"
+      className={cn(
+        "pointer-events-none fixed top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        atSidebarRight
+          ? "left-[calc(var(--sidebar-width)-var(--workspace-titlebar-control-size)-var(--workspace-titlebar-control-gap))]"
+          : "left-[var(--workspace-controls-left)]",
+      )}
       data-sidebar-control=""
     >
       <Tooltip>

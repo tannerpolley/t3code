@@ -51,7 +51,7 @@ export function ThreadRelationshipIcon({
 }: {
   driver?: ProviderDriverKind | undefined;
   provider?: ServerProvider | undefined;
-  status: string | null;
+  status?: string | null;
   fallbackIcon?: LucideIcon;
 }) {
   const iconClassName = "size-4 shrink-0 text-muted-foreground";
@@ -68,22 +68,24 @@ export function ThreadRelationshipIcon({
       ) : (
         <FallbackIcon className={iconClassName} />
       )}
-      <span
-        className={cn(
-          "absolute -bottom-1 -right-1 size-2 rounded-full border-2 border-card",
-          status === "running" ||
-            status === "in_progress" ||
-            status === "pending" ||
-            status === "waiting"
-            ? "bg-info"
-            : status === "failed" || status === "error"
-              ? "bg-destructive"
-              : status === "completed"
-                ? "bg-success"
-                : "bg-muted-foreground/45",
-        )}
-        aria-hidden="true"
-      />
+      {status !== undefined ? (
+        <span
+          className={cn(
+            "absolute -bottom-1 -right-1 size-2 rounded-full border-2 border-card",
+            status === "running" ||
+              status === "in_progress" ||
+              status === "pending" ||
+              status === "waiting"
+              ? "bg-info"
+              : status === "failed" || status === "error"
+                ? "bg-destructive"
+                : status === "completed"
+                  ? "bg-success"
+                  : "bg-muted-foreground/45",
+          )}
+          aria-hidden="true"
+        />
+      ) : null}
     </span>
   );
 }
