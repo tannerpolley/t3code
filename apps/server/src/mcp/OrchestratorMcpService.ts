@@ -1033,7 +1033,7 @@ const make = Effect.gen(function* () {
    * falls back to the parent's checkout with a note; an explicit request fails.
    */
   const resolveDelegatedWorkspace = (input: {
-    readonly parent: OrchestrationV2ThreadProjection;
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">;
     readonly input: OrchestratorMcpDelegateTaskInput;
     readonly commandId: CommandId;
   }): Effect.Effect<
