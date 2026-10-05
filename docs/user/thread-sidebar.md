@@ -57,11 +57,11 @@ folder. Move a project between sections by dragging its row or choosing a sectio
 from its menu. Removing a project clears its saved conversations after confirmation
 and keeps its files on disk.
 
-In **Settings → General**, **Organize by folder** builds sections and subsections
-from a root folder; the same page sets default icons. **Settings → Customizations**
-turns on automatic organization, which places new, unsorted projects there;
-projects you move by hand stay where you put them. It also controls the Projects
-view, project row style, folder colors, and revealing the thread you open.
+In **Settings → Customizations**, **Organize by folder** builds sections and subsections
+from a root folder, and **Keep projects organized by folder** places new, unsorted
+projects there; projects you move by hand stay where you put them. The same page
+controls the Projects view, project row style, folder colors, default icons, the
+sidebar toggle position, and revealing the thread you open.
 
 Drag a thread from Projects onto the composer to add it as context for your next
 message; subagent rows in Projects and rows in **Lineage** drag the same way.

@@ -134,25 +134,6 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
-    id: "project-icon-fallback",
-    title: "Default project icon",
-    to: "/settings/general",
-    searchTerms: ["folder initials"],
-  },
-  {
-    id: "sidebar-toggle-position",
-    title: "Sidebar toggle position",
-    to: "/settings/general",
-    searchTerms: ["left right"],
-  },
-  {
-    id: "organize-by-folder",
-    title: "Organize by folder",
-    to: "/settings/general",
-    searchTerms: ["root folder sections subsections"],
-  },
-
-  {
     id: "storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/storage",
@@ -367,6 +348,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Time format",
     to: "/settings/general",
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
+  },
+  {
+    id: "sidebar-toggle-position",
+    // A search for "toggle sidebar" means the keybinding, so this row ranks after it.
+    title: "Toggle button position",
+    to: "/settings/customizations",
+    secondary: true,
+    searchTerms: ["customization fork sidebar toggle collapse left right corner"],
+  },
+  {
+    id: "project-icon-fallback",
+    title: "Default project icon",
+    to: "/settings/customizations",
+    searchTerms: ["project icon folder initials monogram letters favicon sidebar"],
+  },
+  {
+    id: "organize-by-folder",
+    title: "Organize by folder",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork sections subsections folders workspaces organize mirror"],
   },
   {
     id: "projects-view",
