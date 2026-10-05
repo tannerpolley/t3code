@@ -242,15 +242,12 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handleIssuesClick}
             />
           ) : null}
-          <SidebarUsageItem
-            fallback={
-              <SidebarUtilityItem
-                icon={<ChartNoAxesColumnIcon />}
-                label="Usage"
-                onClick={handleUsageClick}
-              />
-            }
+          <SidebarUtilityItem
+            icon={<ChartNoAxesColumnIcon />}
+            label="Usage"
+            onClick={handleUsageClick}
           />
+          <SidebarUsageItem />
         </>
       )}
       <SidebarUpdatePill />
