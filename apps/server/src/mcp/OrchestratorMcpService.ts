@@ -68,6 +68,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  subagentResultOwed,
 } from "../orchestration-v2/SubagentProjection.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -374,7 +375,7 @@ function pageIncludesTerminalTaskResult(input: {
   >;
   readonly maxChars: number;
 }): boolean {
-  const transfer = input.parent.contextTransfers.find(
+  const transfer = input.parent.contextTransfers.findLast(
     (transfer) =>
       transfer.type === "subagent_result" &&
       transfer.sourceThreadId === input.target.thread.id &&
@@ -1176,10 +1177,23 @@ const make = Effect.gen(function* () {
         (yield* threadManagement
           .delegatedTaskResultPending(task.childThreadId)
           .pipe(Effect.mapError(threadManagementFailure)));
+      const resultTransfers = parentProjection.contextTransfers.filter(
+        (transfer) =>
+          transfer.type === "subagent_result" &&
+          transfer.sourceThreadId === task.childThreadId &&
+          transfer.targetThreadId === scope.thread.threadId,
+      );
+      const reported = task.result !== null && !subagentResultOwed({
+        runs: childControls.runs,
+        messages: childControls.messages,
+        parentThreadId: scope.thread.threadId,
+        reportedRunIds: resultTransfers.map((transfer) => transfer.sourcePoint.runId),
+        resultRun: { ordinal: Number.POSITIVE_INFINITY },
+      });
       const workState =
-        task.result !== null ? "result_available" : heldForRestart ? "working" : progress.state;
+        reported ? "result_available" : heldForRestart ? "working" : progress.state;
       const status =
-        task.result !== null
+        reported
           ? taskStatusForRun(
               task.status === "completed" ||
                 task.status === "failed" ||
@@ -1199,12 +1213,6 @@ const make = Effect.gen(function* () {
           : progress.resultRun !== undefined && isTerminalTaskStatus(status)
             ? subagentResultForRun(childProjection, progress.resultRun).text
             : null;
-      const resultTransfers = parentProjection.contextTransfers.filter(
-        (transfer) =>
-          transfer.type === "subagent_result" &&
-          transfer.sourceThreadId === task.childThreadId &&
-          transfer.targetThreadId === scope.thread.threadId,
-      );
       const resultTransferForRun = (run: OrchestrationV2Run | undefined) =>
         !canExposeTaskRunResult(run)
           ? null
@@ -1213,7 +1221,7 @@ const make = Effect.gen(function* () {
               ? resultTransfers.find((transfer) => transfer.sourcePoint.runId === undefined)
               : undefined) ??
             null);
-      const resultTransfer = resultTransfers[0] ?? null;
+      const resultTransfer = resultTransfers.at(-1) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
       const response = {
         taskId: task.id,
@@ -1940,7 +1948,7 @@ const make = Effect.gen(function* () {
           task !== undefined &&
           (input.textOffset ?? 0) === 0
         ) {
-          const transfer = parent.contextTransfers.find(
+          const transfer = parent.contextTransfers.findLast(
             (transfer) =>
               transfer.type === "subagent_result" &&
               transfer.sourceThreadId === target.thread.id &&

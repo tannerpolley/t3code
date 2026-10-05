@@ -111,6 +111,7 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   delegatedTaskProgress,
+  subagentResultOwed,
   subagentThreadTitle,
 } from "./SubagentProjection.ts";
 import {
@@ -8879,6 +8880,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
     );
     const nextCohort = {
+      ...cohort,
       disposition: "open" as const,
       nextGeneration: generation + 1,
       delivery: {
@@ -8989,28 +8991,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      const existingResultTransfer = parentProjection.contextTransfers.find(
-        (transfer) =>
-          transfer.type === "subagent_result" &&
-          transfer.sourceThreadId === childThreadId &&
-          transfer.targetThreadId === parentThreadId,
-      );
-      if (existingResultTransfer !== undefined) {
-        return;
-      }
-
+      const reportedRunIds = parentProjection.contextTransfers.filter(
+        (transfer) => transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId && transfer.targetThreadId === parentThreadId,
+      ).map((transfer) => transfer.sourcePoint.runId);
+      if (!subagentResultOwed({ runs: childControls.runs, messages: childControls.messages, parentThreadId, reportedRunIds, resultRun: childRun })) return;
+      const resumed = reportedRunIds.length > 0;
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, childRun);
-      const parentRun =
-        task.runId === null
-          ? undefined
-          : parentProjection.runs.find((candidate) => candidate.id === task.runId);
+      const ownerRun = task.runId === null ? undefined : parentProjection.runs.find((run) => run.id === task.runId);
+      // Parent-sent follow-ups reopen automatic delivery for this task.
+      const { completionDelivery: _settledDelivery, ...reopenedTask } = task;
+      const deliveryTask = resumed ? reopenedTask : task;
+      const parentRun = resumed && ownerRun?.delegatedCompletion !== undefined
+        ? { ...ownerRun, delegatedCompletion: { ...ownerRun.delegatedCompletion, disposition: "open" as const, settledDeliveryCount: 0 } }
+        : ownerRun;
       const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentProjection.turnItems.find(
         (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
       );
       const updatedTask: OrchestrationV2Subagent = {
-        ...task,
+        ...deliveryTask,
         providerThreadId: childRun.providerThreadId,
         status: terminalStatus,
         result: result.text,
@@ -9020,10 +9020,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const completionPlan = yield* planDelegatedCompletionDelivery({
         parentProjection,
         parentRun,
-        task,
+        task: deliveryTask,
         updatedTask,
         now,
       });
+      const parentRunUpdate = completionPlan.parentRun ?? (parentRun === ownerRun ? undefined : parentRun);
       const resultTransferId = yield* idAllocator.allocate.contextTransfer({
         sourceThreadId: childThreadId,
         targetThreadId: parentThreadId,
@@ -9108,19 +9109,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: completionPlan.task,
         },
-        ...(completionPlan.parentRun === undefined
+        ...(parentRunUpdate === undefined
           ? []
           : [
               {
                 type: "run.updated" as const,
                 threadId: parentThreadId,
-                runId: completionPlan.parentRun.id,
-                ...(completionPlan.parentRun.rootNodeId === null
+                runId: parentRunUpdate.id,
+                ...(parentRunUpdate.rootNodeId === null
                   ? {}
-                  : { nodeId: completionPlan.parentRun.rootNodeId }),
-                providerInstanceId: completionPlan.parentRun.providerInstanceId,
+                  : { nodeId: parentRunUpdate.rootNodeId }),
+                providerInstanceId: parentRunUpdate.providerInstanceId,
                 occurredAt: now,
-                payload: completionPlan.parentRun,
+                payload: parentRunUpdate,
               },
             ]),
         ...(completionPlan.message === undefined

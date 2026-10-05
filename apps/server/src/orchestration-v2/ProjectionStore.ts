@@ -1,3 +1,4 @@
+import { subagentResultOwed } from "./SubagentProjection.ts";
 import {
   latestRootProviderFailure,
   latestUnheldRun,
@@ -507,19 +508,22 @@ function needsRecovery(
       return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
     case "subagent-results": {
       const parentThreadId = projection.thread.lineage.parentThreadId;
+      const latestRun = projection.runs.at(-1);
       return (
         projection.thread.lineage.relationshipToParent === "subagent" &&
         parentThreadId !== null &&
         projection.thread.forkedFrom?.type === "node" &&
         ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-          projection.runs.at(-1)?.status ?? "idle",
+          latestRun?.status ?? "idle",
         ) &&
-        !projection.contextTransfers.some(
-          (transfer) =>
-            transfer.type === "subagent_result" &&
-            transfer.sourceThreadId === projection.thread.id &&
-            transfer.targetThreadId === parentThreadId,
-        )
+        latestRun !== undefined &&
+        subagentResultOwed({
+          runs: projection.runs,
+          messages: projection.messages,
+          parentThreadId,
+          reportedRunIds: projection.contextTransfers.filter((transfer) => transfer.type === "subagent_result" && transfer.sourceThreadId === projection.thread.id && transfer.targetThreadId === parentThreadId).map((transfer) => transfer.sourcePoint.runId),
+          resultRun: latestRun,
+        })
       );
     }
     case "runtime":
@@ -3427,11 +3431,45 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE thread_id = child.thread_id
                     ORDER BY ordinal DESC LIMIT 1
                   ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                  -- Mirrors subagentResultOwed: a reported result stays current until the
+                  -- parent sends the child a later turn.
                   AND NOT EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_context_transfers
-                    WHERE source_thread_id = child.thread_id
-                      AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
-                      AND type = 'subagent_result'
+                    SELECT 1 FROM orchestration_v2_projection_context_transfers AS reported
+                    LEFT JOIN orchestration_v2_projection_runs AS reported_run
+                      ON reported_run.run_id = json_extract(reported.payload_json, '$.sourcePoint.runId')
+                    WHERE reported.source_thread_id = child.thread_id
+                      AND reported.target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                      AND reported.type = 'subagent_result'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM orchestration_v2_projection_messages AS sent
+                        JOIN orchestration_v2_projection_runs AS sent_run
+                          ON sent_run.run_id = sent.run_id
+                        WHERE sent.thread_id = child.thread_id
+                          AND sent.role = 'user'
+                          AND json_extract(sent.payload_json, '$.senderThreadId')
+                            = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                          AND sent_run.ordinal > reported_run.ordinal
+                      )
+                  )
+                  -- A restart recovers a later report only while the parent has not moved on:
+                  -- a parent turn requested after the child's last run ended carried on without it.
+                  AND NOT (
+                    EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_context_transfers
+                      WHERE source_thread_id = child.thread_id
+                        AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                        AND type = 'subagent_result'
+                    )
+                    AND EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs AS parent_run
+                      WHERE parent_run.thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                        AND json_extract(parent_run.payload_json, '$.requestedAt') > (
+                          SELECT json_extract(payload_json, '$.completedAt')
+                          FROM orchestration_v2_projection_runs
+                          WHERE thread_id = child.thread_id
+                          ORDER BY ordinal DESC LIMIT 1
+                        )
+                    )
                   )
                   ELSE 0 END
               `;
@@ -5749,7 +5787,15 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         Effect.gen(function* () {
           const projections = (yield* Ref.get(replayState)).projections;
           return [...projections.values()]
-            .filter((projection) => needsRecovery(projection, kind))
+            .filter((projection) => {
+              if (!needsRecovery(projection, kind)) return false;
+              if (kind !== "subagent-results") return true;
+              const parentId = projection.thread.lineage.parentThreadId;
+              const parent = parentId === null ? undefined : projections.get(parentId);
+              const latestRun = projection.runs.at(-1);
+              const reported = projection.contextTransfers.some((transfer) => transfer.type === "subagent_result" && transfer.sourceThreadId === projection.thread.id && transfer.targetThreadId === parentId);
+              return !reported || latestRun?.completedAt == null || !parent?.runs.some((run) => DateTime.toEpochMillis(run.requestedAt) > DateTime.toEpochMillis(latestRun.completedAt!));
+            })
             .toSorted(
               (left, right) =>
                 DateTime.toEpochMillis(left.thread.updatedAt) -
