@@ -8,6 +8,7 @@ import {
   dailyPaceBudget,
   dayStartMs,
   limitChartColumns,
+  limitReadouts,
   limitWindowOptions,
   OTHER_MODELS,
 } from "./usageLimitModels";
@@ -252,5 +253,48 @@ describe("dailyPaceBudget", () => {
     });
     expect(result.isWorkday).toBe(true);
     expect(result.workdayWeightsSoFar).toBeCloseTo(2);
+  });
+});
+
+describe("limitReadouts", () => {
+  const timeZone = "America/New_York";
+  // Weekly window from Thursday 1 October 2026, 10:00 local; Monday's budget is 20 * (14/24 + 2).
+  const span = {
+    start: Date.parse("2026-10-01T14:00:00Z"),
+    end: Date.parse("2026-10-08T14:00:00Z"),
+  };
+  const readouts = (now: string, weeklyUsed: number) =>
+    limitReadouts({
+      session: { usedPercent: 38, resetsAt: Date.parse("2026-10-05T18:00:00Z") },
+      weekly: { usedPercent: weeklyUsed, span },
+      now: Date.parse(now),
+      timeZone,
+    });
+
+  it("reports the five-hour, daily and weekly quota left", () => {
+    const { session, daily, weekly } = readouts("2026-10-05T16:00:00Z", 31);
+    expect(session?.leftPercent).toBe(62);
+    // Budget ≈ 51.67 points, 31 used: (51.67 - 31) / 51.67 ≈ 40% of the budget left.
+    expect(daily).toEqual({ usedPercent: 31, budgetPercent: 52, leftPercent: 40 });
+    expect(weekly).toEqual({ usedPercent: 31, leftPercent: 69, resetsAt: span.end });
+  });
+
+  it("goes negative over pace", () => {
+    expect(readouts("2026-10-05T16:00:00Z", 62).daily?.leftPercent).toBe(-20);
+  });
+
+  it("has no daily share left on a day off", () => {
+    expect(readouts("2026-10-03T16:00:00Z", 10).daily?.leftPercent).toBeNull();
+  });
+
+  it("skips the day without a weekly reset clock", () => {
+    const result = limitReadouts({
+      session: null,
+      weekly: { usedPercent: 25, span: null },
+      now: Date.parse("2026-10-05T16:00:00Z"),
+      timeZone,
+    });
+    expect(result.daily).toBeNull();
+    expect(result.weekly?.leftPercent).toBe(75);
   });
 });

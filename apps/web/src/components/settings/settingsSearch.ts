@@ -500,8 +500,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "sidebar-five-hour-usage",
+    title: "5-hour usage in the sidebar",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork usage limits five hour 5h session quota left sidebar footer claude codex",
+    ],
+  },
+  {
     id: "daily-usage-meter",
-    title: "Daily usage meter",
+    title: "Daily usage in the sidebar",
     to: "/settings/customizations",
     searchTerms: [
       "customization fork usage limits weekly daily budget pace workday sidebar meter claude codex",
