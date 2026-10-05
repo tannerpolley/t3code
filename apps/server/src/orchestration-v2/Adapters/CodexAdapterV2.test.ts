@@ -540,6 +540,39 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  it.effect("sends the user's model roles in either interaction mode", () =>
+    Effect.gen(function* () {
+      const modelRoles = [
+        {
+          id: "checker",
+          name: "Checker",
+          description: "Read-only review",
+          targets: [
+            {
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.4",
+              unavailableReason: null,
+            },
+          ],
+        },
+      ] as const;
+      for (const interactionMode of ["plan", "default"] as const) {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: `native-roles-${interactionMode}`,
+          codexInput: [{ type: "text", text: "delegate this" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode, cwd: null },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: true,
+          modelRoles,
+        });
+        assert.include(
+          params.additionalContext?.t3_code_model_roles?.value ?? "",
+          '- Checker: Read-only review. gpt-5.4 (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-5.4"}`',
+        );
+      }
+    }),
+  );
+
   it.effect("keeps Codex in plan mode without referencing unavailable T3 MCP tools", () =>
     Effect.gen(function* () {
       const params = yield* CodexAdapterV2.buildCodexTurnStartParams({

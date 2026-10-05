@@ -62,6 +62,7 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { ModelRolesSection } from "./ModelRolesSettings";
 import {
   resolveEnvironmentIdentificationPillLabel,
   useEnvironmentStageLabel,
@@ -3329,6 +3330,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <ModelRolesSection />
 
       <SettingsSection id="about" title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (

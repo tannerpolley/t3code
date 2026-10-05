@@ -209,6 +209,14 @@ retry and the normal snooze choices.
 
 On web and desktop, use **Agents** to follow work delegated to subagents.
 
+To tell agents which model and effort suit each kind of delegated work, edit
+**Model roles** in **Settings → General** on web and desktop. Agents use these
+roles at their own discretion; your explicit instructions in a thread win. Each
+role holds up to four model and effort choices; the first is the default, and an
+unavailable choice is marked. Codex agents see changes on their next turn and
+Claude agents in their next session. Reset model roles to get the latest
+defaults; this replaces your customizations.
+
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
 thread asks for it.

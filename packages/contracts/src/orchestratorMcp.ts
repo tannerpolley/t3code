@@ -36,6 +36,7 @@ import {
   ProviderOptionSelectionValue,
 } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { MAX_MODEL_ROLE_TARGETS, ModelRole, ModelRoleTarget } from "./settings.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
   description: "Complete task or message text for the target agent.",
@@ -483,6 +484,21 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
+/**
+ * A model role as orchestrators see it. Each choice reports why
+ * `delegate_task` would reject that target right now, or null.
+ */
+export const OrchestratorMcpModelRole = Schema.Struct({
+  ...ModelRole.fields,
+  targets: Schema.NonEmptyArray(
+    Schema.Struct({
+      ...ModelRoleTarget.fields,
+      unavailableReason: Schema.NullOr(Schema.String),
+    }),
+  ).check(Schema.isMaxLength(MAX_MODEL_ROLE_TARGETS)),
+});
+export type OrchestratorMcpModelRole = typeof OrchestratorMcpModelRole.Type;
+
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   /** The calling thread, or null when the caller is not a T3 thread. */
   parentThreadId: Schema.NullOr(ThreadId),
@@ -492,6 +508,11 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  /**
+   * The user's model roles: defaults to use at the agent's discretion when
+   * picking a `delegate_task` target. Explicit user instructions win.
+   */
+  modelRoles: Schema.Array(OrchestratorMcpModelRole),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

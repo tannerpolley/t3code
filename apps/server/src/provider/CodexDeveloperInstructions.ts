@@ -1,10 +1,11 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import type { OrchestratorMcpModelRole, ProviderInteractionMode } from "@t3tools/contracts";
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  t3ModelRolesInstructions,
 } from "./T3OrchestrationInstructions.ts";
 
 const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = `## T3 Code devices
@@ -211,8 +212,10 @@ export function buildCodexAdditionalContext(
    * setting, so the prompt cannot claim tools the turn doesn't have.
    */
   toolsAvailable: boolean | T3CodeToolAvailability = true,
+  modelRoles: ReadonlyArray<OrchestratorMcpModelRole> = [],
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
+  const roles = t3ModelRolesInstructions(modelRoles).trim();
   // Separate keys keep each value under Codex's per-entry token cap.
   return {
     t3_code_orchestration: { kind: "application", value: T3_CODE_ORCHESTRATION_INSTRUCTIONS },
@@ -221,5 +224,6 @@ export function buildCodexAdditionalContext(
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
+    ...(roles ? { t3_code_model_roles: { kind: "application", value: roles } } : {}),
   };
 }
