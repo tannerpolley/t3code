@@ -424,6 +424,38 @@ export function resolveInteractionMode(
     : Effect.succeed(resolved);
 }
 
+/**
+ * A delegated child must not message its parent or any ancestor: each message
+ * starts a turn there and interrupts it. Its final message already reaches the
+ * parent through delegated completion delivery, and decisions go through the
+ * question tool. Shared by every MCP path that sends a message to a thread.
+ */
+export const assertNotSendingToAncestor = Effect.fn("mcp.assertNotSendingToAncestor")(function* (
+  threads: Pick<ThreadManagementService.ThreadManagementService["Service"], "getThreadShell">,
+  caller: Pick<OrchestrationV2ThreadShell, "lineage" | "creationSource"> | undefined,
+  targetThreadId: ThreadId,
+) {
+  // Provider-native subagents never call MCP as themselves; only delegate_task children do.
+  if (caller?.lineage.relationshipToParent !== "subagent" || caller.creationSource === "provider") {
+    return;
+  }
+  const visited = new Set<ThreadId>();
+  let ancestorId = caller.lineage.parentThreadId;
+  while (ancestorId !== null && !visited.has(ancestorId)) {
+    if (ancestorId === targetThreadId) {
+      return yield* failure(
+        "ancestor_send_denied",
+        "A delegated task cannot message its parent or ancestor threads. Report in your final message; it is delivered to your parent automatically. To ask for a decision, use the question tool (`t3_request_user_input` or your native ask tool).",
+      );
+    }
+    visited.add(ancestorId);
+    const ancestor = yield* threads
+      .getThreadShell(ancestorId)
+      .pipe(Effect.mapError(threadManagementFailure));
+    ancestorId = ancestor?.lineage.parentThreadId ?? null;
+  }
+});
+
 function stablePart(value: string): string {
   return encodeURIComponent(value);
 }
@@ -2061,6 +2093,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
         yield* assertLiveCallerForOtherThread(scope, parent, target);
+        yield* assertNotSendingToAncestor(threadManagement, parent?.thread, target.thread.id);
         yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
         yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
