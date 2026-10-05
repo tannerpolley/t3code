@@ -8,7 +8,7 @@ function currentMinute(): string {
 }
 
 let nowMinute = currentMinute();
-let timerId: number | null = null;
+let timerId: ReturnType<typeof setTimeout> | null = null;
 let timerIsInterval = false;
 const listeners = new Set<() => void>();
 
@@ -24,11 +24,11 @@ function startTimer(): void {
   // Align to the next UTC minute boundary, then tick every 60s. Ticks re-read
   // the clock, so a throttled or late timer self-corrects when it fires.
   timerIsInterval = false;
-  timerId = window.setTimeout(
+  timerId = setTimeout(
     () => {
       tick();
       timerIsInterval = true;
-      timerId = window.setInterval(tick, 60_000);
+      timerId = setInterval(tick, 60_000);
     },
     60_000 - (Date.now() % 60_000),
   );
@@ -42,8 +42,8 @@ function subscribe(listener: () => void): () => void {
   return () => {
     listeners.delete(listener);
     if (listeners.size === 0 && timerId !== null) {
-      if (timerIsInterval) window.clearInterval(timerId);
-      else window.clearTimeout(timerId);
+      if (timerIsInterval) clearInterval(timerId);
+      else clearTimeout(timerId);
       timerId = null;
     }
   };

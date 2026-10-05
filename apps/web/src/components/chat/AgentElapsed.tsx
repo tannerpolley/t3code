@@ -2,19 +2,7 @@ import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRunt
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
 import { useEffect, useRef } from "react";
-
-function formatElapsedSeconds(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.floor(totalSeconds));
-  const minutes = Math.floor(seconds / 60);
-  if (minutes === 0) {
-    return `${seconds}s`;
-  }
-  const hours = Math.floor(minutes / 60);
-  if (hours === 0) {
-    return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
-  }
-  return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
-}
+import { formatElapsedSeconds } from "../../timestampFormat";
 
 /**
  * Elapsed time for the current activation. Live agents self-tick via DOM
@@ -55,7 +43,7 @@ export function AgentElapsed({
     return null;
   }
   return (
-    <span ref={textRef} className="tabular-nums">
+    <span ref={textRef} className="tabular-nums whitespace-nowrap">
       {formatElapsedSeconds(elapsedMs / 1000)}
     </span>
   );

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   formatDayAwareTimestamp,
   formatElapsedDurationLabel,
+  formatElapsedSeconds,
   formatExpiresInLabel,
   formatRelativeTime,
   formatRelativeTimeLabel,
@@ -314,5 +315,18 @@ describe("formatElapsedDurationLabel", () => {
     expect(formatElapsedDurationLabel("2026-04-07T11:45:00.000Z")).toBe("15m");
     expect(formatElapsedDurationLabel("2026-04-07T06:00:00.000Z")).toBe("6h");
     expect(formatElapsedDurationLabel("2026-04-03T12:00:00.000Z")).toBe("4d");
+  });
+});
+
+describe("formatElapsedSeconds", () => {
+  it.each([
+    [0, "00m 00s"],
+    [65, "01m 05s"],
+    [3599, "59m 59s"],
+    [3600, "01h 00m 00s"],
+    [100 * 3600, "100h 00m 00s"],
+    [12 * 3600 + 4 * 60, "12h 04m 00s"],
+  ])("formats %d seconds as %s", (seconds, expected) => {
+    expect(formatElapsedSeconds(seconds)).toBe(expected);
   });
 });
