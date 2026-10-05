@@ -70,6 +70,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useUiStateStore } from "../../uiStateStore";
 import { AgentElapsed } from "./AgentElapsed";
+import { shortModelName } from "./providerIconUtils";
 import {
   groupThreadLineageRows,
   resolveLineageClearedAt,
@@ -300,6 +301,7 @@ export function ThreadRelationshipsPanel(props: {
   const previousExpanded = previousOpenFor === threadKey;
   const expandDetailsByDefault = useClientSettings((settings) => settings.lineageDetailsExpanded);
   const autoClearMinutes = useClientSettings((settings) => settings.lineageAutoClearMinutes);
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const nowMinute = useNowMinute();
   const navigate = useNavigate();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
@@ -552,6 +554,9 @@ export function ThreadRelationshipsPanel(props: {
                     parentProject: currentProject,
                     childProject: project,
                   });
+                  const shownModelLabel = shortModelNames
+                    ? shortModelName(metadata.modelLabel)
+                    : metadata.modelLabel;
                   const effortLabel =
                     agent?.effort ??
                     (modelSelection
@@ -609,7 +614,7 @@ export function ThreadRelationshipsPanel(props: {
                       />
                       {model ? (
                         <span className="max-w-32 shrink-0 truncate text-2xs font-normal text-foreground/75">
-                          {metadata.modelLabel}
+                          {shownModelLabel}
                           {effortLabel ? ` · ${effortLabel}` : ""}
                         </span>
                       ) : null}
@@ -744,7 +749,7 @@ export function ThreadRelationshipsPanel(props: {
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="shrink-0">{modelLabel}</span>
                               <span className="min-w-0 truncate text-foreground/75">
-                                {metadata.modelLabel}
+                                {shownModelLabel}
                               </span>
                             </div>
                           ) : null}
