@@ -506,6 +506,13 @@ export const ClientSettingsSchema = Schema.Struct({
   autoOrganizeByFolder: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   revealOpenThreadInSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   lineageAutoClearMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  // Fork customizations, each switchable back to the original behavior in Settings → Customizations.
+  /**
+   * Usage page Limits laid out like Cost and Tokens (one window kind at a time,
+   * provider rows, an estimated by-provider or by-model chart); off shows the
+   * per-provider window cards.
+   */
+  usageLimitModelBreakdown: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1832,6 +1839,7 @@ export const ClientSettingsPatch = Schema.Struct({
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
   revealOpenThreadInSidebar: Schema.optionalKey(Schema.Boolean),
   lineageAutoClearMinutes: Schema.optionalKey(NonNegativeInt),
+  usageLimitModelBreakdown: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

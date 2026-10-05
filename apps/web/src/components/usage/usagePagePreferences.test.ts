@@ -35,6 +35,15 @@ describe("Usage page preferences", () => {
     }
   });
 
+  it("keeps the chosen limit window alongside the metric", () => {
+    saveUsagePagePreferences({ metric: "limits", windowDays: 7, limitWindow: "weekly" });
+    expect(readUsagePagePreferences()).toEqual({
+      metric: "limits",
+      windowDays: 7,
+      limitWindow: "weekly",
+    });
+  });
+
   it.each([
     "not-json",
     '{"metric":"unknown","windowDays":7}',

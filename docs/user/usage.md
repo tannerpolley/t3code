@@ -87,6 +87,17 @@ Claude resets are not available when the server runs on macOS, where Claude keep
 Keychain. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
 
+This fork lays Limits out like Cost and Tokens by default. Pick a window (**5 hours**, **Weekly**,
+**Monthly**) where the period picker usually is. The headline is the tightest provider's share left
+and its next refill. Each provider row shows what is left and how many accounts share it; hover a row
+for each account's share and reset time. The chart and **Breakdown** estimate how much of the window
+each provider or model used. Providers do not report this, so it is estimated from the usage your
+connected environments recorded, weighted by each model's API-equivalent price. Usage from other
+machines or apps on the same account is spread across the models shown. Redeem a banked reset credit
+from the **Reset credits** total. For the window cards described above, turn off **Settings →
+Customizations → Limits page like Cost and Tokens**.
+
+
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 
