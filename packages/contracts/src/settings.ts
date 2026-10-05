@@ -1553,6 +1553,11 @@ export const ServerSettings = Schema.Struct({
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   projectFolderRoot: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /**
+   * Agent browser tabs: a thread keeps at most 3 agent-opened tabs, and a tab stuck loading gets
+   * one hard reload and a retry.
+   */
+  agentBrowserTabLimits: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Every ~10 minutes, retitle top-level threads with new messages to what they are working on
    * now, using GPT-6 Luna. Titles a user typed are never changed.
    */
@@ -1881,6 +1886,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   projectFolderRoot: Schema.optionalKey(TrimmedString),
+  agentBrowserTabLimits: Schema.optionalKey(Schema.Boolean),
   keepThreadTitlesCurrent: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),

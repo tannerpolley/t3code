@@ -449,6 +449,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork browser preview agent side panel floating mini player"],
   },
   {
+    id: "agent-browser-tab-limits",
+    title: "Agent browser tab limits",
+    to: "/settings/customizations",
+    scope: "environment-defaults",
+    searchTerms: ["customization fork browser preview agent tabs cap three stuck reload retry"],
+  },
+  {
     id: "version-control-issues",
     title: "Issues in thread details",
     to: "/settings/customizations",

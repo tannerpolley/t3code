@@ -159,24 +159,32 @@ function CustomizationsGroup({
   );
 }
 
+type ServerSwitchKey = "keepThreadTitlesCurrent" | "agentBrowserTabLimits";
+
 /** A server setting: it applies to the environment running T3, not this client. */
-function KeepThreadTitlesCurrentRow() {
+function ServerSwitchRow({
+  settingKey,
+  searchId,
+  description,
+}: {
+  readonly settingKey: ServerSwitchKey;
+  readonly searchId: SettingsSearchItemId;
+  readonly description: string;
+}) {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsRow
       serverScoped
-      settingKeys={["keepThreadTitlesCurrent"]}
-      {...searchableSetting("keep-thread-titles-current")}
-      description="Every ~10 minutes, GPT-6 Luna retitles top-level threads with new activity to what they're working on now. Titles you typed are kept. Regenerate title uses the same model and says when the title still fits."
+      settingKeys={[settingKey]}
+      {...searchableSetting(searchId)}
+      description={description}
       control={
         <ScopedSwitch
-          settingKeys={["keepThreadTitlesCurrent"]}
-          checked={settings.keepThreadTitlesCurrent}
-          onCheckedChange={(checked) =>
-            updateSettings({ keepThreadTitlesCurrent: Boolean(checked) })
-          }
-          aria-label="Keep thread titles current"
+          settingKeys={[settingKey]}
+          checked={settings[settingKey]}
+          onCheckedChange={(checked) => updateSettings({ [settingKey]: Boolean(checked) })}
+          aria-label={searchableSetting(searchId).title}
         />
       }
     />
@@ -230,12 +238,22 @@ export function CustomizationsSettings() {
   return (
     <SettingsPageContainer>
       <CustomizationsGroup title="Sidebar & projects" section="sidebar">
-        <KeepThreadTitlesCurrentRow />
+        <ServerSwitchRow
+          settingKey="keepThreadTitlesCurrent"
+          searchId="keep-thread-titles-current"
+          description="Every ~10 minutes, GPT-6 Luna retitles top-level threads with new activity to what they're working on now. Titles you typed are kept. Regenerate title uses the same model and says when the title still fits."
+        />
       </CustomizationsGroup>
       <CustomizationsGroup title="Lineage & background work" section="lineage" />
       <CustomizationsGroup title="Composer & chat" section="composer" />
       <CustomizationsGroup title="Version control & issues" section="versionControl" />
-      <CustomizationsGroup title="Browser & preview" section="browser" />
+      <CustomizationsGroup title="Browser & preview" section="browser">
+        <ServerSwitchRow
+          settingKey="agentBrowserTabLimits"
+          searchId="agent-browser-tab-limits"
+          description="A thread keeps at most 3 browser tabs an agent opened; opening another closes the oldest. A tab stuck loading gets one hard reload and a retry. Off leaves agent tabs unlimited and returns the timeout."
+        />
+      </CustomizationsGroup>
       <ModelRolesSection />
       <CustomizationsGroup title="Usage" section="usage" />
       <ProviderPluginsSection />
