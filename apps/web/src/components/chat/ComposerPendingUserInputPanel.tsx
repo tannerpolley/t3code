@@ -18,6 +18,8 @@ interface PendingUserInputPanelProps {
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  /** Number keys pick options from anywhere on the page. Only one card on screen may own them. */
+  keyboardShortcuts?: boolean;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -28,6 +30,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onToggleOption,
   onAdvance,
   onDismiss,
+  keyboardShortcuts = true,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -43,6 +46,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
+      keyboardShortcuts={keyboardShortcuts}
     />
   );
 });
@@ -55,6 +59,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption,
   onAdvance,
   onDismiss,
+  keyboardShortcuts,
 }: {
   prompt: PendingUserInput;
   isResponding: boolean;
@@ -63,6 +68,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  keyboardShortcuts: boolean;
 }) {
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
@@ -142,7 +148,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // select prompts keep the existing auto-advance behavior. Collapsed prompts opt
   // out, since the numbers they refer to are not on screen.
   useEffect(() => {
-    if (!activeQuestion || responseDisabled || isCollapsed) return;
+    if (!activeQuestion || responseDisabled || isCollapsed || !keyboardShortcuts) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -151,7 +157,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       }
       if (
         target instanceof HTMLElement &&
-        target.closest('[contenteditable]:not([contenteditable="false"])')
+        target.closest('[contenteditable]:not([contenteditable="false"]),[data-question-popup]')
       ) {
         return;
       }
@@ -166,7 +172,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, handleOptionSelection, isCollapsed, responseDisabled]);
+  }, [activeQuestion, handleOptionSelection, isCollapsed, keyboardShortcuts, responseDisabled]);
 
   if (!activeQuestion) {
     return null;
@@ -246,7 +252,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const isSelected =
                   isOptimisticallySelected ||
                   (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
-                const shortcutKey = index < 9 ? index + 1 : null;
+                // Only advertise number keys when they act on this card.
+                const shortcutKey = keyboardShortcuts && index < 9 ? index + 1 : null;
                 const className = cn(
                   "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-primary/25",
                   isSelected

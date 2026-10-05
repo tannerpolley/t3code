@@ -264,6 +264,26 @@ describe("thread notifications", () => {
     );
   });
 
+  it.each([true, false])(
+    "takes back a question alert once the question is answered with focus=%s",
+    async (focused) => {
+      state.mode = "notifications";
+      state.focused = focused;
+      await render();
+      state.input = true;
+      await render();
+      state.input = false;
+      await render();
+      if (focused) {
+        expect(state.add).toHaveBeenCalledTimes(1);
+        expect(state.close).toHaveBeenCalledWith("toast-1");
+      } else {
+        const notification = state.notification.mock.results[0]?.value as { close: () => void };
+        expect(notification.close).toHaveBeenCalled();
+      }
+    },
+  );
+
   it("keeps background desktop alerts when in-app notifications are disabled", async () => {
     state.focused = false;
     state.inApp = false;
