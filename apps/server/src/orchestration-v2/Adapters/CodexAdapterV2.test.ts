@@ -6508,6 +6508,50 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("records the selected reasoning effort on a native child thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const metadataRead = yield* Deferred.make<void>();
+        const metadataEvent = yield* Deferred.make<Extract<ProviderAdapterV2Event, { type: "subagent.updated" }>>();
+        const reported = { model: "gpt-6-luna", reasoningEffort: "max" };
+        const harness = yield* makeCodexReplayHarness(
+          resumeSubagentTranscript,
+          (event) => event.type === "subagent.updated" && event.subagent.model === reported.model
+            ? Deferred.succeed(metadataEvent, event).pipe(Effect.asVoid)
+            : Effect.void,
+          undefined,
+          (threadId) => {
+            assert.equal(threadId, RESUME_CHILD_THREAD);
+            return Deferred.succeed(metadataRead, undefined).pipe(
+              Effect.as({
+                thread: { id: threadId, ...reported },
+                // The current resume probe reads model at the response root;
+                // thread/read exposes it on the thread itself.
+                model: reported.model,
+              }),
+            );
+          },
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-reasoning-effort"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* Deferred.await(metadataRead);
+        const selectionEvent = yield* Deferred.await(metadataEvent);
+        assert.deepEqual(selectionEvent?.modelSelection, {
+          ...CODEX_TEST_MODEL_SELECTION,
+          model: reported.model,
+          options: [{ id: "reasoningEffort", value: reported.reasoningEffort }],
+        });
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect.each(["thread/settings/updated", "model/rerouted"] as const)(
     "keeps %s child metadata when an older lookup finishes later",
     (method) =>
