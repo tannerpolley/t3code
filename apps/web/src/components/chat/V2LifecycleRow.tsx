@@ -42,6 +42,7 @@ import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColorClassName } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
+import { useClientSettings } from "~/hooks/useSettings";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
@@ -561,6 +562,7 @@ function HandoffEndpoint(props: {
   readonly model?: string | undefined;
 }) {
   const entry = getProviderInstanceEntry(props.providers, props.instanceId);
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const model = props.model?.trim();
   const providerModel =
     model === undefined || model.length === 0
@@ -568,7 +570,7 @@ function HandoffEndpoint(props: {
       : entry?.models.find((candidate) => candidate.slug === model);
   const label =
     providerModel !== undefined
-      ? getTriggerDisplayModelName(providerModel)
+      ? getTriggerDisplayModelName(providerModel, shortModelNames)
       : model !== undefined && model.length > 0
         ? model
         : (entry?.displayName ?? props.instanceId);

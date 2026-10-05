@@ -244,7 +244,7 @@ import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
-import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
+import { getTriggerDisplayModelLabel, shortModelName } from "./chat/providerIconUtils";
 import {
   deriveProviderEntriesByEnvironment,
   shouldShowInstanceBadge,
@@ -430,6 +430,8 @@ function SidebarThreadTooltip({
   terminalProcessCount: number;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
+  const shownModelLabel = shortModelNames ? shortModelName(modelLabel) : modelLabel;
   const previousProviderNames = thread.providerInstanceHistory
     .filter((instanceId) => instanceId !== modelInstanceId)
     .map((instanceId) => providerEntryByInstanceId.get(instanceId)?.displayName ?? instanceId);
@@ -493,8 +495,8 @@ function SidebarThreadTooltip({
             />
             <div className="min-w-0 truncate text-foreground/75">
               {showInstanceBadge && providerEntry
-                ? `${modelLabel} · ${providerEntry.displayName}`
-                : modelLabel}
+                ? `${shownModelLabel} · ${providerEntry.displayName}`
+                : shownModelLabel}
             </div>
           </div>
         ) : null}
