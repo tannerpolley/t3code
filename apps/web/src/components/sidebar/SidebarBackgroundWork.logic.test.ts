@@ -129,7 +129,7 @@ describe("describeSidebarBackgroundWork", () => {
         activeRunId: null,
         activityStartedAt: null,
       },
-      pendingBackgroundTasks: [{ taskId: "monitor", kind: "monitor" }],
+      pendingBackgroundTasks: [{ taskId: "monitor", kind: "monitor" as const }],
     };
 
     expect(describeSidebarBackgroundWork([], [failedChild])[0]?.status).toBe("failed");
