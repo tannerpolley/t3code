@@ -133,6 +133,7 @@ import {
 } from "../AttachmentPrompt.ts";
 import {
   ProviderAdapterEnsureThreadError,
+  ProviderAdapterEventStreamError,
   ProviderAdapterForkThreadError,
   ProviderAdapterInterruptError,
   ProviderAdapterOpenSessionError,
@@ -1639,7 +1640,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           model: input.modelSelection.model,
           now,
         });
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<
+          ProviderAdapterV2Event,
+          ProviderAdapterEventStreamError
+        >();
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
@@ -5441,12 +5445,62 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }),
         );
 
+        // Finish local turn cleanup before failing the stream. In particular,
+        // Stop may be finalizing descendants after a failed protocol request;
+        // consumers must drain those terminal events before seeing the failure.
+        yield* client.raw.awaitTermination.pipe(
+          Effect.catch((cause) =>
+            Effect.gen(function* () {
+              const completedAt = yield* DateTime.now;
+              const interrupted = yield* Ref.get(interruptingNativeTurns);
+              for (const context of (yield* Ref.get(activeTurns)).values()) {
+                yield* finalizeCodexTurn({
+                  context,
+                  nativeTurnId: context.nativeTurnId,
+                  status: interrupted.has(context.nativeTurnId) ? "interrupted" : "failed",
+                  completedAt,
+                  failureMessage: cause.message,
+                });
+              }
+              // Retained background work belongs to the same dead process, even
+              // when its root turn already completed. It cannot wake that turn.
+              for (const context of (yield* Ref.get(settledTurns)).values()) {
+                yield* terminalizeRunningCommandItems(
+                  context,
+                  context.nativeTurnId,
+                  "failed",
+                  completedAt,
+                );
+                yield* terminalizeRunningDynamicTools(
+                  context,
+                  context.nativeTurnId,
+                  "failed",
+                  completedAt,
+                  true,
+                );
+              }
+              yield* Ref.set(settledTurns, new Map());
+              yield* Ref.set(runningCommandItemsByTurn, new Map());
+              yield* Ref.set(runningDynamicToolsByTurn, new Map());
+              yield* Queue.fail(
+                events,
+                new ProviderAdapterEventStreamError({
+                  driver: CODEX_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
+              );
+            }),
+          ),
+          Effect.forkIn(scope),
+        );
+
         const runtime: ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          events: Stream.fromEffectRepeat(Queue.take(events)),
+          events: Stream.fromQueue(events),
           canReuseContextUsage: canReuseCodexContextUsage,
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race
