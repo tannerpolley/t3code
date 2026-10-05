@@ -1,8 +1,14 @@
-import type { ClientSettings } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import type { ClientSettings, ServerProviderPlugin } from "@t3tools/contracts";
+import { ChevronRightIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { cn } from "../../lib/utils";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { groupProviderPlugins } from "./CustomizationsSettings.logic";
+import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { ModelRolesSection } from "./ModelRolesSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -20,7 +26,8 @@ type CustomizationSection =
   | "composer"
   | "versionControl"
   | "browser"
-  | "usage";
+  | "usage"
+  | "motion";
 
 /**
  * Each switch turns one area of this fork's UI back to the original behavior when off, so with
@@ -33,11 +40,67 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
   readonly description: string;
 }> = [
   {
+    key: "projectsView",
+    searchId: "projects-view",
+    section: "sidebar",
+    description:
+      "Offer a Projects view of sections and projects, turned on and off with the folder button beside search (blue while on). Off shows only the standard Activity list.",
+  },
+  {
+    key: "codexStyleSidebar",
+    searchId: "codex-style-sidebar",
+    section: "sidebar",
+    description:
+      "Projects view like the Codex app: hover chevrons, rows that toggle and drag, a blue spinner on running threads, smaller thread titles, running subagents and their own subagents and shells in a tree under their thread with model and title, each level collapsible, how long each working or waiting thread, subagent and background process has been running, and New thread in the project menu instead of a hover button. Off restores chevrons, grip handles, status dots and the All projects row.",
+  },
+  {
+    key: "sectionFolderColors",
+    searchId: "section-folder-colors",
+    section: "sidebar",
+    description:
+      "Tint the folder icons of a section's projects with the color chosen in the section's menu. Off keeps the colors saved but unused.",
+  },
+  {
+    key: "autoOrganizeByFolder",
+    searchId: "auto-organize-by-folder",
+    section: "sidebar",
+    description:
+      "Put projects that are in no section yet into their folder's section automatically, using the Organize by folder root. Projects you move by hand stay where you put them.",
+  },
+  {
+    key: "revealOpenThreadInSidebar",
+    searchId: "reveal-open-thread-in-sidebar",
+    section: "sidebar",
+    description:
+      "When you open a thread by any route (a link, Lineage, search, a notification, a shortcut, Back or Forward), open the sections and project that hold it and scroll its row into view. A subagent reveals its parent's row. It runs when you open a thread, so a project you collapse afterwards stays collapsed.",
+  },
+  {
+    key: "topBackButton",
+    searchId: "top-back-button",
+    section: "sidebar",
+    description:
+      "Shows a Back button at the top-left of the Settings, Pull Requests, Issues and Usage pages, in addition to the one at the bottom of the sidebar.",
+  },
+  {
     key: "onboardingCodexSettings",
     searchId: "onboarding-codex-settings",
     section: "sidebar",
     description:
       "When onboarding imports projects you used with Codex, preview their Codex trust level and offer to apply it as the project's runtime mode.",
+  },
+  {
+    key: "threadDetailsRedesign",
+    searchId: "thread-details-redesign",
+    section: "lineage",
+    description:
+      "Lineage rows lead with model and effort, end in a status mark (spinner, green done dot, failure icon) and open into details; Clear hides finished agents under Previous agents. Off restores the original Lineage rows.",
+  },
+  {
+    key: "lineageDetailsExpanded",
+    searchId: "lineage-details-expanded",
+    section: "lineage",
+    description:
+      "Open every Lineage row's details (model, effort, status, branch, latest progress) by default. Rows you close by hand stay closed. Needs the redesigned Lineage.",
   },
   {
     key: "backgroundProcessOutput",
@@ -137,6 +200,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     description:
       "The sidebar's Usage button shows Claude's and Codex's weekly quota left (7d 75%). With any usage readout on, the button replaces its chart icon, colors each value green from 70%, amber from 30%, red below, and opens Limits.",
   },
+  {
+    key: "fastShimmer",
+    searchId: "fast-shimmer",
+    section: "motion",
+    description:
+      "Run the shimmer over running activity faster and smoother: 1.4 seconds per pass instead of 2.2.",
+  },
 ];
 
 function CustomizationsGroup({
@@ -205,50 +275,97 @@ function ServerSwitchRow({
   );
 }
 
-/**
- * Read-only: each enabled provider's plugins, as its latest snapshot reports them. Hidden until a
- * provider reports a plugin list at all, so an older server is not mistaken for "no plugins".
- */
+const pluginDescription = (plugin: ServerProviderPlugin) =>
+  [
+    plugin.marketplace,
+    `${plugin.skillCount} ${plugin.skillCount === 1 ? "skill" : "skills"}`,
+    plugin.requiresDesktopApp ? "Needs the ChatGPT desktop app" : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+const pluginRows = (plugins: ReadonlyArray<ServerProviderPlugin>) =>
+  plugins.map((plugin) => (
+    <SettingsRow
+      key={`${plugin.name}@${plugin.marketplace ?? ""}`}
+      title={plugin.name}
+      description={pluginDescription(plugin)}
+    />
+  ));
+
+/** Plugins that offer no skills here, folded away under their provider's usable ones. */
+function UnavailablePlugins({
+  plugins,
+}: {
+  readonly plugins: ReadonlyArray<ServerProviderPlugin>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex min-h-9 w-full items-center gap-2 rounded-md px-3 text-left text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-4">
+        <ChevronRightIcon
+          aria-hidden
+          className={cn(
+            "size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
+            open && "rotate-90",
+          )}
+        />
+        Unavailable / no skills · {plugins.length}
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
+          {pluginRows(plugins)}
+        </div>
+      </CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
+/** Read-only: each enabled provider's plugins, as its latest snapshot reports them. */
 function ProviderPluginsSection() {
   const { environment } = useSettingsScope();
-  const providers = (environment?.serverConfig?.providers ?? []).filter(
-    (provider) => provider.enabled && provider.plugins !== undefined,
-  );
-  if (providers.length === 0) return null;
-  const rows = providers.flatMap((provider) =>
-    (provider.plugins ?? []).map((plugin) => ({
-      provider: provider.displayName ?? provider.driver,
-      plugin,
-    })),
-  );
-  return (
-    <SettingsSection title="Plugins">
-      {rows.length === 0 ? (
+  const groups = groupProviderPlugins(environment?.serverConfig?.providers ?? []);
+  if (groups === null) return null;
+  if (groups.length === 0) {
+    return (
+      <SettingsSection title="Plugins">
         <SettingsRow
           title="No enabled plugins"
           description="Plugins you enable in Claude Code or Codex are listed here, with their skills offered under $."
         />
-      ) : (
-        rows.map(({ provider, plugin }) => (
-          <SettingsRow
-            key={`${provider}:${plugin.name}@${plugin.marketplace ?? ""}`}
-            title={plugin.name}
-            description={[
-              provider,
-              plugin.marketplace,
-              `${plugin.skillCount} ${plugin.skillCount === 1 ? "skill" : "skills"}`,
-              plugin.requiresDesktopApp ? "Needs the ChatGPT desktop app" : undefined,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          />
-        ))
-      )}
+      </SettingsSection>
+    );
+  }
+  return (
+    <SettingsSection title="Plugins" variant="plain">
+      {groups.map((group) => (
+        <FoldedSettingsSection
+          key={group.key}
+          id={`plugins-${group.key}`}
+          title={group.label}
+          summary={[
+            `${group.available.length} ${group.available.length === 1 ? "plugin" : "plugins"}`,
+            `${group.skillCount} ${group.skillCount === 1 ? "skill" : "skills"}`,
+            group.unavailable.length > 0 ? `${group.unavailable.length} unavailable` : undefined,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        >
+          {pluginRows(group.available)}
+          {group.unavailable.length > 0 ? <UnavailablePlugins plugins={group.unavailable} /> : null}
+        </FoldedSettingsSection>
+      ))}
     </SettingsSection>
   );
 }
 
+const LINEAGE_AUTO_CLEAR_MINUTES = [0, 30, 60] as const;
+const lineageAutoClearLabel = (minutes: number) =>
+  minutes === 0 ? "Off" : minutes === 60 ? "1 hour" : `${minutes} minutes`;
+
 export function CustomizationsSettings() {
+  const settings = useClientSettings();
+  const updateSettings = useUpdateClientSettings();
   return (
     <SettingsPageContainer>
       <CustomizationsGroup title="Sidebar & projects" section="sidebar">
@@ -258,7 +375,33 @@ export function CustomizationsSettings() {
           description="Every ~10 minutes, GPT-6 Luna retitles top-level threads with new activity to what they're working on now. Titles you typed are kept. Regenerate title uses the same model and says when the title still fits."
         />
       </CustomizationsGroup>
-      <CustomizationsGroup title="Lineage & background work" section="lineage" />
+      <CustomizationsGroup title="Lineage & background work" section="lineage">
+        <SettingsRow
+          {...searchableSetting("lineage-auto-clear")}
+          description="Hide finished agents from Lineage's Previous agents once they have sat unused this long, as if you pressed Clear. An agent you resume shows again. Show brings cleared ones back. Needs the Lineage redesign."
+          control={
+            <Select
+              value={String(settings.lineageAutoClearMinutes)}
+              onValueChange={(value) => updateSettings({ lineageAutoClearMinutes: Number(value) })}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="Clear finished agents after"
+              >
+                <SelectValue>{lineageAutoClearLabel(settings.lineageAutoClearMinutes)}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {LINEAGE_AUTO_CLEAR_MINUTES.map((minutes) => (
+                  <SelectItem hideIndicator key={minutes} value={String(minutes)}>
+                    {lineageAutoClearLabel(minutes)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      </CustomizationsGroup>
       <CustomizationsGroup title="Composer & chat" section="composer" />
       <CustomizationsGroup title="Version control & issues" section="versionControl" />
       <CustomizationsGroup title="Browser & preview" section="browser">
@@ -270,6 +413,7 @@ export function CustomizationsSettings() {
       </CustomizationsGroup>
       <ModelRolesSection />
       <CustomizationsGroup title="Usage" section="usage" />
+      <CustomizationsGroup title="Appearance & motion" section="motion" />
       <ProviderPluginsSection />
     </SettingsPageContainer>
   );

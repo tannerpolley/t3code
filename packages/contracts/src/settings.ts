@@ -538,10 +538,14 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   /** Offer to apply supported Codex project settings when onboarding imports projects. */
   onboardingCodexSettings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
   /** Clicking a background command or monitor follows its live output. */
   backgroundProcessOutput: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
   shortModelNames: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Lineage rows led by model and effort, with status marks, details and clearing. */
+  threadDetailsRedesign: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** The quicker running-activity shimmer. */
+  fastShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -2060,6 +2064,8 @@ export const ClientSettingsPatch = Schema.Struct({
   openQuestionsAutomatically: Schema.optionalKey(Schema.Boolean),
   onboardingCodexSettings: Schema.optionalKey(Schema.Boolean),
   shortModelNames: Schema.optionalKey(Schema.Boolean),
+  threadDetailsRedesign: Schema.optionalKey(Schema.Boolean),
+  fastShimmer: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

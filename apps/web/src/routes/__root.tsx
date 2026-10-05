@@ -281,6 +281,11 @@ function ContrastAppearanceSync() {
     document.documentElement.dataset.chatWidth = chatWidth;
   }, [chatWidth]);
 
+  const fastShimmer = useClientSettings((settings) => settings.fastShimmer);
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-fast-shimmer", fastShimmer);
+  }, [fastShimmer]);
+
   useEffect(() => {
     applyAppearanceContrast(document.documentElement, appearanceContrast);
   }, [appearanceContrast]);
