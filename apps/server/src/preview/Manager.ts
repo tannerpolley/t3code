@@ -64,7 +64,14 @@ interface PreviewSessionState {
   readonly threadId: string;
   readonly tabId: string;
   readonly snapshot: PreviewSessionSnapshot;
+  readonly openedByAgent?: boolean;
 }
+
+/**
+ * Agent-opened tabs a thread may keep. Opening one more closes the thread's
+ * oldest agent-opened tab; tabs the user opened are never closed for this.
+ */
+export const MAX_AGENT_TABS_PER_THREAD = 3;
 
 interface ManagerState {
   /** All sessions across every thread, keyed by `${threadId}\u0000${tabId}`. */
@@ -92,6 +99,28 @@ const sessionsForThread = (
     if (session.threadId === threadId) out.push(session);
   }
   return out;
+};
+
+/** Removes `targets` and returns one `closed` event draft per removed tab. */
+const removeSessions = (
+  state: ManagerState,
+  targets: ReadonlyArray<PreviewSessionState>,
+  createdAt: string,
+) => {
+  const sessions = new Map(state.sessions);
+  let revision = state.revision;
+  const events = targets.map((target) => {
+    revision += 1;
+    sessions.delete(compositeKey(target.threadId, target.tabId));
+    return {
+      type: "closed" as const,
+      threadId: target.threadId,
+      tabId: target.tabId,
+      createdAt,
+      revision,
+    };
+  });
+  return { state: { sessions, revision }, events };
 };
 
 const normalizeUrl = (rawUrl: string): Effect.Effect<string, PreviewInvalidUrlError> =>
@@ -244,14 +273,30 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             profileId: input.profileId,
             updatedAt,
           });
-      yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
+      yield* SynchronizedRef.modifyEffect(stateRef, (current) =>
         Effect.gen(function* () {
+          // Map order is open order, so the first agent tabs are the oldest.
+          const agentTabs = input.openedByAgent
+            ? sessionsForThread(current, input.threadId).filter((entry) => entry.openedByAgent)
+            : [];
+          const evicted = removeSessions(
+            current,
+            agentTabs.slice(0, Math.max(0, agentTabs.length - MAX_AGENT_TABS_PER_THREAD + 1)),
+            snapshot.updatedAt,
+          );
+          yield* Effect.forEach(
+            evicted.events,
+            (event) => PubSub.publish(eventsPubSub, { ...event, serverEpoch }),
+            { discard: true },
+          );
+          const state = evicted.state;
           const revision = state.revision + 1;
           const sessions = new Map(state.sessions);
           sessions.set(compositeKey(input.threadId, tabId), {
             threadId: input.threadId,
             tabId,
             snapshot,
+            ...(input.openedByAgent ? { openedByAgent: true } : {}),
           });
           yield* PubSub.publish(eventsPubSub, {
             type: "opened",
@@ -398,34 +443,22 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     function* (input) {
       const createdAt = yield* currentIsoTimestamp;
       yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
-        const eventsToEmit: PreviewEvent[] = [];
-        const sessions = new Map(state.sessions);
         const targets = input.tabId
           ? [state.sessions.get(compositeKey(input.threadId, input.tabId))].filter(
               (entry): entry is PreviewSessionState => entry !== undefined,
             )
           : sessionsForThread(state, input.threadId);
-        let revision = state.revision;
-        for (const target of targets) {
-          revision += 1;
-          sessions.delete(compositeKey(target.threadId, target.tabId));
-          eventsToEmit.push({
-            type: "closed",
-            threadId: target.threadId,
-            tabId: target.tabId,
-            createdAt,
-            serverEpoch,
-            revision,
-          });
-        }
-        if (eventsToEmit.length === 0) {
+        if (targets.length === 0) {
           return Effect.succeed([undefined, state] as const);
         }
+        const removed = removeSessions(state, targets, createdAt);
         return Effect.as(
-          Effect.forEach(eventsToEmit, (event) => PubSub.publish(eventsPubSub, event), {
-            discard: true,
-          }),
-          [undefined, { sessions, revision }] as const,
+          Effect.forEach(
+            removed.events,
+            (event) => PubSub.publish(eventsPubSub, { ...event, serverEpoch }),
+            { discard: true },
+          ),
+          [undefined, removed.state] as const,
         );
       });
     },

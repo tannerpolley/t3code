@@ -67,7 +67,10 @@ export function resolveBrowserNavigationTarget(
   if (target.kind === "url") {
     return {
       requestedUrl: target.url,
-      resolvedUrl: target.url,
+      // A server-relative URL, such as a signed file asset, belongs to this environment.
+      resolvedUrl: /^\/(?!\/)/.test(target.url)
+        ? new URL(target.url, readEnvironmentUrl(environmentId)).href
+        : target.url,
       resolutionKind: "direct",
       environmentId,
     };

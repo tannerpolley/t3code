@@ -5,9 +5,10 @@
  * stable line-prefixed field format; this is the only `lsof` flag set we rely
  * on).
  *
- * Windows / lsof missing: checks a curated list of common dev ports through
- * the shared Net service.
+ * Windows: enumerates listeners with PowerShell. If listener enumeration fails,
+ * checks only common dev ports through the shared Net service.
  *
+ * Only T3-owned listeners, common dev ports, and configured URLs are probed.
  * Listening ports are published only after a bounded HTTP(S) probe finds a
  * successful HTML document or a redirect to one.
  * Positive and negative results are cached briefly by candidate URL and listener identity,
@@ -30,6 +31,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -293,6 +295,7 @@ const serversEqual = (
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcessPlatform;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
@@ -302,6 +305,73 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   });
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
   const scanSemaphore = yield* Semaphore.make(1);
+
+  const readProcessParents = Effect.fn("PortDiscovery.readProcessParents")(
+    function* () {
+      if (hostPlatform === "linux") {
+        const entries = yield* fileSystem.readDirectory("/proc");
+        const parents = new Map<number, number>();
+        yield* Effect.forEach(
+          entries.filter((entry) => /^\d+$/.test(entry)),
+          (entry) =>
+            fileSystem.readFileString(`/proc/${entry}/stat`).pipe(
+              Effect.tap((stat) =>
+                Effect.sync(() => {
+                  // comm can contain spaces and parentheses; ppid follows the final ')'.
+                  const commandEnd = stat.lastIndexOf(")");
+                  if (commandEnd < 0) return;
+                  const ppid = Number(
+                    stat
+                      .slice(commandEnd + 1)
+                      .trim()
+                      .split(/\s+/)[1],
+                  );
+                  if (Number.isInteger(ppid) && ppid >= 0) parents.set(Number(entry), ppid);
+                }),
+              ),
+              // Processes may exit or be unreadable during the snapshot.
+              Effect.orElseSucceed(() => undefined),
+            ),
+          { concurrency: 4, discard: true },
+        );
+        return parents;
+      }
+      if (hostPlatform !== "darwin" && hostPlatform !== "win32") return null;
+      const result = yield* processRunner.run({
+        command: hostPlatform === "win32" ? "powershell.exe" : "ps",
+        args:
+          hostPlatform === "win32"
+            ? [
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId) $($_.ParentProcessId)" }',
+              ]
+            : ["-Ao", "pid=,ppid="],
+        timeout: Duration.millis(LSOF_TIMEOUT_MS),
+        maxOutputBytes: 1024 * 1024,
+        outputMode: "truncate",
+      });
+      if (
+        result.code !== 0 ||
+        result.timedOut ||
+        result.stdoutTruncated ||
+        result.stdoutInvalidUtf8
+      ) {
+        return null;
+      }
+      const parents = new Map<number, number>();
+      for (const line of result.stdout.split("\n")) {
+        const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+        if (pid === undefined || ppid === undefined) continue;
+        if (Number.isInteger(pid) && pid > 0 && Number.isInteger(ppid) && ppid >= 0) {
+          parents.set(pid, ppid);
+        }
+      }
+      return parents;
+    },
+    Effect.orElseSucceed(() => null),
+  );
 
   const probeCommonPorts = Effect.fn("PortDiscovery.probeCommonPorts")(function* () {
     const results = yield* Effect.forEach(
@@ -351,6 +421,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const makeWebProbeGroups = (
     servers: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
+    ownedProcessIds: ReadonlySet<number>,
   ): ReadonlyArray<WebProbeGroup> => {
     const serversByKey = new Map(
       servers.map((server) => [localServerKey(server.host, server.port), server] as const),
@@ -380,6 +451,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
 
     for (const server of servers) {
+      // Unsolicited HTTP(S) requests can break non-web services such as Steam's game pipe.
+      if (
+        !COMMON_DEV_PORTS.includes(server.port) &&
+        (server.pid === null || !ownedProcessIds.has(server.pid))
+      ) {
+        continue;
+      }
       groups.push({
         server,
         urls: [`http://${server.host}:${server.port}`, `https://${server.host}:${server.port}`],
@@ -394,9 +472,32 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     servers: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
   ) {
+    const parents = yield* readProcessParents();
+    const ownedProcessIds = new Set<number>();
+    if (parents !== null) {
+      const childrenByParent = new Map<number, number[]>();
+      for (const [pid, ppid] of parents) {
+        const children = childrenByParent.get(ppid) ?? [];
+        children.push(pid);
+        childrenByParent.set(ppid, children);
+      }
+      const state = yield* Ref.get(stateRef);
+      const pending = [
+        process.pid,
+        ...[...state.terminalProcesses.values()].flatMap((registration) => [
+          ...registration.processIds,
+        ]),
+      ];
+      while (pending.length > 0) {
+        const pid = pending.pop()!;
+        if (ownedProcessIds.has(pid)) continue;
+        ownedProcessIds.add(pid);
+        pending.push(...(childrenByParent.get(pid) ?? []));
+      }
+    }
     const nowMillis = yield* Clock.currentTimeMillis;
     const cached = yield* Ref.get(webProbeCacheRef);
-    const groups = makeWebProbeGroups(servers, configuredUrls);
+    const groups = makeWebProbeGroups(servers, configuredUrls, ownedProcessIds);
     const batchProbes = new Map<
       string,
       Effect.Effect<{ readonly probe: WebProbeCacheEntry; readonly fresh: boolean }>
