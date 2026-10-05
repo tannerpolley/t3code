@@ -271,6 +271,15 @@ export function summarizeT3ToolCalls(
     case "question-list":
       label = phrase("Listed", "list", `pending questions ${times}`);
       break;
+    case "question-ask": {
+      const questions = selected.reduce(
+        (count, call) =>
+          count + (Array.isArray(call.input?.questions) ? call.input.questions.length : 1),
+        0,
+      );
+      label = phrase("Asked", "ask", quantity(questions, "question"));
+      break;
+    }
     case "question-read":
       label = phrase(
         "Read",

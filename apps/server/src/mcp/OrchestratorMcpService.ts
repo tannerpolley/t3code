@@ -1,7 +1,6 @@
 import {
   CommandId,
   type RunId,
-  isProviderAvailable,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -46,15 +45,15 @@ import {
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
   type ProviderInteractionMode,
-  type ProviderOptionDescriptor,
-  type ProviderOptionSelection,
   type RuntimeMode,
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import { WORKTREE_BRANCH_PREFIX, sanitizeBranchFragment } from "@t3tools/shared/git";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import * as NodeCrypto from "node:crypto";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -64,15 +63,23 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { deriveDelegatedTaskNode } from "../orchestration-v2/IdAllocator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
   delegatedTaskProgress,
 } from "../orchestration-v2/SubagentProjection.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import {
+  checkDelegateTarget,
+  modelRoleStatuses,
+  providerConstraints,
+} from "./delegateTaskTarget.ts";
 import {
   type McpInvocationScope,
   type McpThreadInvocationScope,
@@ -213,71 +220,6 @@ function scheduledTaskSummary(task: ScheduledTask): OrchestratorMcpScheduledTask
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
   };
-}
-
-function providerConstraints(
-  provider: ServerProvider | undefined,
-  supportsOrchestrationV2: boolean,
-): ReadonlyArray<string> {
-  const constraints: Array<string> = [];
-  if (!supportsOrchestrationV2) {
-    constraints.push("No V2 provider adapter is registered.");
-  }
-  if (provider === undefined) return constraints;
-  if (!provider.enabled) constraints.push("Provider instance is disabled.");
-  if (!provider.installed) constraints.push("Provider executable is not installed.");
-  if (!isProviderAvailable(provider)) {
-    constraints.push(provider.unavailableReason ?? "Provider driver is unavailable.");
-  }
-  if (provider.status === "error" || provider.status === "disabled") {
-    constraints.push(provider.message ?? `Provider status is ${provider.status}.`);
-  }
-  if (provider.auth.status === "unauthenticated") {
-    constraints.push("Provider is not authenticated.");
-  }
-  return constraints;
-}
-
-/**
- * Checks requested option selections for duplicates and, when the model
- * advertises option descriptors, against those descriptors. Models without
- * descriptors skip the descriptor checks (mirroring how model slugs are only
- * validated when the provider advertises models), but duplicate ids always
- * fail: downstream consumers disagree on whether the first or last value of
- * a duplicated id wins.
- */
-function invalidOptionSelections(
-  selections: ReadonlyArray<ProviderOptionSelection>,
-  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
-): ReadonlyArray<string> {
-  const problems: Array<string> = [];
-  const seen = new Set<string>();
-  for (const selection of selections) {
-    if (seen.has(selection.id)) {
-      problems.push(`Option ${selection.id} was specified more than once.`);
-      continue;
-    }
-    seen.add(selection.id);
-    if (descriptors === undefined) continue;
-    const descriptor = descriptors.find((candidate) => candidate.id === selection.id);
-    if (descriptor === undefined) {
-      const known = descriptors.map((candidate) => candidate.id).join(", ");
-      problems.push(`Unknown option ${selection.id}; supported options: ${known || "none"}.`);
-      continue;
-    }
-    if (descriptor.type === "boolean" && typeof selection.value !== "boolean") {
-      problems.push(`Option ${selection.id} expects a boolean value.`);
-      continue;
-    }
-    if (
-      descriptor.type === "select" &&
-      !descriptor.options.some((choice) => choice.id === selection.value)
-    ) {
-      const choices = descriptor.options.map((choice) => choice.id).join(", ");
-      problems.push(`Option ${selection.id} must be one of: ${choices}.`);
-    }
-  }
-  return problems;
 }
 
 function taskStatusForRun(
@@ -500,6 +442,15 @@ function stableCommandId(input: {
       ...(input.index === undefined ? [] : [String(input.index)]),
     ].join(":"),
   );
+}
+
+/**
+ * Branch for a delegated child's own worktree: readable from the task, and
+ * fixed by the delegate command id so a retry never cuts a second branch.
+ */
+function delegatedWorktreeBranch(input: OrchestratorMcpDelegateTaskInput, commandId: CommandId) {
+  const suffix = NodeCrypto.createHash("sha256").update(commandId).digest("hex").slice(0, 8);
+  return `${WORKTREE_BRANCH_PREFIX}/${sanitizeBranchFragment((input.title ?? input.task).slice(0, 40))}-${suffix}`;
 }
 
 function stableThreadId(input: {
@@ -769,6 +720,16 @@ const make = Effect.gen(function* () {
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  // Optional like settings: only worktree delegation needs it, and production always provides it.
+  const threadLaunch = yield* Effect.serviceOption(ThreadLaunchService.ThreadLaunchService);
+  const requireThreadLaunch = Option.match(threadLaunch, {
+    onNone: () =>
+      Effect.fail(
+        failure("orchestration_error", "Worktree delegation is unavailable on this server."),
+      ),
+    onSome: Effect.succeed,
+  });
 
   /** A caller-named project, which must exist before anything is recorded against it. */
   const requireProject = (projectId: ProjectId) =>
@@ -1039,67 +1000,19 @@ const make = Effect.gen(function* () {
       }
       instanceId ??= input.parent.thread.modelSelection.instanceId;
 
-      const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
-      if (provider === undefined) {
-        return yield* failure(
-          "provider_unavailable",
-          `Provider instance ${instanceId} is not registered.`,
-        );
-      }
-      if (requestedDriver !== undefined && provider.driver !== requestedDriver) {
-        return yield* failure(
-          "invalid_request",
-          `Provider instance ${instanceId} uses driver ${provider.driver}, not ${requestedDriver}.`,
-        );
-      }
-      const constraints = providerConstraints(
-        provider,
-        orchestrationCapableInstanceIds.has(provider.instanceId),
-      );
-      if (constraints.length > 0) {
-        return yield* failure(
-          "provider_unavailable",
-          `Provider ${instanceId} cannot run a child task: ${constraints.join(" ")}`,
-        );
-      }
-
       const inheritedSelection = input.parent.thread.modelSelection;
-      const requestedModel = input.target?.model;
-      const model =
-        requestedModel ??
-        (instanceId === inheritedSelection.instanceId
-          ? inheritedSelection.model
-          : provider?.models[0]?.slug);
-      if (model === undefined) {
-        return yield* failure(
-          "model_unavailable",
-          `Provider ${instanceId} has no model available for inheritance.`,
-        );
-      }
-      if (
-        requestedModel !== undefined &&
-        provider !== undefined &&
-        provider.models.length > 0 &&
-        !provider.models.some((candidate) => candidate.slug === requestedModel)
-      ) {
-        return yield* failure(
-          "model_unavailable",
-          `Model ${requestedModel} is not advertised by provider ${instanceId}.`,
-        );
-      }
-
       const requestedOptions = input.target?.options;
-      if (requestedOptions !== undefined) {
-        const descriptors = provider.models.find((candidate) => candidate.slug === model)
-          ?.capabilities?.optionDescriptors;
-        const invalid = invalidOptionSelections(requestedOptions, descriptors);
-        if (invalid.length > 0) {
-          return yield* failure(
-            "invalid_request",
-            `Model ${model} on provider ${instanceId} rejected options: ${invalid.join(" ")}`,
-          );
-        }
-      }
+      const model = checkDelegateTarget({
+        providers: input.providers,
+        orchestrationCapableInstanceIds,
+        instanceId,
+        requestedDriver,
+        requestedModel: input.target?.model,
+        inheritedModel:
+          instanceId === inheritedSelection.instanceId ? inheritedSelection.model : undefined,
+        options: requestedOptions,
+      });
+      if (typeof model !== "string") return yield* model;
 
       return {
         modelSelection:
@@ -1110,6 +1023,66 @@ const make = Effect.gen(function* () {
             : requestedOptions === undefined
               ? { instanceId, model }
               : { instanceId, model, options: requestedOptions },
+      };
+    });
+
+  /**
+   * Where a delegated child works. Implementation and test roles default to
+   * their own worktree, cut from the parent's branch or, for a thread in the
+   * project root, the branch its checkout is on. Without a branch, a default
+   * falls back to the parent's checkout with a note; an explicit request fails.
+   */
+  const resolveDelegatedWorkspace = (input: {
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">;
+    readonly input: OrchestratorMcpDelegateTaskInput;
+    readonly commandId: CommandId;
+  }): Effect.Effect<
+    {
+      readonly worktree?: { readonly baseRef: string; readonly branch: string };
+      readonly note?: string;
+    },
+    OrchestratorMcpFailure
+  > =>
+    Effect.gen(function* () {
+      const requested =
+        input.input.workspace ??
+        (input.input.role === "implementation" || input.input.role === "test"
+          ? "worktree"
+          : "inherit");
+      // A retry replays the accepted command, whose decision stands.
+      const accepted = input.parent.subagents.some(
+        (task) => task.id === deriveDelegatedTaskNode({ commandId: input.commandId }),
+      );
+      if (requested === "inherit" || accepted) return {};
+      const baseRef =
+        input.parent.thread.branch ??
+        (yield* (yield* requireThreadLaunch)
+          .readCheckoutBranch({
+            commandId: input.commandId,
+            projectId: input.parent.thread.projectId,
+            worktreePath: input.parent.thread.worktreePath,
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to read this thread's checkout branch: ${errorMessage(error)}`,
+              ),
+            ),
+          ));
+      if (baseRef !== null) {
+        return {
+          worktree: { baseRef, branch: delegatedWorktreeBranch(input.input, input.commandId) },
+        };
+      }
+      if (input.input.workspace === "worktree") {
+        return yield* failure(
+          "invalid_request",
+          "workspace \"worktree\" cuts the child's branch from this thread's checkout, but that checkout is on a detached HEAD or is not a git repository.",
+        );
+      }
+      return {
+        note: "This thread's checkout is on a detached HEAD or is not a git repository, so the child shares this checkout instead of getting its own worktree.",
       };
     });
 
@@ -1225,6 +1198,8 @@ const make = Effect.gen(function* () {
         hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
         providerInstanceId: task.providerInstanceId,
         model: task.model,
+        branch: childControls.thread.branch,
+        worktreePath: childControls.thread.worktreePath,
         summary: derivedResult,
         resultContextTransferId: resultTransfer?.id ?? null,
         latestTerminalRunId: terminalRun?.id ?? null,
@@ -1461,6 +1436,16 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+        const modelRoles = modelRoleStatuses(
+          Option.isNone(serverSettings)
+            ? []
+            : yield* serverSettings.value.getSettings.pipe(
+                Effect.map((settings) => settings.modelRoles),
+                Effect.orElseSucceed(() => []),
+              ),
+          providers,
+          orchestrationCapableInstanceIds,
+        );
         return {
           parentThreadId: parent?.thread.id ?? null,
           inheritedProviderInstanceId: parent?.thread.modelSelection.instanceId ?? null,
@@ -1489,6 +1474,7 @@ const make = Effect.gen(function* () {
               constraints: [...constraints],
             };
           }),
+          modelRoles,
           features: {
             appOwnedSubagents: true,
             asyncPolling: true,
@@ -1534,6 +1520,9 @@ const make = Effect.gen(function* () {
           requestKey: key,
           operation: "delegate-task",
         });
+        const workspace = yield* resolveDelegatedWorkspace({ parent, input, commandId });
+        const withNote = (result: OrchestratorMcpDelegateTaskResult) =>
+          workspace.note === undefined ? result : { ...result, workspaceNote: workspace.note };
         const result = yield* threadManagement
           .dispatch({
             type: "delegated_task.request",
@@ -1552,6 +1541,7 @@ const make = Effect.gen(function* () {
             // delegations deliver through the blocking tool call, so a wake is
             // only needed if the parent settled first (timeout, disconnect).
             completionWake: input.mode === "wait" ? "settled_only" : "always",
+            ...(workspace.worktree === undefined ? {} : { worktree: workspace.worktree }),
           })
           .pipe(
             Effect.mapError((error) =>
@@ -1572,9 +1562,37 @@ const make = Effect.gen(function* () {
           );
         }
         const taskId = taskEvent.event.payload.id;
+        const childThreadId = taskEvent.event.payload.childThreadId;
+        if (childThreadId !== null) {
+          // A worktree child's first run waits in "preparing" until the same
+          // preparation a worktree launch uses creates, binds and sets up its
+          // worktree, then releases it; a failure there fails the child's run.
+          // A replay finds the run already released, or prepares it again.
+          const childRun = (yield* loadProjection(childThreadId)).runs.find(
+            (run) => run.status === "preparing" && run.workspacePreparation?.type === "worktree",
+          );
+          if (childRun?.workspacePreparation !== undefined) {
+            yield* (yield* requireThreadLaunch)
+              .prepareDeferredRun({
+                commandId,
+                projectId: parent.thread.projectId,
+                threadId: childThreadId,
+                runId: childRun.id,
+                workspaceStrategy: childRun.workspacePreparation,
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  failure(
+                    "orchestration_error",
+                    `Unable to prepare the delegated task's worktree: ${errorMessage(error)}`,
+                  ),
+                ),
+              );
+          }
+        }
 
         if (input.mode !== "wait") {
-          return yield* readTask(scope, taskId, false, true);
+          return withNote(yield* readTask(scope, taskId, false, true));
         }
         const timeoutMs = Math.min(
           MAX_WAIT_TIMEOUT_MS,
@@ -1582,7 +1600,7 @@ const make = Effect.gen(function* () {
         );
         const waited = yield* waitForTask(scope, taskId, timeoutMs);
         if (Option.isSome(waited)) {
-          return waited.value;
+          return withNote(waited.value);
         }
         // The blocking wait timed out, so it no longer owns delivery: upgrade
         // the task so a later terminal wakes the parent even mid-turn. Best
@@ -1623,7 +1641,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return yield* readTask(scope, taskId, true, true);
+        return withNote(yield* readTask(scope, taskId, true, true));
       }),
     taskStatus: (callerScope, taskId) =>
       Effect.gen(function* () {

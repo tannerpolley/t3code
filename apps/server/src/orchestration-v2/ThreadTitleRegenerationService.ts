@@ -3,6 +3,8 @@ import {
   CommandId,
   type ChatAttachment,
   type MessageId,
+  type ModelSelection,
+  ProviderInstanceId,
   type ServerSettingsError,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -21,6 +23,17 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 import { formatThreadTitleContext } from "../textGeneration/ThreadTitleContext.ts";
 export { formatThreadTitleContext } from "../textGeneration/ThreadTitleContext.ts";
+
+/**
+ * Regeneration (manual and automatic) always uses GPT-6 Luna at max effort, never the
+ * text generation setting: it runs unattended every few minutes, so it must stay cheap.
+ * Without a Codex instance the request fails instead of falling back to another model.
+ */
+export const TITLE_REFRESH_MODEL_SELECTION: ModelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-6-luna",
+  options: [{ id: "reasoningEffort", value: "max" }],
+};
 
 export class ThreadTitleRegenerationService extends Context.Service<
   ThreadTitleRegenerationService,
@@ -48,6 +61,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly requestId: CommandId;
     readonly title?: string;
+    readonly failed?: true;
   }) =>
     threads
       .dispatch({
@@ -56,6 +70,7 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         requestId: input.requestId,
         ...(input.title === undefined ? {} : { title: input.title }),
+        ...(input.failed ? { failed: true } : {}),
       })
       .pipe(Effect.asVoid);
 
@@ -64,6 +79,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const outcome:
       | { readonly type: "stale" }
+      | { readonly type: "failed" }
       | { readonly type: "complete"; readonly title?: string } = yield* Effect.gen(function* () {
       const projection = yield* threads.getThreadRecords(
         input.threadId,
@@ -103,16 +119,17 @@ const make = Effect.gen(function* () {
         return { type: "complete" as const };
       }
 
-      const settings = resolveProjectSettings(
-        yield* serverSettings.getSettings,
-        projection.thread.projectId,
-      ).settings;
+      const modelSelection =
+        input.kind.type === "regenerate"
+          ? TITLE_REFRESH_MODEL_SELECTION
+          : resolveProjectSettings(yield* serverSettings.getSettings, projection.thread.projectId)
+              .settings.textGenerationModelSelection;
       const result = yield* textGeneration.generateThreadTitle({
         cwd: projection.thread.worktreePath ?? project.value.workspaceRoot,
         message: context.message,
         attachments: context.attachments,
         ...(input.kind.type === "regenerate" ? { previousTitle: projection.thread.title } : {}),
-        modelSelection: settings.textGenerationModelSelection,
+        modelSelection,
       });
       const generatedTitle = result.title.trim();
       return generatedTitle === "New thread" ||
@@ -131,7 +148,7 @@ const make = Effect.gen(function* () {
               threadId: input.threadId,
               requestId: input.requestId,
               cause,
-            }).pipe(Effect.as({ type: "complete" as const })),
+            }).pipe(Effect.as({ type: "failed" as const })),
       ),
     );
 
@@ -140,7 +157,10 @@ const make = Effect.gen(function* () {
     }
     yield* complete({
       ...input,
-      ...(outcome.title === undefined ? {} : { title: outcome.title }),
+      ...(outcome.type === "failed" ? { failed: true as const } : {}),
+      ...(outcome.type === "complete" && outcome.title !== undefined
+        ? { title: outcome.title }
+        : {}),
     });
   });
 

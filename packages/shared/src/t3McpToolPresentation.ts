@@ -37,6 +37,7 @@ export type T3McpToolSummaryAction =
   | "queue-steer"
   | "question-list"
   | "question-read"
+  | "question-ask"
   | "question-respond"
   | "worktree-handoff"
   | "worktree-list"
@@ -238,6 +239,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["List", "Listing", "Listed", "pending questions"],
     "question-list",
   ),
+  t3_request_user_input: tool(["Ask", "Asking", "Asked", "the user"], "question-ask"),
   t3_pending_request_read: tool(["Read", "Reading", "Read", "pending questions"], "question-read"),
   t3_pending_request_respond: tool(
     ["Answer", "Answering", "Answered", "pending questions"],

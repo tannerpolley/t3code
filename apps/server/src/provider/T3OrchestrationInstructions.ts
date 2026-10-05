@@ -1,10 +1,12 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import type { OrchestratorMcpModelRole, ProviderInteractionMode } from "@t3tools/contracts";
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
 ## T3 Code orchestration
 
 The \`t3-code\` MCP server provides app-owned orchestration. Treat these concepts distinctly:
+
+For questions that need multiple selections, prefer \`t3_request_user_input\` when available; otherwise use your native ask-user tool, such as Codex's native \`request_user_input\` tool.
 
 - A delegated task/subagent is child work owned by the current thread. Use \`orchestrator_capabilities\` to discover the current provider/model IDs from the same live catalog as the composer, including configured custom models. Do not treat a native tool's model list as the full list of available subagent models. Prefer native subagent tools for same-provider work only when they support the chosen model. Use \`delegate_task\` with that provider instance and model when native tools cannot, including for same-provider work. Also use \`delegate_task\` for cross-provider or explicitly T3-owned child tasks. Retain each returned \`taskId\`, and use \`task_status\` or \`task_cancel\` to manage it. The returned \`childThreadId\` is backing storage for the subagent, not the target for starting another delegated review round.
 - \`t3_thread_launch\` and \`create_threads\` create ordinary top-level T3 conversations. Use them only when the user explicitly asks for separate/new/top-level threads or conversations. Never use them merely because the user said "subagent" or requested parallel delegated work.
@@ -29,6 +31,79 @@ Tool names may include a harness-normalized MCP prefix, such as \`mcp__t3_code__
 
 ACP fallback: some ACP agents accept the injected MCP server but fail to expose its tools. When the T3 tools are absent and \`T3_ACP_MCP_NODE\` is present, call the same tools through the terminal: \`ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call orchestrator_capabilities '{}'\` (\`T3_ACP_MCP_ENTRYPOINT\` is unset when T3 runs as a standalone executable). Delegate with \`acp-mcp-call delegate_task '{"task":"...","target":{"providerInstanceId":"...","model":"..."},"mode":"async","clientRequestId":"..."}'\`. This is the supported T3 transport fallback, not an ordinary shell-based substitute for delegation.
 `;
+
+/** Upper bound on the model roles block, which is sent with every turn. */
+export const MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH = 6_000;
+
+const MODEL_ROLES_HEADER = `
+
+### Model roles
+
+The user's defaults for delegated work. Use them at your discretion; explicit user instructions win. The first choice is the default; you may pick another by your judgment. Pass a choice's Target JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists all choices and their availability again.
+
+`;
+// Room for the closing "more roles" line, so the block never passes the cap.
+const OMITTED_ROLES_RESERVE = 120;
+
+const oneLine = (text: string, maxLength: number) => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > maxLength ? `${flat.slice(0, maxLength - 1)}…` : flat;
+};
+
+function modelRoleLine(role: OrchestratorMcpModelRole): string {
+  const description = oneLine(role.description, 200);
+  const head = `- ${oneLine(role.name, 60)}${description.length > 0 ? `: ${description}` : ""}.`;
+  const choices = role.targets.map(({ providerInstanceId, model, options, unavailableReason }) => {
+    const traits = options?.map((option) => oneLine(String(option.value), 60)).join(" ");
+    const label = `${oneLine(model, 100)}${traits ? ` ${traits}` : ""} (${providerInstanceId})`;
+    if (unavailableReason !== null) {
+      return `${label} Unavailable: ${oneLine(unavailableReason, 200)}`;
+    }
+    const target = {
+      providerInstanceId,
+      model,
+      ...(options === undefined || options.length === 0
+        ? {}
+        : { options: Object.fromEntries(options.map((option) => [option.id, option.value])) }),
+    };
+    return `${label}. Target JSON: \`${JSON.stringify(target)}\``;
+  });
+  return `${head} ${choices.join(" or ")}`;
+}
+
+/**
+ * The user's model roles as one line each: name, when to use it, and
+ * each exact `delegate_task` target, or why that choice is unavailable. Roles that
+ * would push the block past its cap are counted instead of listed.
+ */
+export function t3ModelRolesInstructions(roles: ReadonlyArray<OrchestratorMcpModelRole>): string {
+  if (roles.length === 0) return "";
+  const lines: Array<string> = [];
+  let length = MODEL_ROLES_HEADER.length + 1;
+  let omitted = 0;
+  for (const role of roles) {
+    const line = modelRoleLine(role);
+    if (length + line.length + 1 > MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH - OMITTED_ROLES_RESERVE) {
+      omitted += 1;
+      continue;
+    }
+    lines.push(line);
+    length += line.length + 1;
+  }
+  if (omitted > 0) {
+    lines.push(
+      `- ${omitted} more ${omitted === 1 ? "role" : "roles"} not shown; call \`orchestrator_capabilities\` to see them.`,
+    );
+  }
+  return `${MODEL_ROLES_HEADER}${lines.join("\n")}\n`;
+}
+
+/** Orchestration instructions followed by the user's model roles. */
+export function t3OrchestrationInstructions(
+  roles: ReadonlyArray<OrchestratorMcpModelRole> = [],
+): string {
+  return `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}${t3ModelRolesInstructions(roles)}`;
+}
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 

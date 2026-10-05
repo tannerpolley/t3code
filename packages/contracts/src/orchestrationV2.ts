@@ -992,6 +992,8 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
   responseCapability: Schema.Union([
     Schema.Struct({ type: Schema.Literal("live"), providerSessionId: ProviderSessionId }),
+    // Asked through T3's own tool (t3_request_user_input) during a live turn of this session.
+    Schema.Struct({ type: Schema.Literal("app_owned"), providerSessionId: ProviderSessionId }),
     Schema.Struct({ type: Schema.Literal("message") }),
     Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
   ]),
@@ -1130,6 +1132,11 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
   required: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
+
+export const OrchestrationV2UserInputQuestions = Schema.Array(
+  OrchestrationV2UserInputQuestion,
+).check(Schema.isMinLength(1), Schema.isMaxLength(3));
+export type OrchestrationV2UserInputQuestions = typeof OrchestrationV2UserInputQuestions.Type;
 
 const OrchestrationV2PlanArtifactBaseFields = {
   id: PlanId,
@@ -2643,6 +2650,15 @@ export const OrchestrationV2Command = Schema.Union([
     title: Schema.optional(TrimmedNonEmptyString),
     /** Kick off (true) or abandon (false) an async title regeneration. */
     regenerateTitle: Schema.optional(Schema.Boolean),
+    /** Who chose `title`. Absent means a person in a client; an agent's rename stays eligible for automatic refresh. */
+    renamedBy: Schema.optional(OrchestrationV2Actor),
+    /**
+     * Marks an automatic refresh with the state the sweep read. It is rejected if the title,
+     * its evaluation, or its owner changed since, or another regeneration is pending.
+     */
+    titleRefreshGuard: Schema.optional(
+      Schema.Struct({ title: Schema.String, evaluationRequestId: Schema.NullOr(CommandId) }),
+    ),
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2708,6 +2724,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     requestId: CommandId,
     title: Schema.optional(TrimmedNonEmptyString),
+    /** Generation failed; the title stays as it was. */
+    failed: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.runtime-mode.set"),
@@ -2853,6 +2871,15 @@ export const OrchestrationV2Command = Schema.Union([
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
   }),
   Schema.Struct({
+    type: Schema.Literal("runtime-request.create-user-input"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+    runId: RunId,
+    providerSessionId: ProviderSessionId,
+    questions: OrchestrationV2UserInputQuestions,
+  }),
+  Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -2909,6 +2936,11 @@ export const OrchestrationV2Command = Schema.Union([
     // Omitted behaves as "settled_only" (no wake while the parent has a live
     // run); producers that want fire-and-forget wakes must set "always".
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+    // Set when the child gets its own worktree: the child starts on `branch` with a
+    // deferred run whose preparation cuts the worktree from `baseRef`.
+    worktree: Schema.optional(
+      Schema.Struct({ baseRef: TrimmedNonEmptyString, branch: TrimmedNonEmptyString }),
+    ),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({

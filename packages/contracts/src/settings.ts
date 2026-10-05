@@ -1218,7 +1218,170 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const MAX_MODEL_ROLES = 20;
+export const MAX_MODEL_ROLE_TARGETS = 4;
+export const MAX_MODEL_ROLE_NAME_LENGTH = 60;
+export const MAX_MODEL_ROLE_DESCRIPTION_LENGTH = 200;
+export const MAX_MODEL_ROLE_MODEL_LENGTH = 100;
+export const MAX_MODEL_ROLE_OPTIONS = 8;
+export const MAX_MODEL_ROLE_OPTION_LENGTH = 60;
+
+const ModelRoleOptionText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(MAX_MODEL_ROLE_OPTION_LENGTH),
+);
+
+export const ModelRoleTarget = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_MODEL_LENGTH)),
+  options: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        id: ModelRoleOptionText,
+        value: Schema.Union([ModelRoleOptionText, Schema.Boolean]),
+      }),
+    ).check(
+      Schema.isMaxLength(MAX_MODEL_ROLE_OPTIONS),
+      Schema.makeFilter(
+        (options) => new Set(options.map((option) => option.id)).size === options.length,
+        { expected: "option ids that are each used once" },
+      ),
+    ),
+  ),
+});
+export type ModelRoleTarget = typeof ModelRoleTarget.Type;
+
+/** Ordered delegation choices; the first is the default. Bounded for per-turn instructions. */
+export const ModelRole = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_NAME_LENGTH)),
+  description: TrimmedString.check(Schema.isMaxLength(MAX_MODEL_ROLE_DESCRIPTION_LENGTH)),
+  targets: Schema.NonEmptyArray(ModelRoleTarget).check(Schema.isMaxLength(MAX_MODEL_ROLE_TARGETS)),
+});
+export type ModelRole = typeof ModelRole.Type;
+
+// Roles saved before multiple choices per role held one `target`.
+const LegacyModelRole = Schema.Struct({
+  id: ModelRole.fields.id,
+  name: ModelRole.fields.name,
+  description: ModelRole.fields.description,
+  target: Schema.toEncoded(ModelRoleTarget),
+}).pipe(
+  Schema.decodeTo(
+    ModelRole,
+    SchemaTransformation.transform({
+      decode: ({ target, ...role }): typeof ModelRole.Encoded => ({ ...role, targets: [target] }),
+      encode: ({ targets, ...role }) => ({ ...role, target: targets[0] }),
+    }),
+  ),
+);
+// Try the current shape first so encoding never writes the legacy `target` key.
+const ModelRoleSetting = Schema.Union([ModelRole, LegacyModelRole]);
+export const ModelRoles = Schema.Array(ModelRoleSetting).check(Schema.isMaxLength(MAX_MODEL_ROLES));
+
+const modelRole = (
+  id: string,
+  name: string,
+  description: string,
+  providerInstanceId: "claudeAgent" | "codex",
+  model: string,
+  effort: string,
+  alternatives: ReadonlyArray<ModelRoleTarget> = [],
+): ModelRole => ({
+  id,
+  name,
+  description,
+  targets: [
+    {
+      providerInstanceId: ProviderInstanceId.make(providerInstanceId),
+      model,
+      options: [
+        { id: providerInstanceId === "codex" ? "reasoningEffort" : "effort", value: effort },
+      ],
+    },
+    ...alternatives,
+  ],
+});
+
+export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
+  modelRole(
+    "orchestrator",
+    "Orchestrator",
+    "Plans, delegates, integrates; default main-thread model",
+    "claudeAgent",
+    "claude-opus-5-5",
+    "high",
+  ),
+  modelRole(
+    "fast-builder",
+    "Fast builder",
+    "Bounded changes where speed matters; a Checker reviews afterwards",
+    "claudeAgent",
+    "claude-opus-5-5",
+    "medium",
+    [
+      {
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-6.1-sol",
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      },
+    ],
+  ),
+  modelRole(
+    "checker",
+    "Checker",
+    "Read-only review of a build: missed places, weak tests, edge cases; budget review and sanity checks",
+    "codex",
+    "gpt-6.1-sol",
+    "high",
+  ),
+  modelRole(
+    "thorough-builder",
+    "Thorough builder",
+    "Broad, cross-cutting or correctness-critical implementation; complex diagnosis, even read-only",
+    "codex",
+    "gpt-6.1-sol",
+    "high",
+  ),
+  modelRole(
+    "bounded-worker",
+    "Bounded worker",
+    "Well-specified, contained tasks and calculations; same results as the Thorough builder there, faster and cheaper",
+    "codex",
+    "gpt-6.1-sol",
+    "medium",
+  ),
+  modelRole(
+    "evidence-gatherer",
+    "Evidence gatherer",
+    "Deterministic work with one clear result; gathering evidence without making decisions",
+    "codex",
+    "gpt-6-luna",
+    "max",
+  ),
+  modelRole(
+    "quick-claude",
+    "Quick Claude",
+    "Quick, well-specified Claude-side work",
+    "claudeAgent",
+    "claude-sonnet-5-5",
+    "medium",
+  ),
+  modelRole(
+    "strong-reviewer",
+    "Strong reviewer",
+    "Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call",
+    "codex",
+    "gpt-6-astra",
+    "xhigh",
+  ),
+];
+
 export const ServerSettings = Schema.Struct({
+  /**
+   * Ordered defaults for delegated work, shown to orchestrating agents in
+   * new sessions and turns. Server-side because the prompt is built here.
+   */
+  modelRoles: ModelRoles.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_MODEL_ROLES))),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
@@ -1358,6 +1521,11 @@ export const ServerSettings = Schema.Struct({
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   projectFolderRoot: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /**
+   * Every ~10 minutes, retitle top-level threads with new messages to what they are working on
+   * now, using GPT-6 Luna. Titles a user typed are never changed.
+   */
+  keepThreadTitlesCurrent: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1600,6 +1768,8 @@ const OpenCodeSettingsPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  // Whole-list replacement: roles are ordered and edited as one list.
+  modelRoles: Schema.optionalKey(ModelRoles),
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(
       Schema.Union([
@@ -1679,6 +1849,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   projectFolderRoot: Schema.optionalKey(TrimmedString),
+  keepThreadTitlesCurrent: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),

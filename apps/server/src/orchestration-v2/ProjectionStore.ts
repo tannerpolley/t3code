@@ -153,6 +153,12 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "snoozedUntil"
 >;
 
+/** A live top-level thread and when its latest user or assistant message changed (ISO). */
+export interface ProjectionTitleRefreshCandidate {
+  readonly thread: OrchestrationV2AppThread;
+  readonly latestMessageAt: string | null;
+}
+
 /** The thread fields pull request sync reads, for a thread with at least one link. */
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
@@ -351,6 +357,16 @@ export interface ProjectionStoreV2Shape {
     readonly autoResume: boolean;
     readonly snooze: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
+  /**
+   * Live top-level threads that are regenerating, plus those that could be due: not typed by
+   * the user and last evaluated at or before `evaluatedBefore` (`fallbackEvaluatedAt` when
+   * never). Only the latter read their latest message. A cheap prefilter;
+   * selectTitleRefreshThreads makes the decision.
+   */
+  readonly getTitleRefreshCandidates: (options: {
+    readonly evaluatedBefore: string;
+    readonly fallbackEvaluatedAt: string;
+  }) => Effect.Effect<ReadonlyArray<ProjectionTitleRefreshCandidate>, ProjectionStoreV2Error>;
   /** Every candidate, or only `threadId` when a sweep checks one thread. */
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
@@ -1426,6 +1442,7 @@ export function threadShellFromProjection(
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
+    titleEvaluation: projection.thread.titleEvaluation ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
     deletedAt: projection.thread.deletedAt,
   };
@@ -1652,6 +1669,7 @@ function shellFromState(input: {
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
+    titleEvaluation: input.state.thread.titleEvaluation ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
@@ -4111,7 +4129,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const runtimeRequests = (yield* decodeRows(
               decodeRuntimeRequestPayload,
               threadId,
-            )(rows)).filter((request) => request.responseCapability.type !== "message");
+            )(rows)).filter((request) => request.responseCapability.type === "live");
             if (runtimeRequests.length === 0) return { runtimeRequests, nodes: [], turnItems: [] };
             const nodeRows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_nodes
@@ -5100,6 +5118,48 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         return { providerThreadsByThreadId, pendingTurnItemsByThreadId };
       });
 
+    const getTitleRefreshCandidates: ProjectionStoreV2Shape["getTitleRefreshCandidates"] = (
+      options,
+    ) =>
+      sql<{ readonly payload_json: string; readonly latest_message_at: string | null }>`
+        WITH live AS (
+          SELECT t.thread_id, t.payload_json,
+            json_extract(t.payload_json, '$.titleRegeneration') IS NULL
+              AND json_extract(t.payload_json, '$.titleSource') IS NOT 'user'
+              AND COALESCE(
+                json_extract(t.payload_json, '$.titleEvaluation.evaluatedAt'),
+                ${options.fallbackEvaluatedAt}
+              ) <= ${options.evaluatedBefore} AS eligible,
+            json_extract(t.payload_json, '$.titleRegeneration') IS NOT NULL AS regenerating
+          FROM orchestration_v2_projection_threads t
+          WHERE t.deleted_at IS NULL
+            AND t.archived_at IS NULL
+            AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+        )
+        SELECT live.payload_json,
+          CASE WHEN live.eligible THEN NULLIF(MAX(
+            COALESCE((
+              SELECT MAX(message.updated_at) FROM orchestration_v2_projection_messages message
+              WHERE message.thread_id = live.thread_id AND message.role = 'user'
+            ), ''),
+            COALESCE((
+              SELECT MAX(message.updated_at) FROM orchestration_v2_projection_messages message
+              WHERE message.thread_id = live.thread_id AND message.role = 'assistant'
+            ), '')
+          ), '') END AS latest_message_at
+        FROM live
+        WHERE live.eligible OR live.regenerating
+      `.pipe(
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (row) =>
+            decodeThreadPayload(row.payload_json).pipe(
+              Effect.map((thread) => ({ thread, latestMessageAt: row.latest_message_at })),
+            ),
+          ),
+        ),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
     const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (threadId) =>
       sql
         .withTransaction(
@@ -5540,6 +5600,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadShell,
       getThread,
       getSettlementCandidates,
+      getTitleRefreshCandidates,
       getThreadsWithPullRequests,
       getThreadProjection,
       getTurnStartContext,
@@ -5649,6 +5710,33 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           return projection.thread;
         }),
+      // Returns every live top-level thread; selectTitleRefreshThreads applies the rules.
+      getTitleRefreshCandidates: () =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .filter(
+                ({ thread }) =>
+                  thread.deletedAt === null &&
+                  thread.archivedAt === null &&
+                  thread.lineage.relationshipToParent !== "subagent",
+              )
+              .map(({ thread, messages }) => {
+                const latest = messages
+                  .filter((message) => message.role === "user" || message.role === "assistant")
+                  .map((message) => message.updatedAt)
+                  .reduce<DateTime.Utc | null>(
+                    (max, value) =>
+                      max === null || DateTime.isGreaterThan(value, max) ? value : max,
+                    null,
+                  );
+                return {
+                  thread,
+                  latestMessageAt: latest === null ? null : DateTime.formatIso(latest),
+                };
+              }),
+          ),
+        ),
       getSettlementCandidates: (threadId) =>
         Effect.gen(function* () {
           const projections = (yield* Ref.get(replayState)).projections;
@@ -5768,7 +5856,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               request.providerTurnId === providerTurnId &&
               request.kind === "user_input" &&
               request.status === "pending" &&
-              request.responseCapability.type !== "message",
+              request.responseCapability.type === "live",
           );
           const requestIds = new Set(runtimeRequests.map((request) => request.id));
           const nodeIds = new Set(runtimeRequests.map((request) => request.nodeId));

@@ -36,6 +36,7 @@ import {
   ProviderOptionSelectionValue,
 } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { MAX_MODEL_ROLE_TARGETS, ModelRole, ModelRoleTarget } from "./settings.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
   description: "Complete task or message text for the target agent.",
@@ -186,6 +187,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  workspace: Schema.optional(
+    Schema.Literals(["inherit", "worktree"]).annotate({
+      description:
+        "Defaults to worktree for implementation and test roles, inherit otherwise. inherit keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's branch, or the branch its checkout is on (local commits; uncommitted changes are not copied), with the project's setup script run before the child starts. Explicit workspace always overrides the role default.",
+    }),
+  ),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
@@ -203,8 +210,17 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   latestTerminalResultContextTransferId: Schema.NullOr(ContextTransferId),
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
+  branch: Schema.NullOr(Schema.String),
+  worktreePath: Schema.NullOr(Schema.String).annotate({
+    description:
+      "The child's checkout; null means the project root. A workspace=worktree child reports null until its worktree is ready.",
+  }),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
+  workspaceNote: Schema.optional(Schema.String).annotate({
+    description:
+      "Present on the delegate_task result when the role's default worktree was not possible and the child shares this thread's checkout instead.",
+  }),
   waitTimedOut: Schema.Boolean.annotate({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
@@ -483,6 +499,21 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
+/**
+ * A model role as orchestrators see it. Each choice reports why
+ * `delegate_task` would reject that target right now, or null.
+ */
+export const OrchestratorMcpModelRole = Schema.Struct({
+  ...ModelRole.fields,
+  targets: Schema.NonEmptyArray(
+    Schema.Struct({
+      ...ModelRoleTarget.fields,
+      unavailableReason: Schema.NullOr(Schema.String),
+    }),
+  ).check(Schema.isMaxLength(MAX_MODEL_ROLE_TARGETS)),
+});
+export type OrchestratorMcpModelRole = typeof OrchestratorMcpModelRole.Type;
+
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   /** The calling thread, or null when the caller is not a T3 thread. */
   parentThreadId: Schema.NullOr(ThreadId),
@@ -492,6 +523,11 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  /**
+   * The user's model roles: defaults to use at the agent's discretion when
+   * picking a `delegate_task` target. Explicit user instructions win.
+   */
+  modelRoles: Schema.Array(OrchestratorMcpModelRole),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

@@ -128,9 +128,14 @@ If dragging is unavailable for one environment, update the T3 Code server runnin
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
 
-To generate a fresh title from the conversation, open a thread's menu and choose
-**Regenerate title**. The action is unavailable while title generation is in progress
-or when the connected environment needs a server update.
+To retitle a thread after what it is working on now, open its menu and choose
+**Regenerate title**. It uses GPT-6 Luna through the server's Codex provider, tells you when the
+current title still fits, and makes a title you typed automatic again. The action is unavailable
+while title generation is in progress or when the connected environment needs a server update.
+
+**Keep thread titles current** in **Settings → General** (on by default) does the same about
+every ten minutes for top-level threads with new messages. Titles you typed are never changed
+automatically, and nothing runs when the server has no Codex provider.
 
 Agents connected through T3 Code can use the same server-owned metadata workflow to
 rename a thread, regenerate its title, or link and unlink a pull request. These changes
@@ -238,6 +243,14 @@ Use **Clear** under **Previous agents** to hide finished agents, and **Show** to
 them automatically, set **Settings → General → Clear finished agents automatically**
 to a number of minutes; zero keeps them visible. Background shell summaries appear
 alongside the agents.
+
+To tell agents which model and effort suit each kind of delegated work, edit
+**Model roles** in **Settings → General** on web and desktop. Agents use these
+roles at their own discretion; your explicit instructions in a thread win. Each
+role holds up to four model and effort choices; the first is the default, and an
+unavailable choice is marked. Codex agents see changes on their next turn and
+Claude agents in their next session. Reset model roles to get the latest
+defaults; this replaces your customizations.
 
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent

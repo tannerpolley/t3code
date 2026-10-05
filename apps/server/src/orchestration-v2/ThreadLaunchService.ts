@@ -121,6 +121,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   {
     operation: Schema.Literals([
       "resolve-project",
+      "read-branch",
       "read-receipt",
       "generate-metadata",
       "provision-worktree",
@@ -148,6 +149,27 @@ export class ThreadLaunchService extends Context.Service<
     readonly launch: (
       input: ThreadLaunchInput,
     ) => Effect.Effect<ThreadLaunchResult, ThreadLaunchError>;
+    /**
+     * Prepares the workspace of a run its caller already created with
+     * `defer_start`, then releases the run, exactly as `launch` does. A run
+     * that is no longer preparing, or whose preparation is already in flight,
+     * is left alone, so retries are safe.
+     */
+    readonly prepareDeferredRun: (
+      input: Pick<PreparationInput, "commandId" | "projectId" | "workspaceStrategy"> & {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+      },
+    ) => Effect.Effect<void, ThreadLaunchError>;
+    /**
+     * The branch a thread's checkout is on right now: its worktree, else the
+     * project root. Null on a detached HEAD or outside git.
+     */
+    readonly readCheckoutBranch: (input: {
+      readonly commandId: CommandId;
+      readonly projectId: ProjectId;
+      readonly worktreePath: string | null;
+    }) => Effect.Effect<string | null, ThreadLaunchError>;
     /** Dispatches prepared-run.retry and prepares the run's workspace again. */
     readonly retryPreparation: (
       input: ThreadLaunchRetryInput,
@@ -185,7 +207,11 @@ const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
 
   const mapError =
-    (input: PreparationInput, operation: ThreadLaunchError["operation"], threadId?: ThreadId) =>
+    (
+      input: Pick<PreparationInput, "commandId" | "projectId">,
+      operation: ThreadLaunchError["operation"],
+      threadId?: ThreadId,
+    ) =>
     (cause: unknown) =>
       new ThreadLaunchError({
         operation,
@@ -664,6 +690,31 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** Schedules preparation unless it is in flight or the run already left `preparing`. */
+  const ensurePreparation = Effect.fn("ThreadLaunchService.ensurePreparation")(function* (
+    input: PreparationInput,
+    threadId: ThreadId,
+    runId: RunId | null,
+  ) {
+    if (!(yield* reservePreparation(input.commandId))) return;
+    yield* Effect.gen(function* () {
+      const preparationStillRequired =
+        runId === null
+          ? true
+          : yield* threads.getThreadRecords(threadId, ["runs"], { runIds: [runId] }).pipe(
+              Effect.map((current) =>
+                current.runs.some((run) => run.id === runId && run.status === "preparing"),
+              ),
+              Effect.mapError(mapError(input, "update-thread", threadId)),
+            );
+      if (preparationStillRequired) {
+        yield* schedulePreparation(input, threadId, runId);
+      } else {
+        yield* releasePreparation(input.commandId);
+      }
+    }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
+  });
+
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (input) {
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
@@ -855,29 +906,11 @@ const make = Effect.gen(function* () {
               }
             : workspaceStrategy;
         if (shouldSchedule) {
-          const ownsPreparation = yield* reservePreparation(input.commandId);
-          if (ownsPreparation) {
-            yield* Effect.gen(function* () {
-              const preparationStillRequired =
-                runId === null
-                  ? true
-                  : yield* threads.getThreadRecords(threadId, ["runs"], { runIds: [runId] }).pipe(
-                      Effect.map((current) =>
-                        current.runs.some((run) => run.id === runId && run.status === "preparing"),
-                      ),
-                      Effect.mapError(mapError(input, "update-thread", threadId)),
-                    );
-              if (preparationStillRequired) {
-                yield* schedulePreparation(
-                  { ...input, workspaceStrategy: preparationStrategy },
-                  threadId,
-                  runId,
-                );
-              } else {
-                yield* releasePreparation(input.commandId);
-              }
-            }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
-          }
+          yield* ensurePreparation(
+            { ...input, workspaceStrategy: preparationStrategy },
+            threadId,
+            runId,
+          );
         }
 
         return {
@@ -960,7 +993,35 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return ThreadLaunchService.of({ launch, retryPreparation });
+  const readCheckoutBranch: ThreadLaunchService["Service"]["readCheckoutBranch"] = Effect.fn(
+    "ThreadLaunchService.readCheckoutBranch",
+  )(function* (input) {
+    const cwd =
+      input.worktreePath ??
+      (yield* projects.getById(input.projectId).pipe(
+        Effect.mapError(mapError(input, "resolve-project")),
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(mapError(input, "resolve-project")("Project no longer exists.")),
+            onSome: (project) => Effect.succeed(project.workspaceRoot),
+          }),
+        ),
+      ));
+    // Status is cached briefly; an agent may have switched branches just before delegating.
+    yield* git.invalidateLocalStatus(cwd);
+    const status = yield* git
+      .localStatus({ cwd })
+      .pipe(Effect.mapError(mapError(input, "read-branch")));
+    return status.isRepo ? status.refName : null;
+  });
+
+  return ThreadLaunchService.of({
+    launch,
+    prepareDeferredRun: (input) => ensurePreparation(input, input.threadId, input.runId),
+    readCheckoutBranch,
+    retryPreparation,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

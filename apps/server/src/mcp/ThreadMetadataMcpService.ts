@@ -80,6 +80,7 @@ function metadataCommand(input: {
         commandId: input.commandId,
         threadId: input.threadId,
         title: input.update.title!,
+        renamedBy: "agent",
       };
     case "regenerate_title":
       return {
