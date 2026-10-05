@@ -133,7 +133,7 @@ export function IssueTree({
                         onClick={() => onSelect(issue)}
                       >
                         {issueStateIcon(issue)}
-                        <span className="min-w-0 flex-1 truncate">
+                        <span className="min-w-0 flex-1 break-words">
                           <span className="me-1 font-mono text-xs text-muted-foreground">
                             #{issue.number}
                           </span>

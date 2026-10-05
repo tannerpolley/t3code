@@ -30,6 +30,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "issue",
   "pull-requests",
+  "issues",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -96,7 +97,9 @@ export type RightPanelSurface =
     }
   | IssueSurface
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
-  | { id: "pull-requests"; kind: "pull-requests" };
+  | { id: "pull-requests"; kind: "pull-requests" }
+  /** The GitHub issue list beside a thread; its issues open as `issue` tabs next to it. */
+  | { id: "issues"; kind: "issues" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -106,7 +109,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v14 removes the agents surface; lineage lives in the thread title bar.
 // v15 adds issue surfaces and the session-only issues panel.
 // v16 keys issue surfaces by repository instead of project.
-const RIGHT_PANEL_STORAGE_VERSION = 16;
+// v17 adds the issue-list surface.
+const RIGHT_PANEL_STORAGE_VERSION = 17;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -226,6 +230,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
+    case "issues":
+      return { id: "issues", kind };
     case "device":
       return { id: "device", kind };
   }

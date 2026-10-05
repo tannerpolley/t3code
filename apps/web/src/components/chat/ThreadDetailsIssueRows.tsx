@@ -8,7 +8,6 @@ import type {
 import { pullRequestHostOf } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
-import { useNavigate } from "@tanstack/react-router";
 import { CheckCircle2Icon, CircleDotIcon, ListIcon, MinusIcon, PlusIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -84,8 +83,8 @@ export function threadIssueGroups(
 /**
  * The fork's own sibling section for the thread repository's issues, a fork feature kept out of
  * the vanilla Version Control section. Collapsed by default and remembered per repository. The
- * Filter menu shares the Issues page's saved choices. A row opens the issue beside the thread;
- * the list stays live while agents work on it.
+ * Filter menu shares the Issues page's saved choices. A row opens the issue beside the thread, and
+ * "Browse all issues" opens the full list there; the list stays live while agents work on it.
  */
 export function ThreadDetailsIssueRows({
   environmentId,
@@ -208,7 +207,6 @@ function IssueRowsBody({
   showAll: boolean;
   onShowAllChange: (showAll: boolean) => void;
 }) {
-  const navigate = useNavigate();
   if (view === null) {
     return failed ? (
       <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">Issues unavailable</p>
@@ -246,10 +244,7 @@ function IssueRowsBody({
       <ThreadDetailsControl
         tone="muted"
         onClick={() =>
-          void navigate({
-            to: "/issues",
-            search: { environmentId, host, repository, originThreadId: threadId },
-          })
+          useRightPanelStore.getState().open(scopeThreadRef(environmentId, threadId), "issues")
         }
       >
         <ListIcon aria-hidden className="-mx-0.5 size-4 shrink-0" />
