@@ -1,5 +1,5 @@
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import type { EnvironmentId, ThreadPullRequestLink } from "@t3tools/contracts";
+import type { EnvironmentId, RepositoryIdentity, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
@@ -17,15 +17,18 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
+import { threadPullRequestLabel } from "./threadPullRequestLabel";
 
 function ThreadDetailsPrLinkRow({
   environmentId,
   link,
+  threadRepository,
   onOpen,
   onActed,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
+  threadRepository: RepositoryIdentity | null | undefined;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
 }) {
@@ -40,6 +43,7 @@ function ThreadDetailsPrLinkRow({
         ) ?? null);
   const linked = linkedPullRequestSnapshotStatus(link);
   const pr = linked?.pr ?? null;
+  const referenceLabel = threadPullRequestLabel(link, threadRepository);
   return (
     <ThreadDetailsPrRow
       environmentId={environmentId}
@@ -48,7 +52,8 @@ function ThreadDetailsPrLinkRow({
       reference={link}
       status={prStatusIndicator(pr, linked?.sourceControlProvider)}
       project={project}
-      label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
+      label={`${referenceLabel}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
+      referenceLabel={referenceLabel}
       openAriaLabel={link.url}
       onOpen={onOpen}
       {...(onActed ? { onActed } : {})}
@@ -84,6 +89,7 @@ export function ThreadDetailsPrRows({
               key={threadPullRequestKeyOf(link)}
               environmentId={row.environmentId}
               link={link}
+              threadRepository={row.project?.repositoryIdentity}
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
             />

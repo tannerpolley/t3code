@@ -41,6 +41,7 @@ import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
+import { threadPullRequestLabel } from "./chat/threadPullRequestLabel";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -600,10 +601,17 @@ export function BranchToolbarBranchSelector({
   const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
   const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
   const openPrLink = useOpenPrLink(threadRef);
+  const prReferenceLabel =
+    prNumber === undefined
+      ? ""
+      : threadPullRequestLabel(
+          { repository: currentLinkedPr?.repository, number: prNumber },
+          activeProject?.repositoryIdentity,
+        );
   const panelPrLabel =
     prNumber === undefined
       ? ""
-      : `#${prNumber}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
+      : `${prReferenceLabel}${displayedPr?.title.trim() ? `: ${displayedPr.title}` : ""}`;
 
   function selectPickerItem(itemValue: string) {
     const groupHeader = branchGroupHeaderByItem.get(itemValue);
@@ -821,6 +829,7 @@ export function BranchToolbarBranchSelector({
             status={displayedPrStatus}
             project={activeProject}
             label={panelPrLabel}
+            referenceLabel={prReferenceLabel}
             openAriaLabel={prUrl ?? "Open pull request"}
             onOpen={(event) => openPrLink(event, prUrl)}
             onActed={() => branchStatusQuery.refresh()}
