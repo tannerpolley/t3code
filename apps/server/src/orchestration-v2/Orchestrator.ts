@@ -466,6 +466,16 @@ function isBlockingRun(run: OrchestrationV2Run): boolean {
   );
 }
 
+/** The current attempt has a provider turn that can accept steering. */
+function hasRunningProviderTurn(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns">,
+  run: OrchestrationV2Run,
+): boolean {
+  return run.activeAttemptId !== null && projection.providerTurns.some(
+    (turn) => turn.runAttemptId === run.activeAttemptId && turn.status === "running",
+  );
+}
+
 /**
  * A parent thread is "live" for wake purposes while a run is still producing
  * agent output. A run parked at "waiting" is post-terminal drain, so its agent
@@ -3626,6 +3636,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
+    readonly heldSteer?: boolean;
   }) =>
     Effect.gen(function* () {
       const targetRun = input.projection.runs.find(
@@ -3806,7 +3817,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             type: "user_message",
             messageId: input.messageId,
             inputIntent:
-              input.command.type === "queued-message.promote-to-steer"
+              input.command.type === "queued-message.promote-to-steer" && !input.heldSteer
                 ? "promoted_queued_to_steer"
                 : "steer",
             text: input.text,
@@ -4526,6 +4537,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           dispatchMode = { type: "start_immediately" };
         }
       }
+      let steerTargetRunId: RunId | undefined;
+      if (
+        dispatchMode.type === "steer_active" &&
+        command.notification === undefined &&
+        command.delegatedCompletion === undefined &&
+        !isNativeMaintenanceCommand(command)
+      ) {
+        const targetRunId = dispatchMode.targetRunId;
+        const target = projection.runs.find((run) => run.id === targetRunId);
+        const targetMessage = projection.messages.find((message) => message.id === target?.userMessageId);
+        if (
+          target !== undefined &&
+          (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
+          ["preparing", "starting", "running"].includes(target.status) &&
+          !hasRunningProviderTurn(projection, target)
+        ) {
+          steerTargetRunId = target.id;
+          dispatchMode = { type: "queue_after_active" };
+        }
+      }
       if (
         command.notification !== undefined &&
         (command.createdBy !== "agent" ||
@@ -4823,6 +4854,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
             ? { queueHeld: true }
             : {}),
+          ...(steerTargetRunId === undefined ? {} : { steerTargetRunId }),
           queuePosition:
             Math.max(
               0,
@@ -7224,6 +7256,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { senderThreadId: queuedMessage.senderThreadId }),
         forceRestart: false,
+        heldSteer: queuedRun.steerTargetRunId !== undefined,
       });
     });
 
@@ -9880,6 +9913,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.parentThreadId));
     }
 
+    if (
+      command.type === "message.dispatch" &&
+      committed.storedEvents.some((stored) => stored.event.type === "run.created" && stored.event.payload.steerTargetRunId !== undefined)
+    ) {
+      yield* deliverHeldSteers(command.threadId);
+    }
+
     return {
       sequence: committed.receipt.resultSequence,
       storedEvents: committed.storedEvents,
@@ -9888,6 +9928,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
     threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+
+  // Caller holds the thread lock. A steer whose target ended remains an ordinary queued turn.
+  const deliverHeldSteers = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const { runs, providerTurns } = yield* projectionStore.getThreadRecords(threadId, ["runs", "providerTurns"]);
+    const held = runs.filter((run) => run.status === "queued" && run.steerTargetRunId !== undefined)
+      .toSorted((a, b) => (a.queuePosition ?? a.ordinal) - (b.queuePosition ?? b.ordinal));
+    for (const run of held) {
+      const target = runs.find((candidate) => candidate.id === run.steerTargetRunId);
+      if (target?.status !== "running" || !hasRunningProviderTurn({ providerTurns }, target)) continue;
+      yield* dispatchWithReceiptEffect({
+        type: "queued-message.promote-to-steer",
+        commandId: CommandId.make(`command:system:held-steer:${run.id}`),
+        threadId,
+        queuedRunId: run.id,
+        targetRunId: target.id,
+      }).pipe(Effect.catchCause((cause) => Effect.logWarning("Held steer stays queued", { threadId, runId: run.id, cause })));
+    }
+  }, Effect.catchCause((cause) => Effect.logWarning("Failed to deliver held steers", { cause })));
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
@@ -9949,6 +10007,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Stream.runForEach(handleTerminalRun),
       Effect.forkDetach,
     );
+
+  yield* eventSink.stream({ afterSequence: terminalEventsAfterSequence, eventType: "provider-turn.updated" }).pipe(
+    Stream.filter((stored) => stored.event.type === "provider-turn.updated" && stored.event.payload.status === "running"),
+    Stream.runForEach((stored) => threadDispatch.withLock(stored.event.threadId, deliverHeldSteers(stored.event.threadId))),
+    Effect.forkDetach,
+  );
 
   // Settles child results and completion deliveries whose runs ended without
   // the listener above: before this boot, or in runtime reconciliation, which
