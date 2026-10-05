@@ -92,6 +92,8 @@ import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispa
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
+import { claudeTaskOutputDir, reportedTaskOutputPaths } from "../backgroundTaskOutput.ts";
+import { classifyShellCommand } from "@t3tools/shared/shellCommand";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   claudeSignedOutMessage,
@@ -339,6 +341,7 @@ export interface ClaudeAgentSdkQuerySession {
   readonly setPermissionMode: (
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -492,6 +495,11 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.interrupt";
       };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: { readonly type: "query.stop_task"; readonly taskId: string };
     }
   | {
       readonly direction: "outgoing";
@@ -703,6 +711,19 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
                     type: "query.set_permission_mode",
                     mode,
                   },
+                }),
+              ),
+            ),
+          stopTask: (taskId) =>
+            Effect.tryPromise({
+              try: () => queryRuntime.stopTask(taskId),
+              catch: (cause) => queryRunnerError(cause, "stopTask"),
+            }).pipe(
+              Effect.tap(() =>
+                logProtocolEvent({
+                  direction: "outgoing",
+                  stage: "decoded",
+                  payload: { type: "query.stop_task", taskId },
                 }),
               ),
             ),
@@ -2150,6 +2171,26 @@ function claudeToolResultBlocksFromUserMessage(
   return message.message.content.filter(isClaudeUserToolResultContentBlock);
 }
 
+function claudeReportedTaskOutputDir(message: SDKMessage): string | null {
+  if (message.type === "system" && message.subtype === "task_notification") {
+    return claudeTaskOutputDir(message.output_file);
+  }
+  for (const block of claudeToolResultBlocksFromUserMessage(message)) {
+    const content = block.type === "tool_result" ? block.content : undefined;
+    const texts =
+      typeof content === "string"
+        ? [content]
+        : Array.isArray(content)
+          ? content.flatMap((part) => (part.type === "text" ? [part.text] : []))
+          : [];
+    for (const text of texts) {
+      const path = reportedTaskOutputPaths(text)[0]?.path;
+      if (path !== undefined) return claudeTaskOutputDir(path);
+    }
+  }
+  return null;
+}
+
 function claudeToolResultEntriesFromMessage(message: SDKMessage): ReadonlyArray<{
   readonly toolResult: ClaudeToolResultContentBlock;
   readonly output: ClaudeNativeToolOutput;
@@ -3054,6 +3095,11 @@ export function makeClaudeAdapterV2(
         // Authoritative + incremental background-task roster for post-settle
         // Waiting UI. Outer key is native Claude session id so concurrent
         // provider threads on one runtime cannot share or clear each other.
+        const taskOutputDirByNativeThread = new Map<string, string>();
+        const backgroundToolUses = new Map<
+          string,
+          { readonly commandKind: string; readonly ownerToolUseId: string | null }
+        >();
         const pendingBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
         );
@@ -3509,6 +3555,7 @@ export function makeClaudeAdapterV2(
           tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
         ) =>
           Effect.gen(function* () {
+            const now = yield* DateTime.now;
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const updated = new Map(current);
               if (tasks.length === 0) {
@@ -3516,7 +3563,25 @@ export function makeClaudeAdapterV2(
               } else {
                 updated.set(
                   nativeThreadId,
-                  new Map(tasks.map((task) => [task.taskId, task] as const)),
+                  new Map(
+                    tasks.map((task) => {
+                      const kept = rosterForNativeThread(current, nativeThreadId).get(task.taskId);
+                      return [
+                        task.taskId,
+                        {
+                          ...task,
+                          ...(kept?.kind === "monitor" ? { kind: "monitor" as const } : {}),
+                          ...(kept?.ownerThreadId === undefined
+                            ? {}
+                            : { ownerThreadId: kept.ownerThreadId }),
+                          ...(kept?.commandKind === undefined
+                            ? {}
+                            : { commandKind: kept.commandKind }),
+                          startedAt: kept?.startedAt ?? now,
+                        },
+                      ] as const;
+                    }),
+                  ),
                 );
               }
               return updated;
@@ -3538,9 +3603,13 @@ export function makeClaudeAdapterV2(
           task: OrchestrationV2PendingBackgroundTask,
         ) =>
           Effect.gen(function* () {
+            const now = yield* DateTime.now;
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const roster = new Map(rosterForNativeThread(current, nativeThreadId));
-              roster.set(task.taskId, task);
+              roster.set(task.taskId, {
+                ...task,
+                startedAt: roster.get(task.taskId)?.startedAt ?? now,
+              });
               return new Map(current).set(nativeThreadId, roster);
             });
             yield* rememberOpaqueTasks([task]);
@@ -5384,9 +5453,23 @@ export function makeClaudeAdapterV2(
             if (!isClaudeNonSubagentTask(message) || message.is_backgrounded === false) {
               return false;
             }
-            yield* upsertPendingBackgroundTask(
-              input.nativeThreadId,
-              claudePendingBackgroundTask({
+            const toolUseId = message.tool_use_id;
+            const spawningCall =
+              toolUseId === undefined ? undefined : input.activeContext?.toolCalls.get(toolUseId);
+            const toolUse = toolUseId === undefined ? undefined : backgroundToolUses.get(toolUseId);
+            const ownerTaskId =
+              toolUse?.ownerToolUseId == null
+                ? undefined
+                : (yield* Ref.get(sessionSubagentTaskIdsByToolUseId)).get(toolUse.ownerToolUseId);
+            const ownerThreadId =
+              spawningCall?.runId === null
+                ? spawningCall.threadId
+                : ownerTaskId === undefined
+                  ? undefined
+                  : (yield* Ref.get(sessionSubagentsByTaskId)).get(ownerTaskId)?.childThreadId;
+            if (toolUseId !== undefined) backgroundToolUses.delete(toolUseId);
+            yield* upsertPendingBackgroundTask(input.nativeThreadId, {
+              ...claudePendingBackgroundTask({
                 taskId: message.task_id,
                 taskType: claudeTaskTypeFromSdkMessage(message),
                 startedByMonitor: yield* isClaudeMonitorTask({
@@ -5397,7 +5480,9 @@ export function makeClaudeAdapterV2(
                 description:
                   typeof message.description === "string" ? message.description : undefined,
               }),
-            );
+              ...(ownerThreadId === undefined ? {} : { ownerThreadId }),
+              ...(toolUse === undefined ? {} : { commandKind: toolUse.commandKind }),
+            });
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_notification") {
             yield* endClaudeMonitorTasks((taskId) => taskId === message.task_id);
@@ -5457,6 +5542,25 @@ export function makeClaudeAdapterV2(
           }
 
           const message = input.message;
+          const outputDir = claudeReportedTaskOutputDir(message);
+          if (outputDir !== null)
+            taskOutputDirByNativeThread.set(liveQuery.nativeThreadId, outputDir);
+          if (!input.replayed)
+            for (const tool of claudeToolUseBlocksFromAssistantMessage(message)) {
+              if (tool.name !== "Bash" && tool.name !== "Monitor") continue;
+              const command =
+                typeof tool.input === "object" && tool.input !== null
+                  ? Reflect.get(tool.input, "command")
+                  : undefined;
+              if (typeof command === "string")
+                backgroundToolUses.set(tool.id, {
+                  commandKind: tool.name === "Monitor" ? "watcher" : classifyShellCommand(command),
+                  ownerToolUseId: parentToolUseIdFromSdkMessage(message),
+                });
+              // Foreground calls may never become tasks; bound the remembered metadata.
+              if (backgroundToolUses.size > 256)
+                backgroundToolUses.delete(backgroundToolUses.keys().next().value!);
+            }
           // Before any routing: a Monitor started during an idle wake turn
           // reports its task before the drain replays the tool call.
           yield* trackClaudeMonitorCalls(message);
@@ -7635,6 +7739,49 @@ export function makeClaudeAdapterV2(
                   nativeThreadId,
                 ).values(),
               ].some((task) => task.kind !== "monitor");
+            }),
+          stopBackgroundTask: Effect.fn("ClaudeAdapterV2.stopBackgroundTask")(
+            function* (stopInput) {
+              const nativeThreadId = stopInput.providerThread.nativeThreadRef?.nativeId;
+              const live = yield* Ref.get(queryContext);
+              if (
+                nativeThreadId === undefined ||
+                nativeThreadId === null ||
+                !rosterForNativeThread(
+                  yield* Ref.get(pendingBackgroundTasksByNativeThread),
+                  nativeThreadId,
+                ).has(stopInput.taskId)
+              ) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude provider thread ${stopInput.providerThread.id} has no running background task ${stopInput.taskId}.`,
+                });
+              }
+              if (live === null || live.nativeThreadId !== nativeThreadId) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude provider thread ${stopInput.providerThread.id} has no live query.`,
+                });
+              }
+              // The SDK answers with a `stopped` task_notification, which clears the roster.
+              yield* live.query.stopTask(stopInput.taskId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail: `Claude could not stop background task ${stopInput.taskId}.`,
+                      cause,
+                    }),
+                ),
+              );
+            },
+          ),
+          backgroundTaskOutputDir: (dirInput) =>
+            Effect.sync(() => {
+              const nativeThreadId = dirInput.providerThread.nativeThreadRef?.nativeId;
+              return nativeThreadId == null
+                ? null
+                : (taskOutputDirByNativeThread.get(nativeThreadId) ?? null);
             }),
           ensureThread: Effect.fn("ClaudeAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {

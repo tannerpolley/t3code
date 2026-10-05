@@ -1,9 +1,26 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ClockIcon, CircleDashedIcon, CornerDownRightIcon, TerminalIcon } from "lucide-react";
+import { CornerDownRightIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
+import { useClientSettings } from "../../hooks/useSettings";
+import {
+  BackgroundProcessOutputButton,
+  BackgroundShellElapsed,
+  StopBackgroundShellButton,
+  STOP_SHELL_ON_ROW_HOVER_CLASS,
+} from "../chat/BackgroundProcessOutput";
+import {
+  BackgroundProcessKindIcon,
+  backgroundProcessKindLabel,
+} from "../chat/BackgroundProcessKind";
+import {
+  BackgroundTaskResourceUsageLabel,
+  backgroundTaskResourceUsageKey,
+  useBackgroundTaskListVisibility,
+  useBackgroundTaskResourceUsage,
+} from "../chat/BackgroundTaskUsage";
 import { useServerConfigs, useThreadShell } from "../../state/entities";
 import type { SidebarThreadSummary } from "../../types";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
@@ -60,10 +77,18 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
   const ownerProvider = providers?.find((entry) => entry.instanceId === ownerProviderId);
   const { agents, backgroundTasks } = groupBackgroundWorkTaskRows(props.rows);
   const rows = [...agents, ...backgroundTasks];
+  const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
+  const { listRef, isVisible } = useBackgroundTaskListVisibility(backgroundTasks.length > 0);
+  const resourceUsage = useBackgroundTaskResourceUsage({
+    environmentId: props.environmentId,
+    threadIds: backgroundTasks.map((row) => row.ownerThreadId ?? props.threadId),
+    enabled: isVisible,
+  });
   const padding = props.columns ? "px-2" : "px-1.5";
 
   return (
     <ul
+      ref={listRef}
       className={
         props.columns
           ? "text-2xs"
@@ -73,7 +98,18 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
       }
     >
       {rows.map((row, index) => {
-        const kindLabel = backgroundWorkKindLabel(row.kind);
+        const kindLabel =
+          row.kind === "subagent"
+            ? "Subagent"
+            : backgroundProcessKindLabel(row.kind, row.commandKind);
+        const taskThreadId =
+          row.kind === "subagent" ? props.threadId : (row.ownerThreadId ?? props.threadId);
+        const usage =
+          row.kind === "subagent" ? null : (
+            <BackgroundTaskResourceUsageLabel
+              usage={resourceUsage.get(backgroundTaskResourceUsageKey(taskThreadId, row.taskId))}
+            />
+          );
         const childThreadId = row.kind === "subagent" ? row.childThreadId : null;
         const provider =
           row.kind === "subagent" && row.child
@@ -87,8 +123,9 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               fallbackIcon={CornerDownRightIcon}
             />
           ) : (
-            <BackgroundWorkKindIcon
+            <BackgroundProcessKindIcon
               kind={row.kind}
+              commandKind={row.commandKind}
               className={props.columns ? "size-4" : "size-3.5"}
             />
           );
@@ -105,7 +142,11 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               {...(row.status === undefined ? {} : { status: row.status })}
             />
           ) : row.startedAt ? (
-            elapsed(row.startedAt)
+            row.kind === "subagent" ? (
+              elapsed(row.startedAt)
+            ) : (
+              <BackgroundShellElapsed startedAt={row.startedAt} commandKind={row.commandKind} />
+            )
           ) : null;
         const content = props.columns ? (
           <>
@@ -117,6 +158,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               </span>
             ) : null}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
+            {usage}
             <SidebarTrailingColumns
               count={toggle && !toggle.open ? toggle.count : undefined}
               time={time}
@@ -127,6 +169,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           <>
             {icon}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
+            {usage}
             {props.compact ? null : (
               <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
             )}
@@ -173,6 +216,20 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             >
               {content}
             </button>
+          ) : row.kind !== "subagent" && processOutput ? (
+            <BackgroundProcessOutputButton
+              environmentId={props.environmentId}
+              threadId={taskThreadId}
+              taskId={row.taskId}
+              label={row.label}
+              className={cn(
+                "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left hover:bg-accent",
+                PROJECTS_WORK_ROW_HEIGHT,
+                padding,
+              )}
+            >
+              {content}
+            </BackgroundProcessOutputButton>
           ) : (
             <div
               className={cn("flex min-w-0 items-center gap-2", PROJECTS_WORK_ROW_HEIGHT, padding)}
@@ -190,6 +247,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 : undefined
             }
             className={cn(
+              row.kind !== "subagent" && "group/shell",
               index === agents.length && agents.length > 0 && "border-t border-sidebar-border/40",
               props.columns
                 ? cn(
@@ -217,6 +275,15 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             ) : (
               element
             )}
+            {row.kind !== "subagent" ? (
+              <StopBackgroundShellButton
+                environmentId={props.environmentId}
+                threadId={taskThreadId}
+                taskId={row.taskId}
+                label={row.label}
+                className={cn(STOP_SHELL_ON_ROW_HOVER_CLASS, props.columns ? "end-1.5" : "end-0.5")}
+              />
+            ) : null}
             {toggle ? (
               <SidebarCaretToggle
                 open={toggle.open}
@@ -231,32 +298,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
       })}
     </ul>
   );
-}
-
-function BackgroundWorkKindIcon(props: {
-  readonly kind: Exclude<BackgroundWorkTaskRow["kind"], "subagent">;
-  readonly className: string;
-}) {
-  const Icon =
-    props.kind === "command"
-      ? TerminalIcon
-      : props.kind === "monitor"
-        ? ClockIcon
-        : CircleDashedIcon;
-  return <Icon aria-hidden className={cn("shrink-0 text-muted-foreground", props.className)} />;
-}
-
-function backgroundWorkKindLabel(kind: BackgroundWorkTaskRow["kind"]): string {
-  switch (kind) {
-    case "subagent":
-      return "Subagent";
-    case "command":
-      return "Command";
-    case "monitor":
-      return "Monitor";
-    case "background_task":
-      return "Background task";
-  }
 }
 
 function elapsed(startedAt: string) {

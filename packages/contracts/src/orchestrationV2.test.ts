@@ -131,6 +131,7 @@ describe("orchestration V2 contracts", () => {
       childThreadId: "child-1",
       startedAt: timestamp,
       commandKind: "python",
+      ownerThreadId: "child-1",
     };
     const providerThread = {
       id: "provider-thread-1",

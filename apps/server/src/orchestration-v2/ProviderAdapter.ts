@@ -524,6 +524,15 @@ export interface ProviderAdapterV2SessionRuntime {
    * Compaction thresholds are still discarded. Unknown transitions invalidate usage.
    */
   readonly canReuseContextUsage?: (previous: ModelSelection, next: ModelSelection) => boolean;
+  /** Stops one provider-owned task without interrupting sibling work. */
+  readonly stopBackgroundTask?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly taskId: string;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /** Claude's session-reported tasks directory; clients never supply a path. */
+  readonly backgroundTaskOutputDir?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<string | null>;
   readonly ensureThread: (
     input: ProviderAdapterV2EnsureThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;

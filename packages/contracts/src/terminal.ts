@@ -48,6 +48,13 @@ export const TerminalOpenInput = Schema.Struct({
 });
 export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 
+export const TerminalFollowBackgroundTaskInput = Schema.Struct({
+  ...TerminalOpenInput.fields,
+  /** Provider task id from the thread's pending background tasks. */
+  taskId: TrimmedNonEmptyStringSchema,
+});
+export type TerminalFollowBackgroundTaskInput = typeof TerminalFollowBackgroundTaskInput.Type;
+
 export const TerminalAttachInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),

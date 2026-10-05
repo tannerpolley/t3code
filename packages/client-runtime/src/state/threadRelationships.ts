@@ -4,6 +4,10 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import {
+  backgroundWorkHoldsCompletion,
+  pendingBackgroundWorkOfThread,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
 
@@ -58,6 +62,20 @@ export function deriveThreadRelationshipGraph(input: {
       threadsById.set(thread.id, thread);
     }
   }
+  const statusOf = (thread: OrchestrationV2ThreadShell | undefined) => {
+    if (thread === undefined) return null;
+    const status = thread.activityRunStatus ?? thread.status;
+    const parentId = thread.lineage.parentThreadId;
+    const tasks = pendingBackgroundWorkOfThread(
+      thread.id,
+      thread.pendingBackgroundTasks,
+      parentId === null ? [] : threadsById.get(parentId)?.pendingBackgroundTasks,
+    );
+    return ["completed", "idle", "interrupted", "cancelled"].includes(status) &&
+      backgroundWorkHoldsCompletion(tasks)
+      ? "waiting"
+      : status;
+  };
   const threads = [...threadsById.values()];
   const nodes = new Map<ThreadId, ThreadRelationshipNode>(
     threads.map((thread) => [thread.id, { threadId: thread.id, thread, missing: false }]),
@@ -84,7 +102,10 @@ export function deriveThreadRelationshipGraph(input: {
       sourceThreadId: parentThreadId,
       targetThreadId: thread.id,
       kind: thread.lineage.relationshipToParent === "subagent" ? "subagent" : "fork",
-      status: thread.activityRunStatus ?? thread.status,
+      status:
+        thread.lineage.relationshipToParent === "subagent"
+          ? statusOf(thread)
+          : (thread.activityRunStatus ?? thread.status),
     });
   }
 
@@ -99,7 +120,7 @@ export function deriveThreadRelationshipGraph(input: {
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
-        status: threadsById.get(subagent.childThreadId)?.activityRunStatus ?? subagent.status,
+        status: statusOf(threadsById.get(subagent.childThreadId)) ?? subagent.status,
       });
     }
     for (const transfer of input.projection.contextTransfers) {

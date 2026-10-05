@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -197,6 +197,9 @@ import {
 import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
+  OrchestrationV2BackgroundTaskResourceUsage,
+  OrchestrationV2BackgroundTaskOutputError,
+  OrchestrationV2StopBackgroundTaskError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
@@ -232,6 +235,7 @@ import {
   TerminalEvent,
   TerminalMetadataStreamEvent,
   TerminalOpenInput,
+  TerminalFollowBackgroundTaskInput,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
@@ -415,6 +419,7 @@ export const WS_METHODS = {
   terminalClear: "terminal.clear",
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
+  terminalFollowBackgroundTask: "terminal.followBackgroundTask",
 
   // Preview methods
   previewOpen: "preview.open",
@@ -467,6 +472,7 @@ export const WS_METHODS = {
   serverGetHostResources: "server.getHostResources",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
+  serverGetBackgroundTaskResourceUsage: "server.getBackgroundTaskResourceUsage",
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
@@ -1732,7 +1738,48 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+const WsTerminalFollowBackgroundTaskRpc = Rpc.make(WS_METHODS.terminalFollowBackgroundTask, {
+  payload: TerminalFollowBackgroundTaskInput,
+  success: TerminalSessionSnapshot,
+  error: Schema.Union([
+    TerminalError,
+    OrchestrationV2BackgroundTaskOutputError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+const WsServerGetBackgroundTaskResourceUsageRpc = Rpc.make(
+  WS_METHODS.serverGetBackgroundTaskResourceUsage,
+  {
+    payload: Schema.Struct({ threadIds: Schema.Array(ThreadId) }),
+    success: Schema.Array(OrchestrationV2BackgroundTaskResourceUsage),
+    error: EnvironmentAuthorizationError,
+  },
+);
+
+const WsOrchestrationV2SubscribeBackgroundTaskOutputRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput,
+  {
+    payload: OrchestrationV2RpcSchemas.subscribeBackgroundTaskOutput.input,
+    success: OrchestrationV2RpcSchemas.subscribeBackgroundTaskOutput.output,
+    error: Schema.Union([OrchestrationV2BackgroundTaskOutputError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
+const WsOrchestrationV2StopBackgroundTaskRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask,
+  {
+    payload: OrchestrationV2RpcSchemas.stopBackgroundTask.input,
+    error: Schema.Union([OrchestrationV2StopBackgroundTaskError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsRpcGroup = RpcGroup.make(
+  WsTerminalFollowBackgroundTaskRpc,
+  WsServerGetBackgroundTaskResourceUsageRpc,
+  WsOrchestrationV2SubscribeBackgroundTaskOutputRpc,
+  WsOrchestrationV2StopBackgroundTaskRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

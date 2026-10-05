@@ -6,6 +6,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { classifyShellCommand } from "./shellCommand.ts";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "command_execution",
@@ -102,6 +103,7 @@ type PendingBackgroundWorkTurnItem = {
     readonly nativeId: string | null;
   } | null;
   readonly input?: unknown;
+  readonly startedAt?: OrchestrationV2PendingBackgroundTask["startedAt"] | null;
   readonly prompt?: string | undefined;
   readonly childThreadId?: ThreadId | null;
 };
@@ -148,7 +150,11 @@ function pendingTaskFromTurnItem(
   item: PendingBackgroundWorkTurnItem,
 ): PendingBackgroundWorkTask {
   const description = descriptionFromTurnItem(item);
-  const named = { taskId, ...(description === undefined ? {} : { description }) };
+  const named = {
+    taskId,
+    ...(description === undefined ? {} : { description }),
+    ...(item.startedAt == null ? {} : { startedAt: item.startedAt }),
+  };
   switch (item.type) {
     case "subagent":
       return {
@@ -157,7 +163,13 @@ function pendingTaskFromTurnItem(
         ...(item.childThreadId == null ? {} : { childThreadId: item.childThreadId }),
       };
     case "command_execution":
-      return { ...named, kind: "command" };
+      return {
+        ...named,
+        kind: "command",
+        ...(typeof item.input === "string"
+          ? { commandKind: classifyShellCommand(item.input) }
+          : {}),
+      };
     default:
       return { ...named, kind: "background_task" };
   }
@@ -265,4 +277,27 @@ export function derivePendingBackgroundWork(input: {
   }
 
   return Array.from(byTaskId.values());
+}
+
+/** A thread's own work plus commands it spawned inside its parent's provider session. */
+export function pendingBackgroundWorkOfThread(
+  threadId: ThreadId,
+  own: ReadonlyArray<PendingBackgroundWorkTask> = [],
+  parent: ReadonlyArray<PendingBackgroundWorkTask> = [],
+): ReadonlyArray<PendingBackgroundWorkTask> {
+  const byId = new Map(
+    own
+      .filter(
+        (task) =>
+          task.kind === "subagent" ||
+          (task.ownerThreadId ?? task.childThreadId ?? threadId) === threadId,
+      )
+      .map((task) => [task.taskId, task]),
+  );
+  for (const task of parent) {
+    if (task.kind !== "subagent" && (task.ownerThreadId ?? task.childThreadId) === threadId) {
+      byId.set(task.taskId, task);
+    }
+  }
+  return [...byId.values()];
 }

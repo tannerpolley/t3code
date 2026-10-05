@@ -423,6 +423,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork onboarding import codex trust runtime mode projects"],
   },
   {
+    id: "background-process-output",
+    title: "Background process output",
+    to: "/settings/customizations",
+    searchTerms: ["background command monitor shell task terminal follow logs stop cpu memory"],
+  },
+  {
     id: "short-model-names",
     title: "Short model names",
     to: "/settings/customizations",

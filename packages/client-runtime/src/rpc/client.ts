@@ -59,6 +59,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribePreviewEvents
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.subscribeDeviceState
+  | typeof ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
   | typeof WS_METHODS.previewAutomationConnect

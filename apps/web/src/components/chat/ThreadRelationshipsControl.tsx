@@ -1,3 +1,6 @@
+import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { SidebarBackgroundWorkRows } from "../sidebar/SidebarBackgroundWorkRows";
+import { describeSidebarBackgroundWork } from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -41,7 +44,6 @@ import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
-  ActivityIcon,
   CornerDownRightIcon,
   ChevronDownIcon,
   ChevronsDownUpIcon,
@@ -51,7 +53,6 @@ import {
   LoaderCircleIcon,
   MoreHorizontalIcon,
   PlusIcon,
-  TerminalIcon,
   UnplugIcon,
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
@@ -180,34 +181,21 @@ function ThreadLineageGroup(props: {
   );
 }
 
-/** A read-only roster; output, stop, and terminal-follow controls belong to the later panel. */
+/** The same task controls as Projects, scoped to the displayed thread. */
 function ThreadLineageBackgroundTasks(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
-  readonly labelled?: boolean;
 }) {
-  const tasks = props.tasks.filter((task) => task.kind !== "subagent");
-  if (tasks.length === 0) return null;
   return (
-    <ul
-      aria-label={props.labelled ? "Background work" : undefined}
-      className="m-0 grid list-none gap-1 p-0"
-    >
-      {tasks.map((task) => {
-        const Icon = task.kind === "command" ? TerminalIcon : ActivityIcon;
-        const description = task.description ?? task.taskId;
-        return (
-          <li
-            key={task.taskId}
-            aria-label={`${task.kind.replaceAll("_", " ")}: ${description}`}
-            className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground"
-          >
-            <Icon aria-hidden className="size-3 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{description}</span>
-            <span className="shrink-0 capitalize">{task.kind.replaceAll("_", " ")}</span>
-          </li>
-        );
-      })}
-    </ul>
+    <SidebarBackgroundWorkRows
+      environmentId={props.environmentId}
+      threadId={props.threadId}
+      rows={describeSidebarBackgroundWork(
+        props.tasks.filter((task) => task.kind !== "subagent"),
+        [],
+      )}
+    />
   );
 }
 
@@ -398,7 +386,16 @@ export function ThreadRelationshipsPanel(props: {
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && isOrchestrationV2WorkActive(agent.status),
     ).length ?? 0) + active.length;
-  const backgroundTasks = currentThreadShell?.pendingBackgroundTasks ?? [];
+  const parentTasks =
+    currentThreadShell?.lineage.parentThreadId == null
+      ? []
+      : (graph.nodes.get(currentThreadShell.lineage.parentThreadId)?.thread
+          ?.pendingBackgroundTasks ?? []);
+  const backgroundTasks = pendingBackgroundWorkOfThread(
+    props.threadId,
+    currentThreadShell?.pendingBackgroundTasks,
+    parentTasks,
+  );
   const hasBackgroundTasks = backgroundTasks.some((task) => task.kind !== "subagent");
 
   if (relationshipRows.length === 0 && runningCount === 0 && !hasBackgroundTasks) {
@@ -543,6 +540,10 @@ export function ThreadRelationshipsPanel(props: {
                       ? node.thread.modelSelection
                       : null
                     : (node?.thread?.modelSelection ?? null);
+                  const elapsedAgent =
+                    agent && status === "waiting"
+                      ? { ...agent, status: "waiting" as const, completedAt: null }
+                      : agent;
                   const reportedModel = agent?.model ?? null;
                   const model = reportedModel ?? modelSelection?.model ?? null;
                   const modelLabel = "Selected model";
@@ -586,17 +587,17 @@ export function ThreadRelationshipsPanel(props: {
                     ? "This related thread is unavailable"
                     : `Open ${relationship.toLowerCase()} in this chat`;
                   const RelationshipPopup = agent ? ThreadHoverCardPopup : TooltipPopup;
-                  const relationshipTooltip = agent ? (
+                  const relationshipTooltip = elapsedAgent ? (
                     <SubagentTooltipContent
                       title={threadTitle}
-                      model={agent.model}
+                      model={elapsedAgent.model}
                       provider={provider}
                       providers={providers}
                       driver={providerDriver}
-                      elapsed={<AgentElapsed agent={agent} />}
-                      status={agent.status}
-                      result={agent.result}
-                      progress={agent.progress}
+                      elapsed={<AgentElapsed agent={elapsedAgent} />}
+                      status={elapsedAgent.status}
+                      result={elapsedAgent.result}
+                      progress={elapsedAgent.progress}
                       parentThread={currentThread ?? undefined}
                       childThread={node?.thread ?? undefined}
                       parentProject={currentProject}
@@ -623,10 +624,10 @@ export function ThreadRelationshipsPanel(props: {
                           {threadTitle}
                         </span>
                       </span>
-                      {agent ? (
-                        agent.startedAt ? (
+                      {elapsedAgent ? (
+                        elapsedAgent.startedAt ? (
                           <span className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground">
-                            <AgentElapsed agent={agent} />
+                            <AgentElapsed agent={elapsedAgent} />
                           </span>
                         ) : null
                       ) : (
@@ -768,7 +769,13 @@ export function ThreadRelationshipsPanel(props: {
                           {preview ? <p className="m-0 line-clamp-2">{preview}</p> : null}
                           {node?.thread ? (
                             <ThreadLineageBackgroundTasks
-                              tasks={node.thread.pendingBackgroundTasks ?? []}
+                              environmentId={props.environmentId}
+                              threadId={node.thread.id}
+                              tasks={pendingBackgroundWorkOfThread(
+                                node.thread.id,
+                                node.thread.pendingBackgroundTasks,
+                                currentThreadShell?.pendingBackgroundTasks,
+                              )}
                             />
                           ) : null}
                         </div>
@@ -786,7 +793,11 @@ export function ThreadRelationshipsPanel(props: {
           headingId="thread-details-background-tasks-heading"
           title="Background tasks"
         >
-          <ThreadLineageBackgroundTasks tasks={backgroundTasks} labelled />
+          <ThreadLineageBackgroundTasks
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+            tasks={backgroundTasks}
+          />
         </ThreadDetailsSection>
       ) : null}
     </>

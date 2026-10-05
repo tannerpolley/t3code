@@ -244,6 +244,20 @@ them automatically, set **Settings → General → Clear finished agents automat
 to a number of minutes; zero keeps them visible. Background shell summaries appear
 alongside the agents.
 
+Click a Codex or Claude background command or monitor in Projects, Lineage, or
+the expandable background-work line above the composer to follow its live output.
+It opens a terminal tab in the owning thread; clicking again returns to that tab.
+The tab also follows existing log files the command reads or writes. Ctrl+C stops
+following and leaves a usable terminal; it does not stop the background task.
+Hosts that cannot follow in a terminal show live output in a popover instead.
+
+Task rows show their age and command kind. CPU and memory appear when the host
+can attribute a process tree to that task. A non-server shell running for over
+two hours is marked as possibly stuck. Hover a task row, or focus its Stop control,
+to stop that task. **Stop** above the composer stops all the thread's background
+work. Turn off **Settings → Customizations → Background process output** to
+disable opening output from task rows.
+
 To tell agents which model and effort suit each kind of delegated work, edit
 **Model roles** in **Settings → Customizations** on web and desktop. Agents use these
 roles at their own discretion; your explicit instructions in a thread win. Each

@@ -819,6 +819,8 @@ function pendingBackgroundTaskSchema<
     childThreadId: Schema.optional(ThreadId),
     startedAt: Schema.optional(startedAt),
     commandKind: Schema.optional(TrimmedNonEmptyString),
+    /** App thread that spawned a command in a shared provider session. */
+    ownerThreadId: Schema.optional(ThreadId),
   };
   const encodeFields = Schema.encodeSync(Schema.Struct(fields));
   return kindUnionWithFallback(
@@ -3050,6 +3052,8 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
+  subscribeBackgroundTaskOutput: "orchestration.subscribeBackgroundTaskOutput",
+  stopBackgroundTask: "orchestration.stopBackgroundTask",
 } as const;
 
 export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
@@ -3379,7 +3383,63 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<Orch
   }
 }
 
+export const OrchestrationV2BackgroundTaskResourceUsage = Schema.Struct({
+  threadId: ThreadId,
+  taskId: TrimmedNonEmptyString,
+  /** Null when the host cannot attribute a live process to this task. */
+  cpuPercent: Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
+  residentBytes: Schema.NullOr(NonNegativeInt),
+});
+export type OrchestrationV2BackgroundTaskResourceUsage =
+  typeof OrchestrationV2BackgroundTaskResourceUsage.Type;
+
+export const OrchestrationV2SubscribeBackgroundTaskOutputInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Provider task id from the thread's pending background tasks. */
+  taskId: TrimmedNonEmptyString,
+});
+export type OrchestrationV2SubscribeBackgroundTaskOutputInput =
+  typeof OrchestrationV2SubscribeBackgroundTaskOutputInput.Type;
+
+export const OrchestrationV2BackgroundTaskOutputChunk = Schema.Struct({
+  text: Schema.String,
+  reset: Schema.Boolean,
+});
+export type OrchestrationV2BackgroundTaskOutputChunk =
+  typeof OrchestrationV2BackgroundTaskOutputChunk.Type;
+
+export class OrchestrationV2BackgroundTaskOutputError extends Schema.TaggedError<OrchestrationV2BackgroundTaskOutputError>()(
+  "OrchestrationV2BackgroundTaskOutputError",
+  {
+    taskId: Schema.String,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export const OrchestrationV2StopBackgroundTaskInput = Schema.Struct({
+  /** The thread the task counts for; a Claude subagent's shell may sit on its parent's roster. */
+  threadId: ThreadId,
+  taskId: TrimmedNonEmptyString,
+});
+export type OrchestrationV2StopBackgroundTaskInput =
+  typeof OrchestrationV2StopBackgroundTaskInput.Type;
+
+export class OrchestrationV2StopBackgroundTaskError extends Schema.TaggedError<OrchestrationV2StopBackgroundTaskError>()(
+  "OrchestrationV2StopBackgroundTaskError",
+  {
+    taskId: Schema.String,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const OrchestrationV2RpcSchemas = {
+  subscribeBackgroundTaskOutput: {
+    input: OrchestrationV2SubscribeBackgroundTaskOutputInput,
+    output: OrchestrationV2BackgroundTaskOutputChunk,
+  },
+  stopBackgroundTask: { input: OrchestrationV2StopBackgroundTaskInput, output: Schema.Void },
   dispatchCommand: {
     input: OrchestrationV2Command,
     output: OrchestrationV2DispatchCommandResult,

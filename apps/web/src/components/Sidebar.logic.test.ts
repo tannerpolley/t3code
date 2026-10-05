@@ -2389,6 +2389,32 @@ describe("groupRunningSubagentsByParent", () => {
     },
   });
 
+  it("lists a child held by an owned monitor on another thread's roster", () => {
+    const finished = child("monitor-owner", { status: "completed" });
+    const parent = {
+      ...child("parent"),
+      pendingBackgroundTasks: [
+        { taskId: "monitor", kind: "monitor" as const, ownerThreadId: finished.id },
+      ],
+    };
+    expect(
+      [...groupRunningSubagentsByParent([finished, parent]).values()]
+        .flat()
+        .map((thread) => thread.id),
+    ).toContain(finished.id);
+    const command = {
+      ...parent,
+      pendingBackgroundTasks: [
+        { taskId: "command", kind: "command" as const, ownerThreadId: finished.id },
+      ],
+    };
+    expect(
+      [...groupRunningSubagentsByParent([finished, command]).values()]
+        .flat()
+        .map((thread) => thread.id),
+    ).not.toContain(finished.id);
+  });
+
   it("keeps only running subagent children, keyed by their parent", () => {
     const grouped = groupRunningSubagentsByParent([
       child("running"),

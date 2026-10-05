@@ -113,6 +113,7 @@ import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as BackgroundTasks from "./orchestration-v2/backgroundTaskOutput.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
@@ -1187,6 +1188,9 @@ const makeWsRpcLayer = (
   ServerWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const backgroundTasks = yield* BackgroundTasks.BackgroundTasks.pipe(
+        Effect.provide(BackgroundTasks.layer),
+      );
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -2618,6 +2622,30 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.serverGetBackgroundTaskResourceUsage]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetBackgroundTaskResourceUsage,
+            backgroundTasks.resourceUsage(input),
+            { "rpc.aggregate": "orchestrationV2" },
+          ),
+        [WS_METHODS.terminalFollowBackgroundTask]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.terminalFollowBackgroundTask,
+            backgroundTasks.followInTerminal(input),
+            { "rpc.aggregate": "terminal" },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask,
+            backgroundTasks.stop(input),
+            { "rpc.aggregate": "orchestrationV2" },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput]: (input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput,
+            backgroundTasks.subscribeOutput(input),
+            { "rpc.aggregate": "orchestrationV2" },
           ),
         [WS_METHODS.serverGetResourceTelemetryHistory]: (input) =>
           observeRpcEffect(

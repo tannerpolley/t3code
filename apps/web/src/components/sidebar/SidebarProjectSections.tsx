@@ -1,3 +1,5 @@
+import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
 import {
   closestCorners,
   DragOverlay,
@@ -1317,6 +1319,7 @@ function SidebarProjectThreadRow(props: {
             environmentId={props.thread.environmentId}
             threadId={props.thread.id}
             rows={workRows}
+            parentTasks={props.thread.pendingBackgroundTasks}
             runningChildren={runningSubagents}
             onChildClick={props.onClick}
             onChildContextMenu={props.onContextMenu}
@@ -1345,6 +1348,7 @@ function SidebarSubagentTree(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
+  readonly parentTasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
   /** The threads behind this level's subagent rows. */
   readonly runningChildren: readonly SidebarThreadSummary[];
   readonly onChildClick: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
@@ -1366,7 +1370,11 @@ function SidebarSubagentTree(props: {
       props.runningSubagentsByParentKey.get(
         scopedThreadKey(scopeThreadRef(props.environmentId, child.id)),
       ) ?? NO_THREADS;
-    const rows = describeSidebarBackgroundWork(child.pendingBackgroundTasks, grandchildren);
+    const rows = describeSidebarBackgroundWork(
+      pendingBackgroundWorkOfThread(child.id, child.pendingBackgroundTasks, props.parentTasks),
+      grandchildren,
+      child.id,
+    );
     return rows.length === 0 ? null : { child, grandchildren, rows };
   };
   return (
@@ -1407,6 +1415,7 @@ function SidebarSubagentTree(props: {
               environmentId={props.environmentId}
               threadId={child.id}
               rows={rows}
+              parentTasks={child.pendingBackgroundTasks}
               runningChildren={grandchildren}
               onChildClick={props.onChildClick}
               onChildContextMenu={props.onChildContextMenu}

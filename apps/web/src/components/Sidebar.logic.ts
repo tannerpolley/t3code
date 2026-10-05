@@ -1041,7 +1041,15 @@ export function groupRunningSubagentsByParent<
       thread.pendingBackgroundTasks.flatMap((task) =>
         task.kind === "subagent" && task.childThreadId !== undefined
           ? [scopedThreadKey(scopeThreadRef(thread.environmentId, task.childThreadId))]
-          : [],
+          : task.kind !== "subagent" &&
+              backgroundWorkHoldsCompletion([task]) &&
+              (task.ownerThreadId ?? task.childThreadId) !== undefined
+            ? [
+                scopedThreadKey(
+                  scopeThreadRef(thread.environmentId, (task.ownerThreadId ?? task.childThreadId)!),
+                ),
+              ]
+            : [],
       ),
     ),
   );

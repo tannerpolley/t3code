@@ -7,7 +7,11 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as DateTime from "effect/DateTime";
+import {
+  backgroundWorkHoldsCompletion,
+  pendingBackgroundWorkOfThread,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import type { SidebarThreadSummary } from "../../types";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
@@ -20,7 +24,7 @@ type LinkedSubagentTask = Extract<OrchestrationV2PendingBackgroundTask, { kind: 
 type BackgroundWorkRowBase = {
   readonly taskId: string;
   readonly label: string;
-  /** The current contract does not report task start times; linked child threads can. */
+  /** Task start, or the linked child thread's current work start. */
   readonly startedAt: string | null;
   readonly status?: SidebarThreadStatus | undefined;
 };
@@ -34,6 +38,8 @@ export type BackgroundWorkTaskRow =
     })
   | (BackgroundWorkRowBase & {
       readonly kind: "command" | "monitor" | "background_task";
+      readonly commandKind?: string;
+      readonly ownerThreadId?: ThreadId;
     });
 
 /** A thread's stored model selection and effort, with no model fallback to its parent. */
@@ -63,12 +69,13 @@ export function groupBackgroundWorkTaskRows(rows: ReadonlyArray<BackgroundWorkTa
 
 /**
  * Joins provider-reported subagent tasks to their thread rows. Some providers omit a child id;
- * those roster entries pair with running children by count. Other pending task kinds stay visible
- * as display-only rows until the sidebar gains background process controls.
+ * those roster entries pair with running children by count. Commands started by a child sit
+ * beneath that child while staying on the parent provider's roster.
  */
 export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,
+  ownerThreadId?: ThreadId,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
   const listedChildIds = new Set(runningChildren.map((child) => child.id));
   const linked = tasks.filter(
@@ -87,10 +94,10 @@ export function describeSidebarBackgroundWork(
 
   const childRows: BackgroundWorkTaskRow[] = runningChildren.map((child) => {
     const currentStatus = resolveSidebarThreadStatus(child);
-    const linkedChildWork = linked.filter((task) => task.childThreadId === child.id);
     const hasPendingWork =
-      backgroundWorkHoldsCompletion(child.pendingBackgroundTasks) ||
-      backgroundWorkHoldsCompletion(linkedChildWork);
+      backgroundWorkHoldsCompletion(
+        pendingBackgroundWorkOfThread(child.id, child.pendingBackgroundTasks, tasks),
+      ) || backgroundWorkHoldsCompletion(linked.filter((task) => task.childThreadId === child.id));
     const status = currentStatus === "ready" && hasPendingWork ? "waiting" : currentStatus;
 
     return {
@@ -111,18 +118,33 @@ export function describeSidebarBackgroundWork(
     taskId: task.taskId,
     label: task.description ?? task.taskId,
     kind: "subagent",
-    startedAt: null,
+    startedAt: task.startedAt ? DateTime.formatIso(task.startedAt) : null,
     childThreadId: task.childThreadId ?? null,
   }));
 
   const backgroundTaskRows: BackgroundWorkTaskRow[] = tasks
     .filter((task) => task.kind !== "subagent")
-    .map((task) => ({
-      taskId: task.taskId,
-      label: task.description ?? task.taskId,
-      kind: task.kind,
-      startedAt: null,
-    }));
+    .filter((task) => {
+      const owner = task.ownerThreadId ?? task.childThreadId;
+      return owner === undefined || !listedChildIds.has(owner);
+    })
+    .map((task) => {
+      const taskOwner = task.ownerThreadId ?? task.childThreadId ?? ownerThreadId;
+      return {
+        taskId: task.taskId,
+        label: task.description ?? task.taskId,
+        kind: task.kind,
+        startedAt: task.startedAt ? DateTime.formatIso(task.startedAt) : null,
+        ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
+        ...(taskOwner === undefined ? {} : { ownerThreadId: taskOwner }),
+      };
+    });
 
   return [...childRows, ...unmatchedSubagentRows, ...backgroundTaskRows];
+}
+
+/** Warn after two hours, while long-lived servers keep their normal age display. */
+export const POSSIBLY_STUCK_SHELL_MS = 2 * 60 * 60 * 1000;
+export function msUntilPossiblyStuck(startedAt: string, nowMs: number): number {
+  return Math.max(0, Date.parse(startedAt) + POSSIBLY_STUCK_SHELL_MS - nowMs);
 }

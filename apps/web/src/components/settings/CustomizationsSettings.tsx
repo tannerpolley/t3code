@@ -40,6 +40,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "When onboarding imports projects you used with Codex, preview their Codex trust level and offer to apply it as the project's runtime mode.",
   },
   {
+    key: "backgroundProcessOutput",
+    searchId: "background-process-output",
+    section: "lineage",
+    description:
+      "Click a Codex or Claude background command or monitor in Projects, Lineage, or the chat task list to follow its output in a terminal tab. On Windows, or if a terminal cannot follow it, view the live output in a popover. Commands also show their kind, age, available CPU and memory use, and a Stop control.",
+  },
+  {
     key: "shortModelNames",
     searchId: "short-model-names",
     section: "lineage",
