@@ -417,6 +417,38 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "onboarding-codex-settings",
+    title: "Codex settings during onboarding",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork onboarding import codex trust runtime mode projects"],
+  },
+  {
+    id: "short-model-names",
+    title: "Short model names",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork model name label short opus sonnet sol claude gpt icon"],
+  },
+  {
+    id: "open-questions-automatically",
+    title: "Open questions automatically",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork question popup floating panel answer anywhere other thread user input ask",
+    ],
+  },
+  {
+    id: "branch-picker-groups",
+    title: "Branch picker groups",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork branch picker current local remote collapse"],
+  },
+  {
+    id: "agent-browser-in-panel",
+    title: "Agent browser opens in the side panel",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork browser preview agent side panel floating mini player"],
+  },
+  {
     id: "version-control-issues",
     title: "Issues in thread details",
     to: "/settings/customizations",
@@ -619,14 +651,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "keep-thread-titles-current",
     title: "Keep thread titles current",
-    to: "/settings/general",
+    to: "/settings/customizations",
     scope: "environment-defaults",
     searchTerms: ["thread title rename regenerate automatic refresh luna sidebar names"],
   },
   {
     id: "model-roles",
     title: "Model roles",
-    to: "/settings/general",
+    to: "/settings/customizations",
     scope: "environment-defaults",
     searchTerms: [
       "model roles orchestrator delegate subagent builder checker reviewer default model effort",

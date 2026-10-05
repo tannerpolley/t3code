@@ -133,7 +133,7 @@ To retitle a thread after what it is working on now, open its menu and choose
 current title still fits, and makes a title you typed automatic again. The action is unavailable
 while title generation is in progress or when the connected environment needs a server update.
 
-**Keep thread titles current** in **Settings → General** (on by default) does the same about
+**Keep thread titles current** in **Settings → Customizations** (on by default) does the same about
 every ten minutes for top-level threads with new messages. Titles you typed are never changed
 automatically, and nothing runs when the server has no Codex provider.
 
@@ -245,7 +245,7 @@ to a number of minutes; zero keeps them visible. Background shell summaries appe
 alongside the agents.
 
 To tell agents which model and effort suit each kind of delegated work, edit
-**Model roles** in **Settings → General** on web and desktop. Agents use these
+**Model roles** in **Settings → Customizations** on web and desktop. Agents use these
 roles at their own discretion; your explicit instructions in a thread win. Each
 role holds up to four model and effort choices; the first is the default, and an
 unavailable choice is marked. Codex agents see changes on their next turn and

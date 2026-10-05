@@ -63,7 +63,6 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
-import { ModelRolesSection } from "./ModelRolesSettings";
 import {
   resolveEnvironmentIdentificationPillLabel,
   useEnvironmentStageLabel,
@@ -3485,38 +3484,7 @@ export function GeneralSettingsPanel() {
             )
           }
         />
-        <SettingsRow
-          serverScoped
-          settingKeys={["keepThreadTitlesCurrent"]}
-          {...searchableSetting("keep-thread-titles-current")}
-          description="Every ~10 minutes, GPT-6 Luna retitles top-level threads with new activity to what they're working on now. Titles you typed are kept. Regenerate title uses the same model and says when the title still fits."
-          resetAction={
-            settings.keepThreadTitlesCurrent !==
-            DEFAULT_UNIFIED_SETTINGS.keepThreadTitlesCurrent ? (
-              <SettingResetButton
-                label="automatic titles"
-                onClick={() =>
-                  updateSettings({
-                    keepThreadTitlesCurrent: DEFAULT_UNIFIED_SETTINGS.keepThreadTitlesCurrent,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
-              settingKeys={["keepThreadTitlesCurrent"]}
-              checked={settings.keepThreadTitlesCurrent}
-              onCheckedChange={(checked) =>
-                updateSettings({ keepThreadTitlesCurrent: Boolean(checked) })
-              }
-              aria-label="Keep thread titles current"
-            />
-          }
-        />
       </SettingsSection>
-
-      <ModelRolesSection />
 
       <SettingsSection id="about" title="About">
         {isElectron || HOSTED_APP_CHANNEL ? (

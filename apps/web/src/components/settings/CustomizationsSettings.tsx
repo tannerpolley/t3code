@@ -1,16 +1,26 @@
 import type { ClientSettings } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
+import { ModelRolesSection } from "./ModelRolesSettings";
+import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 type CustomizationSwitchKey = {
   [Key in keyof ClientSettings]: ClientSettings[Key] extends boolean ? Key : never;
 }[keyof ClientSettings];
 
-type CustomizationSection = "composer" | "versionControl" | "usage";
+type CustomizationSection =
+  | "sidebar"
+  | "lineage"
+  | "composer"
+  | "versionControl"
+  | "browser"
+  | "usage";
 
 /**
  * Each switch turns one area of this fork's UI back to the original behavior when off, so with
@@ -22,6 +32,20 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
   readonly section: CustomizationSection;
   readonly description: string;
 }> = [
+  {
+    key: "onboardingCodexSettings",
+    searchId: "onboarding-codex-settings",
+    section: "sidebar",
+    description:
+      "When onboarding imports projects you used with Codex, preview their Codex trust level and offer to apply it as the project's runtime mode.",
+  },
+  {
+    key: "shortModelNames",
+    searchId: "short-model-names",
+    section: "lineage",
+    description:
+      "Model labels drop the company name the provider icon already shows and lead with the model's own name, then its version: Opus 5.5, Sonnet 5, Sol 6. Applies to the sidebar, Lineage, agent details and the composer's model button, always right after the icon; the model list keeps full names. Off restores the full names.",
+  },
   {
     key: "composerCodeFormatting",
     searchId: "composer-code-formatting",
@@ -35,6 +59,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     section: "composer",
     description:
       "Render math in chat messages: $…$, $$…$$, \\( \\) and \\[ \\]. Dollar amounts such as $5 stay text. Off shows the formula source as plain text.",
+  },
+  {
+    key: "openQuestionsAutomatically",
+    searchId: "open-questions-automatically",
+    section: "composer",
+    description:
+      "When an agent in any thread, including another project's or a subagent's, asks you a question, show it in a floating panel over whatever you are viewing, so you can answer on the spot. Later hides a question until it is asked again; the thread still shows it. Off shows questions only in their thread.",
   },
   {
     key: "pluginSkills",
@@ -56,6 +87,20 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     section: "versionControl",
     description:
       "Show Issues in the sidebar: browse open issues across the repositories you control, grouped by owner, filtered, with pinned repositories.",
+  },
+  {
+    key: "branchPickerGroups",
+    searchId: "branch-picker-groups",
+    section: "versionControl",
+    description:
+      "Group the branch picker into collapsible Current, Local and Remote sections. Off shows one flat list.",
+  },
+  {
+    key: "agentBrowserInPanel",
+    searchId: "agent-browser-in-panel",
+    section: "browser",
+    description:
+      "When an agent uses the in-app browser, show it in the right side panel instead of the small floating player.",
   },
   {
     key: "usageLimitModelBreakdown",
@@ -83,9 +128,11 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
 function CustomizationsGroup({
   title,
   section,
+  children,
 }: {
   readonly title: string;
   readonly section: CustomizationSection;
+  readonly children?: ReactNode;
 }) {
   const settings = useClientSettings();
   const updateSettings = useUpdateClientSettings();
@@ -107,7 +154,32 @@ function CustomizationsGroup({
           />
         ),
       )}
+      {children}
     </SettingsSection>
+  );
+}
+
+/** A server setting: it applies to the environment running T3, not this client. */
+function KeepThreadTitlesCurrentRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["keepThreadTitlesCurrent"]}
+      {...searchableSetting("keep-thread-titles-current")}
+      description="Every ~10 minutes, GPT-6 Luna retitles top-level threads with new activity to what they're working on now. Titles you typed are kept. Regenerate title uses the same model and says when the title still fits."
+      control={
+        <ScopedSwitch
+          settingKeys={["keepThreadTitlesCurrent"]}
+          checked={settings.keepThreadTitlesCurrent}
+          onCheckedChange={(checked) =>
+            updateSettings({ keepThreadTitlesCurrent: Boolean(checked) })
+          }
+          aria-label="Keep thread titles current"
+        />
+      }
+    />
   );
 }
 
@@ -157,9 +229,14 @@ function ProviderPluginsSection() {
 export function CustomizationsSettings() {
   return (
     <SettingsPageContainer>
+      <CustomizationsGroup title="Sidebar & projects" section="sidebar">
+        <KeepThreadTitlesCurrentRow />
+      </CustomizationsGroup>
+      <CustomizationsGroup title="Lineage & background work" section="lineage" />
       <CustomizationsGroup title="Composer & chat" section="composer" />
       <CustomizationsGroup title="Version control & issues" section="versionControl" />
-      {/* Model roles (delegation defaults) get their own section here. */}
+      <CustomizationsGroup title="Browser & preview" section="browser" />
+      <ModelRolesSection />
       <CustomizationsGroup title="Usage" section="usage" />
       <ProviderPluginsSection />
     </SettingsPageContainer>
