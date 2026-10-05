@@ -97,6 +97,10 @@ machines or apps on the same account is spread across the models shown. Redeem a
 from the **Reset credits** total. For the window cards described above, turn off **Settings →
 Customizations → Limits page like Cost and Tokens**.
 
+Two optional sidebar views live in **Settings → Customizations → Usage**. **Daily usage meter**
+paces Claude's and Codex's weekly limits at 20% per Monday–Friday, carrying unused room forward.
+**Weekly usage in the sidebar** replaces the Usage button's icon with each provider's weekly quota
+left. Both open **Usage → Limits** when clicked.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.

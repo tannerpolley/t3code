@@ -513,6 +513,10 @@ export const ClientSettingsSchema = Schema.Struct({
    * per-provider window cards.
    */
   usageLimitModelBreakdown: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** A sidebar meter pacing each Monday–Friday at 20% of each provider's weekly limit. */
+  dailyUsageMeter: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** The sidebar footer's Usage icon shows each provider's weekly quota left instead. */
+  sidebarWeeklyUsage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1840,6 +1844,8 @@ export const ClientSettingsPatch = Schema.Struct({
   revealOpenThreadInSidebar: Schema.optionalKey(Schema.Boolean),
   lineageAutoClearMinutes: Schema.optionalKey(NonNegativeInt),
   usageLimitModelBreakdown: Schema.optionalKey(Schema.Boolean),
+  dailyUsageMeter: Schema.optionalKey(Schema.Boolean),
+  sidebarWeeklyUsage: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),
