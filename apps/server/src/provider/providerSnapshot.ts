@@ -5,6 +5,7 @@ import type {
   RuntimeMode,
   ServerProvider,
   ServerProviderAuth,
+  ServerProviderPlugin,
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
@@ -207,6 +208,7 @@ export function buildServerProvider(input: {
   models: ReadonlyArray<ServerProviderModel>;
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
+  plugins?: ReadonlyArray<ServerProviderPlugin>;
   probe: ProviderProbeResult;
 }): ServerProviderDraft {
   const versionAdvisory = input.driver
@@ -244,6 +246,7 @@ export function buildServerProvider(input: {
     models: input.models,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
+    ...(input.plugins ? { plugins: [...input.plugins] } : {}),
     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };

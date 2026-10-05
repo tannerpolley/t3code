@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 
 /** Coding agent home directories the scanner knows how to read. */
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex"]);
@@ -44,6 +45,14 @@ export const AgentSessionProjectGit = Schema.Struct({
 });
 export type AgentSessionProjectGit = typeof AgentSessionProjectGit.Type;
 
+/** Read-only preview of the narrow Codex-to-T3 settings mapping offered during onboarding. */
+export const CodexProjectSettingsPreview = Schema.Struct({
+  trustLevel: Schema.NullOr(TrimmedNonEmptyString),
+  defaultRuntimeMode: Schema.NullOr(RuntimeMode),
+  unsupportedKeys: Schema.Array(TrimmedNonEmptyString),
+});
+export type CodexProjectSettingsPreview = typeof CodexProjectSettingsPreview.Type;
+
 export const AgentSessionProjectCandidate = Schema.Struct({
   path: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
@@ -58,6 +67,7 @@ export const AgentSessionProjectCandidate = Schema.Struct({
    * from plain folders and should treat every candidate as a standalone project.
    */
   git: Schema.optionalKey(Schema.NullOr(AgentSessionProjectGit)),
+  codexSettings: Schema.optionalKey(CodexProjectSettingsPreview),
 });
 export type AgentSessionProjectCandidate = typeof AgentSessionProjectCandidate.Type;
 

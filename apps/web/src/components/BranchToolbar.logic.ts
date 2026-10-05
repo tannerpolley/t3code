@@ -8,6 +8,7 @@ import type {
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { toSortableTimestamp } from "../lib/threadSort";
+import type { BranchPickerGroup } from "../uiStateStore";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
@@ -333,4 +334,58 @@ export function shouldIncludeBranchPickerItem(input: {
     sanitizedQuery !== normalizedQuery &&
     lowerItemValue.includes(sanitizedQuery)
   );
+}
+
+const BRANCH_PICKER_GROUP_LABELS: Record<BranchPickerGroup, string> = {
+  current: "Current",
+  local: "Local",
+  remote: "Remote",
+};
+const BRANCH_PICKER_GROUP_ITEM_PREFIX = "__branch_group__:";
+
+export interface BranchPickerGroupHeader {
+  group: BranchPickerGroup;
+  label: string;
+  count: number;
+  collapsed: boolean;
+}
+
+function branchPickerGroupOf(ref: VcsRef): BranchPickerGroup {
+  return ref.current ? "current" : ref.isRemote ? "remote" : "local";
+}
+
+/**
+ * Orders loaded refs into Current, Local, and Remote groups, each led by a
+ * header item. Collapsed groups contribute only their header. A flat list
+ * (while searching, or with grouping off) ignores collapse state, so a match is
+ * never hidden and Enter keeps selecting the first match rather than a header.
+ */
+export function buildBranchPickerRefItems(input: {
+  refs: readonly VcsRef[];
+  collapsedGroups: readonly BranchPickerGroup[];
+  flat: boolean;
+}): { items: string[]; headerByItem: Map<string, BranchPickerGroupHeader> } {
+  const headerByItem = new Map<string, BranchPickerGroupHeader>();
+  if (input.flat) {
+    return { items: input.refs.map((ref) => ref.name), headerByItem };
+  }
+  const namesByGroup: Record<BranchPickerGroup, string[]> = { current: [], local: [], remote: [] };
+  for (const ref of input.refs) namesByGroup[branchPickerGroupOf(ref)].push(ref.name);
+
+  const items: string[] = [];
+  for (const group of ["current", "local", "remote"] as const) {
+    const names = namesByGroup[group];
+    if (names.length === 0) continue;
+    const collapsed = input.collapsedGroups.includes(group);
+    const headerItem = `${BRANCH_PICKER_GROUP_ITEM_PREFIX}${group}`;
+    headerByItem.set(headerItem, {
+      group,
+      label: BRANCH_PICKER_GROUP_LABELS[group],
+      count: names.length,
+      collapsed,
+    });
+    items.push(headerItem);
+    if (!collapsed) items.push(...names);
+  }
+  return { items, headerByItem };
 }

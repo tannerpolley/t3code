@@ -1,5 +1,11 @@
 import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
-import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type {
+  AgentSessionProjectCandidate,
+  CodexProjectSettingsPreview,
+  EnvironmentId,
+  ProjectId,
+  ProjectSettingsOverrides,
+} from "@t3tools/contracts";
 
 const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 /** One or two threads in a directory is usually a one-off question, not a project. */
@@ -138,4 +144,21 @@ export function resolveOnboardingLandingProject<T>(
 /** Paths identify projects only within the computer that owns them. */
 export function onboardingProjectKey(environmentId: EnvironmentId, path: string): string {
   return JSON.stringify([environmentId, path]);
+}
+
+/** Never replace an existing T3 runtime choice; equal imports are idempotent. */
+export function planCodexProjectSettingsImport(
+  current: ProjectSettingsOverrides | undefined,
+  preview: CodexProjectSettingsPreview,
+):
+  | { readonly action: "write"; readonly overrides: ProjectSettingsOverrides }
+  | { readonly action: "unchanged" }
+  | { readonly action: "conflict" }
+  | { readonly action: "unsupported" } {
+  const incoming = preview.defaultRuntimeMode;
+  if (incoming === null) return { action: "unsupported" };
+  const existing = current?.defaultRuntimeMode;
+  if (existing === incoming) return { action: "unchanged" };
+  if (existing !== undefined) return { action: "conflict" };
+  return { action: "write", overrides: { ...current, defaultRuntimeMode: incoming } };
 }

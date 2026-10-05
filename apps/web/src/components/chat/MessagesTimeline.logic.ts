@@ -1,4 +1,5 @@
 import { DOLLAR_MATH_SPAN } from "../../markdown-math";
+import { formatElapsedSeconds } from "../../timestampFormat";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import * as Equal from "effect/Equal";
@@ -23,7 +24,6 @@ export {
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
-  formatDuration,
   isStreamingMessageTextUpdate,
   isStreamingTurnItemTextUpdate,
   timelineEntryIsPersistentResourceCard,
@@ -1078,7 +1078,7 @@ function deriveTurnFolds(input: {
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
           );
-    const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+    const duration = elapsedMs !== null ? formatElapsedSeconds(elapsedMs / 1000) : null;
     const label = isLatestInterruptedTurn
       ? duration
         ? `You stopped after ${duration}`

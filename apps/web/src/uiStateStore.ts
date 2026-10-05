@@ -34,6 +34,8 @@ export interface SidebarProjectSection {
 
 const isProjectIconColor = Schema.is(ProjectIconColor);
 export type SidebarMode = "projects" | "activity";
+export type BranchPickerGroup = "current" | "local" | "remote";
+const BRANCH_PICKER_GROUPS: readonly BranchPickerGroup[] = ["current", "local", "remote"];
 
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
@@ -53,6 +55,7 @@ export interface PersistedUiState {
   lineageDetailsExpandedById?: Record<string, boolean>;
   lineageAgentsClearedAtById?: Record<string, string>;
   issueMilestoneCollapsedById?: Record<string, boolean>;
+  branchPickerCollapsedGroups?: string[];
 }
 
 export interface UiProjectState {
@@ -90,8 +93,17 @@ export interface UiLineageState {
   lineageAgentsClearedAtById: Record<string, string>;
 }
 
+export interface UiBranchPickerState {
+  branchPickerCollapsedGroups: BranchPickerGroup[];
+}
+
 export interface UiState
-  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState, UiLineageState {}
+  extends UiProjectState,
+    UiThreadState,
+    UiEndpointState,
+    UiPullRequestState,
+    UiLineageState,
+    UiBranchPickerState {}
 
 const initialState: UiState = {
   projectExpandedById: {},
@@ -107,6 +119,7 @@ const initialState: UiState = {
   issueMilestoneCollapsedById: {},
   lineageDetailsExpandedById: {},
   lineageAgentsClearedAtById: {},
+  branchPickerCollapsedGroups: [],
 };
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
@@ -225,6 +238,12 @@ function isSidebarMode(value: unknown): value is SidebarMode {
   return value === "projects" || value === "activity";
 }
 
+function sanitizeBranchPickerCollapsedGroups(value: unknown): BranchPickerGroup[] {
+  return Array.isArray(value)
+    ? BRANCH_PICKER_GROUPS.filter((group) => value.includes(group))
+    : initialState.branchPickerCollapsedGroups;
+}
+
 export function parsePersistedState(parsed: PersistedUiState): UiState {
   const projectExpandedById =
     parsed.projectExpandedById === undefined
@@ -278,6 +297,9 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       parsed.lineageAgentsClearedAtById,
     ),
     issueMilestoneCollapsedById: sanitizeBooleanRecord(parsed.issueMilestoneCollapsedById),
+    branchPickerCollapsedGroups: sanitizeBranchPickerCollapsedGroups(
+      parsed.branchPickerCollapsedGroups,
+    ),
   };
 }
 
@@ -358,6 +380,7 @@ export function persistState(state: UiState): void {
         lineageDetailsExpandedById: state.lineageDetailsExpandedById,
         lineageAgentsClearedAtById: state.lineageAgentsClearedAtById,
         issueMilestoneCollapsedById: state.issueMilestoneCollapsedById,
+        branchPickerCollapsedGroups: state.branchPickerCollapsedGroups,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -683,6 +706,20 @@ function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMetho
     : { ...state, pullRequestMergeMethod: method };
 }
 
+export function setBranchPickerGroupCollapsed(
+  state: UiState,
+  group: BranchPickerGroup,
+  collapsed: boolean,
+): UiState {
+  if (state.branchPickerCollapsedGroups.includes(group) === collapsed) return state;
+  return {
+    ...state,
+    branchPickerCollapsedGroups: BRANCH_PICKER_GROUPS.filter((candidate) =>
+      candidate === group ? collapsed : state.branchPickerCollapsedGroups.includes(candidate),
+    ),
+  };
+}
+
 export function resolveProjectExpanded(
   projectExpandedById: Readonly<Record<string, boolean>>,
   preferenceKeys: readonly string[],
@@ -786,6 +823,7 @@ interface UiStateStore extends UiState {
   setLineageAgentsClearedAt: (key: string, clearedAt: string | null) => void;
   setIssueMilestoneCollapsed: (key: string, collapsed: boolean) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
+  setBranchPickerGroupCollapsed: (group: BranchPickerGroup, collapsed: boolean) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -851,6 +889,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setIssueMilestoneCollapsed: (key, collapsed) =>
     set((state) => setIssueMilestoneCollapsed(state, key, collapsed)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
+  setBranchPickerGroupCollapsed: (group, collapsed) =>
+    set((state) => setBranchPickerGroupCollapsed(state, group, collapsed)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

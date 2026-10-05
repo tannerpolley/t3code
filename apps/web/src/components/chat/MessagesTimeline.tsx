@@ -60,7 +60,7 @@ const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { formatElapsedSeconds } from "../../timestampFormat";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
@@ -3177,16 +3177,11 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
     return null;
   }
 
-  const elapsedSeconds = Math.max(0, Math.floor((endedAtMs - startedAtMs) / 1000));
-  if (elapsedSeconds < 60) {
-    return `${elapsedSeconds}s`;
-  }
-
-  return formatDuration(elapsedSeconds * 1_000);
+  return formatElapsedSeconds((endedAtMs - startedAtMs) / 1000);
 }
 
 function formatWorkingTimerNow(startIso: string): string {
-  return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
+  return formatWorkingTimer(startIso, new Date().toISOString()) ?? formatElapsedSeconds(0);
 }
 
 function WorkingTimer({ createdAt }: { createdAt: string }) {
@@ -3205,7 +3200,7 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   }, [createdAt]);
 
   return (
-    <span ref={textRef} className="tabular-nums">
+    <span ref={textRef} className="tabular-nums whitespace-nowrap">
       {initialText}
     </span>
   );

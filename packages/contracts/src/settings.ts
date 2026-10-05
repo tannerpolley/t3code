@@ -523,6 +523,18 @@ export const ClientSettingsSchema = Schema.Struct({
   dailyUsageMeter: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** The sidebar footer's Usage icon shows each provider's weekly quota left instead. */
   sidebarWeeklyUsage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Customizations: this fork's UI changes, each switchable back to the original behavior.
+  branchPickerGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Show a browser tab an agent uses in the right panel instead of the floating mini player. */
+  agentBrowserInPanel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Show a new question from any thread in a floating panel, to answer without opening it. */
+  openQuestionsAutomatically: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  /** Offer to apply supported Codex project settings when onboarding imports projects. */
+  onboardingCodexSettings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
+  shortModelNames: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -2026,6 +2038,11 @@ export const ClientSettingsPatch = Schema.Struct({
   usageLimitModelBreakdown: Schema.optionalKey(Schema.Boolean),
   dailyUsageMeter: Schema.optionalKey(Schema.Boolean),
   sidebarWeeklyUsage: Schema.optionalKey(Schema.Boolean),
+  branchPickerGroups: Schema.optionalKey(Schema.Boolean),
+  agentBrowserInPanel: Schema.optionalKey(Schema.Boolean),
+  openQuestionsAutomatically: Schema.optionalKey(Schema.Boolean),
+  onboardingCodexSettings: Schema.optionalKey(Schema.Boolean),
+  shortModelNames: Schema.optionalKey(Schema.Boolean),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

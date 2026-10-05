@@ -37,6 +37,7 @@ import {
   selectThreadPreviewMiniPlayerTabId,
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import {
   readActiveBrowserRecordingTargets,
@@ -131,6 +132,26 @@ const waitForDesktopOverlay = async (
     threadId: threadRef.threadId,
     timeoutMs: waitBudgetMs,
   });
+};
+
+/**
+ * The desktop navigate call settles only when the page finishes loading, so a
+ * hung page would outlive the broker's deadline. Stop waiting at the host
+ * deadline and let readiness polling report the timeout instead; the broker
+ * treats an unanswered request as a dead host and drops the connection.
+ */
+const navigateWithinDeadline = async (navigation: Promise<void>, deadlineMs: number) => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      navigation,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, Math.max(0, deadlineMs - Date.now()));
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 interface ExecutablePreviewWebview extends Element {
@@ -262,6 +283,18 @@ const currentStatus = async (
     loading: navStatus?._tag === "Loading",
     ...viewportStatus,
   };
+};
+
+/**
+ * Shows a tab an agent is using: in the right panel, or in the floating mini player when the
+ * user turned "Agent browser opens in the side panel" off.
+ */
+const presentAgentBrowser = (threadRef: ScopedThreadRef, tabId: string, inPanel: boolean) => {
+  if (inPanel) {
+    useRightPanelStore.getState().openBrowser(threadRef, tabId);
+    return;
+  }
+  usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(tabId));
 };
 
 const raiseAtomCommandFailure = (result: Parameters<typeof squashAtomCommandFailure>[0]): never => {
@@ -399,7 +432,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           const readyState = readThreadPreviewState(threadRef);
           const runtimeTabId = previewRuntimeTabId(threadRef, readyState.serverEpoch, readyTabId);
           if (request.operation !== "open") {
-            const { autoShowFloatingPreview } = await resolveBrowserDefaults();
+            const { autoShowFloatingPreview, agentBrowserInPanel } = await resolveBrowserDefaults();
             if (
               shouldAutoShowPreviewForAutomationUse({
                 operation: request.operation,
@@ -410,9 +443,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                     ?.has(runtimeTabId) ?? false,
               })
             ) {
-              usePreviewMiniPlayerStore
-                .getState()
-                .open(threadRef, browserMiniPlayerSource(readyTabId));
+              presentAgentBrowser(threadRef, readyTabId, agentBrowserInPanel);
             }
           }
           browserActivity.release ??= acquireBrowserSurfaceActivity(runtimeTabId);
@@ -462,6 +493,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   // configured default, same as a hand-opened tab.
                   viewport: browserDefaultOpenViewport(defaults),
                   profileId: browserDefaultOpenProfileId(defaults),
+                  openedByAgent: true,
                 },
               });
               if (result._tag === "Failure") {
@@ -510,9 +542,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 updatePreviewServerSnapshot(threadRef, resizeResult.value);
               }
             }
+            const browserDefaults = await resolveBrowserDefaults();
             const shouldPresentPreview = shouldOpenPreviewMiniPlayer(
               input,
-              (await resolveBrowserDefaults()).autoShowFloatingPreview,
+              browserDefaults.autoShowFloatingPreview,
             );
             const explicitlySuppressed = explicitlySuppressesPreviewMiniPlayer(input);
             const suppressedTabs = presentationSuppressedRuntimeTabsRef.current.get(
@@ -541,9 +574,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               }
             }
             if (shouldPresentPreview) {
-              usePreviewMiniPlayerStore
-                .getState()
-                .open(threadRef, browserMiniPlayerSource(activeTabId));
+              presentAgentBrowser(threadRef, activeTabId, browserDefaults.agentBrowserInPanel);
             }
             if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
               await requireReadyTab();
@@ -557,7 +588,10 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             }
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);
-              await previewBridge.navigate(activeRuntimeTabId, resolvedInputUrl);
+              await navigateWithinDeadline(
+                previewBridge.navigate(activeRuntimeTabId, resolvedInputUrl),
+                hostDeadlineMs,
+              );
               await waitForNavigationReadiness(
                 threadRef,
                 request.requestId,
@@ -565,7 +599,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 activeRuntimeTabId,
                 request.operation,
                 "load",
-                request.timeoutMs,
+                hostDeadlineMs - Date.now(),
               );
             }
             return await currentStatus(threadRef, activeTabId);
@@ -573,14 +607,19 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "navigate": {
             const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationNavigateInput;
-            const resolution = resolveBrowserNavigationTarget(
-              environmentId,
-              input.target ?? {
-                kind: "url",
-                url: input.url!,
-              },
-            );
-            await ready.bridge.navigate(ready.runtimeTabId, resolution.resolvedUrl);
+            const navigation =
+              input.reload === "bypassCache"
+                ? ready.bridge.hardReload(ready.runtimeTabId)
+                : input.reload === "normal"
+                  ? ready.bridge.refresh(ready.runtimeTabId)
+                  : ready.bridge.navigate(
+                      ready.runtimeTabId,
+                      resolveBrowserNavigationTarget(
+                        environmentId,
+                        input.target ?? { kind: "url", url: input.url! },
+                      ).resolvedUrl,
+                    );
+            await navigateWithinDeadline(navigation, hostDeadlineMs);
             await waitForNavigationReadiness(
               threadRef,
               request.requestId,
@@ -588,7 +627,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               ready.runtimeTabId,
               request.operation,
               input.readiness ?? "load",
-              input.timeoutMs ?? request.timeoutMs,
+              hostDeadlineMs - Date.now(),
             );
             return await currentStatus(threadRef, ready.tabId);
           }

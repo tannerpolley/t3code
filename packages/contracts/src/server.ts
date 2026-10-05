@@ -118,6 +118,8 @@ export const ServerProviderSkill = Schema.Struct({
    * only the agent can start it. Composers must not offer it under `/`.
    */
   userInvocable: Schema.optional(Schema.Boolean),
+  /** Owning plugin when `scope` is `"plugin"`; `name` is then `<plugin>:<skill>`. */
+  pluginName: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

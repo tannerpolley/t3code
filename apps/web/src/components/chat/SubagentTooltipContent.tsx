@@ -23,6 +23,8 @@ import { ThreadHoverCard } from "../ThreadHoverCard";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
+import { useClientSettings } from "~/hooks/useSettings";
+import { shortModelName } from "./providerIconUtils";
 import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
 
 /** Geometry and preview limits stay identical in lineage and timeline tooltips. */
@@ -42,7 +44,12 @@ export function SubagentTooltipContent(props: {
   result?: string | null | undefined;
   progress?: string | null | undefined;
 }) {
-  const { modelLabel, workspace: metadata } = resolveSubagentMetadata(props);
+  const metadataResult = resolveSubagentMetadata(props);
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
+  const modelLabel = shortModelNames
+    ? shortModelName(metadataResult.modelLabel)
+    : metadataResult.modelLabel;
+  const metadata = metadataResult.workspace;
   const preview = subagentDetailPreview(props);
   const driver = props.provider?.driver ?? props.driver;
   const entries = deriveProviderInstanceEntries(props.providers ?? []);

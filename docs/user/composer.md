@@ -183,6 +183,10 @@ provider. On mobile, both are also available before starting a thread on
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
 
+Skills from Claude Code and Codex plugins you have enabled appear too, marked
+**Plugin** and named `plugin:skill`. Turn plugins on or off in the provider
+itself.
+
 After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,
 and your next message starts the agent again with the new setup.

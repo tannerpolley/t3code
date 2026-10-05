@@ -24,6 +24,10 @@ import {
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { toastManager } from "./ui/toast";
 
+// A click on a system notification can raise the window, and the focus it causes can
+// arrive before the click itself. A notification closed in between drops the click.
+const CLICK_AFTER_FOCUS_GRACE_MS = 1_000;
+
 export function ThreadNotificationCoordinator() {
   const environmentIds = useEnvironmentIds();
   const mode = useClientSettings((settings) => settings.notificationMode);
@@ -36,6 +40,13 @@ export function ThreadNotificationCoordinator() {
   const onNotification = useCallback((environmentId: EnvironmentId, notification: Notification) => {
     pending.current.get(notification.tag)?.notification.close();
     pending.current.set(notification.tag, { environmentId, notification });
+    setNotificationBadge(pending.current.size);
+  }, []);
+  const onRetract = useCallback((tag: string) => {
+    const entry = pending.current.get(tag);
+    if (!entry) return;
+    entry.notification.close();
+    pending.current.delete(tag);
     setNotificationBadge(pending.current.size);
   }, []);
 
@@ -51,18 +62,24 @@ export function ThreadNotificationCoordinator() {
   }, [environmentIds]);
 
   useEffect(() => {
-    const clear = () => {
-      for (const { notification } of pending.current.values()) notification.close();
+    const clear = (closeAfterMs?: number) => {
+      const delivered = [...pending.current.values()];
       pending.current.clear();
       setNotificationBadge(0);
+      const close = () => {
+        for (const { notification } of delivered) notification.close();
+      };
+      if (closeAfterMs === undefined) close();
+      else setTimeout(close, closeAfterMs);
     };
+    const clearOnFocus = () => clear(CLICK_AFTER_FOCUS_GRACE_MS);
     clear();
     if (!hasDesktopNotifications(mode)) return;
-    const unsubscribe = window.desktopBridge?.onNotificationBadgeClear?.(clear);
-    window.addEventListener("focus", clear);
+    const unsubscribe = window.desktopBridge?.onNotificationBadgeClear?.(clearOnFocus);
+    window.addEventListener("focus", clearOnFocus);
     return () => {
       unsubscribe?.();
-      window.removeEventListener("focus", clear);
+      window.removeEventListener("focus", clearOnFocus);
       clear();
     };
   }, [mode]);
@@ -84,6 +101,7 @@ export function ThreadNotificationCoordinator() {
       key={environmentId}
       environmentId={environmentId}
       onNotification={onNotification}
+      onRetract={onRetract}
     />
   ));
 }
@@ -91,9 +109,11 @@ export function ThreadNotificationCoordinator() {
 function EnvironmentNotifications({
   environmentId,
   onNotification,
+  onRetract,
 }: {
   environmentId: EnvironmentId;
   onNotification: (environmentId: EnvironmentId, notification: Notification) => void;
+  onRetract: (tag: string) => void;
 }) {
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const mode = useClientSettings((settings) => settings.notificationMode);
@@ -107,6 +127,7 @@ function EnvironmentNotifications({
   const previous = useRef(
     new Map<ThreadId, { attention: string | null; completion: number | null }>(),
   );
+  const toasts = useRef(new Map<ThreadId, string>());
 
   useEffect(() => {
     if (shell.status !== "live" || Option.isNone(shell.snapshot)) {
@@ -133,6 +154,13 @@ function EnvironmentNotifications({
           ? completedAt
           : (prior?.completion ?? null);
       next.set(thread.id, { attention, completion });
+      if (prior?.attention && attention !== prior.attention) {
+        // Answered, decided, or replaced by a new turn: its alert would now lie.
+        const toastId = toasts.current.get(thread.id);
+        if (toastId !== undefined) toastManager.close(toastId);
+        toasts.current.delete(thread.id);
+        onRetract(`${environmentId}:${thread.id}`);
+      }
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
         attention && attention !== prior.attention
@@ -190,6 +218,7 @@ function EnvironmentNotifications({
             },
           },
         });
+        toasts.current.set(thread.id, toastId);
         continue;
       }
       if (
@@ -227,6 +256,7 @@ function EnvironmentNotifications({
     mode,
     navigate,
     onNotification,
+    onRetract,
     shell,
   ]);
 

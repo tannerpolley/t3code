@@ -39,6 +39,7 @@ export function BranchPicker({
   open,
   onOpenChange,
   onSelectItem,
+  extraData,
   hasNextPage,
   isFetchingNextPage,
   onLoadNext,
@@ -58,6 +59,8 @@ export function BranchPicker({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelectItem: (value: string) => void;
+  /** Re-renders visible rows when it changes; rows are cached by item key. */
+  extraData?: unknown;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   onLoadNext: () => void;
@@ -201,6 +204,7 @@ export function BranchPicker({
                 ref={branchListRef}
                 data={filteredItems}
                 keyExtractor={(item) => item}
+                extraData={extraData}
                 {...(getItemType ? { getItemType } : {})}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={28}

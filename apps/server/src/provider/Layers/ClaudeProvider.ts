@@ -36,7 +36,7 @@ import {
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import { discoverClaudeSkills, discoverClaudeSkillsAndPlugins } from "../Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "../ProviderDriver.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
@@ -184,6 +184,21 @@ export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+/**
+ * A probe started in the home directory would read `~/.claude/settings.json` as
+ * project settings, and Claude's startup plugin sync then records every enabled
+ * plugin as a project install for $HOME. Home is never a project, so read only
+ * user settings there.
+ */
+function claudeProbeSettingSources(
+  cwd: string | undefined,
+  home: string | undefined,
+): Array<SettingSource> {
+  const trim = (path: string) => path.replace(/[\\/]+$/, "");
+  const inHome = cwd !== undefined && home !== undefined && trim(cwd) === trim(home);
+  return inHome ? ["user"] : [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES];
+}
+
 /** Build the exact SDK options used by the periodic Claude capability probe. */
 export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly executablePath: string;
@@ -195,7 +210,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
-    settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
+    settingSources: claudeProbeSettingSources(input.cwd, input.environment.HOME),
     // The probe keeps filesystem setting sources for slash-command discovery,
     // but must not run the user's hooks: it fires every few minutes, so
     // SessionStart hooks would run on every health check.
@@ -563,7 +578,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
+  const { skills, plugins } = yield* discoverClaudeSkillsAndPlugins(
+    claudeSettings,
+    cwd,
+    resolvedEnvironment,
+  );
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
@@ -575,6 +594,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       models,
       slashCommands: dedupedSlashCommands,
       skills,
+      plugins,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -612,6 +632,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     models,
     slashCommands: dedupedSlashCommands,
     skills,
+    plugins,
     probe: {
       installed: true,
       version: parsedVersion,

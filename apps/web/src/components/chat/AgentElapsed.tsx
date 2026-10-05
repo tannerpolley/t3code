@@ -44,7 +44,7 @@ export function AgentElapsed({
     return null;
   }
   return (
-    <span ref={textRef} className="tabular-nums">
+    <span ref={textRef} className="tabular-nums whitespace-nowrap">
       {formatElapsedSeconds(elapsedMs / 1000)}
     </span>
   );
