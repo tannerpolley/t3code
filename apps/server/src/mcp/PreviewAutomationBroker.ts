@@ -3,6 +3,7 @@ import {
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationControlInterruptedError,
   PreviewAutomationExecutionError,
+  PreviewAutomationFileUnavailableError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
@@ -22,7 +23,9 @@ import {
   type PreviewAutomationOperation,
   type PreviewAutomationHost,
   type PreviewAutomationHostFocus,
+  type PreviewAutomationOpenInput,
   type PreviewAutomationResponse,
+  type PreviewAutomationStatus,
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -32,11 +35,14 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import { issueAssetUrl } from "../assets/AssetAccess.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 export interface PreviewAutomationInvokeInput {
@@ -62,9 +68,18 @@ export class PreviewAutomationBroker extends Context.Service<
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
+    /**
+     * While "Agent browser tab limits" is on, a timed-out open or navigate that reused a tab
+     * hard-reloads that tab once and retries.
+     */
     readonly invoke: <A = unknown>(
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
+    /** `preview_open`; a local file `path` reaches the client as a signed asset URL. */
+    readonly open: (request: {
+      readonly scope: McpInvocationContext.McpThreadInvocationScope;
+      readonly input: PreviewAutomationOpenInput;
+    }) => Effect.Effect<PreviewAutomationStatus, PreviewAutomationError>;
   }
 >()("t3/mcp/PreviewAutomationBroker") {}
 
@@ -318,6 +333,9 @@ const classifyResponseError = (
 
 export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const crypto = yield* Crypto.Crypto;
+  const path = yield* Path.Path;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const assetContext = yield* Effect.context<Effect.Services<ReturnType<typeof issueAssetUrl>>>();
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     assignments: new Map(),
@@ -471,7 +489,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     }
   });
 
-  const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
+  const invokeOnce = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeoutMs = input.timeoutMs ?? 15_000;
@@ -655,7 +673,85 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return result;
   });
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  const tabLimitsEnabled = serverSettings.getSettings.pipe(
+    Effect.map((settings) => settings.agentBrowserTabLimits),
+    Effect.orElseSucceed(() => true),
+  );
+
+  const invoke = <A = unknown>(request: PreviewAutomationInvokeInput) => {
+    let targetTabId = request.tabId;
+    return invokeOnce<A>({
+      ...request,
+      onTargetTab: (tabId) => {
+        targetTabId = tabId;
+        request.onTargetTab?.(tabId);
+      },
+    }).pipe(
+      Effect.catchTag("PreviewAutomationTimeoutError", (error) =>
+        Effect.gen(function* () {
+          const stuckTabId = targetTabId;
+          const reusesTab =
+            request.operation === "navigate" ||
+            (request.operation === "open" &&
+              (request.input as PreviewAutomationOpenInput).reuseExistingTab !== false);
+          if (!reusesTab || stuckTabId === undefined || !(yield* tabLimitsEnabled)) {
+            return yield* error;
+          }
+          // A page that never finishes loading usually recovers from a hard
+          // reload. Heal the same tab once, then retry; never loop.
+          yield* invokeOnce({
+            scope: request.scope,
+            operation: "navigate",
+            input: { reload: "bypassCache", readiness: "none" },
+            tabId: stuckTabId,
+          }).pipe(Effect.mapError(() => error));
+          return yield* invokeOnce<A>({ ...request, tabId: stuckTabId });
+        }),
+      ),
+    );
+  };
+
+  /**
+   * Serves a local file through a signed asset URL. The URL is relative so
+   * each client resolves it against its own connection to this server.
+   */
+  const issueFileUrl = Effect.fn("PreviewAutomationBroker.issueFileUrl")(function* (
+    scope: McpInvocationContext.McpThreadInvocationScope,
+    filePath: string,
+  ) {
+    if (!path.isAbsolute(filePath)) {
+      return yield* new PreviewAutomationFileUnavailableError({
+        path: filePath,
+        reason: "pass an absolute path.",
+      });
+    }
+    // ponytail: served as a single file, so an HTML page's relative sibling assets
+    // don't load; issue a workspace-file asset from the thread's workspace if that matters.
+    const asset = yield* issueAssetUrl({
+      resource: { _tag: "media-file", threadId: scope.thread.threadId, path: filePath },
+    }).pipe(
+      Effect.provide(assetContext),
+      Effect.mapError(
+        (error) =>
+          new PreviewAutomationFileUnavailableError({ path: filePath, reason: error.message }),
+      ),
+    );
+    return asset.relativeUrl;
+  });
+
+  const open: PreviewAutomationBroker["Service"]["open"] = Effect.fn(
+    "PreviewAutomationBroker.open",
+  )(function* ({ scope, input: { path: filePath, tabId, ...input } }) {
+    const url = filePath === undefined ? input.url : yield* issueFileUrl(scope, filePath);
+    return yield* invoke<PreviewAutomationStatus>({
+      scope,
+      operation: "open",
+      input: { ...input, ...(url === undefined ? {} : { url }) },
+      ...(tabId === undefined ? {} : { tabId }),
+    });
+  });
+
+  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke, open });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);

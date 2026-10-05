@@ -41,6 +41,8 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
+import * as ServerSettings from "../serverSettings.ts";
+
 export class PreviewManager extends Context.Service<
   PreviewManager,
   {
@@ -184,6 +186,7 @@ const buildIdleSnapshot = (input: {
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PreviewManagerMake() {
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const serverEpoch = NodeCrypto.randomUUID();
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
   // Unbounded PubSub is fine here — events are tiny and we don't want to
@@ -273,10 +276,17 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             profileId: input.profileId,
             updatedAt,
           });
+      // The agent tab cap applies only while "Agent browser tab limits" is on.
+      const capAgentTabs =
+        input.openedByAgent === true &&
+        (yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.agentBrowserTabLimits),
+          Effect.orElseSucceed(() => true),
+        ));
       yield* SynchronizedRef.modifyEffect(stateRef, (current) =>
         Effect.gen(function* () {
           // Map order is open order, so the first agent tabs are the oldest.
-          const agentTabs = input.openedByAgent
+          const agentTabs = capAgentTabs
             ? sessionsForThread(current, input.threadId).filter((entry) => entry.openedByAgent)
             : [];
           const evicted = removeSessions(
