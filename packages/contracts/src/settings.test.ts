@@ -1105,3 +1105,32 @@ describe("branch naming settings", () => {
     },
   );
 });
+
+describe("fork sidebar preferences", () => {
+  it("retains existing persisted settings through snapshots, encoding, and patches", () => {
+    const input = {
+      projectsView: false,
+      codexStyleSidebar: false,
+      sectionFolderColors: false,
+      projectIconFallback: "initials",
+      sidebarTogglePosition: "right",
+      topBackButton: false,
+      autoOrganizeByFolder: false,
+      revealOpenThreadInSidebar: false,
+      lineageDetailsExpanded: true,
+      lineageAutoClearMinutes: 5,
+    };
+    expect(encodeClientSettings(decodeClientSettings(input))).toMatchObject(input);
+    expect(decodeClientSettingsPatch(input)).toEqual(input);
+    expect(decodeClientSettings({ activityNeedsYouFirst: true })).not.toHaveProperty(
+      "activityNeedsYouFirst",
+    );
+    expect(() => decodeClientSettingsPatch({ lineageAutoClearMinutes: -1 })).toThrow();
+    expect(
+      encodeServerSettings(decodeServerSettings({ projectFolderRoot: "/work" })),
+    ).toMatchObject({ projectFolderRoot: "/work" });
+    expect(decodeServerSettingsPatch({ projectFolderRoot: "/work" })).toEqual({
+      projectFolderRoot: "/work",
+    });
+  });
+});

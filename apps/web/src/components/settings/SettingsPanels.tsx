@@ -1,3 +1,4 @@
+import { SidebarProjectSettings } from "./SidebarProjectSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
@@ -2254,6 +2255,161 @@ export function GeneralSettingsPanel() {
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
+        <SidebarProjectSettings />
+        <SettingsRow
+          {...searchableSetting("projects-view")}
+          description="Adds a Projects view alongside Activity. Project expansion keeps every project available."
+          control={
+            <Switch
+              checked={settings.projectsView}
+              onCheckedChange={(checked) => updateSettings({ projectsView: Boolean(checked) })}
+              aria-label="Projects view"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("codex-style-sidebar")}
+          description="Use compact project rows with aligned status and work-time columns."
+          control={
+            <Switch
+              checked={settings.codexStyleSidebar}
+              onCheckedChange={(checked) => updateSettings({ codexStyleSidebar: Boolean(checked) })}
+              aria-label="Compact project rows"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("section-folder-colors")}
+          description="Use section colors for projects with folder icons."
+          control={
+            <Switch
+              checked={settings.sectionFolderColors}
+              onCheckedChange={(checked) =>
+                updateSettings({ sectionFolderColors: Boolean(checked) })
+              }
+              aria-label="Section folder colors"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("auto-organize-by-folder")}
+          description="Place unsorted projects into sections based on the folder organization root."
+          control={
+            <Switch
+              checked={settings.autoOrganizeByFolder}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoOrganizeByFolder: Boolean(checked) })
+              }
+              aria-label="Organize new projects by folder"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("reveal-open-thread-in-sidebar")}
+          description="Expand the project and sections that contain a thread when you open it."
+          control={
+            <Switch
+              checked={settings.revealOpenThreadInSidebar}
+              onCheckedChange={(checked) =>
+                updateSettings({ revealOpenThreadInSidebar: Boolean(checked) })
+              }
+              aria-label="Reveal open thread"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("top-back-button")}
+          description="Show Back in page headers as well as the sidebar footer."
+          control={
+            <Switch
+              checked={settings.topBackButton}
+              onCheckedChange={(checked) => updateSettings({ topBackButton: Boolean(checked) })}
+              aria-label="Top Back button"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("lineage-details-expanded")}
+          description="Expand agent details by default. Rows you close stay closed."
+          control={
+            <Switch
+              checked={settings.lineageDetailsExpanded}
+              onCheckedChange={(checked) =>
+                updateSettings({ lineageDetailsExpanded: Boolean(checked) })
+              }
+              aria-label="Expand agent details"
+            />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("project-icon-fallback")}
+          control={
+            <Select
+              value={settings.projectIconFallback}
+              onValueChange={(value) => {
+                if (value === "folder" || value === "initials")
+                  updateSettings({ projectIconFallback: value });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Default project icon">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup align="end">
+                <SelectItem value="folder" key="folder">
+                  Folder
+                </SelectItem>
+                <SelectItem value="initials" key="initials">
+                  Initials
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("sidebar-toggle-position")}
+          control={
+            <Select
+              value={settings.sidebarTogglePosition}
+              onValueChange={(value) => {
+                if (value === "left" || value === "right")
+                  updateSettings({ sidebarTogglePosition: value });
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-44"
+                aria-label="Sidebar toggle position"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup align="end">
+                <SelectItem value="left" key="left">
+                  Left
+                </SelectItem>
+                <SelectItem value="right" key="right">
+                  Right
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("lineage-auto-clear-minutes")}
+          description="Hide finished agents under Previous agents after this many minutes. Zero keeps them visible."
+          control={
+            <Input
+              type="number"
+              min={0}
+              value={settings.lineageAutoClearMinutes}
+              aria-label="Clear finished agents automatically"
+              onChange={(event) => {
+                const value = Number(event.currentTarget.value);
+                if (Number.isInteger(value) && value >= 0)
+                  updateSettings({ lineageAutoClearMinutes: value });
+              }}
+            />
+          }
+        />
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."

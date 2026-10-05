@@ -1,0 +1,69 @@
+import { CircleAlertIcon, CircleXIcon, ClockIcon, MessageCircleQuestionIcon } from "lucide-react";
+
+import { cn } from "~/lib/utils";
+import type { SidebarThreadStatus } from "./Sidebar.logic";
+import { Spinner } from "./ui/spinner";
+
+/** A sidebar thread status, plus `done` for a finished run worth a green dot. */
+export type ThreadStatusMarkStatus = SidebarThreadStatus | "done";
+
+/** Maps a Lineage edge status (subagent, fork run, or transfer) onto the shared mark. */
+export function lineageStatusMark(status: string | null): ThreadStatusMarkStatus {
+  switch (status) {
+    case "preparing":
+    case "queued":
+    case "starting":
+    case "pending":
+    case "running":
+    case "in_progress":
+      return "working";
+    case "waiting":
+      return "waiting";
+    case "failed":
+    case "error":
+      return "failed";
+    case "completed":
+      return "done";
+    case "input":
+    case "approval":
+      return status;
+    default:
+      return "ready";
+  }
+}
+
+/**
+ * The right-side status mark shared by sidebar thread rows and Lineage rows: a blue spinner while
+ * working, a green dot when done, an icon when it needs you or failed, a gray dot when settled.
+ */
+export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMarkStatus }) {
+  const iconClass = "size-3.5 shrink-0";
+  switch (status) {
+    case "working":
+      return <Spinner aria-label="Working" size="sm" tone="working" />;
+    case "waiting":
+      // Its own turn is done but subagents or background tasks still run: same spinner, amber, half speed.
+      return <Spinner aria-label="Waiting on background work" size="sm" tone="waiting" />;
+    case "done":
+      return (
+        <span aria-label="Done" role="img" className={cn(iconClass, "grid place-items-center")}>
+          <span className="size-2 rounded-full bg-success" />
+        </span>
+      );
+    case "approval":
+      return <CircleAlertIcon aria-hidden className={cn(iconClass, "text-warning")} />;
+    case "input":
+      return <MessageCircleQuestionIcon aria-hidden className={cn(iconClass, "text-warning")} />;
+    case "failed":
+      return <CircleXIcon aria-hidden className={cn(iconClass, "text-error")} />;
+    case "limited":
+      return <ClockIcon aria-hidden className={cn(iconClass, "text-warning")} />;
+    case "ready":
+      // A settled thread still fills the slot, so the time beside it never shifts.
+      return (
+        <span aria-label="Idle" role="img" className={cn(iconClass, "grid place-items-center")}>
+          <span className="size-2 rounded-full bg-sidebar-muted-foreground/35" />
+        </span>
+      );
+  }
+}

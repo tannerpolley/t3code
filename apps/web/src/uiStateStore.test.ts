@@ -2,6 +2,8 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  addSidebarProjectSection,
+  deleteSidebarProjectSection,
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
@@ -9,10 +11,21 @@ import {
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
+  moveProjectToSidebarProjectSection,
   reorderProjects,
+  reorderSidebarProjectSectionProjects,
+  reorderSidebarProjectSections,
+  renameSidebarProjectSection,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setLineageAgentsClearedAt,
+  setLineageDetailsExpanded,
   setProjectExpanded,
+  setSidebarMode,
+  setSidebarOtherProjectsExpanded,
+  setSidebarProjectSectionColor,
+  setSidebarProjectSectionExpanded,
+  setSidebarProjectSectionFolderIcons,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
   type UiState,
@@ -22,11 +35,16 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    sidebarProjectSections: [],
+    sidebarOtherProjectsExpanded: true,
+    sidebarMode: "activity",
     sidebarProjectScopeKey: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
+    lineageDetailsExpandedById: {},
+    lineageAgentsClearedAtById: {},
     ...overrides,
   };
 }
@@ -156,6 +174,81 @@ describe("uiStateStore pure functions", () => {
     expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
     expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
   });
+
+  it("keeps the Projects view and section organization independent of Activity filters", () => {
+    const projects = setSidebarMode(makeUiState(), "projects");
+    const work = addSidebarProjectSection(projects, { id: "work", name: " Work " });
+    const personal = addSidebarProjectSection(work, { id: "personal", name: "Personal" });
+    const placed = moveProjectToSidebarProjectSection(
+      moveProjectToSidebarProjectSection(personal, "project-a", "work"),
+      "project-b",
+      "work",
+    );
+    const reordered = reorderSidebarProjectSectionProjects(placed, "work", [
+      "project-b",
+      "project-a",
+    ]);
+    const moved = moveProjectToSidebarProjectSection(reordered, "project-a", "personal");
+    const collapsed = setSidebarProjectSectionExpanded(moved, "work", false);
+    const renamed = renameSidebarProjectSection(collapsed, "work", "Now");
+    const colored = setSidebarProjectSectionColor(renamed, "work", "blue");
+    const folders = setSidebarProjectSectionFolderIcons(colored, "work", true);
+    const ordered = reorderSidebarProjectSections(folders, ["personal", "work"]);
+
+    expect(ordered.sidebarProjectSections).toEqual([
+      { id: "personal", name: "Personal", projectKeys: ["project-a"], collapsed: false },
+      {
+        id: "work",
+        name: "Now",
+        projectKeys: ["project-b"],
+        collapsed: true,
+        color: "blue",
+        folderIcons: true,
+      },
+    ]);
+    expect(setSidebarOtherProjectsExpanded(ordered, false).sidebarOtherProjectsExpanded).toBe(
+      false,
+    );
+    expect(deleteSidebarProjectSection(ordered, "work").sidebarProjectSections).toEqual([
+      ordered.sidebarProjectSections[0],
+    ]);
+    expect(
+      parsePersistedState({ sidebarProjectSections: ordered.sidebarProjectSections }),
+    ).toMatchObject({
+      sidebarMode: "projects",
+      sidebarProjectSections: ordered.sidebarProjectSections,
+    });
+  });
+
+  it("limits subsections to one level and returns their projects to the parent on delete", () => {
+    const work = addSidebarProjectSection(makeUiState(), { id: "work", name: "Work" });
+    const nested = addSidebarProjectSection(work, {
+      id: "nested",
+      name: "Nested",
+      parentId: "work",
+    });
+    expect(addSidebarProjectSection(nested, { id: "deep", name: "Deep", parentId: "nested" })).toBe(
+      nested,
+    );
+    const placed = moveProjectToSidebarProjectSection(nested, "project-a", "nested");
+    expect(deleteSidebarProjectSection(placed, "nested").sidebarProjectSections).toEqual([
+      { id: "work", name: "Work", projectKeys: ["project-a"], collapsed: false },
+    ]);
+  });
+
+  it("remembers lineage expansion and clear timestamps", () => {
+    const open = setLineageDetailsExpanded(makeUiState(), ["env:parent"], true);
+    const cleared = setLineageAgentsClearedAt(open, "env:parent", "show-all");
+    expect(cleared.lineageDetailsExpandedById).toEqual({ "env:parent": true });
+    expect(cleared.lineageAgentsClearedAtById).toEqual({ "env:parent": "show-all" });
+    expect(
+      parsePersistedState({ lineageAgentsClearedAtById: { "env:parent": "show-all" } })
+        .lineageAgentsClearedAtById,
+    ).toEqual({ "env:parent": "show-all" });
+    expect(
+      setLineageAgentsClearedAt(cleared, "env:parent", null).lineageAgentsClearedAtById,
+    ).toEqual({});
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -197,12 +290,17 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      sidebarProjectSections: [],
+      sidebarOtherProjectsExpanded: true,
+      sidebarMode: "activity",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
       pullRequestMergeMethod: "merge",
+      lineageDetailsExpandedById: {},
+      lineageAgentsClearedAtById: {},
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -297,6 +395,9 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      sidebarProjectSections: [],
+      sidebarOtherProjectsExpanded: true,
+      sidebarMode: "activity",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -319,6 +420,9 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      sidebarProjectSections: [],
+      sidebarOtherProjectsExpanded: true,
+      sidebarMode: "activity",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -332,6 +436,8 @@ describe("uiStateStore persistence", () => {
         },
       },
       pullRequestMergeMethod: "merge",
+      lineageDetailsExpandedById: {},
+      lineageAgentsClearedAtById: {},
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,

@@ -124,6 +124,13 @@ import {
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
+import {
+  currentAddProjectSection,
+  placeAddedProject,
+  setAddProjectSection,
+} from "../projectSectionPlacement";
+import { useProjectFolderAppearance } from "../projectFolderAppearance";
+import { sectionFolderPath } from "../sectionProjectPath";
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -337,8 +344,15 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
   }
 }
 
-function projectFaviconIcon(project: Project): ReactNode {
-  return <ProjectFavicon project={project} className={ITEM_ICON_CLASS} />;
+function SectionProjectIcon({
+  project,
+  projectKey,
+}: {
+  project: Project;
+  projectKey: string | null;
+}) {
+  const appearance = useProjectFolderAppearance(projectKey);
+  return <ProjectFavicon project={project} className={ITEM_ICON_CLASS} {...appearance} />;
 }
 
 function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null): string | null {
@@ -458,10 +472,6 @@ function notifyThemeSaveFailure(): void {
       description: "Try again.",
     }),
   );
-}
-
-function projectFavicon(project: Project) {
-  return <ProjectFavicon project={project} className="size-4" />;
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
@@ -592,6 +602,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onOpenCommandPalette((detail) => {
+        setAddProjectSection(detail.open === "add-project" ? (detail.sectionId ?? null) : null);
         if (detail.open === "new-thread-in") {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
@@ -608,6 +619,10 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       }),
     [openAddProject, openNewThreadIn, setOpen],
   );
+
+  useEffect(() => {
+    if (!state.open) setAddProjectSection(null);
+  }, [state.open]);
 
   return (
     <ComposerHandleContext value={composerHandleRef}>
@@ -1110,6 +1125,22 @@ function OpenCommandPaletteDialog(props: {
       );
       const environmentSettings = environment?.serverConfig?.settings ?? null;
       const baseDirectory = environmentSettings?.addProjectBaseDirectory?.trim() ?? "";
+      // Started from a section: browse from that section's folder, the layout Organize by
+      // folder reads (<root>/<Section>[/<Subsection>]).
+      const sectionId = currentAddProjectSection();
+      const sections = sectionId === null ? [] : useUiStateStore.getState().sidebarProjectSections;
+      const section = sections.find((candidate) => candidate.id === sectionId);
+      const parent = sections.find((candidate) => candidate.id === section?.parentId);
+      const sectionFolder =
+        section === undefined
+          ? null
+          : sectionFolderPath(
+              environmentSettings?.projectFolderRoot?.trim() || baseDirectory,
+              parent === undefined ? [section.name] : [parent.name, section.name],
+            );
+      if (sectionFolder !== null) {
+        return ensureBrowseDirectoryPath(sectionFolder);
+      }
       if (baseDirectory.length === 0) {
         return "~/";
       }
@@ -1298,7 +1329,15 @@ function OpenCommandPaletteDialog(props: {
             />
           );
         },
-        icon: projectFaviconIcon,
+        icon: (project) => (
+          <SectionProjectIcon
+            project={project}
+            projectKey={
+              projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`)?.projectKey ??
+              null
+            }
+          />
+        ),
         runProject: openProjectFromSearch,
       }),
     [
@@ -1350,7 +1389,15 @@ function OpenCommandPaletteDialog(props: {
               </span>
             );
           },
-          icon: projectFaviconIcon,
+          icon: (project) => (
+            <SectionProjectIcon
+              project={project}
+              projectKey={
+                projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`)?.projectKey ??
+                null
+              }
+            />
+          ),
           runProject: async (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
             const contextualRefBelongsToGroup =
@@ -2357,7 +2404,10 @@ function OpenCommandPaletteDialog(props: {
       readonly rawCwd: string;
       readonly platform: string;
       readonly currentProjectCwd: string | null;
+      readonly sectionId?: string | null;
     }) => {
+      const sectionId =
+        input.sectionId === undefined ? currentAddProjectSection() : input.sectionId;
       const environment = environments.find(
         (candidate) => candidate.environmentId === input.environmentId,
       );
@@ -2403,6 +2453,7 @@ function OpenCommandPaletteDialog(props: {
         cwd,
       );
       if (existing) {
+        placeAddedProject(scopeProjectRef(existing.environmentId, existing.id), sectionId);
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
@@ -2460,6 +2511,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
+      placeAddedProject(scopeProjectRef(input.environmentId, projectId), sectionId);
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(input.environmentId, projectId)),
       );
@@ -2491,11 +2543,12 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const handleAddProject = useCallback(
-    async (rawCwd: string) => {
+    async (rawCwd: string, sectionId = currentAddProjectSection()) => {
       if (!browseEnvironmentId) return;
       await handleAddProjectForEnvironment({
         environmentId: browseEnvironmentId,
         rawCwd,
+        sectionId,
         platform: browseEnvironmentPlatform,
         currentProjectCwd: currentProjectCwdForBrowse,
       });
@@ -2658,6 +2711,8 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
+    const sectionId = currentAddProjectSection();
+
     // Older servers only offer the blocking clone: the palette has to wait
     // for git so it can add the project afterwards.
     if (browseEnvironment?.serverConfig?.environment.capabilities.projectCloneTracking !== true) {
@@ -2682,7 +2737,7 @@ function OpenCommandPaletteDialog(props: {
         }
         return;
       }
-      await handleAddProject(cloneResult.value.cwd);
+      await handleAddProject(cloneResult.value.cwd, sectionId);
       return;
     }
 
@@ -2715,8 +2770,9 @@ function OpenCommandPaletteDialog(props: {
       }
       return;
     }
-    setOpen(false);
     const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
+    placeAddedProject(projectRef, sectionId);
+    setOpen(false);
     // The create event usually lands before this call returns; give the shell
     // stream a moment so the draft opens with its project resolved instead of
     // flashing the project picker.

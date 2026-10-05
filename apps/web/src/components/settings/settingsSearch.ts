@@ -132,6 +132,73 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "projects-view",
+    title: "Projects view",
+    to: "/settings/general",
+    searchTerms: ["sections projects activity"],
+  },
+  {
+    id: "codex-style-sidebar",
+    title: "Compact project rows",
+    to: "/settings/general",
+    searchTerms: ["codex folder projects style"],
+  },
+  {
+    id: "section-folder-colors",
+    title: "Section folder colors",
+    to: "/settings/general",
+    searchTerms: ["folder icon color"],
+  },
+  {
+    id: "project-icon-fallback",
+    title: "Default project icon",
+    to: "/settings/general",
+    searchTerms: ["folder initials"],
+  },
+  {
+    id: "sidebar-toggle-position",
+    title: "Sidebar toggle position",
+    to: "/settings/general",
+    searchTerms: ["left right"],
+  },
+  {
+    id: "top-back-button",
+    title: "Top Back button",
+    to: "/settings/general",
+    searchTerms: ["navigation back"],
+  },
+  {
+    id: "auto-organize-by-folder",
+    title: "Organize new projects by folder",
+    to: "/settings/general",
+    searchTerms: ["automatic sections folders"],
+  },
+  {
+    id: "organize-by-folder",
+    title: "Organize by folder",
+    to: "/settings/general",
+    searchTerms: ["root folder sections subsections"],
+  },
+  {
+    id: "reveal-open-thread-in-sidebar",
+    title: "Reveal open thread",
+    to: "/settings/general",
+    searchTerms: ["sidebar reveal scroll"],
+  },
+  {
+    id: "lineage-details-expanded",
+    title: "Expand agent details",
+    to: "/settings/general",
+    searchTerms: ["lineage agents model effort"],
+  },
+  {
+    id: "lineage-auto-clear-minutes",
+    title: "Clear finished agents automatically",
+    to: "/settings/general",
+    searchTerms: ["lineage agents previous minutes"],
+  },
+
+  {
     id: "storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/storage",

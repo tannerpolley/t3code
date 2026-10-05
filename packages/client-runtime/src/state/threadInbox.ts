@@ -19,6 +19,7 @@ type WorkingThreadInput = Pick<
     it. Approvals, questions, plan prompts, and failures stay in the inbox. */
 export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  if (thread.runtime?.status === "idle" && thread.latestRun?.status === "failed") return false;
   if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
   // A plan prompt outranks lingering background work: the user has to act on it.
   const run = thread.latestRun;

@@ -8,6 +8,7 @@ import {
   ForwardCompatibleOptional,
   OmittedWhenNull,
   ProjectId,
+  NonNegativeInt,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
@@ -44,6 +45,12 @@ import { PullRequestMergeMethod } from "./pullRequest.ts";
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
+
+export const ProjectIconFallback = Schema.Literals(["folder", "initials"]);
+export type ProjectIconFallback = typeof ProjectIconFallback.Type;
+
+export const SidebarTogglePosition = Schema.Literals(["left", "right"]);
+export type SidebarTogglePosition = typeof SidebarTogglePosition.Type;
 
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
@@ -485,6 +492,20 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
+  projectIconFallback: ProjectIconFallback.pipe(
+    Schema.withDecodingDefault(Effect.succeed("folder" as const)),
+  ),
+  sidebarTogglePosition: SidebarTogglePosition.pipe(
+    Schema.withDecodingDefault(Effect.succeed("left" as const)),
+  ),
+  projectsView: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  codexStyleSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sectionFolderColors: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  topBackButton: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  lineageDetailsExpanded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoOrganizeByFolder: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  revealOpenThreadInSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  lineageAutoClearMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1332,6 +1353,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  projectFolderRoot: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -1652,6 +1674,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  projectFolderRoot: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),
@@ -1795,6 +1818,16 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  projectIconFallback: Schema.optionalKey(ProjectIconFallback),
+  sidebarTogglePosition: Schema.optionalKey(SidebarTogglePosition),
+  projectsView: Schema.optionalKey(Schema.Boolean),
+  codexStyleSidebar: Schema.optionalKey(Schema.Boolean),
+  sectionFolderColors: Schema.optionalKey(Schema.Boolean),
+  topBackButton: Schema.optionalKey(Schema.Boolean),
+  lineageDetailsExpanded: Schema.optionalKey(Schema.Boolean),
+  autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
+  revealOpenThreadInSidebar: Schema.optionalKey(Schema.Boolean),
+  lineageAutoClearMinutes: Schema.optionalKey(NonNegativeInt),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

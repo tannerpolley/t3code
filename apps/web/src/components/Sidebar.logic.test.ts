@@ -16,6 +16,10 @@ import {
   filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
   formatWorkingDurationLabel,
+  formatStoppedThreadDuration,
+  groupRunningSubagentsByParent,
+  withChildNeeds,
+  resolveThreadStatusMark,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
   getSidebarForkParentThreadId,
@@ -60,6 +64,7 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
@@ -976,6 +981,45 @@ describe("resolveSidebarThreadStatus", () => {
         runtime: { ...runtime, status: "idle" as const, lastError: "persisted" },
       }),
     ).toBe("waiting");
+  });
+
+  it("reports waiting on background work below approval, input, and a failed turn", () => {
+    const backgroundWait = { ...runtime, status: "idle" as const };
+    const latestRun = (status: "completed" | "failed") => ({
+      runId: "run-1" as never,
+      status,
+      requestedAt: null,
+      startedAt: null,
+      completedAt: null,
+      assistantMessageId: null,
+    });
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime: backgroundWait,
+        latestRun: latestRun("completed"),
+      }),
+    ).toBe("waiting");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, runtime: backgroundWait }),
+    ).toBe("approval");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, hasPendingUserInput: true, runtime: backgroundWait }),
+    ).toBe("input");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime: backgroundWait,
+        latestRun: latestRun("failed"),
+      }),
+    ).toBe("failed");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        runtime: { ...backgroundWait, lastErrorClass: "usage_limit" as const },
+        latestRun: latestRun("failed"),
+      }),
+    ).toBe("limited");
   });
 
   it("defaults to ready with no runtime", () => {
@@ -2270,5 +2314,186 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+  });
+});
+
+describe("formatStoppedThreadDuration", () => {
+  const startedAt = DateTime.makeUnsafe("2026-09-21T12:00:00.000Z");
+  const completedAt = DateTime.makeUnsafe("2026-09-21T12:01:05.000Z");
+  const base = {
+    ...makeThreadFixture().source,
+    latestRunId: RunId.make("last-run"),
+    latestRunStartedAt: startedAt,
+    latestRunCompletedAt: completedAt,
+    updatedAt: DateTime.makeUnsafe("2026-09-23T12:00:00.000Z"),
+  };
+
+  it("freezes the completed run's duration rather than its age", () => {
+    expect(formatStoppedThreadDuration(presentThreadShell(localEnvironmentId, base))).toBe(
+      "01m 05s",
+    );
+  });
+
+  it.each([
+    ["no run", { latestRunId: null }],
+    ["no start", { latestRunStartedAt: null }],
+    ["no finish", { latestRunCompletedAt: null }],
+    ["neither time", { latestRunStartedAt: null, latestRunCompletedAt: null }],
+    ["older server without a finish field", { latestRunCompletedAt: undefined }],
+  ])("shows nothing for %s", (_, missing) => {
+    const thread = presentThreadShell(localEnvironmentId, { ...base, ...missing });
+    expect(formatStoppedThreadDuration(thread)).toBeNull();
+  });
+});
+
+describe("groupRunningSubagentsByParent", () => {
+  const child = (
+    id: string,
+    overrides: {
+      status?: "running" | "completed" | "idle";
+      fork?: boolean;
+      asking?: boolean;
+      backgroundWork?: boolean;
+      pendingTaskFor?: string;
+    } = {},
+  ) => ({
+    id: ThreadId.make(id),
+    environmentId: localEnvironmentId,
+    pendingBackgroundTasks: [
+      ...(overrides.backgroundWork ? [{ taskId: "bash-1", kind: "monitor" as const }] : []),
+      ...(overrides.pendingTaskFor
+        ? [
+            {
+              taskId: "item-1",
+              kind: "subagent" as const,
+              childThreadId: ThreadId.make(overrides.pendingTaskFor),
+            },
+          ]
+        : []),
+    ],
+    archivedAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: overrides.asking ?? false,
+    lineage: {
+      parentThreadId: ThreadId.make("parent"),
+      relationshipToParent: overrides.fork ? ("fork" as const) : ("subagent" as const),
+      rootThreadId: ThreadId.make("parent"),
+    },
+    runtime: {
+      status: overrides.status ?? "running",
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: null,
+      lastError: null,
+      updatedAt: "2026-09-23T10:00:00.000Z",
+    },
+  });
+
+  it("keeps only running subagent children, keyed by their parent", () => {
+    const grouped = groupRunningSubagentsByParent([
+      child("running"),
+      child("finished", { status: "completed" }),
+      child("idle", { status: "idle" }),
+      child("waiting-on-own-work", { status: "idle", backgroundWork: true }),
+      // Its turn ended, but a pending task still names it.
+      child("result-pending", { status: "completed" }),
+      child("sibling-holding-the-task", { pendingTaskFor: "result-pending" }),
+      child("fork", { fork: true }),
+      child("asking", { status: "completed", asking: true }),
+    ]);
+    expect([...grouped.keys()]).toEqual([
+      scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make("parent"))),
+    ]);
+    expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual([
+      "running",
+      "waiting-on-own-work",
+      "result-pending",
+      "sibling-holding-the-task",
+      "asking",
+    ]);
+  });
+});
+
+describe("withChildNeeds", () => {
+  const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
+  it("shows a child's question on a working or ready parent, but keeps the parent's own urgent state", () => {
+    const asking = { hasPendingApprovals: false, hasPendingUserInput: true };
+    expect(withChildNeeds("working", [idle, asking])).toBe("input");
+    expect(
+      withChildNeeds("ready", [{ hasPendingApprovals: true, hasPendingUserInput: false }]),
+    ).toBe("approval");
+    expect(withChildNeeds("failed", [asking])).toBe("failed");
+    expect(withChildNeeds("waiting", [idle])).toBe("waiting");
+  });
+
+  it("keeps a settled parent waiting while a listed child still works", () => {
+    expect(withChildNeeds("ready", [idle])).toBe("waiting");
+    expect(withChildNeeds("ready", [])).toBe("ready");
+  });
+});
+
+it("does not list a finished child for another environment's task or a running command", () => {
+  const parent = makeThreadFixture({ environmentId: localEnvironmentId });
+  const foreignEnvironment = EnvironmentId.make("foreign");
+  const child = {
+    ...parent,
+    id: ThreadId.make("child"),
+    runtime: null,
+    pendingBackgroundTasks: [{ taskId: "server", kind: "command" as const }],
+    lineage: {
+      parentThreadId: parent.id,
+      rootThreadId: parent.id,
+      relationshipToParent: "subagent" as const,
+    },
+  };
+  const foreign = {
+    ...parent,
+    environmentId: foreignEnvironment,
+    pendingBackgroundTasks: [
+      { taskId: "agent", kind: "subagent" as const, childThreadId: child.id },
+    ],
+  };
+  expect([...groupRunningSubagentsByParent([child, foreign]).values()].flat()).toEqual([]);
+});
+
+describe("resolveThreadStatusMark", () => {
+  const thread = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestRun: makeLatestRun(),
+    runtime: null,
+  };
+
+  it("shows done until the finished thread is opened, from either visit record", () => {
+    expect(
+      resolveThreadStatusMark({ ...thread, lastVisitedAt: "2026-03-09T10:04:00.000Z" }, undefined),
+    ).toBe("done");
+    expect(
+      resolveThreadStatusMark({ ...thread, lastVisitedAt: "2026-03-09T10:06:00.000Z" }, undefined),
+    ).toBe("ready");
+    // Servers without visit tracking fall back to this browser's visit.
+    expect(resolveThreadStatusMark(thread, "2026-03-09T10:06:00.000Z")).toBe("ready");
+  });
+
+  it("keeps a thread waiting on background work amber, not done", () => {
+    expect(
+      resolveThreadStatusMark(
+        {
+          ...thread,
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          runtime: {
+            status: "idle",
+            activeRunId: null,
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            providerName: null,
+            lastError: null,
+            updatedAt: "2026-03-09T10:05:00.000Z",
+          },
+        },
+        undefined,
+      ),
+    ).toBe("waiting");
   });
 });

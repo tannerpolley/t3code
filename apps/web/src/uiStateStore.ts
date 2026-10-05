@@ -1,7 +1,10 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import type { PullRequestMergeMethod } from "@t3tools/contracts";
+import { ProjectIconColor, type PullRequestMergeMethod } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
+import { randomUUID } from "./lib/utils";
+import { organizeSectionsByFolder, type FolderOrganizedProject } from "./sidebarSectionFolders";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 // Version 1 stored card visibility, not folder expansion.
@@ -19,9 +22,25 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v1",
 ] as const;
 
+export interface SidebarProjectSection {
+  id: string;
+  name: string;
+  projectKeys: string[];
+  collapsed: boolean;
+  color?: ProjectIconColor;
+  parentId?: string;
+  folderIcons?: boolean;
+}
+
+const isProjectIconColor = Schema.is(ProjectIconColor);
+export type SidebarMode = "projects" | "activity";
+
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  sidebarProjectSections?: SidebarProjectSection[];
+  sidebarOtherProjectsExpanded?: boolean;
+  sidebarMode?: SidebarMode;
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -31,11 +50,16 @@ export interface PersistedUiState {
   threadChangedFilesExpansionVersion?: number;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
   pullRequestMergeMethod?: string;
+  lineageDetailsExpandedById?: Record<string, boolean>;
+  lineageAgentsClearedAtById?: Record<string, string>;
 }
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
+  sidebarProjectSections: SidebarProjectSection[];
+  sidebarOtherProjectsExpanded: boolean;
+  sidebarMode: SidebarMode;
   // Logical project key the sidebar list is scoped to, or null for "all
   // projects". Lives here so routes that unmount the sidebar (Settings)
   // cannot reset the filter.
@@ -55,17 +79,27 @@ export interface UiPullRequestState {
   pullRequestMergeMethod: PullRequestMergeMethod;
 }
 
+export interface UiLineageState {
+  lineageDetailsExpandedById: Record<string, boolean>;
+  lineageAgentsClearedAtById: Record<string, string>;
+}
+
 export interface UiState
-  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState {}
+  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState, UiLineageState {}
 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  sidebarProjectSections: [],
+  sidebarOtherProjectsExpanded: true,
+  sidebarMode: "activity",
   sidebarProjectScopeKey: null,
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
   pullRequestMergeMethod: "merge",
+  lineageDetailsExpandedById: {},
+  lineageAgentsClearedAtById: {},
 };
 
 const LEGACY_PROJECT_CWD_PREFERENCE_PREFIX = "legacy-project-cwd:";
@@ -85,6 +119,53 @@ function sanitizeStringArray(value: unknown): string[] {
       value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0),
     ),
   ];
+}
+
+const MAX_SIDEBAR_PROJECT_SECTION_NAME_LENGTH = 80;
+
+function normalizeSidebarProjectSectionName(name: string): string {
+  return name.trim().slice(0, MAX_SIDEBAR_PROJECT_SECTION_NAME_LENGTH);
+}
+
+function sanitizeSidebarProjectSections(value: unknown): SidebarProjectSection[] {
+  if (!Array.isArray(value)) return [];
+  const seenIds = new Set<string>();
+  const claimedProjectKeys = new Set<string>();
+  const sections: SidebarProjectSection[] = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const candidate = entry as Record<string, unknown>;
+    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+    const name =
+      typeof candidate.name === "string" ? normalizeSidebarProjectSectionName(candidate.name) : "";
+    if (!id || !name || seenIds.has(id)) return [];
+    seenIds.add(id);
+    const projectKeys = sanitizeStringArray(candidate.projectKeys).filter((key) => {
+      if (claimedProjectKeys.has(key)) return false;
+      claimedProjectKeys.add(key);
+      return true;
+    });
+    return [
+      {
+        id,
+        name,
+        projectKeys,
+        collapsed: candidate.collapsed === true,
+        ...(isProjectIconColor(candidate.color) ? { color: candidate.color } : {}),
+        ...(typeof candidate.parentId === "string" && candidate.parentId.length > 0
+          ? { parentId: candidate.parentId }
+          : {}),
+        ...(candidate.folderIcons === true ? { folderIcons: true } : {}),
+      },
+    ];
+  });
+  const topLevelIds = new Set(
+    sections.filter((section) => !section.parentId).map((section) => section.id),
+  );
+  return sections.map((section) => {
+    if (section.parentId === undefined || topLevelIds.has(section.parentId)) return section;
+    const { parentId: _orphaned, ...rest } = section;
+    return rest;
+  });
 }
 
 function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
@@ -117,8 +198,24 @@ function sanitizeTimestampRecord(value: unknown): Record<string, string> {
   );
 }
 
+function sanitizeLineageAgentsClearedAtRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] =>
+        entry[0].length > 0 &&
+        typeof entry[1] === "string" &&
+        (entry[1] === "show-all" || Number.isFinite(Date.parse(entry[1]))),
+    ),
+  );
+}
+
 function isPullRequestMergeMethod(value: unknown): value is PullRequestMergeMethod {
   return value === "merge" || value === "squash" || value === "rebase";
+}
+
+function isSidebarMode(value: unknown): value is SidebarMode {
+  return value === "projects" || value === "activity";
 }
 
 export function parsePersistedState(parsed: PersistedUiState): UiState {
@@ -144,10 +241,21 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     parsed.projectOrder === undefined
       ? sanitizeStringArray(parsed.projectOrderCwds).map(legacyProjectCwdPreferenceKey)
       : sanitizeStringArray(parsed.projectOrder);
+  const sidebarProjectSections = sanitizeSidebarProjectSections(parsed.sidebarProjectSections);
 
   return {
     projectExpandedById,
     projectOrder,
+    sidebarProjectSections,
+    sidebarOtherProjectsExpanded:
+      typeof parsed.sidebarOtherProjectsExpanded === "boolean"
+        ? parsed.sidebarOtherProjectsExpanded
+        : initialState.sidebarOtherProjectsExpanded,
+    sidebarMode: isSidebarMode(parsed.sidebarMode)
+      ? parsed.sidebarMode
+      : sidebarProjectSections.length > 0
+        ? "projects"
+        : initialState.sidebarMode,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById:
       parsed.threadChangedFilesExpansionVersion === THREAD_CHANGED_FILES_EXPANSION_VERSION
@@ -158,6 +266,10 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
+    lineageDetailsExpandedById: sanitizeBooleanRecord(parsed.lineageDetailsExpandedById),
+    lineageAgentsClearedAtById: sanitizeLineageAgentsClearedAtRecord(
+      parsed.lineageAgentsClearedAtById,
+    ),
   };
 }
 
@@ -226,12 +338,17 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        sidebarProjectSections: state.sidebarProjectSections,
+        sidebarOtherProjectsExpanded: state.sidebarOtherProjectsExpanded,
+        sidebarMode: state.sidebarMode,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         sidebarProjectScopeKey: state.sidebarProjectScopeKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
         threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
         pullRequestMergeMethod: state.pullRequestMergeMethod,
+        lineageDetailsExpandedById: state.lineageDetailsExpandedById,
+        lineageAgentsClearedAtById: state.lineageAgentsClearedAtById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -340,6 +457,204 @@ export function setSidebarProjectScopeKey(state: UiState, projectKey: string | n
   };
 }
 
+export function setSidebarMode(state: UiState, mode: SidebarMode): UiState {
+  return state.sidebarMode === mode ? state : { ...state, sidebarMode: mode };
+}
+
+export function setSidebarOtherProjectsExpanded(state: UiState, expanded: boolean): UiState {
+  return state.sidebarOtherProjectsExpanded === expanded
+    ? state
+    : { ...state, sidebarOtherProjectsExpanded: expanded };
+}
+
+export function addSidebarProjectSection(
+  state: UiState,
+  section: Pick<SidebarProjectSection, "id" | "name" | "parentId">,
+): UiState {
+  const id = section.id.trim();
+  const name = normalizeSidebarProjectSectionName(section.name);
+  if (!id || !name || state.sidebarProjectSections.some((candidate) => candidate.id === id)) {
+    return state;
+  }
+  const parent =
+    section.parentId === undefined
+      ? undefined
+      : state.sidebarProjectSections.find((candidate) => candidate.id === section.parentId);
+  if (section.parentId !== undefined && (!parent || parent.parentId !== undefined)) return state;
+  return {
+    ...state,
+    sidebarProjectSections: [
+      ...state.sidebarProjectSections,
+      { id, name, projectKeys: [], collapsed: false, ...(parent ? { parentId: parent.id } : {}) },
+    ],
+  };
+}
+
+export function renameSidebarProjectSection(
+  state: UiState,
+  sectionId: string,
+  name: string,
+): UiState {
+  const nextName = normalizeSidebarProjectSectionName(name);
+  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
+  if (!nextName || !section || section.name === nextName) return state;
+  return {
+    ...state,
+    sidebarProjectSections: state.sidebarProjectSections.map((candidate) =>
+      candidate.id === sectionId ? { ...candidate, name: nextName } : candidate,
+    ),
+  };
+}
+
+export function setSidebarProjectSectionColor(
+  state: UiState,
+  sectionId: string,
+  color: ProjectIconColor | null,
+): UiState {
+  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
+  if (!section || (section.color ?? null) === color) return state;
+  return {
+    ...state,
+    sidebarProjectSections: state.sidebarProjectSections.map((candidate) => {
+      if (candidate.id !== sectionId) return candidate;
+      const { color: _color, ...rest } = candidate;
+      return color === null ? rest : { ...rest, color };
+    }),
+  };
+}
+
+export function setSidebarProjectSectionFolderIcons(
+  state: UiState,
+  sectionId: string,
+  folderIcons: boolean,
+): UiState {
+  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
+  if (!section || (section.folderIcons === true) === folderIcons) return state;
+  return {
+    ...state,
+    sidebarProjectSections: state.sidebarProjectSections.map((candidate) => {
+      if (candidate.id !== sectionId) return candidate;
+      const { folderIcons: _previous, ...rest } = candidate;
+      return folderIcons ? { ...rest, folderIcons: true } : rest;
+    }),
+  };
+}
+
+export function deleteSidebarProjectSection(state: UiState, sectionId: string): UiState {
+  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
+  if (!section) return state;
+  const sidebarProjectSections = state.sidebarProjectSections.flatMap((candidate) => {
+    if (candidate.id === sectionId || candidate.parentId === sectionId) return [];
+    if (candidate.id === section.parentId) {
+      return [{ ...candidate, projectKeys: [...candidate.projectKeys, ...section.projectKeys] }];
+    }
+    return [candidate];
+  });
+  return { ...state, sidebarProjectSections };
+}
+
+export function setSidebarProjectSectionExpanded(
+  state: UiState,
+  sectionId: string,
+  expanded: boolean,
+): UiState {
+  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
+  if (!section || section.collapsed === !expanded) return state;
+  return {
+    ...state,
+    sidebarProjectSections: state.sidebarProjectSections.map((candidate) =>
+      candidate.id === sectionId ? { ...candidate, collapsed: !expanded } : candidate,
+    ),
+  };
+}
+
+export function moveProjectToSidebarProjectSection(
+  state: UiState,
+  projectKey: string,
+  sectionId: string | null,
+): UiState {
+  const currentSection = state.sidebarProjectSections.find((section) =>
+    section.projectKeys.includes(projectKey),
+  );
+  if (
+    currentSection?.id === sectionId ||
+    (sectionId !== null &&
+      !state.sidebarProjectSections.some((section) => section.id === sectionId))
+  ) {
+    return state;
+  }
+  if (!currentSection && sectionId === null) return state;
+  return {
+    ...state,
+    sidebarProjectSections: state.sidebarProjectSections.map((section) => ({
+      ...section,
+      projectKeys:
+        section.id === sectionId
+          ? [...section.projectKeys.filter((key) => key !== projectKey), projectKey]
+          : section.projectKeys.filter((key) => key !== projectKey),
+    })),
+  };
+}
+
+export function reorderSidebarProjectSectionProjects(
+  state: UiState,
+  sectionId: string,
+  projectKeys: readonly string[],
+): UiState {
+  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
+  if (!section) return state;
+  const requested = new Set(projectKeys);
+  const allowed = new Set(section.projectKeys);
+  const nextProjectKeys = [
+    ...new Set(projectKeys.filter((key) => allowed.has(key))),
+    ...section.projectKeys.filter((key) => !requested.has(key)),
+  ];
+  if (nextProjectKeys.every((key, index) => key === section.projectKeys[index])) return state;
+  return {
+    ...state,
+    sidebarProjectSections: state.sidebarProjectSections.map((candidate) =>
+      candidate.id === sectionId ? { ...candidate, projectKeys: nextProjectKeys } : candidate,
+    ),
+  };
+}
+
+export function reorderSidebarProjectSections(
+  state: UiState,
+  sectionIds: readonly string[],
+): UiState {
+  const requested = new Set(sectionIds);
+  const byId = new Map(state.sidebarProjectSections.map((section) => [section.id, section]));
+  const nextIds = [
+    ...new Set(sectionIds.filter((id) => byId.has(id))),
+    ...state.sidebarProjectSections.map((section) => section.id).filter((id) => !requested.has(id)),
+  ];
+  if (nextIds.every((id, index) => id === state.sidebarProjectSections[index]?.id)) return state;
+  return { ...state, sidebarProjectSections: nextIds.map((id) => byId.get(id)!) };
+}
+
+export function setLineageDetailsExpanded(
+  state: UiState,
+  keys: readonly string[],
+  expanded: boolean,
+): UiState {
+  const changed = keys.filter((key) => state.lineageDetailsExpandedById[key] !== expanded);
+  if (changed.length === 0) return state;
+  const lineageDetailsExpandedById = { ...state.lineageDetailsExpandedById };
+  for (const key of changed) lineageDetailsExpandedById[key] = expanded;
+  return { ...state, lineageDetailsExpandedById };
+}
+
+export function setLineageAgentsClearedAt(
+  state: UiState,
+  key: string,
+  clearedAt: string | null,
+): UiState {
+  if ((state.lineageAgentsClearedAtById[key] ?? null) === clearedAt) return state;
+  const { [key]: _previous, ...lineageAgentsClearedAtById } = state.lineageAgentsClearedAtById;
+  if (clearedAt !== null) lineageAgentsClearedAtById[key] = clearedAt;
+  return { ...state, lineageAgentsClearedAtById };
+}
+
 function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMethod): UiState {
   return state.pullRequestMergeMethod === method
     ? state
@@ -429,6 +744,24 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
+  setSidebarMode: (mode: SidebarMode) => void;
+  setSidebarOtherProjectsExpanded: (expanded: boolean) => void;
+  addSidebarProjectSection: (name: string, parentId?: string) => void;
+  organizeSidebarSectionsByFolder: (
+    projects: readonly FolderOrganizedProject[],
+    root: string,
+    onlyUnsorted?: boolean,
+  ) => void;
+  renameSidebarProjectSection: (sectionId: string, name: string) => void;
+  setSidebarProjectSectionColor: (sectionId: string, color: ProjectIconColor | null) => void;
+  setSidebarProjectSectionFolderIcons: (sectionId: string, folderIcons: boolean) => void;
+  deleteSidebarProjectSection: (sectionId: string) => void;
+  setSidebarProjectSectionExpanded: (sectionId: string, expanded: boolean) => void;
+  moveProjectToSidebarProjectSection: (projectKey: string, sectionId: string | null) => void;
+  reorderSidebarProjectSectionProjects: (sectionId: string, projectKeys: readonly string[]) => void;
+  reorderSidebarProjectSections: (sectionIds: readonly string[]) => void;
+  setLineageDetailsExpanded: (keys: readonly string[], expanded: boolean) => void;
+  setLineageAgentsClearedAt: (key: string, clearedAt: string | null) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -450,6 +783,48 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   setSidebarProjectScopeKey: (projectKey) =>
     set((state) => setSidebarProjectScopeKey(state, projectKey)),
+  setSidebarMode: (mode) => set((state) => setSidebarMode(state, mode)),
+  setSidebarOtherProjectsExpanded: (expanded) =>
+    set((state) => setSidebarOtherProjectsExpanded(state, expanded)),
+  addSidebarProjectSection: (name, parentId) =>
+    set((state) =>
+      addSidebarProjectSection(state, {
+        id: randomUUID(),
+        name,
+        ...(parentId === undefined ? {} : { parentId }),
+      }),
+    ),
+  organizeSidebarSectionsByFolder: (projects, root, onlyUnsorted = false) =>
+    set((state) => {
+      const organized = organizeSectionsByFolder({
+        sections: state.sidebarProjectSections,
+        projects,
+        root,
+        makeId: randomUUID,
+        onlyUnsorted,
+      });
+      return organized.changed ? { ...state, sidebarProjectSections: organized.sections } : state;
+    }),
+  renameSidebarProjectSection: (sectionId, name) =>
+    set((state) => renameSidebarProjectSection(state, sectionId, name)),
+  setSidebarProjectSectionColor: (sectionId, color) =>
+    set((state) => setSidebarProjectSectionColor(state, sectionId, color)),
+  setSidebarProjectSectionFolderIcons: (sectionId, folderIcons) =>
+    set((state) => setSidebarProjectSectionFolderIcons(state, sectionId, folderIcons)),
+  deleteSidebarProjectSection: (sectionId) =>
+    set((state) => deleteSidebarProjectSection(state, sectionId)),
+  setSidebarProjectSectionExpanded: (sectionId, expanded) =>
+    set((state) => setSidebarProjectSectionExpanded(state, sectionId, expanded)),
+  moveProjectToSidebarProjectSection: (projectKey, sectionId) =>
+    set((state) => moveProjectToSidebarProjectSection(state, projectKey, sectionId)),
+  reorderSidebarProjectSectionProjects: (sectionId, projectKeys) =>
+    set((state) => reorderSidebarProjectSectionProjects(state, sectionId, projectKeys)),
+  reorderSidebarProjectSections: (sectionIds) =>
+    set((state) => reorderSidebarProjectSections(state, sectionIds)),
+  setLineageDetailsExpanded: (keys, expanded) =>
+    set((state) => setLineageDetailsExpanded(state, keys, expanded)),
+  setLineageAgentsClearedAt: (key, clearedAt) =>
+    set((state) => setLineageAgentsClearedAt(state, key, clearedAt)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),

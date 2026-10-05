@@ -13,6 +13,8 @@ import { projectIconColorClassName } from "~/projectIconColors";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
+import { resolveProjectFolderAppearance } from "~/projectFolderAppearance";
+import { useUiStateStore } from "~/uiStateStore";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -61,6 +63,8 @@ export function DraftHeroHeadline({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
+  const folderColorsEnabled = useClientSettings((settings) => settings.sectionFolderColors);
+  const sidebarProjectSections = useUiStateStore((store) => store.sidebarProjectSections);
   const setLogicalProjectDraftThreadId = useComposerDraftStore(
     (store) => store.setLogicalProjectDraftThreadId,
   );
@@ -279,10 +283,20 @@ export function DraftHeroHeadline({
             </MenuRadioItem>
           )}
           {menuEntries.map(({ group }) => {
+            const { folderColor, forceFolder } = resolveProjectFolderAppearance(
+              group.projectKey,
+              sidebarProjectSections,
+              folderColorsEnabled,
+            );
             return (
               <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
                 <span className="flex min-w-0 items-center gap-2">
-                  <ProjectFavicon project={group} className="size-4 shrink-0" />
+                  <ProjectFavicon
+                    project={group}
+                    className="size-4 shrink-0"
+                    folderColor={folderColor}
+                    forceFolder={forceFolder}
+                  />
                   <Tooltip>
                     <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
                       {group.displayName}

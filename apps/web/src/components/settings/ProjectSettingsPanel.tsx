@@ -1,11 +1,9 @@
 import {
   isAtomCommandInterrupted,
   mapAtomCommandResult,
-  settlePromise,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -13,18 +11,13 @@ import * as Cause from "effect/Cause";
 import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useComposerDraftStore } from "../../composerDraftStore";
-import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
-import { readLocalApi } from "../../localApi";
-import {
-  type SidebarProjectGroupMember,
-  type SidebarProjectSnapshot,
-} from "../../sidebarProjectGrouping";
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useRemoveProjectMembers } from "../../hooks/useRemoveProjectMembers";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { useProjectFolderAppearance } from "../../projectFolderAppearance";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -49,10 +42,6 @@ const ProjectIconPickerDialog = lazy(() =>
     default: module.ProjectIconPickerDialog,
   })),
 );
-
-function memberKey(member: { environmentId: string; id: string }): string {
-  return `${member.environmentId}:${member.id}`;
-}
 
 /** `project` is the Projects page shortcut: the new-thread defaults people change most. */
 export type ProjectSettingsCategory = "general" | "integrations" | "source-control" | "project";
@@ -164,8 +153,8 @@ function ProjectDetail({
   group: SidebarProjectSnapshot;
   hasOtherMembers: boolean;
 }) {
-  const navigate = useNavigate({ from: "/settings" });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { folderColor, forceFolder } = useProjectFolderAppearance(group.projectKey);
   const { environments } = useEnvironments();
   const environmentById = useMemo(
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
@@ -175,9 +164,7 @@ function ProjectDetail({
     group.memberProjects.find(
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
     ) ?? group.memberProjects[0]!;
-  const threads = useThreadShells();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
-  const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const projectNameEditedRef = useRef(false);
 
   const faviconPath = representative.faviconPath ?? null;
@@ -294,94 +281,11 @@ function ProjectDetail({
   );
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
-
+  const removeProjectMembers = useRemoveProjectMembers();
   const removeMembers = useCallback(
-    async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
-      const api = readLocalApi();
-      if (!api) return;
-
-      const memberKeys = new Set(members.map(memberKey));
-      const projectThreads = threads.filter((thread) =>
-        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
-      );
-      const isWholeGroup = members.length === group.memberProjects.length;
-      const targetKind = hasOtherMembers || !isWholeGroup ? "checkout" : "project";
-      const singleMember = members.length === 1 ? members[0]! : null;
-      const targetLabel = singleMember?.title ?? group.displayName;
-      const confirmed = await settlePromise(() =>
-        api.dialogs.confirm(
-          [
-            projectThreads.length > 0
-              ? `Remove ${targetKind} "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`
-              : `Remove ${targetKind} "${targetLabel}"?`,
-            ...(singleMember
-              ? [
-                  `Path: ${singleMember.workspaceRoot}`,
-                  ...(singleMember.environmentLabel
-                    ? [`Environment: ${singleMember.environmentLabel}`]
-                    : []),
-                ]
-              : [`This removes ${members.length} grouped project entries.`]),
-            ...(projectThreads.length > 0
-              ? [
-                  "This permanently clears conversation history for those threads and any archived threads.",
-                ]
-              : ["This permanently clears any archived conversation history."]),
-            isWholeGroup && !hasOtherMembers
-              ? "This removes only the project entries, not the files on disk."
-              : "Other entries in this grouped project are unaffected.",
-            "This action cannot be undone.",
-          ].join("\n"),
-          { variant: "destructive" },
-        ),
-      );
-      if (confirmed._tag === "Failure" || !confirmed.value) return;
-
-      const draftStore = useComposerDraftStore.getState();
-      for (const member of members) {
-        const memberThreads = projectThreads.filter(
-          (thread) =>
-            thread.environmentId === member.environmentId && thread.projectId === member.id,
-        );
-        const result = mapAtomCommandResult(
-          await deleteProject({
-            environmentId: member.environmentId,
-            input: {
-              projectId: member.id,
-              force: true,
-            },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          reportFailure(`Failed to remove "${member.title}"`, result);
-          return;
-        }
-        const projectRef = scopeProjectRef(member.environmentId, member.id);
-        releaseProjectDraftUploads(
-          projectRef,
-          memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
-        );
-        const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
-        if (projectDraftThread) {
-          draftStore.clearDraftThread(projectDraftThread.draftId);
-        }
-        draftStore.clearProjectDraftThreadId(projectRef);
-      }
-
-      if (isWholeGroup && !hasOtherMembers) {
-        void navigate({ to: "/", replace: true });
-      }
-    },
-    [
-      deleteProject,
-      group.displayName,
-      group.memberProjects.length,
-      hasOtherMembers,
-      navigate,
-      reportFailure,
-      threads,
-    ],
+    (members: SidebarProjectSnapshot["memberProjects"]) =>
+      removeProjectMembers({ group, hasOtherMembers, members }),
+    [group, hasOtherMembers, removeProjectMembers],
   );
 
   const checkoutChoices = (
@@ -449,7 +353,9 @@ function ProjectDetail({
                   ? `${projectIcon.text} · ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
-                    : (faviconPath ?? "Automatic")
+                    : projectIcon?.kind === "folder"
+                      ? `Folder · ${projectIcon.color}`
+                      : (faviconPath ?? "Automatic")
             }
             resetAction={
               group.memberProjects.some(
@@ -464,7 +370,12 @@ function ProjectDetail({
             }
             control={
               <div className="flex items-center gap-2">
-                <ProjectFavicon project={representative} className="size-6" />
+                <ProjectFavicon
+                  project={representative}
+                  className="size-6"
+                  folderColor={folderColor}
+                  forceFolder={forceFolder}
+                />
                 <Button
                   size="sm"
                   variant="outline"

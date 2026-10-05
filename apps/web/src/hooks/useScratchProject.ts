@@ -1,3 +1,4 @@
+import { currentAddProjectSection, placeAddedProject } from "../projectSectionPlacement";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -67,8 +68,12 @@ export function useScratchProject() {
       environmentId: EnvironmentId,
       failureTitle = "Could not start without a project",
     ): Promise<EnvironmentProject | null> => {
+      const sectionId = currentAddProjectSection();
       const result = await openScratch({ environmentId, input: {} });
-      if (result._tag === "Success") return result.value;
+      if (result._tag === "Success") {
+        placeAddedProject(scopeProjectRef(result.value.environmentId, result.value.id), sectionId);
+        return result.value;
+      }
       if (!isAtomCommandInterrupted(result)) {
         reportScratchFailure(failureTitle, squashAtomCommandFailure(result));
       }
