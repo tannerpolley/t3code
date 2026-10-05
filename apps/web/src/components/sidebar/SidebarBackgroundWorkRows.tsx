@@ -78,6 +78,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
   const { agents, backgroundTasks } = groupBackgroundWorkTaskRows(props.rows);
   const rows = [...agents, ...backgroundTasks];
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const { listRef, isVisible } = useBackgroundTaskListVisibility(backgroundTasks.length > 0);
   const resourceUsage = useBackgroundTaskResourceUsage({
     environmentId: props.environmentId,
@@ -133,7 +134,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           props.columns && row.kind === "subagent" ? (props.nestedToggle?.(row) ?? null) : null;
         const modelLabel =
           row.kind === "subagent" && row.child
-            ? resolveSidebarThreadModelLabel(row.child, provider)
+            ? resolveSidebarThreadModelLabel(row.child, provider, shortModelNames)
             : null;
         const time =
           row.kind === "subagent" && row.child ? (
@@ -153,11 +154,12 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             <SidebarCaretSlot />
             {icon}
             {modelLabel ? (
-              <span className="max-w-[6.5rem] shrink-0 truncate text-foreground/85">
+              // Gives way before the label, as in the thread row above it.
+              <span className="hidden min-w-0 max-w-[6.5rem] shrink-[100] truncate text-foreground/85 @min-[16rem]/work-row:block">
                 {modelLabel}
               </span>
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
+            <span className="min-w-0 flex-[1_1_5rem] truncate text-foreground/85">{row.label}</span>
             {usage}
             <SidebarTrailingColumns
               count={toggle && !toggle.open ? toggle.count : undefined}
@@ -251,7 +253,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               index === agents.length && agents.length > 0 && "border-t border-sidebar-border/40",
               props.columns
                 ? cn(
-                    "relative ms-1.5 before:absolute before:-start-1.5 before:bottom-0 before:border-s before:border-sidebar-border after:absolute after:-start-1.5 after:top-3 after:w-3 after:border-t after:border-sidebar-border last:before:bottom-auto",
+                    "@container/work-row relative ms-1.5 before:absolute before:-start-1.5 before:bottom-0 before:border-s before:border-sidebar-border after:absolute after:-start-1.5 after:top-3 after:w-3 after:border-t after:border-sidebar-border last:before:bottom-auto",
                     props.nested
                       ? "before:-top-1 last:before:h-4"
                       : "before:-top-2 last:before:h-5",

@@ -847,6 +847,50 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("follows the skill paths a plugin manifest lists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const installPath = path.join(configDir, "plugins", "cache", "mk", "matt", "1");
+      const skills = path.join(installPath, "skills");
+      // Grouped in folders, as mattpocock-skills is: one listed skill, one listed folder of
+      // skills, and an unlisted folder that stays out.
+      yield* writeSkill(
+        path.join(skills, "engineering"),
+        "tdd",
+        ["---", "disable-model-invocation: true", "---"].join("\n"),
+      );
+      yield* writeSkill(path.join(skills, "misc"), "setup", "");
+      yield* writeSkill(path.join(skills, "deprecated"), "old", "");
+      yield* fs.makeDirectory(path.join(installPath, ".claude-plugin"));
+      yield* fs.writeFileString(
+        path.join(installPath, ".claude-plugin", "plugin.json"),
+        toJson({ name: "matt", skills: ["./skills/engineering/tdd", "./skills/misc/"] }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        toJson({ plugins: { "matt@mk": [{ scope: "user", installPath }] } }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        toJson({ enabledPlugins: { "matt@mk": true } }),
+      );
+
+      const discovered = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
+
+      assert.deepEqual(
+        discovered.skills.map((skill) => [skill.name, skill.userInvocationOnly === true]),
+        [
+          ["matt:setup", false],
+          ["matt:tdd", true],
+        ],
+      );
+      assert.deepEqual(discovered.plugins, [{ name: "matt", marketplace: "mk", skillCount: 2 }]);
+    }),
+  );
+
   it.effect("follows a symlinked plugins directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

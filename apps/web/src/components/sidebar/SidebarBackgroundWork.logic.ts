@@ -15,6 +15,7 @@ import {
 
 import type { SidebarThreadSummary } from "../../types";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
+import { shortModelName } from "../chat/providerIconUtils";
 
 type ChildThread = SidebarThreadSummary;
 type LinkedSubagentTask = Extract<OrchestrationV2PendingBackgroundTask, { kind: "subagent" }> & {
@@ -42,16 +43,21 @@ export type BackgroundWorkTaskRow =
       readonly ownerThreadId?: ThreadId;
     });
 
-/** A thread's stored model selection and effort, with no model fallback to its parent. */
+/**
+ * A thread's stored model selection and effort, with no model fallback to its parent. `short`
+ * is the shortModelNames switch.
+ */
 export function resolveSidebarThreadModelLabel(
   thread: Pick<SidebarThreadSummary, "modelSelection">,
   provider: Pick<ServerProvider, "driver" | "models"> | undefined,
+  short = false,
 ): string {
   const model = thread.modelSelection.model.trim();
   const modelSlug = provider
     ? resolveSelectableModel(provider.driver, model, provider.models)
     : model;
-  const modelLabel = resolveSubagentMetadata({ model, provider }).modelLabel;
+  const fullLabel = resolveSubagentMetadata({ model, provider }).modelLabel;
+  const modelLabel = short ? shortModelName(fullLabel) : fullLabel;
   const effort = formatModelSelectionEffort(
     { ...thread.modelSelection, model: modelSlug ?? model },
     provider?.models,

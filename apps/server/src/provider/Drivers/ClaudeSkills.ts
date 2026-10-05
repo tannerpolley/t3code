@@ -2,9 +2,10 @@
  * ClaudeSkills — filesystem discovery of Claude Code skills for the `$` picker.
  *
  * Claude Code loads skills from `<config dir>/skills` (user scope) and
- * `<cwd>/.claude/skills` (project scope), plus `<installPath>/skills` of each
- * enabled plugin (published as `<plugin>:<skill>`), one directory per skill with a
- * `SKILL.md` carrying YAML frontmatter. The user root wins on name collisions,
+ * `<cwd>/.claude/skills` (project scope), plus each enabled plugin's skills
+ * (published as `<plugin>:<skill>`): the paths its `.claude-plugin/plugin.json`
+ * lists under `skills`, or `<installPath>/skills` when it lists none. One
+ * directory per skill with a `SKILL.md` carrying YAML frontmatter. The user root wins on name collisions,
  * matching the CLI. `.agents/skills` is a Codex location: verified against the
  * CLI, a skill that lives only there is answered with `Unknown command`, so it
  * is not scanned here.
@@ -329,19 +330,32 @@ const decodeInstalledPlugins = Schema.decodeUnknownEffect(
   ),
 );
 
+// `<installPath>/.claude-plugin/plugin.json`: `skills` lists skill
+// directories, or directories of them, relative to the install.
+const decodePluginManifest = Schema.decodeUnknownEffect(
+  fromLenientJson(
+    Schema.Struct({
+      skills: Schema.optional(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+    }),
+  ),
+);
+
 interface ClaudePluginRoot {
   readonly name: string;
   readonly marketplace: string | undefined;
-  readonly skillsDirectory: string;
+  /** `listed` paths come from the manifest and may each be one skill rather than a parent. */
+  readonly skillDirectories: ReadonlyArray<{
+    readonly directory: string;
+    readonly listed: boolean;
+  }>;
 }
 
 /**
  * Enabled plugins and where their skills live. A plugin counts only when some
  * settings file switches it on (`enabledPlugins`). A project install wins for
- * its own project; otherwise the user install is used. Only the default
- * `skills/` directory is scanned.
- * ponytail: a `skills` path override in plugin.json is not followed; read the
- * manifest if a plugin in the wild relies on it.
+ * its own project; otherwise the user install is used. The manifest's
+ * `skills` paths replace the default `skills/` directory; a missing or
+ * unreadable manifest keeps the default.
  */
 const readEnabledClaudePlugins = Effect.fn("readEnabledClaudePlugins")(function* (
   configDirPath: string,
@@ -370,7 +384,7 @@ const readEnabledClaudePlugins = Effect.fn("readEnabledClaudePlugins")(function*
     return [];
   }
 
-  return Object.entries(installed.plugins).flatMap(([key, installs]) => {
+  const selected = Object.entries(installed.plugins).flatMap(([key, installs]) => {
     if (enabledPlugins.get(key) !== true) return [];
     const install =
       installs.find((entry) => cwd !== undefined && entry.projectPath === cwd) ??
@@ -383,10 +397,27 @@ const readEnabledClaudePlugins = Effect.fn("readEnabledClaudePlugins")(function*
       {
         name,
         marketplace: at > 0 ? key.slice(at + 1) : undefined,
-        skillsDirectory: path.join(install.installPath, "skills"),
+        installPath: install.installPath,
       },
     ];
   });
+  return yield* Effect.forEach(selected, ({ installPath, ...plugin }) =>
+    fileSystem.readFileString(path.join(installPath, ".claude-plugin", "plugin.json")).pipe(
+      Effect.flatMap(decodePluginManifest),
+      Effect.map((manifest) => manifest.skills),
+      Effect.orElseSucceed(() => undefined),
+      Effect.map((listed): ClaudePluginRoot => ({
+        ...plugin,
+        skillDirectories:
+          listed === undefined
+            ? [{ directory: path.join(installPath, "skills"), listed: false }]
+            : (typeof listed === "string" ? [listed] : listed).map((entry) => ({
+                directory: path.resolve(installPath, entry),
+                listed: true,
+              })),
+      })),
+    ),
+  );
 });
 
 /**
@@ -464,26 +495,39 @@ export const discoverClaudeSkillsAndPlugins = Effect.fn("discoverClaudeSkillsAnd
       directory: string;
       scope: ClaudeSkillScope;
       pluginName?: string;
+      listed?: boolean;
     }> = [
       { directory: path.join(configDirPath, "skills"), scope: "user" },
       ...(cwd
         ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }]
         : []),
-      ...pluginRoots.map((plugin) => ({
-        directory: plugin.skillsDirectory,
-        scope: "plugin" as const,
-        pluginName: plugin.name,
-      })),
+      ...pluginRoots.flatMap((plugin) =>
+        plugin.skillDirectories.map(({ directory, listed }) => ({
+          directory,
+          scope: "plugin" as const,
+          pluginName: plugin.name,
+          listed,
+        })),
+      ),
     ];
 
     const skillsByName = new Map<string, ServerProviderSkill>();
     for (const root of roots) {
-      const entries = yield* fileSystem
-        .readDirectory(root.directory)
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      // A manifest path holding a SKILL.md is that one skill, named by its directory.
+      const single =
+        root.listed === true &&
+        (yield* fileSystem
+          .exists(path.join(root.directory, "SKILL.md"))
+          .pipe(Effect.orElseSucceed(() => false)));
+      const parent = single ? path.dirname(root.directory) : root.directory;
+      const entries = single
+        ? [path.basename(root.directory)]
+        : yield* fileSystem
+            .readDirectory(root.directory)
+            .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
 
       for (const entry of [...entries].sort()) {
-        const skillPath = path.join(root.directory, entry, "SKILL.md");
+        const skillPath = path.join(parent, entry, "SKILL.md");
         const contents = yield* fileSystem
           .readFileString(skillPath)
           .pipe(Effect.orElseSucceed(() => undefined));
