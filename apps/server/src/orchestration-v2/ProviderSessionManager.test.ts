@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  EventId,
+  NodeId,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -404,7 +406,7 @@ function makeProviderAdapter(
 
 function makeTestLayer(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
-  readonly idleTimeoutMs: number;
+  readonly idleTimeoutMs?: number;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
@@ -462,7 +464,7 @@ function makeTestLayer(input: {
     IdAllocator.layer,
     TestMcpRegistryLayer,
     ProviderSessionManager.layerWithOptions({
-      idleTimeoutMs: input.idleTimeoutMs,
+      ...(input.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: input.idleTimeoutMs }),
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
       Layer.provide(
@@ -3561,4 +3563,236 @@ it.effect(
       });
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
+);
+
+// Adapts the fork reaper tests to upstream's manager-owned residency timer.
+it.effect.each([0, 1] as const)(
+  "ProviderSessionManagerV2 uses idleAgentSessionMinutes=%s",
+  (minutes) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settings = ServerSettings.layerTest({ idleAgentSessionMinutes: minutes });
+      yield* Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const allocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make(`thread-idle-setting-${minutes}`);
+        const providerSessionId = yield* allocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({
+              idAllocator: allocator,
+              threadId,
+              now: yield* DateTime.now,
+            }),
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* TestClock.adjust(minutes === 0 ? "31 minutes" : "1 minute");
+        const session = yield* manager.get(providerSessionId);
+        assert.equal(Option.isSome(session), minutes === 0);
+        assert.equal((yield* Ref.get(state)).closeCount, minutes === 0 ? 0 : 1);
+      }).pipe(Effect.provide(makeTestLayer({ state, serverSettingsLayer: settings })));
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 unloads only old finished native children once", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const parentId = ThreadId.make("thread:idle-native-parent");
+      const providerSessionId = yield* allocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: parentId,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId: parentId, now }),
+        ],
+      });
+      yield* manager.open({ threadId: parentId, providerSessionId, modelSelection, runtimePolicy });
+      for (const status of ["completed", "running"] as const) {
+        const childId = ThreadId.make(`thread:idle-native-${status}`);
+        const nodeId = NodeId.make(`node:idle-native-${status}`);
+        const child = yield* makeThreadCreatedEvent({
+          idAllocator: allocator,
+          threadId: childId,
+          now,
+        });
+        const providerThread = {
+          ...makeProviderThread({
+            idAllocator: allocator,
+            threadId: childId,
+            providerSessionId,
+            now,
+          }),
+          id: allocator.derive.providerThread({ driver: CODEX_DRIVER, nativeThreadId: status }),
+          nativeThreadRef: { driver: CODEX_DRIVER, nativeId: status, strength: "strong" as const },
+        };
+        yield* sink.write({
+          events: [
+            {
+              ...child,
+              payload: {
+                ...child.payload,
+                lineage: {
+                  parentThreadId: parentId,
+                  rootThreadId: parentId,
+                  relationshipToParent: "subagent",
+                },
+                forkedFrom: { type: "node", nodeId },
+              },
+            },
+            {
+              id: EventId.make(`event:idle-native-provider-${status}`),
+              type: "provider-thread.updated",
+              threadId: childId,
+              occurredAt: now,
+              payload: providerThread,
+            },
+            {
+              id: EventId.make(`event:idle-native-task-${status}`),
+              type: "subagent.updated",
+              threadId: parentId,
+              occurredAt: now,
+              payload: {
+                id: nodeId,
+                threadId: parentId,
+                runId: null,
+                parentNodeId: NodeId.make("node:idle-native-root"),
+                origin: "provider_native",
+                createdBy: "agent",
+                driver: CODEX_DRIVER,
+                providerInstanceId: modelSelection.instanceId,
+                providerThreadId: providerThread.id,
+                childThreadId: childId,
+                nativeTaskRef: null,
+                prompt: "Review",
+                title: "Review",
+                model: modelSelection.model,
+                status,
+                result: status === "completed" ? "Done" : null,
+                startedAt: now,
+                completedAt: status === "completed" ? now : null,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+      }
+      yield* TestClock.adjust("2 minutes");
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["completed"]);
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          serverSettingsLayer: ServerSettings.layerTest({ idleAgentSessionMinutes: 1 }),
+          hasPendingBackgroundWork: Effect.succeed(true),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 keeps a session with a pending question connected", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:idle-question");
+      const providerSessionId = yield* allocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator: allocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+      yield* sink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId, now })],
+      });
+      const pending = yield* makePendingRuntimeRequestEvents({
+        idAllocator: allocator,
+        threadId,
+        providerSessionId,
+        providerThread,
+        now,
+      });
+      yield* sink.write({ events: pending.events });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      yield* TestClock.adjust("2 minutes");
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          serverSettingsLayer: ServerSettings.layerTest({ idleAgentSessionMinutes: 1 }),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 applies an idle timeout change to existing sessions", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const changes = yield* Queue.unbounded<import("@t3tools/contracts").ServerSettings>();
+    const settingsLayer = Layer.effect(
+      ServerSettings.ServerSettingsService,
+      Effect.gen(function* () {
+        const base = yield* ServerSettings.ServerSettingsService;
+        return {
+          ...base,
+          subscribeChanges: Effect.succeed(Stream.fromQueue(changes)),
+          updateSettings: (patch: import("@t3tools/contracts").ServerSettingsPatch) =>
+            base
+              .updateSettings(patch)
+              .pipe(Effect.tap((settings) => Queue.offer(changes, settings))),
+        };
+      }),
+    ).pipe(Layer.provide(ServerSettings.layerTest({ idleAgentSessionMinutes: 0 })));
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const threadId = ThreadId.make("thread:idle-setting-change");
+      const providerSessionId = yield* allocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({
+            idAllocator: allocator,
+            threadId,
+            now: yield* DateTime.now,
+          }),
+        ],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      yield* TestClock.adjust("40 seconds");
+      yield* settings.updateSettings({ idleAgentSessionMinutes: 1 });
+      yield* TestClock.adjust("20 seconds");
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(makeTestLayer({ state, serverSettingsLayer: settingsLayer }), settingsLayer),
+      ),
+    );
+  }),
 );

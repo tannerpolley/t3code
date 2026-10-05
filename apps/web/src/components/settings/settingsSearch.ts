@@ -348,6 +348,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "idle-agent-session",
+    title: "Idle agent timeout",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["disconnect unload MCP tools memory idle agent session timeout minutes"],
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/general",
