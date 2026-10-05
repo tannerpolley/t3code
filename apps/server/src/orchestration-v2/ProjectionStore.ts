@@ -953,6 +953,18 @@ type ShellThreadRow = {
   readonly runless_item_count: number;
 };
 
+function shellForkSourceIds(rows: Iterable<ShellThreadRow>): ReadonlyArray<ThreadId> {
+  return [
+    ...new Set(
+      [...rows].flatMap((row) =>
+        row.forked_from_run_source_thread_id === null
+          ? []
+          : [ThreadId.make(row.forked_from_run_source_thread_id)],
+      ),
+    ),
+  ];
+}
+
 type ShellRunRow = {
   readonly thread_id: string;
   readonly run_id: string;
@@ -2626,25 +2638,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.model-selection-updated" &&
           event.type !== "thread.provider-switched"
         ) {
-          const rows = yield* sql<PayloadRow>`
-            SELECT payload_json
-            FROM orchestration_v2_projection_threads
+          const updatedAt = DateTime.formatIso(event.occurredAt);
+          yield* sql`
+            UPDATE orchestration_v2_projection_threads
+            SET updated_at = ${updatedAt},
+              payload_json = json_set(payload_json, '$.updatedAt', ${updatedAt})
             WHERE thread_id = ${event.threadId}
-            LIMIT 1
           `;
-          const row = rows[0];
-          if (row !== undefined) {
-            const thread = yield* decodeThreadPayload(row.payload_json);
-            const updatedThread = { ...thread, updatedAt: event.occurredAt };
-            const payloadJson = yield* encodeThreadPayload(updatedThread);
-            yield* sql`
-              UPDATE orchestration_v2_projection_threads
-              SET
-                updated_at = ${stringField(parseEncodedPayload(payloadJson), "updatedAt")},
-                payload_json = ${payloadJson}
-              WHERE thread_id = ${event.threadId}
-            `;
-          }
         }
       }).pipe(
         Effect.mapError(
@@ -5064,18 +5064,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND plan.status = 'active'
               ) AS has_actionable_proposed_plan,
               (
-                SELECT COUNT(*)
-                FROM orchestration_v2_projection_turn_items i
+                SELECT COALESCE(SUM(c.item_count), 0)
+                FROM orchestration_v2_projection_turn_item_counts c
                 LEFT JOIN orchestration_v2_projection_runs r
-                  ON r.run_id = i.run_id
-                WHERE i.thread_id = t.thread_id
-                  AND (i.run_id IS NULL OR r.status <> 'rolled_back')
+                  ON r.run_id = c.run_id
+                WHERE c.thread_id = t.thread_id
+                  AND (c.run_id = '' OR r.status <> 'rolled_back')
               ) AS item_count,
               (
-                SELECT COUNT(*)
-                FROM orchestration_v2_projection_turn_items i
-                WHERE i.thread_id = t.thread_id
-                  AND i.run_id IS NULL
+                SELECT COALESCE((
+                  SELECT c.item_count
+                  FROM orchestration_v2_projection_turn_item_counts c
+                  WHERE c.thread_id = t.thread_id AND c.run_id = ''
+                ), 0)
               ) AS runless_item_count
             FROM orchestration_v2_projection_threads t
             -- The newest run not waiting in a held queue, matching latestUnheldRun.
@@ -5118,33 +5119,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
 
-    const selectShellRunRows = (threadIds?: ReadonlyArray<ThreadId>) =>
-      threadIds === undefined
-        ? sql<ShellRunRow>`
-            SELECT thread_id, run_id, ordinal
-            FROM orchestration_v2_projection_runs
-          `
-        : sql<ShellRunRow>`
-            SELECT thread_id, run_id, ordinal
-            FROM orchestration_v2_projection_runs
-            WHERE thread_id IN ${sql.in(threadIds)}
-          `;
+    const selectShellRunRows = (threadIds: ReadonlyArray<ThreadId>) =>
+      sql<ShellRunRow>`
+        SELECT thread_id, run_id, ordinal
+        FROM orchestration_v2_projection_runs
+        WHERE thread_id IN ${sql.in(threadIds)}
+      `;
 
-    const selectShellRunItemCounts = (threadIds?: ReadonlyArray<ThreadId>) =>
-      threadIds === undefined
-        ? sql<ShellRunItemCountRow>`
-            SELECT thread_id, run_id, COUNT(*) AS item_count
-            FROM orchestration_v2_projection_turn_items
-            WHERE run_id IS NOT NULL
-            GROUP BY thread_id, run_id
-          `
-        : sql<ShellRunItemCountRow>`
-            SELECT thread_id, run_id, COUNT(*) AS item_count
-            FROM orchestration_v2_projection_turn_items
-            WHERE run_id IS NOT NULL
-              AND thread_id IN ${sql.in(threadIds)}
-            GROUP BY thread_id, run_id
-          `;
+    const selectShellRunItemCounts = (threadIds: ReadonlyArray<ThreadId>) =>
+      sql<ShellRunItemCountRow>`
+        SELECT thread_id, run_id, item_count
+        FROM orchestration_v2_projection_turn_item_counts
+        WHERE run_id <> '' AND thread_id IN ${sql.in(threadIds)}
+      `;
 
     const selectShellProviderThreadRows = (threadIds?: ReadonlyArray<ThreadId>) =>
       threadIds === undefined
@@ -5597,14 +5584,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             const threadRows = [...rowsByThreadId.values()];
             const threadIds = [...rowsByThreadId.keys()];
+            const forkSourceIds = shellForkSourceIds(rowsByThreadId.values());
+            const forkRunRows =
+              forkSourceIds.length === 0 ? Effect.succeed([]) : selectShellRunRows(forkSourceIds);
+            const forkItemCountRows =
+              forkSourceIds.length === 0
+                ? Effect.succeed([])
+                : selectShellRunItemCounts(forkSourceIds);
             const readForThreadIds = <A>(
               read: (ids: ReadonlyArray<ThreadId>) => Effect.Effect<ReadonlyArray<A>, unknown>,
             ) =>
               threadIds.length === 0 ? Effect.succeed([] as ReadonlyArray<A>) : read(threadIds);
             const [runRows, itemCountRows, sequenceRows, providerThreadRows, pendingTurnItemRows] =
               yield* Effect.all([
-                readForThreadIds(selectShellRunRows),
-                readForThreadIds(selectShellRunItemCounts),
+                forkRunRows,
+                forkItemCountRows,
                 sql<{ readonly snapshot_sequence: number | null }>`
             SELECT MAX(sequence) AS snapshot_sequence
             FROM orchestration_events
@@ -5691,10 +5685,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
 
             const threadIds = [...rowsByThreadId.keys()];
+            const forkSourceIds = shellForkSourceIds(rowsByThreadId.values());
+            const forkRunRows =
+              forkSourceIds.length === 0 ? Effect.succeed([]) : selectShellRunRows(forkSourceIds);
+            const forkItemCountRows =
+              forkSourceIds.length === 0
+                ? Effect.succeed([])
+                : selectShellRunItemCounts(forkSourceIds);
             const [runRows, itemCountRows, providerThreadRows, pendingTurnItemRows] =
               yield* Effect.all([
-                selectShellRunRows(threadIds),
-                selectShellRunItemCounts(threadIds),
+                forkRunRows,
+                forkItemCountRows,
                 selectShellProviderThreadRows(threadIds),
                 selectShellPendingTurnItemRows(threadIds),
               ]);
