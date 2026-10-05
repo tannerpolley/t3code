@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  CheckpointScopeId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -13,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -30,6 +33,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
 const oldSessionId = ProviderSessionId.make("provider-session:effect-worker-restart:old");
@@ -40,6 +44,78 @@ const providerThreadId = ProviderThreadId.make("provider-thread:effect-worker-re
 const providerTurnId = ProviderTurnId.make("provider-turn:effect-worker-restart");
 const attemptId = RunAttemptId.make("run-attempt:effect-worker-restart");
 const runId = RunId.make("run:effect-worker-restart");
+
+it.effect("a stalled title cannot occupy the lifecycle worker lane", () =>
+  Effect.gen(function* () {
+    const titleStarted = yield* Deferred.make<void>();
+    const stopTitle = yield* Deferred.make<void>();
+    const executed = yield* Ref.make<ReadonlyArray<string>>([]);
+    const workerLayer = EffectWorker.layerWithOptions().pipe(
+      Layer.provideMerge(EffectOutbox.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+      Layer.provide(
+        Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2, {
+          execute: (effect) =>
+            effect.request.type === "thread-title.generate"
+              ? Deferred.succeed(titleStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(stopTitle)),
+                )
+              : Ref.update(executed, (current) => [...current, effect.id]),
+        }),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    yield* Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* outbox.enqueue([
+        ...Array.from({ length: 4 }, (_, i) => ({
+          id: `effect:title:${i}`,
+          commandId: CommandId.make(`command:title:${i}`),
+          threadId: ThreadId.make(`thread:title:${i}`),
+          request: {
+            type: "thread-title.generate" as const,
+            kind: { type: "regenerate" as const },
+          },
+        })),
+        {
+          id: "effect:checkpoint",
+          commandId: CommandId.make("command:checkpoint"),
+          threadId,
+          request: {
+            type: "checkpoint.capture",
+            runId,
+            scopeId: CheckpointScopeId.make("checkpoint-scope:test"),
+          },
+        },
+        {
+          id: "effect:start",
+          commandId: CommandId.make("command:start"),
+          threadId: ThreadId.make("thread:title:0"),
+          request: { type: "provider-turn.start", runId },
+        },
+      ]);
+      const titleNotification = yield* worker.awaitWorkInLane("title").pipe(Effect.forkScoped);
+      const lifecycleNotification = yield* worker
+        .awaitWorkInLane("lifecycle")
+        .pipe(Effect.forkScoped);
+      yield* outbox.notifyAvailable();
+      yield* Fiber.join(titleNotification);
+      yield* Fiber.join(lifecycleNotification);
+      const titleFiber = yield* worker.runOnceInLane("title").pipe(Effect.forkScoped);
+      yield* Deferred.await(titleStarted);
+      assert.isTrue(yield* worker.runOnceInLane("lifecycle"));
+      assert.isTrue(yield* worker.runOnceInLane("lifecycle"));
+      assert.deepEqual(yield* Ref.get(executed), ["effect:checkpoint", "effect:start"]);
+      const checkpoint = yield* outbox.get("effect:checkpoint");
+      assert.equal(Option.getOrThrow(checkpoint).status, "succeeded");
+      assert.isFalse(yield* worker.runOnceInLane("lifecycle"));
+      assert.isTrue(Option.isNone(yield* outbox.nextClaimableAtInLane("lifecycle")));
+      assert.isTrue(Option.isSome(yield* outbox.nextClaimableAtInLane("title")));
+      yield* Deferred.succeed(stopTitle, undefined);
+      assert.isTrue(yield* Fiber.join(titleFiber));
+    }).pipe(Effect.provide(workerLayer));
+  }),
+);
 
 function restartEffect(
   now: DateTime.Utc,
@@ -615,20 +691,28 @@ it.effect("uses durable deadlines, notifications, and a slow liveness poll", () 
     const nextClaimableAt = yield* Ref.make<Option.Option<DateTime.Utc>>(
       Option.some(DateTime.add(now, { milliseconds: 100 })),
     );
-    const worker = EffectWorker.OrchestrationEffectWorkerV2.of({
-      awaitWork: Queue.take(available),
-      runRecoveryOnce: Effect.succeed(false),
-      runOnce: Effect.gen(function* () {
-        const count = yield* Ref.updateAndGet(attempts, (current) => current + 1);
-        if (count === 2) {
-          yield* Ref.set(nextClaimableAt, Option.some(DateTime.add(now, { milliseconds: 5_000 })));
-        }
-        if (count === 3) yield* Ref.set(nextClaimableAt, Option.none());
-        return false;
-      }),
-      nextClaimableAt: Ref.get(nextClaimableAt),
-      drain: () => Effect.succeed(0),
-    });
+    const worker: EffectWorker.OrchestrationEffectWorkerV2["Service"] =
+      EffectWorker.OrchestrationEffectWorkerV2.of({
+        runOnceInLane: (lane) => (lane === "title" ? Effect.succeed(false) : worker.runOnce),
+        awaitWorkInLane: (lane) => (lane === "title" ? Effect.never : worker.awaitWork),
+        nextClaimableAtInLane: (lane) =>
+          lane === "title" ? Effect.succeed(Option.none()) : worker.nextClaimableAt,
+        awaitWork: Queue.take(available),
+        runRecoveryOnce: Effect.succeed(false),
+        runOnce: Effect.gen(function* () {
+          const count = yield* Ref.updateAndGet(attempts, (current) => current + 1);
+          if (count === 2) {
+            yield* Ref.set(
+              nextClaimableAt,
+              Option.some(DateTime.add(now, { milliseconds: 5_000 })),
+            );
+          }
+          if (count === 3) yield* Ref.set(nextClaimableAt, Option.none());
+          return false;
+        }),
+        nextClaimableAt: Ref.get(nextClaimableAt),
+        drain: () => Effect.succeed(0),
+      });
     const awaitAttempts = Effect.fnUntraced(function* (expected: number) {
       while ((yield* Ref.get(attempts)) < expected) {
         yield* Effect.yieldNow;
@@ -666,20 +750,25 @@ it.effect("does not hot-loop when a claim fails", () =>
   Effect.gen(function* () {
     const attempts = yield* Ref.make(0);
     const now = yield* DateTime.now;
-    const worker = EffectWorker.OrchestrationEffectWorkerV2.of({
-      awaitWork: Effect.never,
-      runRecoveryOnce: Effect.succeed(false),
-      runOnce: Ref.update(attempts, (count) => count + 1).pipe(
-        Effect.andThen(
-          new EffectWorker.OrchestrationEffectWorkerError({
-            operation: "claim",
-            cause: "simulated database failure",
-          }),
+    const worker: EffectWorker.OrchestrationEffectWorkerV2["Service"] =
+      EffectWorker.OrchestrationEffectWorkerV2.of({
+        runOnceInLane: (lane) => (lane === "title" ? Effect.succeed(false) : worker.runOnce),
+        awaitWorkInLane: (lane) => (lane === "title" ? Effect.never : worker.awaitWork),
+        nextClaimableAtInLane: (lane) =>
+          lane === "title" ? Effect.succeed(Option.none()) : worker.nextClaimableAt,
+        awaitWork: Effect.never,
+        runRecoveryOnce: Effect.succeed(false),
+        runOnce: Ref.update(attempts, (count) => count + 1).pipe(
+          Effect.andThen(
+            new EffectWorker.OrchestrationEffectWorkerError({
+              operation: "claim",
+              cause: "simulated database failure",
+            }),
+          ),
         ),
-      ),
-      nextClaimableAt: Effect.succeed(Option.some(now)),
-      drain: () => Effect.succeed(0),
-    });
+        nextClaimableAt: Effect.succeed(Option.some(now)),
+        drain: () => Effect.succeed(0),
+      });
 
     yield* EffectWorker.runDaemonWithOptions({
       concurrency: 1,
@@ -701,13 +790,18 @@ it.effect("backs off briefly when a due deadline loses a claim race", () =>
   Effect.gen(function* () {
     const attempts = yield* Ref.make(0);
     const now = yield* DateTime.now;
-    const worker = EffectWorker.OrchestrationEffectWorkerV2.of({
-      awaitWork: Effect.never,
-      runRecoveryOnce: Effect.succeed(false),
-      runOnce: Ref.update(attempts, (count) => count + 1).pipe(Effect.as(false)),
-      nextClaimableAt: Effect.succeed(Option.some(now)),
-      drain: () => Effect.succeed(0),
-    });
+    const worker: EffectWorker.OrchestrationEffectWorkerV2["Service"] =
+      EffectWorker.OrchestrationEffectWorkerV2.of({
+        runOnceInLane: (lane) => (lane === "title" ? Effect.succeed(false) : worker.runOnce),
+        awaitWorkInLane: (lane) => (lane === "title" ? Effect.never : worker.awaitWork),
+        nextClaimableAtInLane: (lane) =>
+          lane === "title" ? Effect.succeed(Option.none()) : worker.nextClaimableAt,
+        awaitWork: Effect.never,
+        runRecoveryOnce: Effect.succeed(false),
+        runOnce: Ref.update(attempts, (count) => count + 1).pipe(Effect.as(false)),
+        nextClaimableAt: Effect.succeed(Option.some(now)),
+        drain: () => Effect.succeed(0),
+      });
 
     yield* EffectWorker.runDaemonWithOptions({
       concurrency: 1,

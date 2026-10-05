@@ -141,6 +141,7 @@ const make = Effect.gen(function* () {
         times: input.kind.type === "initial" ? 2 : 0,
         schedule: Schedule.exponential("2 seconds"),
       }),
+      Effect.timeout("2 minutes"),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
