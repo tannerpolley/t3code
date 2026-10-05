@@ -171,6 +171,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   const headers = assetResponseHeaders(asset.path, asset);
   const mediaFile = asset.file;
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
+  // resolveAsset already refuses an oversized file; this catches one that grew since.
   if (asset.maxBytes !== undefined && mediaInfo && mediaInfo.size > BigInt(asset.maxBytes)) {
     return HttpServerResponse.text("Media file exceeds the size limit.", { status: 413 });
   }

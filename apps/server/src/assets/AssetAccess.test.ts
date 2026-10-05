@@ -172,7 +172,7 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("caps Markdown media when signing and when a signed file grows", () =>
+  it.effect("caps Markdown media when signing, resolving, and serving a file that grew", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -198,7 +198,9 @@ describe("AssetAccess", () => {
       expect(yield* Effect.flip(issueAssetUrl({ resource }))).toBeInstanceOf(
         AssetMediaSizeValidationError,
       );
+      // A request after the growth no longer resolves, so the asset route answers 404.
       expect(yield* resolve()).toBeNull();
+      // Only a file that grows between resolving and serving reaches the 413.
       expect((yield* assetFileResponse(asset)).status).toBe(413);
     }).pipe(Effect.provide(testLayer)),
   );
