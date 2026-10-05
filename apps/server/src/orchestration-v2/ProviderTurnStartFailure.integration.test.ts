@@ -11,6 +11,9 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as CodexProtocol from "effect-codex-app-server/protocol";
+import { makeInMemoryStdio } from "../../../../packages/effect-codex-app-server/src/_internal/stdio.ts";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -36,11 +39,12 @@ const modelSelection = { instanceId, model: "test-model" };
 const parentThreadId = ThreadId.make("thread:start-failure-parent");
 const startError = "required MCP servers failed to initialize: serena: Broken pipe";
 
-it.effect("a delegated child whose provider thread never starts fails and wakes its parent", () =>
+const failedChildTest = (stalledTransport: boolean) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("provider-turn-start-failure");
       const wake = yield* Deferred.make<ProviderContinuationRequest>();
+      const childEnsureEntered = yield* Deferred.make<void>();
       let childEnsureAttempts = 0;
       const adapter: ProviderAdapterV2Shape = {
         instanceId,
@@ -50,6 +54,8 @@ it.effect("a delegated child whose provider thread never starts fails and wakes 
         openSession: (input) =>
           Effect.gen(function* () {
             const now = yield* DateTime.now;
+            const { stdio } = yield* makeInMemoryStdio();
+            const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
             return {
               instanceId,
               driver,
@@ -70,6 +76,15 @@ it.effect("a delegated child whose provider thread never starts fails and wakes 
               ensureThread: ({ threadId }) => {
                 if (threadId !== parentThreadId) {
                   childEnsureAttempts += 1;
+                  if (stalledTransport)
+                    return Deferred.succeed(childEnsureEntered, undefined).pipe(
+                      Effect.andThen(transport.request("thread/start", { threadId })),
+                      Effect.flatMap(() => Effect.die("The stalled peer cannot reply")),
+                      Effect.mapError(
+                        (cause) =>
+                          new ProviderAdapterEnsureThreadError({ driver, threadId, cause }),
+                      ),
+                    );
                   return Effect.fail(
                     new ProviderAdapterEnsureThreadError({
                       driver,
@@ -159,7 +174,14 @@ it.effect("a delegated child whose provider thread never starts fails and wakes 
           .subagents[0]!.childThreadId!;
 
         // Every attempt but the last leaves the run starting so the worker retries.
-        yield* worker.drain();
+        if (stalledTransport) {
+          const drain = yield* worker.drain().pipe(Effect.forkScoped);
+          yield* Deferred.await(childEnsureEntered);
+          yield* TestClock.adjust("60 seconds");
+          yield* Fiber.join(drain);
+        } else {
+          yield* worker.drain();
+        }
         assert.equal(childEnsureAttempts, 1);
         assert.equal(
           (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]?.status,
@@ -182,7 +204,8 @@ it.effect("a delegated child whose provider thread never starts fails and wakes 
         assert.equal(request.delegatedCompletion?.parentRunId, parentRun.id);
         const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
         assert.equal(task.status, "failed");
-        assert.equal(task.result, startError);
+        if (stalledTransport) assert.include(task.result ?? "", "timed out");
+        else assert.equal(task.result, startError);
       }).pipe(
         Effect.provide(
           makeOrchestratorV2ReplayLayerWithRegistry(
@@ -200,5 +223,9 @@ it.effect("a delegated child whose provider thread never starts fails and wakes 
         ),
       );
     }),
-  ),
+  );
+
+it.effect.each([false, true])(
+  "a delegated child fails and wakes its parent (stalled transport: %s)",
+  failedChildTest,
 );

@@ -16,6 +16,7 @@ const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 const MAX_BUFFERED_RAW_MESSAGES = 32;
+const REQUEST_TIMEOUT_MS = 60_000;
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -50,6 +51,7 @@ export interface CodexAppServerPatchedProtocolOptions {
 }
 
 export interface CodexAppServerPatchedProtocol {
+  readonly awaitTermination: Effect.Effect<never, CodexError.CodexAppServerError>;
   readonly incomingNotifications: Stream.Stream<CodexAppServerIncomingNotification>;
   readonly incomingRequests: Stream.Stream<CodexAppServerIncomingRequest>;
   readonly request: (
@@ -442,6 +444,11 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             }),
           ),
       }),
+      Effect.catchCause((cause) =>
+        handleTermination(() =>
+          Effect.succeed(normalizeIncomingError(Cause.squash(cause), "read-input-stream")),
+        ),
+      ),
       Effect.forkScoped,
     );
 
@@ -463,6 +470,25 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
           ...(payload !== undefined ? { params: payload } : {}),
         }).pipe(Effect.tapError(() => removePending(String(requestId))));
         return yield* Deferred.await(deferred).pipe(
+          // A live process can stop replying without closing stdout. Retire the
+          // whole connection: its other requests and active event streams share
+          // the same stalled reader, and a late reply cannot make it reusable.
+          Effect.timeoutOrElse({
+            duration: REQUEST_TIMEOUT_MS,
+            orElse: () => {
+              const error = CodexError.CodexAppServerRequestError.fromProtocolError(
+                {
+                  code: -32000,
+                  message: `Codex request '${method}' (${requestId}) timed out after ${REQUEST_TIMEOUT_MS}ms; closing the transport.`,
+                },
+                method,
+                String(requestId),
+              );
+              return handleTermination(() => Effect.succeed(error)).pipe(
+                Effect.andThen(Effect.fail(error)),
+              );
+            },
+          }),
           Effect.onInterrupt(() => removePending(String(requestId))),
         );
       });
@@ -474,6 +500,10 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       });
 
     return {
+      awaitTermination: Deferred.await(terminationSignal).pipe(
+        Effect.andThen(Ref.get(terminationFailure)),
+        Effect.flatMap((error) => Effect.fail(Option.getOrThrow(error))),
+      ),
       incomingNotifications: Stream.fromQueue(incomingNotifications),
       incomingRequests: Stream.fromQueue(incomingRequests),
       request,

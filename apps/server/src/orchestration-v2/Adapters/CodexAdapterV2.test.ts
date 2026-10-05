@@ -32,6 +32,7 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1581,6 +1582,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       });
       const events: Array<ProviderAdapterV2Event> = [];
       const firstTerminal = yield* Deferred.make<void>();
+      const eventStreamEnded = yield* Deferred.make<Exit.Exit<void, unknown>>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) =>
           Effect.sync(() => {
@@ -1594,6 +1596,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Effect.andThen(onEvent(event)),
           ),
         ),
+        Effect.exit,
+        Effect.flatMap((exit) => Deferred.succeed(eventStreamEnded, exit)),
         Effect.forkScoped,
       );
       if (runtime.hasPendingBackgroundWork === undefined) {
@@ -1620,6 +1624,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         subagentUpdates,
         hasPendingBackgroundWork,
         firstTerminal: Deferred.await(firstTerminal),
+        eventStreamExit: Deferred.await(eventStreamEnded),
       };
     });
 
@@ -4157,6 +4162,79 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       { type: "runtime_exit", status: "success" },
     ],
   });
+
+  it.effect("fails active turns and drains terminal events when a shared request times out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const childStarted = yield* Deferred.make<void>();
+        const unsubscribeSent = yield* Deferred.make<void>();
+        const interruptIndex = interruptSubagentCommandTranscript.entries.findIndex(
+          (entry) => entry.type === "expect_outbound" && entry.label === "turn/interrupt/root",
+        );
+        const transcript = makeCodexReplayTranscript({
+          scenario: "codex-stalled-shared-request",
+          entries: [
+            ...interruptSubagentCommandTranscript.entries.slice(0, interruptIndex),
+            {
+              type: "expect_outbound",
+              frame: {
+                id: 5,
+                method: "thread/unsubscribe",
+                params: { threadId: INTERRUPT_NATIVE_THREAD },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM &&
+            event.turnItem.status === "running"
+              ? Deferred.succeed(childStarted, undefined)
+              : Effect.void,
+          (method) =>
+            method === "thread/unsubscribe"
+              ? Deferred.succeed(unsubscribeSent, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-stalled-shared-request"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(childStarted);
+        const detach = yield* harness.runtime.unloadThread!(harness.providerThread).pipe(
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(unsubscribeSent);
+        yield* TestClock.adjust("60 seconds");
+        yield* Fiber.join(detach);
+        yield* harness.firstTerminal;
+        const streamExit = yield* harness.eventStreamExit;
+        assert.isTrue(Exit.isFailure(streamExit));
+        if (Exit.isFailure(streamExit)) assert.include(Cause.pretty(streamExit.cause), "timed out");
+        assert.equal(harness.terminalEvents()[0]?.status, "failed");
+        const childTerminal = harness.events.findIndex(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.threadId !== harness.threadId &&
+            event.providerTurn.status === "failed",
+        );
+        assert.isAtLeast(childTerminal, 0);
+        assert.isAbove(
+          harness.events.findIndex((event) => event.type === "turn.terminal"),
+          childTerminal,
+        );
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
 
   const assertChildProviderTerminalBeforeRoot = (
     events: ReadonlyArray<ProviderAdapterV2Event>,
