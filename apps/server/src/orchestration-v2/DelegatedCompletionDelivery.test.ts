@@ -22,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -109,7 +110,11 @@ const TestProviderInstanceRegistry = Layer.succeed(
   },
 );
 
-const TestLayer = Layer.mergeAll(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive, ProjectionStore.layer).pipe(
+const TestLayer = Layer.mergeAll(
+  OrchestrationV2LayerLive,
+  OrchestrationV2EventSinkLayerLive,
+  ProjectionStore.layer,
+).pipe(
   Layer.provideMerge(ProjectServiceLayerLive),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
@@ -1563,7 +1568,6 @@ it.layer(TestLayer)("resumed delegated child", (it) => {
     }),
   );
 
-
   it.effect("a turn the parent sends reports back and wakes the parent once", () =>
     Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;
@@ -1577,7 +1581,9 @@ it.layer(TestLayer)("resumed delegated child", (it) => {
         RunId.make("run:resumed-sent-child-1"),
         RunId.make("run:resumed-sent-child-2"),
       ]);
-      const parent = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(seeded.parentThreadId);
+      const parent = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(
+        seeded.parentThreadId,
+      );
       const task = parent.subagents.find((candidate) => candidate.id === seeded.taskId);
       assert.equal(task?.result, "Result 2.");
       assert.equal(task?.completionDelivery?.state, "claimed");
@@ -1590,6 +1596,29 @@ it.layer(TestLayer)("resumed delegated child", (it) => {
         yield* projections.getRecoveryThreadIds("subagent-results"),
         seeded.childThreadId,
       );
+    }),
+  );
+
+  it.effect("records a resumed result without reopening delivery disposed after the request", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const seeded = yield* seedReportedChild("resumed-disposed");
+      yield* seeded.finishTurn(2, seeded.parentThreadId, seeded.commandId);
+      yield* TestClock.adjust("1 millis");
+      yield* orchestrator.dispatch({
+        type: "delegated_task.completion-delivery.dispose",
+        commandId: CommandId.make("command:resumed-dispose"),
+        parentThreadId: seeded.parentThreadId,
+        taskId: seeded.taskId,
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      const parent = yield* orchestrator.getThreadProjection(seeded.parentThreadId);
+      assert.equal(parent.subagents[0]?.result, "Result 2.");
+      assert.equal(parent.subagents[0]?.completionDelivery?.state, "disposed");
+      assert.deepEqual(yield* reportedRuns(seeded.parentThreadId, seeded.childThreadId), [
+        RunId.make("run:resumed-disposed-child-1"),
+        RunId.make("run:resumed-disposed-child-2"),
+      ]);
     }),
   );
 
@@ -1655,7 +1684,6 @@ it.layer(TestLayer)("resumed delegated child", (it) => {
       );
     }),
   );
-
 });
 
 const seedChildWaitingOnUser = (input: {
@@ -1786,20 +1814,30 @@ const childQuestionNotices = (parentThreadId: ThreadId) =>
     );
   });
 
-
 it.layer(TestLayer)("child question wake", (it) => {
-  it.effect("recovers a pending child question once, while blocking waits and auth stay quiet", () => Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const question = yield* seedChildWaitingOnUser({ name: "recovery", requestKind: "user_input" });
-    const blocking = yield* seedChildWaitingOnUser({ name: "blocking", requestKind: "user_input", completionWake: "settled_only" });
-    const auth = yield* seedChildWaitingOnUser({ name: "auth", requestKind: "auth_refresh" });
-    yield* orchestrator.recoverDelegatedTasks;
-    yield* orchestrator.recoverDelegatedTasks;
-    const notices = yield* childQuestionNotices(question.parentThreadId);
-    assert.equal(notices.length, 1);
-    assert.include(notices[0]!.text, "Should I also fix the lexer?");
-    assert.equal(notices[0]!.notification?.summary, "Review the parser has a question for you");
-    assert.equal((yield* childQuestionNotices(blocking.parentThreadId)).length, 0);
-    assert.equal((yield* childQuestionNotices(auth.parentThreadId)).length, 0);
-  }));
+  it.effect(
+    "recovers a pending child question once, while blocking waits and auth stay quiet",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const question = yield* seedChildWaitingOnUser({
+          name: "recovery",
+          requestKind: "user_input",
+        });
+        const blocking = yield* seedChildWaitingOnUser({
+          name: "blocking",
+          requestKind: "user_input",
+          completionWake: "settled_only",
+        });
+        const auth = yield* seedChildWaitingOnUser({ name: "auth", requestKind: "auth_refresh" });
+        yield* orchestrator.recoverDelegatedTasks;
+        yield* orchestrator.recoverDelegatedTasks;
+        const notices = yield* childQuestionNotices(question.parentThreadId);
+        assert.equal(notices.length, 1);
+        assert.include(notices[0]!.text, "Should I also fix the lexer?");
+        assert.equal(notices[0]!.notification?.summary, "Review the parser has a question for you");
+        assert.equal((yield* childQuestionNotices(blocking.parentThreadId)).length, 0);
+        assert.equal((yield* childQuestionNotices(auth.parentThreadId)).length, 0);
+      }),
+  );
 });
