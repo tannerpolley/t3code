@@ -1,9 +1,14 @@
-import type { ClientSettings } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import type { ClientSettings, ServerProviderPlugin } from "@t3tools/contracts";
+import { ChevronRightIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { cn } from "../../lib/utils";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { groupProviderPlugins } from "./CustomizationsSettings.logic";
+import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { ModelRolesSection } from "./ModelRolesSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -270,45 +275,86 @@ function ServerSwitchRow({
   );
 }
 
-/**
- * Read-only: each enabled provider's plugins, as its latest snapshot reports them. Hidden until a
- * provider reports a plugin list at all, so an older server is not mistaken for "no plugins".
- */
+const pluginDescription = (plugin: ServerProviderPlugin) =>
+  [
+    plugin.marketplace,
+    `${plugin.skillCount} ${plugin.skillCount === 1 ? "skill" : "skills"}`,
+    plugin.requiresDesktopApp ? "Needs the ChatGPT desktop app" : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+const pluginRows = (plugins: ReadonlyArray<ServerProviderPlugin>) =>
+  plugins.map((plugin) => (
+    <SettingsRow
+      key={`${plugin.name}@${plugin.marketplace ?? ""}`}
+      title={plugin.name}
+      description={pluginDescription(plugin)}
+    />
+  ));
+
+/** Plugins that offer no skills here, folded away under their provider's usable ones. */
+function UnavailablePlugins({
+  plugins,
+}: {
+  readonly plugins: ReadonlyArray<ServerProviderPlugin>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger className="flex min-h-9 w-full items-center gap-2 rounded-md px-3 text-left text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-4">
+        <ChevronRightIcon
+          aria-hidden
+          className={cn(
+            "size-3.5 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
+            open && "rotate-90",
+          )}
+        />
+        Unavailable / no skills · {plugins.length}
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <div className="border-t border-border/50 [&>*+*]:border-t [&>*+*]:border-border/50">
+          {pluginRows(plugins)}
+        </div>
+      </CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
+/** Read-only: each enabled provider's plugins, as its latest snapshot reports them. */
 function ProviderPluginsSection() {
   const { environment } = useSettingsScope();
-  const providers = (environment?.serverConfig?.providers ?? []).filter(
-    (provider) => provider.enabled && provider.plugins !== undefined,
-  );
-  if (providers.length === 0) return null;
-  const rows = providers.flatMap((provider) =>
-    (provider.plugins ?? []).map((plugin) => ({
-      provider: provider.displayName ?? provider.driver,
-      plugin,
-    })),
-  );
-  return (
-    <SettingsSection title="Plugins">
-      {rows.length === 0 ? (
+  const groups = groupProviderPlugins(environment?.serverConfig?.providers ?? []);
+  if (groups === null) return null;
+  if (groups.length === 0) {
+    return (
+      <SettingsSection title="Plugins">
         <SettingsRow
           title="No enabled plugins"
           description="Plugins you enable in Claude Code or Codex are listed here, with their skills offered under $."
         />
-      ) : (
-        rows.map(({ provider, plugin }) => (
-          <SettingsRow
-            key={`${provider}:${plugin.name}@${plugin.marketplace ?? ""}`}
-            title={plugin.name}
-            description={[
-              provider,
-              plugin.marketplace,
-              `${plugin.skillCount} ${plugin.skillCount === 1 ? "skill" : "skills"}`,
-              plugin.requiresDesktopApp ? "Needs the ChatGPT desktop app" : undefined,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          />
-        ))
-      )}
+      </SettingsSection>
+    );
+  }
+  return (
+    <SettingsSection title="Plugins" variant="plain">
+      {groups.map((group) => (
+        <FoldedSettingsSection
+          key={group.key}
+          id={`plugins-${group.key}`}
+          title={group.label}
+          summary={[
+            `${group.available.length} ${group.available.length === 1 ? "plugin" : "plugins"}`,
+            `${group.skillCount} ${group.skillCount === 1 ? "skill" : "skills"}`,
+            group.unavailable.length > 0 ? `${group.unavailable.length} unavailable` : undefined,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        >
+          {pluginRows(group.available)}
+          {group.unavailable.length > 0 ? <UnavailablePlugins plugins={group.unavailable} /> : null}
+        </FoldedSettingsSection>
+      ))}
     </SettingsSection>
   );
 }
