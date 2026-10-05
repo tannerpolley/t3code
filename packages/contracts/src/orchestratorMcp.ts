@@ -210,11 +210,14 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   latestTerminalResultContextTransferId: Schema.NullOr(ContextTransferId),
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
-  branch: Schema.NullOr(Schema.String),
-  worktreePath: Schema.NullOr(Schema.String).annotate({
-    description:
-      "The child's checkout; null means the project root. A workspace=worktree child reports null until its worktree is ready.",
-  }),
+  // Defaulted so task results recorded before these fields existed still decode.
+  branch: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  worktreePath: Schema.NullOr(Schema.String)
+    .pipe(Schema.withDecodingDefault(Effect.succeed(null)))
+    .annotate({
+      description:
+        "The child's checkout; null means the project root. A workspace=worktree child reports null until its worktree is ready.",
+    }),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
   workspaceNote: Schema.optional(Schema.String).annotate({
