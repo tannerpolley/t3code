@@ -42,7 +42,11 @@ const runScenario = <E>(
     readonly steered: ReadonlyArray<MessageId>;
     readonly events: Queue.Queue<ProviderAdapterV2Event>;
     readonly cwd: string;
-  }) => Effect.Effect<void, E, Orchestrator.OrchestratorV2 | OrchestrationEffectWorkerV2 | Scope.Scope>,
+  }) => Effect.Effect<
+    void,
+    E,
+    Orchestrator.OrchestratorV2 | OrchestrationEffectWorkerV2 | Scope.Scope
+  >,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {

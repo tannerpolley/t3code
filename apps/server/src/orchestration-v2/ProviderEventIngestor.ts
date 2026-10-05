@@ -358,10 +358,20 @@ export const layer: Layer.Layer<
         if (subagent.origin !== "provider_native" || childThreadId === null || model === null) {
           return [];
         }
-        const reportedSelection = input.event.type === "subagent.updated" ? input.event.modelSelection : undefined;
-        const selectionFor = (thread: OrchestrationV2AppThread) => reportedSelection ?? { instanceId: thread.modelSelection.instanceId, model };
+        const reportedSelection =
+          input.event.type === "subagent.updated" ? input.event.modelSelection : undefined;
+        const selectionFor = (thread: OrchestrationV2AppThread) =>
+          reportedSelection ?? { instanceId: thread.modelSelection.instanceId, model };
         const staleThread = projections.getThread(childThreadId).pipe(
-          Effect.map((thread) => ((reportedSelection === undefined ? thread.modelSelection.model === model : modelSelectionsEqual(thread.modelSelection, reportedSelection)) ? null : thread)),
+          Effect.map((thread) =>
+            (
+              reportedSelection === undefined
+                ? thread.modelSelection.model === model
+                : modelSelectionsEqual(thread.modelSelection, reportedSelection)
+            )
+              ? null
+              : thread,
+          ),
           Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         );
         // Nearly every update already matches; only a mismatch takes the lock.

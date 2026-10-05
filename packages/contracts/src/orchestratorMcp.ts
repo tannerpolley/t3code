@@ -206,11 +206,13 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
-  waitingOnUser: Schema.optional(Schema.Struct({
-    kind: Schema.Literals(["input", "approval"]),
-    requestIds: Schema.Array(RuntimeRequestId),
-    preview: Schema.String,
-  })),
+  waitingOnUser: Schema.optional(
+    Schema.Struct({
+      kind: Schema.Literals(["input", "approval"]),
+      requestIds: Schema.Array(RuntimeRequestId),
+      preview: Schema.String,
+    }),
+  ),
   waitTimedOut: Schema.Boolean.annotate({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",

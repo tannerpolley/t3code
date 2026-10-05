@@ -223,11 +223,17 @@ it("waits for nested work and retains the report across monitor acknowledgements
   assert.equal(
     delegatedTaskProgress({
       ...projection,
-      pendingBackgroundTasks: [{ taskId: "background-audit", kind: "command" }],
+      pendingBackgroundTasks: [{ kind: "command" }],
     }).state,
     "waiting_for_children",
   );
-  assert.equal(delegatedTaskProgress({ ...projection, pendingBackgroundTasks: [{ taskId: "monitor", kind: "monitor" }] }).state, "result_available");
+  assert.equal(
+    delegatedTaskProgress({
+      ...projection,
+      pendingBackgroundTasks: [{ kind: "monitor" }],
+    }).state,
+    "result_available",
+  );
   const pending = {
     ...run,
     id: RunId.make("followup"),

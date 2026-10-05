@@ -934,11 +934,13 @@ describe("ClaudeAdapterV2 fetched model catalog", () => {
                   messages: Stream.never,
                   offer: () => Effect.void,
                   setModel: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
                 };
               }),
             forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -4783,13 +4785,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             { signal: abort.signal, toolUseID: "tool-steer-question", requestId: "request-steer" },
           ),
         ).pipe(Effect.forkScoped);
-        const requestEvents = () =>
-          harness.events.filter(
-            (
-              event,
-            ): event is Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }> =>
-              event.type === "runtime_request.updated",
-          );
         yield* Queue.take(harness.requestReceipts);
 
         yield* harness.runtime.steerTurn({

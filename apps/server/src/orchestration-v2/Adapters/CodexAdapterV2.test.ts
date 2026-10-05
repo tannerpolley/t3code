@@ -6512,13 +6512,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const metadataRead = yield* Deferred.make<void>();
-        const metadataEvent = yield* Deferred.make<Extract<ProviderAdapterV2Event, { type: "subagent.updated" }>>();
+        const metadataEvent =
+          yield* Deferred.make<Extract<ProviderAdapterV2Event, { type: "subagent.updated" }>>();
         const reported = { model: "gpt-6-luna", reasoningEffort: "max" };
         const harness = yield* makeCodexReplayHarness(
           resumeSubagentTranscript,
-          (event) => event.type === "subagent.updated" && event.subagent.model === reported.model
-            ? Deferred.succeed(metadataEvent, event).pipe(Effect.asVoid)
-            : Effect.void,
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.model === reported.model
+              ? Deferred.succeed(metadataEvent, event).pipe(Effect.asVoid)
+              : Effect.void,
           undefined,
           (threadId) => {
             assert.equal(threadId, RESUME_CHILD_THREAD);
@@ -6687,7 +6689,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.deepEqual(harness.continuationRequests[0]?.notification, {
           source: {
             kind: "subagent",
-            childThreadId: harness.subagentUpdates().at(-1)?.subagent.childThreadId,
+            childThreadId: harness.subagentUpdates().at(-1)?.subagent.childThreadId ?? undefined,
           },
           outcome: "completed",
           summary: 'Subagent "/root/resume_agent" finished',
@@ -6777,7 +6779,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             nativeTurnId: RESUME_NATIVE_TURN,
             prompt: RESUME_PROMPT,
           }),
-          ...children.flatMap(({ name }, index): Array<CodexReplay.CodexAppServerReplayEntry> => [
+          ...children.flatMap(({ name }): Array<CodexReplay.CodexAppServerReplayEntry> => [
             {
               type: "emit_inbound",
               label: `activity-started/${name}`,
@@ -6825,8 +6827,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const { transcript, markerTurn } = subagentWakeTranscript(scenario, children);
       const received = yield* Deferred.make<void>();
       const harness = yield* makeCodexReplayHarness(transcript, (event) =>
-        event.type === "provider_turn.updated" && event.providerTurn.nativeTurnRef?.nativeId === markerTurn
-          ? Deferred.succeed(received, undefined).pipe(Effect.asVoid) : Effect.void,
+        event.type === "provider_turn.updated" &&
+        event.providerTurn.nativeTurnRef?.nativeId === markerTurn
+          ? Deferred.succeed(received, undefined).pipe(Effect.asVoid)
+          : Effect.void,
       );
       yield* harness.runtime.startTurn(
         makeCodexTestTurnInput({

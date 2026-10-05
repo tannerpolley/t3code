@@ -1145,18 +1145,39 @@ const make = Effect.gen(function* () {
       const childControls = yield* threadManagement
         .getThreadRecords(
           task.childThreadId,
-          ["runs", "messages", "contextTransfers", "subagents", "providerThreads", "runtimeRequests"],
+          [
+            "runs",
+            "messages",
+            "contextTransfers",
+            "subagents",
+            "providerThreads",
+            "runtimeRequests",
+          ],
           { messageRoles: ["user"] },
         )
         .pipe(Effect.mapError(threadManagementFailure));
-      const childShell = yield* threadManagement.getThreadShell(task.childThreadId).pipe(Effect.mapError(threadManagementFailure));
-      const requestItems = (childControls.runtimeRequests ?? []).some((request) => request.status === "pending")
-        ? (yield* threadManagement.getThreadRecords(task.childThreadId, ["turnItems"], { turnItemTypes: ["user_input_request", "approval_request"] }).pipe(Effect.mapError(threadManagementFailure))).turnItems
+      const childShell = yield* threadManagement
+        .getThreadShell(task.childThreadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      const requestItems = (childControls.runtimeRequests ?? []).some(
+        (request) => request.status === "pending",
+      )
+        ? (yield* threadManagement
+            .getThreadRecords(task.childThreadId, ["turnItems"], {
+              turnItemTypes: ["user_input_request", "approval_request"],
+            })
+            .pipe(Effect.mapError(threadManagementFailure))).turnItems
         : [];
-      const waitingRequests = pendingUserRequests({ runtimeRequests: childControls.runtimeRequests ?? [], turnItems: requestItems });
+      const waitingRequests = pendingUserRequests({
+        runtimeRequests: childControls.runtimeRequests ?? [],
+        turnItems: requestItems,
+      });
       const childRun = delegatedTaskRun(childControls, task);
       const terminalRun = latestTerminalResultRun(childControls, childRun);
-      const progress = delegatedTaskProgress({ ...childControls, pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [] });
+      const progress = delegatedTaskProgress({
+        ...childControls,
+        pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
+      });
       const resultRunIds = [
         ...new Set(
           [progress.resultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
@@ -1189,30 +1210,30 @@ const make = Effect.gen(function* () {
           transfer.sourceThreadId === task.childThreadId &&
           transfer.targetThreadId === scope.thread.threadId,
       );
-      const reported = task.result !== null && !subagentResultOwed({
-        runs: childControls.runs,
-        messages: childControls.messages,
-        parentThreadId: scope.thread.threadId,
-        reportedRunIds: resultTransfers.map((transfer) => transfer.sourcePoint.runId),
-        resultRun: { ordinal: Number.POSITIVE_INFINITY },
-      });
-      const workState =
-        reported ? "result_available" : heldForRestart ? "working" : progress.state;
-      const status =
-        reported
-          ? taskStatusForRun(
-              task.status === "completed" ||
-                task.status === "failed" ||
-                task.status === "cancelled" ||
-                task.status === "interrupted"
-                ? { status: task.status }
-                : childRun,
-            )
-          : workState === "result_available"
-            ? taskStatusForRun(progress.resultRun ?? childRun)
-            : taskStatusForRun(childRun) === "queued"
-              ? "queued"
-              : "running";
+      const reported =
+        task.result !== null &&
+        !subagentResultOwed({
+          runs: childControls.runs,
+          messages: childControls.messages,
+          parentThreadId: scope.thread.threadId,
+          reportedRunIds: resultTransfers.map((transfer) => transfer.sourcePoint.runId),
+          resultRun: { ordinal: Number.POSITIVE_INFINITY },
+        });
+      const workState = reported ? "result_available" : heldForRestart ? "working" : progress.state;
+      const status = reported
+        ? taskStatusForRun(
+            task.status === "completed" ||
+              task.status === "failed" ||
+              task.status === "cancelled" ||
+              task.status === "interrupted"
+              ? { status: task.status }
+              : childRun,
+          )
+        : workState === "result_available"
+          ? taskStatusForRun(progress.resultRun ?? childRun)
+          : taskStatusForRun(childRun) === "queued"
+            ? "queued"
+            : "running";
       const derivedResult =
         task.result !== null
           ? task.result
@@ -1251,7 +1272,15 @@ const make = Effect.gen(function* () {
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
         waitTimedOut,
-        ...(waitingRequests[0] === undefined ? {} : { waitingOnUser: { kind: waitingRequests[0].kind, requestIds: waitingRequests.map((request) => request.id), preview: waitingRequests[0].summary } }),
+        ...(waitingRequests[0] === undefined
+          ? {}
+          : {
+              waitingOnUser: {
+                kind: waitingRequests[0].kind,
+                requestIds: waitingRequests.map((request) => request.id),
+                preview: waitingRequests[0].summary,
+              },
+            }),
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (
         acknowledgeTerminal &&
@@ -1292,7 +1321,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       while (true) {
         const result = yield* readTask(scope, taskId, false, true);
-        if (isTerminalTaskStatus(result.status) || result.waitingOnUser !== undefined) return result;
+        if (isTerminalTaskStatus(result.status) || result.waitingOnUser !== undefined)
+          return result;
         yield* Effect.sleep(Duration.millis(TASK_POLL_INTERVAL_MS));
       }
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)));

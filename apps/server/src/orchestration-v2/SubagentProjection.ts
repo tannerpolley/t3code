@@ -216,7 +216,9 @@ export function delegatedTaskProgress(projection: {
   readonly subagents: ReadonlyArray<
     Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
   >;
-  readonly pendingBackgroundTasks: ReadonlyArray<Pick<OrchestrationV2ThreadShell["pendingBackgroundTasks"][number], "kind">>;
+  readonly pendingBackgroundTasks: ReadonlyArray<
+    Pick<NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number], "kind">
+  >;
 }) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
@@ -237,8 +239,7 @@ export function delegatedTaskProgress(projection: {
         // The parent still owes that follow-up even between those transactions.
         task.completionDelivery?.state === "pending" ||
         task.completionDelivery?.state === "claimed",
-    ) ||
-    projection.pendingBackgroundTasks.some((task) => task.kind !== "monitor");
+    ) || projection.pendingBackgroundTasks.some((task) => task.kind !== "monitor");
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];

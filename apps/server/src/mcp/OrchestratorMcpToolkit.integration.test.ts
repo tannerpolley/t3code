@@ -470,7 +470,10 @@ const unusedScheduledTaskStubLayer = Layer.succeed(
   }),
 );
 
-function waitForResultReport(orchestrator: Orchestrator.OrchestratorV2Shape, afterSequence: number) {
+function waitForResultReport(
+  orchestrator: Orchestrator.OrchestratorV2Shape,
+  afterSequence: number,
+) {
   return orchestrator.streamStoredEventsFrom({ threadId: parentThreadId, afterSequence }).pipe(
     Stream.filter(
       (stored) =>
@@ -486,7 +489,6 @@ function waitForResultReport(orchestrator: Orchestrator.OrchestratorV2Shape, aft
     ),
   );
 }
-
 
 describe("orchestrator MCP toolkit", () => {
   it.live(

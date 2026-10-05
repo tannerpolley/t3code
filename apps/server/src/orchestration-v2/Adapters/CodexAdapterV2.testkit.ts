@@ -71,9 +71,7 @@ export function withCodexReplayChildMetadata(
           (method === "thread/resume" &&
             Predicate.isObject(params) &&
             params.excludeTurns === true) ||
-          (method === "thread/read" &&
-            Predicate.isObject(params) &&
-            params.includeTurns === false);
+          (method === "thread/read" && Predicate.isObject(params) && params.includeTurns === false);
         return childMetadataRequest &&
           Predicate.isObject(params) &&
           typeof params.threadId === "string" &&
