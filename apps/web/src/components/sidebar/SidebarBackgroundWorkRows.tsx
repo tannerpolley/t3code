@@ -1,7 +1,7 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { CornerDownRightIcon } from "lucide-react";
+import { CornerDownRightIcon, FolderGit2Icon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -36,6 +36,7 @@ import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "../chat/AgentElapsed";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import {
+  childWorktreeLabel,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
   type BackgroundWorkTaskRow,
@@ -66,15 +67,18 @@ export type SidebarBackgroundWorkRowsProps = {
   ) => void;
 };
 
+/** Marks a child thread that works in its own worktree; its row's tooltip names the branch. */
+export function ChildWorktreeIcon() {
+  return <FolderGit2Icon aria-hidden className="size-3 shrink-0 text-muted-foreground" />;
+}
+
 /** Subagent and background task rows in the sidebar's shared thread columns. */
 export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps) {
   const navigate = useNavigate();
   const selectedThreadKeys = useThreadSelectionStore((store) => store.selectedThreadKeys);
   const providers = useServerConfigs().get(props.environmentId)?.providers;
-  const ownerProviderId = useThreadShell(
-    scopeThreadRef(props.environmentId, props.threadId),
-  )?.providerInstanceId;
-  const ownerProvider = providers?.find((entry) => entry.instanceId === ownerProviderId);
+  const owner = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
+  const ownerProvider = providers?.find((entry) => entry.instanceId === owner?.providerInstanceId);
   const { agents, backgroundTasks } = groupBackgroundWorkTaskRows(props.rows);
   const rows = [...agents, ...backgroundTasks];
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
@@ -132,6 +136,9 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           );
         const toggle =
           props.columns && row.kind === "subagent" ? (props.nestedToggle?.(row) ?? null) : null;
+        const worktree =
+          row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
+        const worktreeIcon = worktree ? <ChildWorktreeIcon /> : null;
         const modelLabel =
           row.kind === "subagent" && row.child
             ? resolveSidebarThreadModelLabel(row.child, provider, shortModelNames)
@@ -151,7 +158,15 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           ) : null;
         const content = props.columns ? (
           <>
-            <SidebarCaretSlot />
+            {/* The worktree mark takes the empty caret slot unless a toggle sits over it. */}
+            {toggle ? (
+              <>
+                <SidebarCaretSlot />
+                {worktreeIcon}
+              </>
+            ) : (
+              <SidebarCaretSlot>{worktreeIcon}</SidebarCaretSlot>
+            )}
             {icon}
             {modelLabel ? (
               // Gives way before the label, as in the thread row above it.
@@ -169,6 +184,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           </>
         ) : (
           <>
+            {worktreeIcon}
             {icon}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
             {usage}
@@ -270,6 +286,12 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                     <>
                       <br />
                       Selected model and effort: {modelLabel}
+                    </>
+                  ) : null}
+                  {worktree ? (
+                    <>
+                      <br />
+                      Worktree: {worktree}
                     </>
                   ) : null}
                 </TooltipPopup>

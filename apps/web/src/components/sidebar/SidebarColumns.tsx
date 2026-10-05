@@ -25,15 +25,16 @@ function Caret(props: { readonly open: boolean }) {
 
 /**
  * The left caret slot. Rows that are themselves the toggle pass `open`; a row that can't collapse,
- * or whose toggle is a `SidebarCaretToggle` over it, leaves it empty.
+ * or whose toggle is a `SidebarCaretToggle` over it, leaves it empty or puts a small mark there.
  */
 export function SidebarCaretSlot(props: {
   readonly open?: boolean | undefined;
   readonly className?: string | undefined;
+  readonly children?: ReactNode;
 }) {
   return (
     <span aria-hidden className={cn(CARET_SLOT_CLASS, props.className)}>
-      {props.open === undefined ? null : <Caret open={props.open} />}
+      {props.open === undefined ? props.children : <Caret open={props.open} />}
     </span>
   );
 }

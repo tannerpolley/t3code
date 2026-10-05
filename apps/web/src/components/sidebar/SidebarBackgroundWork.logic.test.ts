@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { makeThreadFixture } from "../../test-fixtures";
 import {
+  childWorktreeLabel,
   describeSidebarBackgroundWork,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
@@ -289,5 +290,27 @@ describe("background task metadata", () => {
     );
     expect(msUntilPossiblyStuck(start, Date.parse("2026-09-23T12:00:00.000Z"))).toBe(0);
     expect(msUntilPossiblyStuck(start, Date.parse("2026-09-24T12:00:00.000Z"))).toBe(0);
+  });
+});
+
+describe("childWorktreeLabel", () => {
+  const root = { worktreePath: null };
+  const worktree = { branch: "feature/child", worktreePath: "/repo/.t3/worktrees/child" };
+
+  it("names the branch of a child in its own worktree", () => {
+    expect(childWorktreeLabel(worktree, root)).toBe("feature/child");
+    expect(childWorktreeLabel(worktree, { worktreePath: "/repo/.t3/worktrees/parent" })).toBe(
+      "feature/child",
+    );
+    expect(childWorktreeLabel(worktree, undefined)).toBe("feature/child");
+    expect(childWorktreeLabel({ ...worktree, branch: null }, root)).toBe(
+      "/repo/.t3/worktrees/child",
+    );
+  });
+
+  it("marks nothing for a child sharing its parent's checkout", () => {
+    expect(childWorktreeLabel(worktree, { worktreePath: worktree.worktreePath })).toBeNull();
+    expect(childWorktreeLabel({ branch: "main", worktreePath: null }, root)).toBeNull();
+    expect(childWorktreeLabel({ branch: "main", worktreePath: null }, undefined)).toBeNull();
   });
 });
