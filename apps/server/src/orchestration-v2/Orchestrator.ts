@@ -112,6 +112,7 @@ import {
   subagentResultForRun,
   delegatedTaskProgress,
   subagentResultOwed,
+  pendingUserRequests,
   subagentThreadTitle,
 } from "./SubagentProjection.ts";
 import {
@@ -9948,6 +9949,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
   }, Effect.catchCause((cause) => Effect.logWarning("Failed to deliver held steers", { cause })));
 
+  // Questions leave the child's run open, so terminal-result delivery cannot tell its parent.
+  const notifyParentOfChildQuestion = Effect.fnUntraced(function* (
+    childThreadId: ThreadId,
+    requestId: RuntimeRequestId,
+  ) {
+    const childThread = yield* projectionStore.getThreadShell(childThreadId);
+    const parentThreadId = childThread?.lineage.parentThreadId;
+    if (childThread?.lineage.relationshipToParent !== "subagent" || parentThreadId == null || childThread.forkedFrom?.type !== "node") return;
+    const taskId = childThread.forkedFrom.nodeId;
+    yield* threadDispatch.withLock(parentThreadId, Effect.gen(function* () {
+      const child = yield* projectionStore.getThreadRecords(childThreadId, ["runtimeRequests", "turnItems"], { turnItemTypes: ["user_input_request", "approval_request"] });
+      const request = pendingUserRequests(child).find((request) => request.id === requestId);
+      if (request === undefined) return;
+      const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents", "runs"]);
+      const task = parent.subagents.find((task) => task.id === taskId && task.origin === "app_owned" && task.childThreadId === childThreadId);
+      if (task === undefined || parent.thread.archivedAt !== null || parent.thread.deletedAt !== null) return;
+      const ownerRun = parent.runs.find((run) => run.id === task.runId);
+      // A blocking delegate_task call returns the question itself.
+      if (task.completionWake === "settled_only" && ownerRun !== undefined && isBlockingRun(ownerRun)) return;
+      const title = child.thread.title.trim() || "Delegated task";
+      yield* dispatchWithReceiptEffect({
+        type: "message.dispatch",
+        commandId: CommandId.make(`server:child-question:${childThreadId}:${requestId}`),
+        threadId: parentThreadId,
+        messageId: MessageId.make(`message:child-question:${childThreadId}:${requestId}`),
+        text: `${title} is waiting on the user: ${request.summary}. Relay it to the user or answer it if you can (task ${task.id}, child thread ${childThreadId}, request ${requestId}).`,
+        notification: {
+          source: { kind: "delegated_task", taskIds: [task.id] },
+          outcome: "updated",
+          summary: `${title} ${request.kind === "input" ? "has a question for you" : "needs your approval"}`,
+        },
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+    }));
+  }, Effect.catchCause((cause) => Effect.logWarning("Failed to notify parent of child question", { cause })));
+
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
@@ -10015,12 +10055,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.forkDetach,
   );
 
+  yield* eventSink.stream({ afterSequence: terminalEventsAfterSequence, eventType: "turn-item.updated" }).pipe(
+    Stream.runForEach((stored) => {
+      const item = stored.event.type === "turn-item.updated" ? stored.event.payload : undefined;
+      return (item?.type === "user_input_request" || item?.type === "approval_request") && item.status === "waiting" && !String(stored.commandId).startsWith("command:runtime-reconcile:")
+        ? notifyParentOfChildQuestion(stored.event.threadId, item.requestId)
+        : Effect.void;
+    }),
+    Effect.forkDetach,
+  );
+
   // Settles child results and completion deliveries whose runs ended without
   // the listener above: before this boot, or in runtime reconciliation, which
   // it skips. Startup runs this after reconciliation and before the effect
   // worker. Queue recovery instead holds unstarted runs until an explicit
   // queue.resume command arrives.
   const recoverDelegatedTasks = Effect.gen(function* () {
+    yield* projectionStore.getRecoveryThreadIds("runtime").pipe(
+      Effect.flatMap((threadIds) => Effect.forEach(threadIds, (threadId) => Effect.gen(function* () {
+        const child = yield* projectionStore.getThreadRecords(threadId, ["runtimeRequests"]);
+        if (child.thread.lineage.relationshipToParent !== "subagent") return;
+        yield* Effect.forEach(child.runtimeRequests.filter((request) => request.status === "pending"), (request) => notifyParentOfChildQuestion(threadId, request.id), { discard: true });
+      }), { discard: true })),
+      Effect.catchCause((cause) => Effect.logWarning("Failed to recover child question notices", { cause })),
+    );
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
       Effect.flatMap((threadIds) =>
         Effect.forEach(

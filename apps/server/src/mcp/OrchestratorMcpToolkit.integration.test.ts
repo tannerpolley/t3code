@@ -8,6 +8,8 @@ import {
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
+  NodeId,
+  RuntimeRequestId,
   type OrchestrationV2DelegatedCompletionDelivery,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -38,6 +40,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -2503,6 +2506,122 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id === upgradedDelegated.taskId,
               )?.completionDelivery,
             ).toMatchObject({ state: "disposed" });
+            yield* expectOffersToStay(0);
+
+            // A blocking wait returns the child's question instead of holding it until timeout,
+            // and hands later delivery to the completion wake.
+            const tasksBeforeQuestion = new Set(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.map(
+                (task) => task.id,
+              ),
+            );
+            const questionWait = yield* invoke("delegate_task", {
+              task: cancellationPrompt,
+              target: { providerInstanceId: codexInstanceId, model: codexModel },
+              mode: "wait",
+              timeoutMs: 600_000,
+              clientRequestId: "delegate-question-wait-1",
+            }).pipe(Effect.forkChild);
+            const questionTask = (yield* waitForProjection(
+              orchestrator,
+              parentThreadId,
+              (projection) =>
+                projection.subagents.some(
+                  (task) => !tasksBeforeQuestion.has(task.id) && task.childThreadId !== null,
+                ),
+            )).subagents.find((task) => !tasksBeforeQuestion.has(task.id))!;
+            const questionChildThreadId = questionTask.childThreadId!;
+            yield* waitForProjection(orchestrator, questionChildThreadId, (projection) =>
+              projection.runs.some((run) => run.status === "running"),
+            );
+            const questionRequestId = RuntimeRequestId.make("request:question-wait");
+            const questionNodeId = NodeId.make("node:question-wait");
+            const questionAt = yield* DateTime.now;
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("event:question-wait-request"),
+                  type: "runtime-request.updated",
+                  threadId: questionChildThreadId,
+                  nodeId: questionNodeId,
+                  occurredAt: questionAt,
+                  payload: {
+                    id: questionRequestId,
+                    nodeId: questionNodeId,
+                    providerTurnId: null,
+                    nativeRequestRef: null,
+                    kind: "user_input",
+                    status: "pending",
+                    responseCapability: { type: "message" },
+                    createdAt: questionAt,
+                    resolvedAt: null,
+                  },
+                },
+                {
+                  id: EventId.make("event:question-wait-item"),
+                  type: "turn-item.updated",
+                  threadId: questionChildThreadId,
+                  nodeId: questionNodeId,
+                  occurredAt: questionAt,
+                  payload: {
+                    id: TurnItemId.make("item:question-wait"),
+                    threadId: questionChildThreadId,
+                    runId: null,
+                    nodeId: questionNodeId,
+                    providerThreadId: null,
+                    providerTurnId: null,
+                    nativeItemRef: null,
+                    parentItemId: null,
+                    ordinal: 1,
+                    status: "waiting",
+                    title: null,
+                    startedAt: questionAt,
+                    completedAt: null,
+                    updatedAt: questionAt,
+                    type: "user_input_request",
+                    requestId: questionRequestId,
+                    questions: [
+                      { id: "q1", header: "Scope", question: "Fix the lexer too?", options: [] },
+                    ],
+                  },
+                },
+              ],
+            });
+            const questionResult = yield* decodeDelegateTaskResult(
+              (yield* Fiber.join(questionWait)).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(questionResult).toMatchObject({
+              taskId: questionTask.id,
+              status: "running",
+              waitTimedOut: false,
+              waitingOnUser: {
+                kind: "input",
+                requestIds: [questionRequestId],
+                preview: "Fix the lexer too?",
+              },
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === questionTask.id,
+              )?.completionWake,
+            ).toBe("always");
+            // Clean up without a parent wake: settle delivery before the child terminalizes.
+            yield* orchestrator.dispatch({
+              type: "delegated_task.completion-delivery.dispose",
+              commandId: CommandId.make("command:mcp-parent:dispose-question-wait"),
+              parentThreadId,
+              taskId: questionTask.id,
+            });
+            yield* invoke("task_cancel", {
+              taskId: questionTask.id,
+              reason: "Clean up the question child.",
+              clientRequestId: "cancel-question-wait-1",
+            });
+            yield* waitForProjection(orchestrator, parentThreadId, (projection) =>
+              projection.subagents.some(
+                (task) => task.id === questionTask.id && task.status === "interrupted",
+              ),
+            );
             yield* expectOffersToStay(0);
 
             // The MCP tool cannot force the reverse interleaving (child

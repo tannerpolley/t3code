@@ -69,6 +69,7 @@ import {
   subagentResultForRun,
   delegatedTaskProgress,
   subagentResultOwed,
+  pendingUserRequests,
 } from "../orchestration-v2/SubagentProjection.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -1144,10 +1145,14 @@ const make = Effect.gen(function* () {
       const childControls = yield* threadManagement
         .getThreadRecords(
           task.childThreadId,
-          ["runs", "messages", "contextTransfers", "subagents", "providerThreads"],
+          ["runs", "messages", "contextTransfers", "subagents", "providerThreads", "runtimeRequests"],
           { messageRoles: ["user"] },
         )
         .pipe(Effect.mapError(threadManagementFailure));
+      const requestItems = (childControls.runtimeRequests ?? []).some((request) => request.status === "pending")
+        ? (yield* threadManagement.getThreadRecords(task.childThreadId, ["turnItems"], { turnItemTypes: ["user_input_request", "approval_request"] }).pipe(Effect.mapError(threadManagementFailure))).turnItems
+        : [];
+      const waitingRequests = pendingUserRequests({ runtimeRequests: childControls.runtimeRequests ?? [], turnItems: requestItems });
       const childRun = delegatedTaskRun(childControls, task);
       const terminalRun = latestTerminalResultRun(childControls, childRun);
       const progress = delegatedTaskProgress(childControls);
@@ -1245,6 +1250,7 @@ const make = Effect.gen(function* () {
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
         waitTimedOut,
+        ...(waitingRequests[0] === undefined ? {} : { waitingOnUser: { kind: waitingRequests[0].kind, requestIds: waitingRequests.map((request) => request.id), preview: waitingRequests[0].summary } }),
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (
         acknowledgeTerminal &&
@@ -1285,7 +1291,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       while (true) {
         const result = yield* readTask(scope, taskId, false, true);
-        if (isTerminalTaskStatus(result.status)) return result;
+        if (isTerminalTaskStatus(result.status) || result.waitingOnUser !== undefined) return result;
         yield* Effect.sleep(Duration.millis(TASK_POLL_INTERVAL_MS));
       }
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)));
@@ -1589,10 +1595,10 @@ const make = Effect.gen(function* () {
           Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
         );
         const waited = yield* waitForTask(scope, taskId, timeoutMs);
-        if (Option.isSome(waited)) {
+        if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
           return waited.value;
         }
-        // The blocking wait timed out, so it no longer owns delivery: upgrade
+        // A timeout or child question ends the blocking wait: upgrade
         // the task so a later terminal wakes the parent even mid-turn. Best
         // effort; on failure the settled_only policy still wakes a settled
         // parent.
@@ -1631,7 +1637,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return yield* readTask(scope, taskId, true, true);
+        return Option.isSome(waited) ? waited.value : yield* readTask(scope, taskId, true, true);
       }),
     taskStatus: (callerScope, taskId) =>
       Effect.gen(function* () {
