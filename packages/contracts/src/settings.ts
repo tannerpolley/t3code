@@ -507,6 +507,12 @@ export const ClientSettingsSchema = Schema.Struct({
   revealOpenThreadInSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   lineageAutoClearMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   // Fork customizations, each switchable back to the original behavior in Settings → Customizations.
+  /** Show the Issues page in the sidebar. */
+  issuesPage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** List the thread repository's issues in thread details. */
+  versionControlIssues: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Offer Claude Code plugin skills in the composer menus, labeled Plugin. */
+  pluginSkills: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Usage page Limits laid out like Cost and Tokens (one window kind at a time,
    * provider rows, an estimated by-provider or by-model chart); off shows the
@@ -1843,6 +1849,9 @@ export const ClientSettingsPatch = Schema.Struct({
   autoOrganizeByFolder: Schema.optionalKey(Schema.Boolean),
   revealOpenThreadInSidebar: Schema.optionalKey(Schema.Boolean),
   lineageAutoClearMinutes: Schema.optionalKey(NonNegativeInt),
+  issuesPage: Schema.optionalKey(Schema.Boolean),
+  versionControlIssues: Schema.optionalKey(Schema.Boolean),
+  pluginSkills: Schema.optionalKey(Schema.Boolean),
   usageLimitModelBreakdown: Schema.optionalKey(Schema.Boolean),
   dailyUsageMeter: Schema.optionalKey(Schema.Boolean),
   sidebarWeeklyUsage: Schema.optionalKey(Schema.Boolean),
