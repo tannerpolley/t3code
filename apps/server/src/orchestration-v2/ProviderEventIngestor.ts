@@ -7,6 +7,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Subagent,
+  type OrchestrationV2AppThread,
   type ModelSelection,
   type RuntimeMode,
   type ProviderInteractionMode,
@@ -25,7 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { modelSelectionsEqual, getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -357,8 +358,20 @@ export const layer: Layer.Layer<
         if (subagent.origin !== "provider_native" || childThreadId === null || model === null) {
           return [];
         }
+        const reportedSelection =
+          input.event.type === "subagent.updated" ? input.event.modelSelection : undefined;
+        const selectionFor = (thread: OrchestrationV2AppThread) =>
+          reportedSelection ?? { instanceId: thread.modelSelection.instanceId, model };
         const staleThread = projections.getThread(childThreadId).pipe(
-          Effect.map((thread) => (thread.modelSelection.model === model ? null : thread)),
+          Effect.map((thread) =>
+            (
+              reportedSelection === undefined
+                ? thread.modelSelection.model === model
+                : modelSelectionsEqual(thread.modelSelection, reportedSelection)
+            )
+              ? null
+              : thread,
+          ),
           Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         );
         // Nearly every update already matches; only a mismatch takes the lock.
@@ -375,7 +388,7 @@ export const layer: Layer.Layer<
               // The parent's options belong to the parent's model.
               payload: {
                 ...thread,
-                modelSelection: { instanceId: thread.modelSelection.instanceId, model },
+                modelSelection: selectionFor(thread),
                 updatedAt: now,
               },
               occurredAt: now,

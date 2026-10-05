@@ -68,6 +68,8 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  subagentResultOwed,
+  pendingUserRequests,
 } from "../orchestration-v2/SubagentProjection.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -316,7 +318,7 @@ function pageIncludesTerminalTaskResult(input: {
   >;
   readonly maxChars: number;
 }): boolean {
-  const transfer = input.parent.contextTransfers.find(
+  const transfer = input.parent.contextTransfers.findLast(
     (transfer) =>
       transfer.type === "subagent_result" &&
       transfer.sourceThreadId === input.target.thread.id &&
@@ -1116,13 +1118,39 @@ const make = Effect.gen(function* () {
       const childControls = yield* threadManagement
         .getThreadRecords(
           task.childThreadId,
-          ["runs", "messages", "contextTransfers", "subagents", "providerThreads"],
+          [
+            "runs",
+            "messages",
+            "contextTransfers",
+            "subagents",
+            "providerThreads",
+            "runtimeRequests",
+          ],
           { messageRoles: ["user"] },
         )
         .pipe(Effect.mapError(threadManagementFailure));
+      const childShell = yield* threadManagement
+        .getThreadShell(task.childThreadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      const requestItems = (childControls.runtimeRequests ?? []).some(
+        (request) => request.status === "pending",
+      )
+        ? (yield* threadManagement
+            .getThreadRecords(task.childThreadId, ["turnItems"], {
+              turnItemTypes: ["user_input_request", "approval_request"],
+            })
+            .pipe(Effect.mapError(threadManagementFailure))).turnItems
+        : [];
+      const waitingRequests = pendingUserRequests({
+        runtimeRequests: childControls.runtimeRequests ?? [],
+        turnItems: requestItems,
+      });
       const childRun = delegatedTaskRun(childControls, task);
       const terminalRun = latestTerminalResultRun(childControls, childRun);
-      const progress = delegatedTaskProgress(childControls);
+      const progress = delegatedTaskProgress({
+        ...childControls,
+        pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
+      });
       const resultRunIds = [
         ...new Set(
           [progress.resultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
@@ -1149,35 +1177,42 @@ const make = Effect.gen(function* () {
         (yield* threadManagement
           .delegatedTaskResultPending(task.childThreadId)
           .pipe(Effect.mapError(threadManagementFailure)));
-      const workState =
-        task.result !== null ? "result_available" : heldForRestart ? "working" : progress.state;
-      const status =
-        task.result !== null
-          ? taskStatusForRun(
-              task.status === "completed" ||
-                task.status === "failed" ||
-                task.status === "cancelled" ||
-                task.status === "interrupted"
-                ? { status: task.status }
-                : childRun,
-            )
-          : workState === "result_available"
-            ? taskStatusForRun(progress.resultRun ?? childRun)
-            : taskStatusForRun(childRun) === "queued"
-              ? "queued"
-              : "running";
-      const derivedResult =
-        task.result !== null
-          ? task.result
-          : progress.resultRun !== undefined && isTerminalTaskStatus(status)
-            ? subagentResultForRun(childProjection, progress.resultRun).text
-            : null;
       const resultTransfers = parentProjection.contextTransfers.filter(
         (transfer) =>
           transfer.type === "subagent_result" &&
           transfer.sourceThreadId === task.childThreadId &&
           transfer.targetThreadId === scope.thread.threadId,
       );
+      const reported =
+        task.result !== null &&
+        !subagentResultOwed({
+          runs: childControls.runs,
+          messages: childControls.messages,
+          parentThreadId: scope.thread.threadId,
+          reportedRunIds: resultTransfers.map((transfer) => transfer.sourcePoint.runId),
+          resultRun: { ordinal: Number.POSITIVE_INFINITY },
+        });
+      const workState = reported ? "result_available" : heldForRestart ? "working" : progress.state;
+      const status = reported
+        ? taskStatusForRun(
+            task.status === "completed" ||
+              task.status === "failed" ||
+              task.status === "cancelled" ||
+              task.status === "interrupted"
+              ? { status: task.status }
+              : childRun,
+          )
+        : workState === "result_available"
+          ? taskStatusForRun(progress.resultRun ?? childRun)
+          : taskStatusForRun(childRun) === "queued"
+            ? "queued"
+            : "running";
+      const derivedResult =
+        task.result !== null
+          ? task.result
+          : progress.resultRun !== undefined && isTerminalTaskStatus(status)
+            ? subagentResultForRun(childProjection, progress.resultRun).text
+            : null;
       const resultTransferForRun = (run: OrchestrationV2Run | undefined) =>
         !canExposeTaskRunResult(run)
           ? null
@@ -1186,7 +1221,7 @@ const make = Effect.gen(function* () {
               ? resultTransfers.find((transfer) => transfer.sourcePoint.runId === undefined)
               : undefined) ??
             null);
-      const resultTransfer = resultTransfers[0] ?? null;
+      const resultTransfer = resultTransfers.at(-1) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
       const response = {
         taskId: task.id,
@@ -1212,6 +1247,15 @@ const make = Effect.gen(function* () {
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
         waitTimedOut,
+        ...(waitingRequests[0] === undefined
+          ? {}
+          : {
+              waitingOnUser: {
+                kind: waitingRequests[0].kind,
+                requestIds: waitingRequests.map((request) => request.id),
+                preview: waitingRequests[0].summary,
+              },
+            }),
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (
         acknowledgeTerminal &&
@@ -1252,7 +1296,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       while (true) {
         const result = yield* readTask(scope, taskId, false, true);
-        if (isTerminalTaskStatus(result.status)) return result;
+        if (isTerminalTaskStatus(result.status) || result.waitingOnUser !== undefined)
+          return result;
         yield* Effect.sleep(Duration.millis(TASK_POLL_INTERVAL_MS));
       }
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)));
@@ -1599,10 +1644,10 @@ const make = Effect.gen(function* () {
           Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
         );
         const waited = yield* waitForTask(scope, taskId, timeoutMs);
-        if (Option.isSome(waited)) {
+        if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
           return withNote(waited.value);
         }
-        // The blocking wait timed out, so it no longer owns delivery: upgrade
+        // A timeout or child question ends the blocking wait: upgrade
         // the task so a later terminal wakes the parent even mid-turn. Best
         // effort; on failure the settled_only policy still wakes a settled
         // parent.
@@ -1641,7 +1686,9 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return withNote(yield* readTask(scope, taskId, true, true));
+        return withNote(
+          Option.isSome(waited) ? waited.value : yield* readTask(scope, taskId, true, true),
+        );
       }),
     taskStatus: (callerScope, taskId) =>
       Effect.gen(function* () {
@@ -1958,7 +2005,7 @@ const make = Effect.gen(function* () {
           task !== undefined &&
           (input.textOffset ?? 0) === 0
         ) {
-          const transfer = parent.contextTransfers.find(
+          const transfer = parent.contextTransfers.findLast(
             (transfer) =>
               transfer.type === "subagent_result" &&
               transfer.sourceThreadId === target.thread.id &&

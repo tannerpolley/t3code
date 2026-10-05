@@ -314,6 +314,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(null),
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);
@@ -512,5 +513,140 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .deleteScheduledTask(makeScope(), { scheduledTaskId: ScheduledTaskId.make("task-foreign") })
       .pipe(Effect.flip);
     expect(staleDelete.code).toBe("parent_not_active");
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("taskStatus reports a child waiting on the user, but not an auth refresh", async () => {
+  const parentProjection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    visibleTurnItems: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [
+      {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: activeRunId,
+        parentNodeId: NodeId.make("node-parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: codexDriver,
+        providerInstanceId: customCodexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Inspect the custom instance.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      },
+    ],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+
+  const childProjection = {
+    thread: {
+      ...baseThread({
+        threadId: childThreadId,
+        title: "Child",
+        instanceId: customCodexInstanceId,
+        model: "gpt-5.4",
+      }),
+      lineage: {
+        parentThreadId,
+        relationshipToParent: "subagent",
+        rootThreadId: parentThreadId,
+      },
+      createdBy: "agent",
+    },
+    runs: [
+      makeRun({
+        id: childRunId,
+        ordinal: 1,
+        status: "running",
+        instanceId: customCodexInstanceId,
+      }),
+    ],
+    visibleTurnItems: [],
+    runtimeRequests: [
+      {
+        id: "request-mcp-question",
+        kind: "user_input",
+        status: "pending",
+      },
+      {
+        id: "request-mcp-auth",
+        kind: "auth_refresh",
+        status: "pending",
+      },
+    ],
+    turnItems: [
+      {
+        type: "user_input_request",
+        requestId: "request-mcp-question",
+        questions: [{ id: "q1", header: "Scope", question: "Fix the lexer too?", options: [] }],
+      },
+    ],
+    messages: [],
+    contextTransfers: [
+      {
+        type: "subagent_spawn",
+        sourceThreadId: parentThreadId,
+        targetThreadId: childThreadId,
+        targetRunId: childRunId,
+      },
+    ],
+    subagents: [],
+    providerThreads: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+
+  const layer = OrchestratorMcpService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(null),
+          getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          getThreadRecords: (threadId) => {
+            if (threadId === parentThreadId) return Effect.succeed(parentProjection);
+            if (threadId === childThreadId) return Effect.succeed(childProjection);
+            return Effect.die(`unexpected thread ${threadId}`);
+          },
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const result = yield* service.taskStatus(makeScope(), taskId);
+    expect(result.status).toBe("running");
+    expect(result.waitingOnUser).toEqual({
+      kind: "input",
+      requestIds: ["request-mcp-question"],
+      preview: "Fix the lexer too?",
+    });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

@@ -1336,6 +1336,26 @@ layer("ProviderEventIngestorV2", (it) => {
         instanceId: modelSelection.instanceId,
         model: "gpt-6.1-sol",
       });
+      const actualSelection = {
+        instanceId: modelSelection.instanceId,
+        model: "gpt-6.1-sol",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      const effortUpdate = { ...subagentUpdated, modelSelection: actualSelection };
+      const effortEvents = yield* ingest(effortUpdate);
+      assert.deepEqual(
+        effortEvents.map((stored) => stored.event.type),
+        ["subagent.updated", "thread.model-selection-updated"],
+      );
+      assert.deepEqual(
+        (yield* projectionStore.getThread(childThreadId)).modelSelection,
+        actualSelection,
+      );
+      const duplicateEffort = yield* ingest(effortUpdate);
+      assert.deepEqual(
+        duplicateEffort.map((stored) => stored.event.type),
+        ["subagent.updated"],
+      );
     }),
   );
 });

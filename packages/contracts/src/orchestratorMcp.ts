@@ -11,6 +11,7 @@ import {
   PositiveInt,
   ProjectId,
   RunId,
+  RuntimeRequestId,
   ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -224,6 +225,13 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description:
       "Present on the delegate_task result when the role's default worktree was not possible and the child shares this thread's checkout instead.",
   }),
+  waitingOnUser: Schema.optional(
+    Schema.Struct({
+      kind: Schema.Literals(["input", "approval"]),
+      requestIds: Schema.Array(RuntimeRequestId),
+      preview: Schema.String,
+    }),
+  ),
   waitTimedOut: Schema.Boolean.annotate({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",

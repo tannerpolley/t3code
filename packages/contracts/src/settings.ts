@@ -1423,6 +1423,8 @@ export const ServerSettings = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /** Disconnect agent sessions after this many idle minutes; 0 keeps sessions open. */
+  idleAgentSessionMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `t3-code` server (and with it every
@@ -1826,6 +1828,7 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   // Server settings
+  idleAgentSessionMinutes: Schema.optionalKey(NonNegativeInt),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),

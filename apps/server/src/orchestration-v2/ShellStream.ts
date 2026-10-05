@@ -41,16 +41,28 @@ export type ShellApplicationEvent =
       readonly event: Pick<OrchestrationV2StoredEvent["event"], "threadId">;
     };
 
-/** Shell updates refetch an aggregate; drop transcript bodies before retaining an event. */
+/**
+ * Retain only the aggregate ID. Native subagent updates refresh their child;
+ * the paired parent turn-item event refreshes the parent. One delta per event
+ * preserves the strictly increasing sequence watermark clients expect.
+ */
 export function toShellApplicationEvent(stored: ApplicationStoredEvent): ShellApplicationEvent {
-  return "aggregateKind" in stored
-    ? {
-        aggregateKind: stored.aggregateKind,
-        aggregateId: stored.aggregateId,
-        type: stored.type,
-        sequence: stored.sequence,
-      }
-    : { sequence: stored.sequence, event: { threadId: stored.event.threadId } };
+  if ("aggregateKind" in stored) {
+    return {
+      aggregateKind: stored.aggregateKind,
+      aggregateId: stored.aggregateId,
+      type: stored.type,
+      sequence: stored.sequence,
+    };
+  }
+  const { event } = stored;
+  const threadId =
+    event.type === "subagent.updated" &&
+    event.payload.origin === "provider_native" &&
+    event.payload.childThreadId !== null
+      ? event.payload.childThreadId
+      : event.threadId;
+  return { sequence: stored.sequence, event: { threadId } };
 }
 
 /** Keep only the newest shell-relevant event per project/thread aggregate. */

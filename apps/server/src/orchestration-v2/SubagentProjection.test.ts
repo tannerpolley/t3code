@@ -163,7 +163,7 @@ function taskFixture() {
     checkpointId: null,
     contextHandoffId: null,
   };
-  return { projection: { ...projection, runs: [run] }, run };
+  return { projection: { ...projection, runs: [run], pendingBackgroundTasks: [] }, run };
 }
 
 it("reports the run that ended last, not the highest ordinal", () => {
@@ -223,11 +223,16 @@ it("waits for nested work and retains the report across monitor acknowledgements
   assert.equal(
     delegatedTaskProgress({
       ...projection,
-      providerThreads: [
-        { pendingBackgroundTasks: [{ taskId: "background-audit", kind: "command" }] },
-      ],
+      pendingBackgroundTasks: [{ kind: "command" }],
     }).state,
     "waiting_for_children",
+  );
+  assert.equal(
+    delegatedTaskProgress({
+      ...projection,
+      pendingBackgroundTasks: [{ kind: "monitor" }],
+    }).state,
+    "result_available",
   );
   const pending = {
     ...run,

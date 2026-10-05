@@ -619,6 +619,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
+      ...(settings.idleAgentSessionMinutes !== DEFAULT_UNIFIED_SETTINGS.idleAgentSessionMinutes
+        ? ["Idle agent timeout"]
+        : []),
       ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
         ? ["Response streaming"]
         : []),
@@ -700,6 +703,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.panelAnimationDurationMs,
       settings.responseStreamingMode,
+      settings.idleAgentSessionMinutes,
       settings.persistComposerContextStrip,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
@@ -815,6 +819,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
+      idleAgentSessionMinutes: DEFAULT_UNIFIED_SETTINGS.idleAgentSessionMinutes,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -2183,6 +2188,7 @@ export function GeneralSettingsPanel() {
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
+  const mixedIdleTimeout = useScopedSettingsMixed(["idleAgentSessionMinutes"]);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -2678,6 +2684,46 @@ export function GeneralSettingsPanel() {
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
                 </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["idleAgentSessionMinutes"]}
+          {...searchableSetting("idle-agent-session")}
+          description="Disconnect idle agents and unload their tools after this interval. The next message resumes the session. Working agents and questions stay connected."
+          resetAction={
+            settings.idleAgentSessionMinutes !== 0 ? (
+              <SettingResetButton
+                label="idle agent timeout"
+                onClick={() => updateSettings({ idleAgentSessionMinutes: 0 })}
+              />
+            ) : undefined
+          }
+          control={
+            <Select
+              value={mixedIdleTimeout ? null : String(settings.idleAgentSessionMinutes)}
+              onValueChange={(value) => {
+                if (value !== null) updateSettings({ idleAgentSessionMinutes: Number(value) });
+              }}
+              disabled={!hasServerTargets}
+            >
+              <SelectTrigger size="sm">
+                <SelectValue>
+                  {mixedIdleTimeout
+                    ? "Mixed"
+                    : settings.idleAgentSessionMinutes === 0
+                      ? "Off"
+                      : `${settings.idleAgentSessionMinutes} minutes`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {[0, 15, 30, 45, 60, 90, 120].map((minutes) => (
+                  <SelectItem key={minutes} hideIndicator value={String(minutes)}>
+                    {minutes === 0 ? "Off" : `${minutes} minutes`}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }

@@ -1239,8 +1239,12 @@ const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
 
 const decodeCodexChildModel = Schema.decodeUnknownEffect(
   Schema.Struct({
-    thread: Schema.Struct({ id: Schema.String }),
-    model: Schema.NullOr(Schema.String),
+    thread: Schema.Struct({
+      id: Schema.String,
+      model: Schema.optional(Schema.NullOr(Schema.String)),
+      reasoningEffort: Schema.optional(Schema.NullOr(Schema.String)),
+    }),
+    model: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 );
 
@@ -2265,6 +2269,56 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 result: task.result,
               },
             });
+            yield* Effect.gen(function* () {
+              const parent = input.subagent.parentContext;
+              if (
+                isOrchestrationV2WorkActive(prior.status) &&
+                ["completed", "failed", "cancelled", "interrupted"].includes(task.status) &&
+                parent.subagent === null &&
+                continuationRequests !== undefined &&
+                !(yield* Ref.get(interruptingNativeTurns)).has(parent.nativeTurnId) &&
+                !(yield* Ref.get(terminalizedNonCompletedNativeTurns)).has(parent.nativeTurnId) &&
+                (yield* findActiveTurnByNativeThreadId(
+                  yield* getNativeThreadId(parent.providerThread),
+                )) === undefined
+              ) {
+                const outcome =
+                  task.status === "completed"
+                    ? "completed"
+                    : task.status === "failed"
+                      ? "failed"
+                      : "cancelled";
+                const verb =
+                  outcome === "completed"
+                    ? "finished"
+                    : outcome === "failed"
+                      ? "failed"
+                      : "was stopped";
+                const notification = backgroundWorkNotification([
+                  {
+                    kind: "subagent",
+                    childThreadId: task.childThreadId ?? undefined,
+                    label: task.title ?? undefined,
+                    outcome,
+                  },
+                ]);
+                yield* continuationRequests.offer({
+                  threadId: parent.projectionThreadId,
+                  providerThreadId: parent.providerThread.id,
+                  driver: CODEX_PROVIDER,
+                  detail:
+                    `Subagent ${task.title ?? "agent"} ${verb}. Its <subagent_notification> in this thread has the full result.` +
+                    (task.result?.trim()
+                      ? `\n\nResult tail:\n${task.result.trim().slice(-4000)}`
+                      : ""),
+                  ...(notification === null ? {} : { notification }),
+                });
+              }
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to offer native subagent completion", { cause }),
+              ),
+            );
           });
 
         const emitSubagentProviderTurnStarted = (
@@ -2434,18 +2488,29 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         const updateSubagentModel = Effect.fnUntraced(function* (
           nativeThreadId: string,
-          value: string | null,
+          value: string | null | undefined,
+          reasoningEffort?: string | null,
         ) {
           const model = value?.trim();
           if (!model) return;
           subagentModels.set(nativeThreadId, model);
           const subagent = (yield* Ref.get(subagentThreads)).get(nativeThreadId);
-          if (subagent === undefined || subagent.task.model === model) return;
+          if (subagent === undefined || (subagent.task.model === model && reasoningEffort == null))
+            return;
           subagent.task = { ...subagent.task, model, updatedAt: yield* DateTime.now };
           yield* emitProviderEvent({
             type: "subagent.updated",
             driver: CODEX_PROVIDER,
             subagent: subagent.task,
+            ...(reasoningEffort == null
+              ? {}
+              : {
+                  modelSelection: {
+                    instanceId: adapterOptions.instanceId,
+                    model,
+                    options: [{ id: "reasoningEffort", value: reasoningEffort }],
+                  },
+                }),
           });
         });
 
@@ -2671,16 +2736,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             for (const pendingTurn of pendingTurns) {
               yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
             }
-            if (task.model === null) {
+            {
               yield* client.raw
-                .request("thread/resume", { threadId: input.nativeThreadId, excludeTurns: true })
+                .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
                 .pipe(
                   Effect.flatMap(decodeCodexChildModel),
                   Effect.timeout("5 seconds"),
                   Effect.flatMap((response) =>
                     response.thread.id === input.nativeThreadId &&
                     !subagentModels.has(input.nativeThreadId)
-                      ? updateSubagentModel(input.nativeThreadId, response.model)
+                      ? updateSubagentModel(
+                          input.nativeThreadId,
+                          response.thread.model ?? response.model,
+                          response.thread.reasoningEffort,
+                        )
                       : Effect.void,
                   ),
                   Effect.catch(() => Effect.void),

@@ -1,3 +1,4 @@
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -396,7 +397,14 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
       }) => `${input.providerSessionId}\u0000${input.threadId}`;
-      const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
+      const configuredIdleTimeout = Effect.gen(function* () {
+        if (options.idleTimeoutMs !== undefined) return Math.max(1, options.idleTimeoutMs);
+        if (Option.isNone(serverSettings)) return DEFAULT_IDLE_TIMEOUT_MS;
+        const settings = yield* serverSettings.value.getSettings;
+        return settings.idleAgentSessionMinutes === 0
+          ? null
+          : settings.idleAgentSessionMinutes * 60_000;
+      }).pipe(Effect.catchCause(() => Effect.succeed(null)));
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
@@ -1033,6 +1041,39 @@ export const layerWithOptions = (
           ) {
             return;
           }
+          const idleTimeoutMs = yield* configuredIdleTimeout;
+          if (idleTimeoutMs === null) return;
+          const remaining =
+            entry.lastActivityAtMs + idleTimeoutMs - (yield* Clock.currentTimeMillis);
+          if (remaining > 0) {
+            yield* Effect.sleep(Duration.millis(remaining));
+            return yield* releaseIfStillIdle(input);
+          }
+          const holdsWork = yield* Effect.forEach([...entry.attachedThreadIds], (threadId) =>
+            projectionStore
+              .getThreadRecords(threadId, ["runtimeRequests", "runs", "subagents"])
+              .pipe(
+                Effect.map(
+                  (thread) =>
+                    thread.runtimeRequests.some((request) => request.status === "pending") ||
+                    thread.runs.some((run) =>
+                      ["queued", "preparing", "starting", "running", "waiting"].includes(
+                        run.status,
+                      ),
+                    ) ||
+                    thread.subagents.some((task) =>
+                      ["pending", "running", "waiting"].includes(task.status),
+                    ),
+                ),
+              ),
+          ).pipe(
+            Effect.map((pending) => pending.some(Boolean)),
+            Effect.catchCause(() => Effect.succeed(true)),
+          );
+          if (holdsWork) {
+            yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+            return yield* releaseIfStillIdle(input);
+          }
           // Capture runtime identity before yielding: a replacement session
           // can reuse the same providerSessionId while this fiber is parked.
           const probedRuntime = entry.runtime;
@@ -1114,7 +1155,10 @@ export const layerWithOptions = (
           ),
         );
 
-      const scheduleIdleReleaseInternal = (providerSessionId: ProviderSessionId) =>
+      const scheduleIdleReleaseInternal = (
+        providerSessionId: ProviderSessionId,
+        resetActivity = true,
+      ) =>
         Effect.gen(function* () {
           const key = sessionKey(providerSessionId);
           const current = yield* Ref.get(sessions);
@@ -1125,11 +1169,18 @@ export const layerWithOptions = (
 
           yield* cancelIdleFiber(entry.idleFiber);
           const generation = entry.idleGeneration + 1;
-          const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
-            Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
-            Effect.forkIn(layerScope),
-          );
-          const lastActivityAtMs = yield* Clock.currentTimeMillis;
+          const now = yield* Clock.currentTimeMillis;
+          const lastActivityAtMs = resetActivity ? now : entry.lastActivityAtMs;
+          const idleTimeoutMs = yield* configuredIdleTimeout;
+          const idleFiber =
+            idleTimeoutMs === null
+              ? null
+              : yield* Effect.sleep(
+                  Duration.millis(Math.max(0, lastActivityAtMs + idleTimeoutMs - now)),
+                ).pipe(
+                  Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
+                  Effect.forkIn(layerScope),
+                );
           yield* Ref.update(sessions, (latest) => {
             const latestEntry = latest.get(key);
             if (latestEntry === undefined || latestEntry.busyCount > 0) {
@@ -1145,6 +1196,125 @@ export const layerWithOptions = (
             return updated;
           });
         });
+
+      const unloadedNativeChildren = new WeakMap<
+        ProviderAdapterV2SessionRuntime,
+        Map<string, number>
+      >();
+      const unloadFinishedNativeChildren = Effect.gen(function* () {
+        const timeoutMs = yield* configuredIdleTimeout;
+        if (timeoutMs === null) return;
+        const now = yield* Clock.currentTimeMillis;
+        for (const entry of (yield* Ref.get(sessions)).values()) {
+          const unload = entry.runtime.unloadThread;
+          if (entry.runtime.driver !== "codex" || unload === undefined) continue;
+          const unloaded = unloadedNativeChildren.get(entry.runtime) ?? new Map<string, number>();
+          unloadedNativeChildren.set(entry.runtime, unloaded);
+          const parents = [...entry.attachedThreadIds];
+          const visited = new Set<ThreadId>();
+          for (const parentId of parents) {
+            if (visited.has(parentId)) continue;
+            visited.add(parentId);
+            const parent = yield* projectionStore.getThreadRecords(parentId, ["subagents"]);
+            for (const task of parent.subagents) {
+              if (task.origin !== "provider_native" || task.childThreadId === null) continue;
+              parents.push(task.childThreadId);
+              if (
+                task.completedAt === null ||
+                !["completed", "failed", "interrupted", "cancelled"].includes(task.status)
+              )
+                continue;
+              const completedAt = DateTime.toEpochMillis(task.completedAt);
+              if (now - completedAt < timeoutMs || unloaded.get(String(task.id)) === completedAt)
+                continue;
+              const childId = task.childThreadId;
+              yield* threadAttachment.withLock(
+                threadAttachmentKey({
+                  providerSessionId: entry.runtime.providerSessionId,
+                  threadId: childId,
+                }),
+                Effect.gen(function* () {
+                  const current = (yield* Ref.get(sessions)).get(
+                    sessionKey(entry.runtime.providerSessionId),
+                  );
+                  if (current?.runtime !== entry.runtime || current.attachedThreadIds.has(childId))
+                    return;
+                  const latestParent = yield* projectionStore.getThreadRecords(parentId, [
+                    "subagents",
+                  ]);
+                  const latest = latestParent.subagents.find(
+                    (candidate) => candidate.id === task.id,
+                  );
+                  if (
+                    latest?.completedAt === null ||
+                    latest === undefined ||
+                    DateTime.toEpochMillis(latest.updatedAt) !==
+                      DateTime.toEpochMillis(task.updatedAt)
+                  )
+                    return;
+                  const child = yield* projectionStore.getThreadRecords(childId, [
+                    "providerThreads",
+                    "runs",
+                    "runtimeRequests",
+                  ]);
+                  if (
+                    child.runs.some((run) =>
+                      ["queued", "preparing", "starting", "running", "waiting"].includes(
+                        run.status,
+                      ),
+                    ) ||
+                    child.runtimeRequests.some((request) => request.status === "pending")
+                  )
+                    return;
+                  const shell = yield* projectionStore.getThreadShell(childId);
+                  if (backgroundWorkHoldsCompletion(shell?.pendingBackgroundTasks ?? [])) return;
+                  const providerThread = child.providerThreads.find(
+                    (thread) =>
+                      thread.id === task.providerThreadId &&
+                      thread.providerSessionId === entry.runtime.providerSessionId &&
+                      thread.nativeThreadRef !== null,
+                  );
+                  if (providerThread === undefined) return;
+                  if (
+                    entry.runtime.hasPendingBackgroundWorkForThread !== undefined &&
+                    (yield* entry.runtime.hasPendingBackgroundWorkForThread(providerThread))
+                  )
+                    return;
+                  yield* unload({ providerThread }).pipe(Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS));
+                  unloaded.set(String(task.id), completedAt);
+                }),
+              );
+            }
+          }
+        }
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to unload finished native children", { cause }),
+        ),
+      );
+
+      if (Option.isSome(serverSettings) && options.idleTimeoutMs === undefined) {
+        yield* Effect.forever(
+          Effect.sleep(Duration.minutes(1)).pipe(Effect.andThen(unloadFinishedNativeChildren)),
+        ).pipe(Effect.forkIn(layerScope));
+        const changes = yield* serverSettings.value.subscribeChanges;
+        yield* changes.pipe(
+          Stream.map((settings) => settings.idleAgentSessionMinutes),
+          Stream.changes,
+          Stream.runForEach(() =>
+            Ref.get(sessions).pipe(
+              Effect.flatMap((current) =>
+                Effect.forEach(
+                  [...current.values()],
+                  (entry) => scheduleIdleReleaseInternal(entry.runtime.providerSessionId, false),
+                  { concurrency: 1, discard: true },
+                ),
+              ),
+            ),
+          ),
+          Effect.forkIn(layerScope),
+        );
+      }
 
       const scheduleIdleRelease = (providerSessionId: ProviderSessionId) =>
         withActivityError(providerSessionId, scheduleIdleReleaseInternal(providerSessionId));

@@ -9,6 +9,7 @@ import type {
   OrchestrationV2ProviderRef,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
   ProviderThreadId,
@@ -215,8 +216,8 @@ export function delegatedTaskProgress(projection: {
   readonly subagents: ReadonlyArray<
     Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
   >;
-  readonly providerThreads: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
+  readonly pendingBackgroundTasks: ReadonlyArray<
+    Pick<NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number], "kind">
   >;
 }) {
   const terminal = (status: string) =>
@@ -238,8 +239,7 @@ export function delegatedTaskProgress(projection: {
         // The parent still owes that follow-up even between those transactions.
         task.completionDelivery?.state === "pending" ||
         task.completionDelivery?.state === "claimed",
-    ) ||
-    projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
+    ) || projection.pendingBackgroundTasks.some((task) => task.kind !== "monitor");
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
@@ -252,4 +252,74 @@ export function delegatedTaskProgress(projection: {
           : ("result_available" as const),
     resultRun,
   };
+}
+
+/**
+ * Whether a delegated child owes its parent the result of `resultRun`. The first result is always
+ * owed. After that, only a turn the parent itself sent or steered into the child (a user message
+ * whose sender is the parent) after the last reported run owes another; turns the user starts in
+ * the child carry no sender. The "subagent-results" recovery query in ProjectionStore mirrors this.
+ */
+export function subagentResultOwed(input: {
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal">>;
+  readonly messages: ReadonlyArray<
+    Pick<OrchestrationV2ConversationMessage, "runId" | "role" | "senderThreadId">
+  >;
+  readonly parentThreadId: ThreadId;
+  readonly reportedRunIds: ReadonlyArray<string | undefined>;
+  readonly resultRun: Pick<OrchestrationV2Run, "ordinal">;
+}): boolean {
+  if (input.reportedRunIds.length === 0) return true;
+  const ordinalOf = (runId: string | null | undefined) =>
+    input.runs.find((run) => run.id === runId)?.ordinal;
+  // A result transfer without a known run predates per-run reporting; treat it as current.
+  const reported = Math.max(...input.reportedRunIds.map((id) => ordinalOf(id) ?? Infinity));
+  return input.messages.some((message) => {
+    const ordinal = ordinalOf(message.runId);
+    return (
+      message.role === "user" &&
+      message.senderThreadId === input.parentThreadId &&
+      ordinal !== undefined &&
+      ordinal > reported &&
+      ordinal <= input.resultRun.ordinal
+    );
+  });
+}
+
+/**
+ * Questions and approvals a thread is blocked on that need the user. Auth refresh and dynamic
+ * tool calls resolve without the user, matching the client's pending-request rule. `summary` is
+ * a short preview for parent notices and task_status.
+ */
+export function pendingUserRequests(
+  projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,
+) {
+  return projection.runtimeRequests.flatMap((request) => {
+    if (
+      request.status !== "pending" ||
+      request.kind === "auth_refresh" ||
+      request.kind === "dynamic_tool_call"
+    ) {
+      return [];
+    }
+    const kind = request.kind === "user_input" ? ("input" as const) : ("approval" as const);
+    const item = projection.turnItems.findLast(
+      (candidate) =>
+        (candidate.type === "user_input_request" || candidate.type === "approval_request") &&
+        candidate.requestId === request.id,
+    );
+    const summary =
+      (item?.type === "user_input_request"
+        ? trimmed(item.questions.map((question) => question.question).join(" / "))
+        : item?.type === "approval_request"
+          ? trimmed(item.prompt)
+          : undefined) ?? (kind === "input" ? "a question" : `${request.kind} approval`);
+    return [
+      {
+        id: request.id,
+        kind,
+        summary: summary.length > 200 ? `${summary.slice(0, 197)}...` : summary,
+      },
+    ];
+  });
 }

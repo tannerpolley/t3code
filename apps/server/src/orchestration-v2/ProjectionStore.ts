@@ -1,3 +1,4 @@
+import { subagentResultOwed } from "./SubagentProjection.ts";
 import {
   latestRootProviderFailure,
   latestUnheldRun,
@@ -523,19 +524,29 @@ function needsRecovery(
       return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
     case "subagent-results": {
       const parentThreadId = projection.thread.lineage.parentThreadId;
+      const latestRun = projection.runs.at(-1);
       return (
         projection.thread.lineage.relationshipToParent === "subagent" &&
         parentThreadId !== null &&
         projection.thread.forkedFrom?.type === "node" &&
         ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-          projection.runs.at(-1)?.status ?? "idle",
+          latestRun?.status ?? "idle",
         ) &&
-        !projection.contextTransfers.some(
-          (transfer) =>
-            transfer.type === "subagent_result" &&
-            transfer.sourceThreadId === projection.thread.id &&
-            transfer.targetThreadId === parentThreadId,
-        )
+        latestRun !== undefined &&
+        subagentResultOwed({
+          runs: projection.runs,
+          messages: projection.messages,
+          parentThreadId,
+          reportedRunIds: projection.contextTransfers
+            .filter(
+              (transfer) =>
+                transfer.type === "subagent_result" &&
+                transfer.sourceThreadId === projection.thread.id &&
+                transfer.targetThreadId === parentThreadId,
+            )
+            .map((transfer) => transfer.sourcePoint.runId),
+          resultRun: latestRun,
+        })
       );
     }
     case "runtime":
@@ -917,6 +928,7 @@ type PayloadRow = {
 type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
+  readonly native_subagent_payload_json: string | null;
   readonly forked_from_run_source_thread_id: string | null;
   readonly latest_run_id: string | null;
   readonly latest_run_status: string | null;
@@ -951,6 +963,7 @@ type SettlementThreadRow = Pick<
   ShellThreadRow,
   | "thread_id"
   | "payload_json"
+  | "native_subagent_payload_json"
   | "latest_run_id"
   | "latest_run_status"
   | "latest_run_requested_at"
@@ -1320,6 +1333,7 @@ function buildVisibleTurnItems(input: {
 
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
+  nativeSubagent: OrchestrationV2Subagent | null = null,
 ): OrchestrationV2ThreadShell {
   const providerSession =
     projection.providerSessions
@@ -1400,6 +1414,7 @@ export function threadShellFromProjection(
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
+    ...nativeSubagentShellFields(latestRun?.id ?? null, pendingRuntimeRequest, nativeSubagent),
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
@@ -1512,6 +1527,7 @@ type ShellThreadState = {
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
+  readonly nativeSubagent: OrchestrationV2Subagent | null;
 };
 
 function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2ShellThreadStatus {
@@ -1532,6 +1548,62 @@ function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2S
     default:
       return "failed";
   }
+}
+
+function nativeSubagentShellFields(
+  latestRunId: RunId | null,
+  pendingRuntimeRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null,
+  subagent: OrchestrationV2Subagent | null,
+): Partial<
+  Pick<
+    OrchestrationV2ThreadShell,
+    | "status"
+    | "latestRunStartedAt"
+    | "latestRunCompletedAt"
+    | "activityRunStatus"
+    | "activityRunStartedAt"
+  >
+> {
+  // A child run (including one waiting on a question) owns its shell status.
+  if (latestRunId !== null || pendingRuntimeRequest !== null || subagent === null) return {};
+
+  const status = shellStatusFromStoredRunStatus(
+    subagent.status === "idle"
+      ? null
+      : subagent.status === "pending"
+        ? "starting"
+        : subagent.status,
+  );
+  const activityRunStatus =
+    status === "starting" || status === "running" || status === "waiting" ? status : null;
+  return {
+    status,
+    latestRunStartedAt: subagent.startedAt,
+    latestRunCompletedAt: subagent.completedAt,
+    activityRunStatus,
+    activityRunStartedAt: activityRunStatus === null ? null : subagent.startedAt,
+  };
+}
+
+function nativeSubagentForChild(
+  projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>,
+  child: OrchestrationV2ThreadProjection,
+): OrchestrationV2Subagent | null {
+  const parentThreadId = child.thread.lineage.parentThreadId;
+  if (parentThreadId === null) return null;
+  return (
+    projections
+      .get(parentThreadId)
+      ?.subagents.filter(
+        (subagent) =>
+          subagent.origin === "provider_native" && subagent.childThreadId === child.thread.id,
+      )
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+          right.id.localeCompare(left.id),
+      )[0] ?? null
+  );
 }
 
 function itemCountThroughRun(input: {
@@ -1636,6 +1708,11 @@ function shellFromState(input: {
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
     status: input.state.latestRunStatus,
+    ...nativeSubagentShellFields(
+      input.state.latestRunId,
+      input.state.pendingRuntimeRequest,
+      input.state.nativeSubagent,
+    ),
     lastError: input.state.lastError,
     lastErrorClass: input.state.lastErrorClass,
     usageLimitResetAt: input.state.usageLimitResetAt,
@@ -3445,11 +3522,45 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE thread_id = child.thread_id
                     ORDER BY ordinal DESC LIMIT 1
                   ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                  -- Mirrors subagentResultOwed: a reported result stays current until the
+                  -- parent sends the child a later turn.
                   AND NOT EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_context_transfers
-                    WHERE source_thread_id = child.thread_id
-                      AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
-                      AND type = 'subagent_result'
+                    SELECT 1 FROM orchestration_v2_projection_context_transfers AS reported
+                    LEFT JOIN orchestration_v2_projection_runs AS reported_run
+                      ON reported_run.run_id = json_extract(reported.payload_json, '$.sourcePoint.runId')
+                    WHERE reported.source_thread_id = child.thread_id
+                      AND reported.target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                      AND reported.type = 'subagent_result'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM orchestration_v2_projection_messages AS sent
+                        JOIN orchestration_v2_projection_runs AS sent_run
+                          ON sent_run.run_id = sent.run_id
+                        WHERE sent.thread_id = child.thread_id
+                          AND sent.role = 'user'
+                          AND json_extract(sent.payload_json, '$.senderThreadId')
+                            = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                          AND sent_run.ordinal > reported_run.ordinal
+                      )
+                  )
+                  -- A restart recovers a later report only while the parent has not moved on:
+                  -- a parent turn requested after the child's last run ended carried on without it.
+                  AND NOT (
+                    EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_context_transfers
+                      WHERE source_thread_id = child.thread_id
+                        AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                        AND type = 'subagent_result'
+                    )
+                    AND EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs AS parent_run
+                      WHERE parent_run.thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                        AND json_extract(parent_run.payload_json, '$.requestedAt') > (
+                          SELECT json_extract(payload_json, '$.completedAt')
+                          FROM orchestration_v2_projection_runs
+                          WHERE thread_id = child.thread_id
+                          ORDER BY ordinal DESC LIMIT 1
+                        )
+                    )
                   )
                   ELSE 0 END
               `;
@@ -4823,6 +4934,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    const nativeSubagentPayload = sql`
+              (
+                SELECT subagent.payload_json
+                FROM orchestration_v2_projection_subagents AS subagent
+                WHERE subagent.child_thread_id = t.thread_id
+                  AND subagent.origin = 'provider_native'
+                ORDER BY subagent.updated_at DESC, subagent.subagent_id DESC
+                LIMIT 1
+              )`;
+
     const selectShellThreadRows = (
       threadId?: ThreadId,
       location?: "active" | "archive",
@@ -4832,6 +4953,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              ${nativeSubagentPayload} AS native_subagent_payload_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
@@ -5169,6 +5291,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             // threads before loading the remaining candidates' background work.
             const rows = yield* sql<SettlementThreadRow>`
             SELECT t.thread_id, t.payload_json,
+              ${nativeSubagentPayload} AS native_subagent_payload_json,
               r.run_id AS latest_run_id,
               r.status AS latest_run_status,
               r.requested_at AS latest_run_requested_at,
@@ -5222,6 +5345,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return yield* Effect.forEach(rows, (row) =>
               Effect.gen(function* () {
                 const thread = yield* decodeThreadPayload(row.payload_json);
+                const nativeSubagent =
+                  row.native_subagent_payload_json === null
+                    ? null
+                    : yield* decodeSubagentPayload(row.native_subagent_payload_json);
                 const status = shellStatusFromStoredRunStatus(row.latest_run_status);
                 const latestRunId =
                   row.latest_run_id === null ? null : RunId.make(row.latest_run_id);
@@ -5256,6 +5383,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       : DateTime.makeUnsafe(row.latest_user_authored_message_at),
                   activityRunStatus: null,
                   activityRunStartedAt: null,
+                  ...nativeSubagentShellFields(latestRunId, null, nativeSubagent),
                   pendingRuntimeRequest: null,
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:
@@ -5321,6 +5449,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           pendingTurnItemsByThreadId,
         } = input;
         const thread = yield* decodeThreadPayload(row.payload_json);
+        const nativeSubagent =
+          row.native_subagent_payload_json === null
+            ? null
+            : yield* decodeSubagentPayload(row.native_subagent_payload_json);
         const pendingRuntimeRequest =
           row.pending_request_payload_json === null
             ? null
@@ -5429,6 +5561,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           updatedAt: thread.updatedAt,
           runOrdinalById: runOrdinalsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
           itemCountByRunId: itemCountsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
+          nativeSubagent,
         } satisfies ShellThreadState;
       });
 
@@ -5681,7 +5814,16 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           const shells = yield* Effect.forEach(
             selectedThreadIds.toSorted((left, right) => String(left).localeCompare(String(right))),
             (threadId) =>
-              service.getThreadProjection(threadId).pipe(Effect.map(threadShellFromProjection)),
+              service
+                .getThreadProjection(threadId)
+                .pipe(
+                  Effect.map((projection) =>
+                    threadShellFromProjection(
+                      projection,
+                      nativeSubagentForChild(existing, projection),
+                    ),
+                  ),
+                ),
           );
           const visible = shells.filter((thread) => thread.deletedAt === null);
           return {
@@ -5699,7 +5841,11 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           const shell = yield* service
             .getThreadProjection(threadId)
-            .pipe(Effect.map(threadShellFromProjection));
+            .pipe(
+              Effect.map((projection) =>
+                threadShellFromProjection(projection, nativeSubagentForChild(existing, projection)),
+              ),
+            );
           return shell.deletedAt === null ? shell : null;
         }),
       getThread: (threadId) =>
@@ -5753,7 +5899,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 !runtimeRequests.some((request) => request.status === "pending"),
             )
             .map((projection) => {
-              const shell = threadShellFromProjection(projection);
+              const shell = threadShellFromProjection(
+                projection,
+                nativeSubagentForChild(projections, projection),
+              );
               return {
                 ...shell,
                 latestUserAuthoredMessageAt: shell.latestUserAuthoredMessageAt ?? null,
@@ -5801,7 +5950,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   thread.archivedAt === null &&
                   thread.settledOverride !== "settled",
               )
-              .map(threadShellFromProjection)
+              .map((projection) =>
+                threadShellFromProjection(
+                  projection,
+                  nativeSubagentForChild(state.projections, projection),
+                ),
+              )
               .filter(
                 (thread) =>
                   thread.status === "failed" &&
@@ -5837,7 +5991,28 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         Effect.gen(function* () {
           const projections = (yield* Ref.get(replayState)).projections;
           return [...projections.values()]
-            .filter((projection) => needsRecovery(projection, kind))
+            .filter((projection) => {
+              if (!needsRecovery(projection, kind)) return false;
+              if (kind !== "subagent-results") return true;
+              const parentId = projection.thread.lineage.parentThreadId;
+              const parent = parentId === null ? undefined : projections.get(parentId);
+              const latestRun = projection.runs.at(-1);
+              const reported = projection.contextTransfers.some(
+                (transfer) =>
+                  transfer.type === "subagent_result" &&
+                  transfer.sourceThreadId === projection.thread.id &&
+                  transfer.targetThreadId === parentId,
+              );
+              return (
+                !reported ||
+                latestRun?.completedAt == null ||
+                !parent?.runs.some(
+                  (run) =>
+                    DateTime.toEpochMillis(run.requestedAt) >
+                    DateTime.toEpochMillis(latestRun.completedAt!),
+                )
+              );
+            })
             .toSorted(
               (left, right) =>
                 DateTime.toEpochMillis(left.thread.updatedAt) -

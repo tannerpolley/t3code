@@ -260,6 +260,11 @@ Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
 
+To free resources from idle agents, set **Settings → General → Idle agent timeout**
+on web or desktop. It is off by default. Working agents and pending questions stay
+connected; the next message resumes a disconnected session. Finished native Codex
+subagents are unloaded after the same interval.
+
 ## Snooze until later
 
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your

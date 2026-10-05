@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  EventId,
+  NodeId,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -55,6 +57,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { makeProviderFailure } from "./ProviderFailure.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
 const TestStoresLayer = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -294,6 +297,7 @@ function makeProviderAdapter(
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly eventStreamEnded?: Deferred.Deferred<void>;
   } = {},
 ): ProviderAdapterV2Shape {
   return {
@@ -354,7 +358,15 @@ function makeProviderAdapter(
                   cause: "process exited",
                 }),
               )
-            : Stream.fromQueue(events),
+            : Stream.fromQueue(events).pipe(
+                Stream.concat(
+                  Stream.fromEffectDrain(
+                    options.eventStreamEnded === undefined
+                      ? Effect.void
+                      : Deferred.succeed(options.eventStreamEnded, undefined),
+                  ),
+                ),
+              ),
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
@@ -394,7 +406,7 @@ function makeProviderAdapter(
 
 function makeTestLayer(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
-  readonly idleTimeoutMs: number;
+  readonly idleTimeoutMs?: number;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
@@ -410,6 +422,7 @@ function makeTestLayer(input: {
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly eventStreamEnded?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -432,6 +445,7 @@ function makeTestLayer(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.eventStreamEnded === undefined ? {} : { eventStreamEnded: input.eventStreamEnded }),
     }),
   );
   const providerEventIngestorTestLayer = ProviderEventIngestor.layer.pipe(
@@ -450,7 +464,7 @@ function makeTestLayer(input: {
     IdAllocator.layer,
     TestMcpRegistryLayer,
     ProviderSessionManager.layerWithOptions({
-      idleTimeoutMs: input.idleTimeoutMs,
+      ...(input.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: input.idleTimeoutMs }),
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
       Layer.provide(
@@ -973,6 +987,78 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
     });
 
     yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 ignores provider exits after SIGTERM", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const eventStreamEnded = yield* Deferred.make<void>();
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-sigterm");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const subscription = yield* runtime.subscribeEvents!;
+      const collected = yield* subscription.events.pipe(
+        Stream.catchCause(() => Stream.empty),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterQueue);
+
+      // Provider CLIs receive SIGTERM with the server and may report a failed
+      // turn before the server finishes shutting down.
+      process.emit("SIGTERM");
+      yield* Queue.offer(adapterQueue!, {
+        type: "turn.terminal",
+        driver: CODEX_DRIVER,
+        providerThreadId: idAllocator.derive.providerThread({
+          driver: CODEX_DRIVER,
+          nativeThreadId: "sigterm-thread",
+        }),
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: "sigterm-turn",
+        }),
+        runOrdinal: 1,
+        failureItemOrdinal: 1,
+        status: "failed",
+        failure: makeProviderFailure({ class: "transport_error" }),
+        threadDisposition: "broken",
+      });
+      yield* Queue.end(adapterQueue!);
+      yield* Deferred.await(eventStreamEnded);
+
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(-1)?.status,
+        "ready",
+      );
+      yield* manager.release({ providerSessionId, reason: "idle_timeout" });
+
+      assert.isEmpty(yield* Fiber.join(collected));
+    });
+
+    yield* effect.pipe(
+      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000, eventStreamEnded })),
+    );
   }),
 );
 
@@ -3477,4 +3563,236 @@ it.effect(
       });
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
+);
+
+// Adapts the fork reaper tests to upstream's manager-owned residency timer.
+it.effect.each([0, 1] as const)(
+  "ProviderSessionManagerV2 uses idleAgentSessionMinutes=%s",
+  (minutes) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settings = ServerSettings.layerTest({ idleAgentSessionMinutes: minutes });
+      yield* Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const allocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make(`thread-idle-setting-${minutes}`);
+        const providerSessionId = yield* allocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* sink.write({
+          events: [
+            yield* makeThreadCreatedEvent({
+              idAllocator: allocator,
+              threadId,
+              now: yield* DateTime.now,
+            }),
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* TestClock.adjust(minutes === 0 ? "31 minutes" : "1 minute");
+        const session = yield* manager.get(providerSessionId);
+        assert.equal(Option.isSome(session), minutes === 0);
+        assert.equal((yield* Ref.get(state)).closeCount, minutes === 0 ? 0 : 1);
+      }).pipe(Effect.provide(makeTestLayer({ state, serverSettingsLayer: settings })));
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 unloads only old finished native children once", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const parentId = ThreadId.make("thread:idle-native-parent");
+      const providerSessionId = yield* allocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: parentId,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId: parentId, now }),
+        ],
+      });
+      yield* manager.open({ threadId: parentId, providerSessionId, modelSelection, runtimePolicy });
+      for (const status of ["completed", "running"] as const) {
+        const childId = ThreadId.make(`thread:idle-native-${status}`);
+        const nodeId = NodeId.make(`node:idle-native-${status}`);
+        const child = yield* makeThreadCreatedEvent({
+          idAllocator: allocator,
+          threadId: childId,
+          now,
+        });
+        const providerThread = {
+          ...makeProviderThread({
+            idAllocator: allocator,
+            threadId: childId,
+            providerSessionId,
+            now,
+          }),
+          id: allocator.derive.providerThread({ driver: CODEX_DRIVER, nativeThreadId: status }),
+          nativeThreadRef: { driver: CODEX_DRIVER, nativeId: status, strength: "strong" as const },
+        };
+        yield* sink.write({
+          events: [
+            {
+              ...child,
+              payload: {
+                ...child.payload,
+                lineage: {
+                  parentThreadId: parentId,
+                  rootThreadId: parentId,
+                  relationshipToParent: "subagent",
+                },
+                forkedFrom: { type: "node", nodeId },
+              },
+            },
+            {
+              id: EventId.make(`event:idle-native-provider-${status}`),
+              type: "provider-thread.updated",
+              threadId: childId,
+              occurredAt: now,
+              payload: providerThread,
+            },
+            {
+              id: EventId.make(`event:idle-native-task-${status}`),
+              type: "subagent.updated",
+              threadId: parentId,
+              occurredAt: now,
+              payload: {
+                id: nodeId,
+                threadId: parentId,
+                runId: null,
+                parentNodeId: NodeId.make("node:idle-native-root"),
+                origin: "provider_native",
+                createdBy: "agent",
+                driver: CODEX_DRIVER,
+                providerInstanceId: modelSelection.instanceId,
+                providerThreadId: providerThread.id,
+                childThreadId: childId,
+                nativeTaskRef: null,
+                prompt: "Review",
+                title: "Review",
+                model: modelSelection.model,
+                status,
+                result: status === "completed" ? "Done" : null,
+                startedAt: now,
+                completedAt: status === "completed" ? now : null,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+      }
+      yield* TestClock.adjust("2 minutes");
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["completed"]);
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          serverSettingsLayer: ServerSettings.layerTest({ idleAgentSessionMinutes: 1 }),
+          hasPendingBackgroundWork: Effect.succeed(true),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 keeps a session with a pending question connected", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:idle-question");
+      const providerSessionId = yield* allocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator: allocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+      yield* sink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId, now })],
+      });
+      const pending = yield* makePendingRuntimeRequestEvents({
+        idAllocator: allocator,
+        threadId,
+        providerSessionId,
+        providerThread,
+        now,
+      });
+      yield* sink.write({ events: pending.events });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      yield* TestClock.adjust("2 minutes");
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          serverSettingsLayer: ServerSettings.layerTest({ idleAgentSessionMinutes: 1 }),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 applies an idle timeout change to existing sessions", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const changes = yield* Queue.unbounded<import("@t3tools/contracts").ServerSettings>();
+    const settingsLayer = Layer.effect(
+      ServerSettings.ServerSettingsService,
+      Effect.gen(function* () {
+        const base = yield* ServerSettings.ServerSettingsService;
+        return {
+          ...base,
+          subscribeChanges: Effect.succeed(Stream.fromQueue(changes)),
+          updateSettings: (patch: import("@t3tools/contracts").ServerSettingsPatch) =>
+            base
+              .updateSettings(patch)
+              .pipe(Effect.tap((settings) => Queue.offer(changes, settings))),
+        };
+      }),
+    ).pipe(Layer.provide(ServerSettings.layerTest({ idleAgentSessionMinutes: 0 })));
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const threadId = ThreadId.make("thread:idle-setting-change");
+      const providerSessionId = yield* allocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* sink.write({
+        events: [
+          yield* makeThreadCreatedEvent({
+            idAllocator: allocator,
+            threadId,
+            now: yield* DateTime.now,
+          }),
+        ],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      yield* TestClock.adjust("40 seconds");
+      yield* settings.updateSettings({ idleAgentSessionMinutes: 1 });
+      yield* TestClock.adjust("20 seconds");
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(makeTestLayer({ state, serverSettingsLayer: settingsLayer }), settingsLayer),
+      ),
+    );
+  }),
 );
