@@ -10,6 +10,11 @@ export function resolveThreadDetailsCardDensity(
   return "essential";
 }
 
+// Narrowest chat lane the docked card leaves beside it. Below this the card
+// becomes a popover, which covers chat, so it stays well under the 640px lane
+// the preview player keeps: an open right panel leaves too little room for that.
+const DOCKED_CARD_MIN_CHAT_WIDTH = 400;
+
 /**
  * The card pins to the top right while a readable chat lane fits beside it.
  * The chat canvas decides whether chat moves over to make room.
@@ -21,7 +26,7 @@ export function resolveThreadDetailsCardLayout({
   overlapsDetailsCard = false,
 }: {
   container: { width: number; height: number };
-  lane: { padding: number; minChatWidth: number };
+  lane: { padding: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
 }) {
@@ -29,7 +34,7 @@ export function resolveThreadDetailsCardLayout({
   // Keep in sync with --thread-details-panel-width, which sizes the popover.
   const width = 280;
   const x = container.width - width - gap;
-  if (x - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth) return null;
+  if (x - DETAILS_CARD_CLEARANCE - lane.padding < DOCKED_CARD_MIN_CHAT_WIDTH) return null;
   // Resizing consumes the height above the player. Dragging first tries to
   // clear the full card and folds it only when there is no readable placement.
   const height =

@@ -214,7 +214,7 @@ describe("chat canvas layout", () => {
       const density = (result: ReturnType<typeof layout>) => {
         const card = resolveThreadDetailsCardLayout({
           container,
-          lane: { padding: 20, minChatWidth: 640 },
+          lane: { padding: 20 },
           frame: result.frame,
           overlapsDetailsCard: result.overlapsDetailsCard,
         });
