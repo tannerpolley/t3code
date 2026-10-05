@@ -4,14 +4,30 @@ import { EnvironmentId, ThreadId, type OrchestrationV2ContextTransfer } from "@t
 import * as DateTime from "effect/DateTime";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
-const state = vi.hoisted(() => ({
-  projection: null as unknown,
-  navigate: vi.fn(),
-  shells: [] as unknown[],
-  projects: [] as unknown[],
-  configs: new Map<string, unknown>(),
-  showTooltips: false,
-}));
+const state = vi.hoisted(() => {
+  const uiState = {
+    lineageDetailsExpandedById: {} as Record<string, boolean>,
+    lineageAgentsClearedAtById: {} as Record<string, string>,
+    setLineageDetailsExpanded: (keys: ReadonlyArray<string>, expanded: boolean) => {
+      for (const key of keys) uiState.lineageDetailsExpandedById[key] = expanded;
+    },
+    setLineageAgentsClearedAt: (key: string, clearedAt: string | null) => {
+      if (clearedAt === null) delete uiState.lineageAgentsClearedAtById[key];
+      else uiState.lineageAgentsClearedAtById[key] = clearedAt;
+    },
+  };
+  return {
+    projection: null as unknown,
+    navigate: vi.fn(),
+    shells: [] as unknown[],
+    projects: [] as unknown[],
+    configs: new Map<string, unknown>(),
+    showTooltips: false,
+    settings: { lineageDetailsExpanded: false, lineageAutoClearMinutes: 0 },
+    nowMinute: "2026-10-05T12:00",
+    uiState,
+  };
+});
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../state/entities", () => ({
@@ -24,6 +40,13 @@ vi.mock("../../lib/archivedThreadsState", () => ({
   useArchivedThreadSnapshots: () => ({ snapshots: [] }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../uiStateStore", () => ({
+  useUiStateStore: (select: (store: typeof state.uiState) => unknown) => select(state.uiState),
+}));
+vi.mock("../../hooks/useSettings", () => ({
+  useClientSettings: <T,>(select: (settings: typeof state.settings) => T) => select(state.settings),
+}));
+vi.mock("../../hooks/useNowMinute", () => ({ useNowMinute: () => state.nowMinute }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ render, children }: { render: ReactElement; children: ReactNode }) =>
@@ -42,6 +65,11 @@ afterEach(async () => {
   state.projects = [];
   state.configs.clear();
   state.showTooltips = false;
+  state.uiState.lineageDetailsExpandedById = {};
+  state.uiState.lineageAgentsClearedAtById = {};
+  state.settings.lineageDetailsExpanded = false;
+  state.settings.lineageAutoClearMinutes = 0;
+  state.nowMinute = "2026-10-05T12:00";
 });
 
 it("shows the matching child agent details and refreshes them when the agent settles", async () => {
@@ -136,6 +164,17 @@ it("shows the matching child agent details and refreshes them when the agent set
   await act(async () =>
     renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
   );
+  expect(text()).toContain("Checker");
+  await act(async () =>
+    renderer.root.findByProps({ "aria-label": "Clear previous agents" }).props.onClick(),
+  );
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).not.toContain("Checker");
+  expect(text()).toContain("1 cleared");
+  await act(async () =>
+    renderer.root.findByProps({ "aria-label": "Show cleared agents" }).props.onClick(),
+  );
+  await act(async () => renderer.update(cloneElement(panel)));
   expect(text()).toContain("Checker");
 
   state.projection = {
@@ -495,3 +534,157 @@ it.each(["source", "target"])(
     }
   },
 );
+
+it("labels child shell model and effort as selected instead of reported", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const environmentId = EnvironmentId.make("test");
+  const parent = {
+    id: "parent",
+    lineage: { parentThreadId: null, relationshipToParent: null },
+    activeProviderThreadId: null,
+    modelSelection: {
+      instanceId: "codex",
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    },
+  };
+  const child = {
+    id: "child",
+    title: "Worker",
+    projectId: "main",
+    providerInstanceId: "codex",
+    latestRunId: "child-run",
+    modelSelection: {
+      instanceId: "codex",
+      model: "codex-alias",
+      options: [{ id: "reasoningEffort", value: "xhigh" }],
+    },
+    lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+  };
+  state.shells = [{ environmentId, source: child }];
+  state.configs.set("test", {
+    providers: [
+      {
+        instanceId: "codex",
+        driver: "codex",
+        models: [
+          {
+            slug: "gpt-5.4",
+            name: "My GPT model",
+            shortName: "My GPT",
+            aliases: ["codex-alias"],
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning effort",
+                  type: "select",
+                  options: [{ id: "xhigh", label: "Extra high" }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+  state.projection = {
+    thread: parent,
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [
+      {
+        id: "agent",
+        childThreadId: "child",
+        driver: "codex",
+        providerInstanceId: "codex",
+        title: "Worker",
+        prompt: "Check",
+        model: null,
+        status: "running",
+        startedAt: null,
+        completedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-10-05T12:00:00Z"),
+      },
+    ],
+  };
+  const panel = (
+    <ThreadRelationshipsPanel environmentId={environmentId} threadId={ThreadId.make("parent")} />
+  );
+  await act(async () => {
+    renderer = create(panel);
+  });
+
+  await act(async () =>
+    renderer.root.findByProps({ "aria-label": "Show details for Worker" }).props.onClick(),
+  );
+  await act(async () => renderer.update(cloneElement(panel)));
+  const text = () =>
+    renderer.root
+      .findAll((node) => typeof node.type === "string")
+      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+      .join(" ")
+      .replace(/\s+/g, " ");
+  expect(text()).toContain("Selected model My GPT");
+  expect(text()).toContain("Selected effort Extra high");
+  expect(text()).not.toContain("Model My GPT");
+  expect(text()).not.toContain("Effort Extra high");
+});
+
+it("lists background task kinds without treating subagents as shell rows", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const environmentId = EnvironmentId.make("test");
+  const pendingBackgroundTasks = [
+    { taskId: "command-1", description: "npm test", kind: "command" },
+    { taskId: "monitor-1", description: "watch logs", kind: "monitor" },
+    {
+      taskId: "subagent-1",
+      description: "Worker",
+      kind: "subagent",
+      childThreadId: "child",
+    },
+  ];
+  state.shells = [
+    {
+      environmentId,
+      source: {
+        id: "parent",
+        status: "completed",
+        lineage: { parentThreadId: null, relationshipToParent: null },
+        pendingBackgroundTasks,
+      },
+    },
+  ];
+  state.projection = {
+    thread: {
+      id: "parent",
+      lineage: { parentThreadId: null, relationshipToParent: null },
+      activeProviderThreadId: null,
+    },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [],
+  };
+  const panel = (
+    <ThreadRelationshipsPanel environmentId={environmentId} threadId={ThreadId.make("parent")} />
+  );
+  await act(async () => {
+    renderer = create(panel);
+  });
+
+  const text = () =>
+    renderer.root
+      .findAll((node) => typeof node.type === "string")
+      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+      .join(" ")
+      .replace(/\s+/g, " ");
+  expect(text()).toContain("Background tasks");
+  expect(text()).toContain("npm test");
+  expect(text()).toContain("watch logs");
+  expect(text()).not.toContain("Worker");
+});

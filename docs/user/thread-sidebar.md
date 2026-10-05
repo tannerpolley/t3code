@@ -43,6 +43,31 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+## Organize projects
+
+On web and desktop, use the folder button beside search to switch between
+**Projects** and **Activity**. Projects keeps sections, projects, and their
+threads together. Expanding a project leaves other projects available. Activity
+keeps the pinned, active, Working, snoozed, and settled lists; its project menu
+explicitly filters the list, with **All projects** as the default.
+
+Choose **New section** to group projects. A section's menu can add a subsection,
+choose its color or folder icons, add an existing project, or create a new project
+folder. Move a project between sections by dragging its row or choosing a section
+from its menu. Removing a project clears its saved conversations after confirmation
+and keeps its files on disk.
+
+In **Settings → General**, **Organize by folder** builds sections and subsections
+from a root folder. Automatic organization places new, unsorted projects there;
+projects you move by hand stay where you put them. The same page controls project
+row style, folder colors, default icons, and revealing the thread you open.
+
+Drag a thread from Projects onto the composer to add it as context for your next
+message. Running subagents and background tasks appear beneath their parent
+thread. A child's question or approval also appears on the parent. Blue marks
+show work in progress; amber spinners show a thread waiting on background work.
+Times show known work duration, rather than time since the last message.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.
@@ -207,7 +232,12 @@ the snooze. Enable **Snooze limited threads** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
-On web and desktop, use **Agents** to follow work delegated to subagents.
+On web and desktop, open **Agents** to follow delegated work and inspect
+**Lineage** for parent and fork relationships. Expand a row for its model, effort, progress, and workspace details.
+Use **Clear** under **Previous agents** to hide finished agents, and **Show** to restore them. To clear
+them automatically, set **Settings → General → Clear finished agents automatically**
+to a number of minutes; zero keeps them visible. Background shell summaries appear
+alongside the agents.
 
 Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
