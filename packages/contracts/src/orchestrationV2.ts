@@ -356,7 +356,20 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+export const OrchestrationV2TitleEvaluation = Schema.Struct({
+  requestId: CommandId,
+  outcome: Schema.Literals(["changed", "unchanged", "failed"]),
+  evaluatedAt: IsoDateTime,
+});
+export type OrchestrationV2TitleEvaluation = typeof OrchestrationV2TitleEvaluation.Type;
+
+const OrchestrationV2ThreadTitleFields = {
+  titleSource: Schema.optional(Schema.Literals(["generated", "user"])),
+  titleEvaluation: Schema.optional(Schema.NullOr(OrchestrationV2TitleEvaluation)),
+};
+
 export const OrchestrationV2AppThread = Schema.Struct({
+  ...OrchestrationV2ThreadTitleFields,
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -487,6 +500,7 @@ export type OrchestrationV2DelegatedCompletionDelivery =
 export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
   disposition: Schema.Literals(["open", "stopped", "disposed"]),
   nextGeneration: PositiveInt,
+  settledDeliveryCount: Schema.optional(NonNegativeInt),
   delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
 });
 export type OrchestrationV2DelegatedCompletionCohort =
@@ -788,38 +802,39 @@ function kindUnionWithFallback<
   return Schema.Union([...members, unknownKind]);
 }
 
-const PendingBackgroundTaskFields = {
-  taskId: TrimmedNonEmptyString,
-  /** The work's name: a subagent's title, a command's description, a monitor's. */
-  description: Schema.optional(TrimmedNonEmptyString),
-};
-
 /**
- * Provider-owned background work that can outlive the root turn (for example a
- * Claude background Bash task). Associated with the provider thread so shared
- * runtimes cannot make an unrelated app thread look busy. Adapters pick the
- * kind; `background_task` is work they cannot name. Rosters persisted before
- * kinds existed carry no `kind` and load as `background_task`.
+ * Provider-owned background work that can outlive the root turn. Legacy
+ * kind-less rosters keep their metadata and still load as `background_task`.
  */
-export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
-  [
-    Schema.Struct({
-      ...PendingBackgroundTaskFields,
-      kind: Schema.Literal("subagent"),
-      /** The subagent's own thread, when it has one. */
-      childThreadId: Schema.optional(ThreadId),
-    }),
-    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("command") }),
-    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("monitor") }),
-    Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("background_task") }),
-  ],
-  (kind) => Schema.Struct({ ...PendingBackgroundTaskFields, kind }),
-  ({ taskId, description }) => ({
-    taskId,
-    ...(description === undefined ? {} : { description }),
-    kind: "background_task",
-  }),
-);
+function pendingBackgroundTaskSchema<
+  StartedAt extends typeof Schema.DateTimeUtc | typeof Schema.DateTimeUtcFromString,
+>(startedAt: StartedAt) {
+  const fields = {
+    taskId: TrimmedNonEmptyString,
+    description: Schema.optional(TrimmedNonEmptyString),
+    // Retained fork metadata; classification remains the adapter's `kind`.
+    taskType: Schema.optional(TrimmedNonEmptyString),
+    childThreadId: Schema.optional(ThreadId),
+    startedAt: Schema.optional(startedAt),
+    commandKind: Schema.optional(TrimmedNonEmptyString),
+  };
+  const encodeFields = Schema.encodeSync(Schema.Struct(fields));
+  return kindUnionWithFallback(
+    [
+      Schema.Struct({ ...fields, kind: Schema.Literal("subagent") }),
+      Schema.Struct({ ...fields, kind: Schema.Literal("command") }),
+      Schema.Struct({ ...fields, kind: Schema.Literal("monitor") }),
+      Schema.Struct({ ...fields, kind: Schema.Literal("background_task") }),
+    ],
+    (kind) => Schema.Struct({ ...fields, kind }),
+    (task) => ({ ...encodeFields(task), kind: "background_task" }),
+  );
+}
+export const OrchestrationV2PendingBackgroundTask = pendingBackgroundTaskSchema(Schema.DateTimeUtc);
+const OrchestrationV2PendingBackgroundTasksJson = Schema.optional(
+  Schema.Array(pendingBackgroundTaskSchema(Schema.DateTimeUtcFromString)),
+).pipe(Schema.withDecodingDefault(Effect.succeed([])));
+
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
 /** Provider and adapter metadata that should not overwrite the app thread's title. */
@@ -987,12 +1002,19 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
+const NotificationSourceFields = {
+  nativeRef: Schema.optional(OrchestrationV2ProviderRef),
+};
 const SubagentNotificationSource = Schema.Struct({
+  ...NotificationSourceFields,
   kind: Schema.Literal("subagent"),
   /** The subagent's own thread, when the notification reports one subagent. */
   childThreadId: Schema.optional(ThreadId),
 });
-const CommandNotificationSource = Schema.Struct({ kind: Schema.Literal("command") });
+const CommandNotificationSource = Schema.Struct({
+  ...NotificationSourceFields,
+  kind: Schema.Literal("command"),
+});
 
 /**
  * What a notification reports on. Several pieces of work of one kind share
@@ -1008,37 +1030,38 @@ const CommandNotificationSource = Schema.Struct({ kind: Schema.Literal("command"
 export const OrchestrationV2NotificationSource = kindUnionWithFallback(
   [
     Schema.Struct({
+      ...NotificationSourceFields,
       kind: Schema.Literal("delegated_task"),
       taskIds: Schema.Array(NodeId),
       /** The task's own thread, when the notification reports one task. */
       childThreadId: Schema.optional(ThreadId),
     }),
     Schema.Struct({
+      ...NotificationSourceFields,
       kind: Schema.Literal("background_task"),
       work: Schema.Literal("subagent"),
       childThreadId: Schema.optional(ThreadId),
     }).pipe(
       Schema.decodeTo(Schema.toType(SubagentNotificationSource), {
-        decode: SchemaGetter.transform(({ childThreadId }) =>
-          childThreadId === undefined
-            ? { kind: "subagent" as const }
-            : { kind: "subagent" as const, childThreadId },
-        ),
-        encode: SchemaGetter.transform(({ childThreadId }) => ({
+        decode: SchemaGetter.transform((source) => ({ ...source, kind: "subagent" as const })),
+        encode: SchemaGetter.transform((source) => ({
+          ...source,
           kind: "background_task" as const,
           work: "subagent" as const,
-          ...(childThreadId === undefined ? {} : { childThreadId }),
         })),
       }),
     ),
-    Schema.Struct({ kind: Schema.Literal("background_command").transform("command") }),
+    Schema.Struct({
+      ...NotificationSourceFields,
+      kind: Schema.Literal("background_command").transform("command"),
+    }),
     SubagentNotificationSource,
     CommandNotificationSource,
-    Schema.Struct({ kind: Schema.Literal("monitor") }),
-    Schema.Struct({ kind: Schema.Literal("background_task") }),
+    Schema.Struct({ ...NotificationSourceFields, kind: Schema.Literal("monitor") }),
+    Schema.Struct({ ...NotificationSourceFields, kind: Schema.Literal("background_task") }),
   ],
-  (kind) => Schema.Struct({ kind }),
-  () => ({ kind: "background_task" }),
+  (kind) => Schema.Struct({ ...NotificationSourceFields, kind }),
+  (source) => ({ ...source, kind: "background_task" }),
 );
 export type OrchestrationV2NotificationSource = typeof OrchestrationV2NotificationSource.Type;
 
@@ -1290,6 +1313,9 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 });
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
+export const OrchestrationV2AssistantMessagePhase = Schema.Literals(["commentary", "final_answer"]);
+export type OrchestrationV2AssistantMessagePhase = typeof OrchestrationV2AssistantMessagePhase.Type;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1315,6 +1341,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
     streaming: Schema.Boolean,
+    phase: Schema.optional(OrchestrationV2AssistantMessagePhase),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1715,6 +1742,7 @@ export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  ...OrchestrationV2ThreadTitleFields,
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -1956,6 +1984,7 @@ export type OrchestrationV2ProviderSessionDetachedJson =
 export const OrchestrationV2ProviderThreadJson = OrchestrationV2ProviderThread.mapFields(
   (fields) => ({
     ...fields,
+    pendingBackgroundTasks: OrchestrationV2PendingBackgroundTasksJson,
     createdAt: Schema.DateTimeUtcFromString,
     updatedAt: Schema.DateTimeUtcFromString,
   }),
@@ -2051,6 +2080,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
     streaming: Schema.Boolean,
+    phase: Schema.optional(OrchestrationV2AssistantMessagePhase),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2278,6 +2308,7 @@ export type OrchestrationV2LatestVisibleMessageSummaryJson =
 
 export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFields((fields) => ({
   ...fields,
+  pendingBackgroundTasks: OrchestrationV2PendingBackgroundTasksJson,
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
