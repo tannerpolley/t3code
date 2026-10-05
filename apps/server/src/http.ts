@@ -162,6 +162,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly fileName?: string;
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
+    readonly maxBytes?: number;
   },
   rangeHeader?: string,
   ifRangeHeader?: string,
@@ -170,6 +171,9 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   const headers = assetResponseHeaders(asset.path, asset);
   const mediaFile = asset.file;
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
+  if (asset.maxBytes !== undefined && mediaInfo && mediaInfo.size > BigInt(asset.maxBytes)) {
+    return HttpServerResponse.text("Media file exceeds the size limit.", { status: 413 });
+  }
   const isMedia = /^(?:audio|video)\//i.test(headers["Content-Type"] ?? "");
   if (isMedia) {
     // Host media can change in place. Do not invite conditional range requests

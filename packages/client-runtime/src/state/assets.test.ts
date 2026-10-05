@@ -35,6 +35,7 @@ import {
   createProjectFaviconUrlAtomFamily,
   InvalidAssetCollectionKeyError,
   parseAssetCollectionKey,
+  assetUrlStateFromResult,
 } from "./assets.ts";
 
 describe("asset collection keys", () => {
@@ -59,8 +60,41 @@ describe("asset collection keys", () => {
   });
 });
 
+describe("asset URL failures", () => {
+  it("preserves signing errors and explains invalid signed URLs", () => {
+    const resource = {
+      _tag: "media-file" as const,
+      threadId: ThreadId.make("thread"),
+      path: "/tmp/missing.png",
+    };
+    expect(
+      assetUrlStateFromResult(
+        AsyncResult.failure(Cause.fail(new AssetWorkspaceAssetNotFoundError({ resource }))),
+        "https://host.test",
+      ),
+    ).toEqual({
+      _tag: "Failure",
+      reason: "Media file was not found.",
+    });
+    expect(
+      assetUrlStateFromResult(
+        AsyncResult.success({ relativeUrl: "/api/assets/token/shot.png", expiresAt: 1000 }),
+        "invalid origin",
+      ),
+    ).toEqual({
+      _tag: "Failure",
+      reason: "The environment returned an invalid asset URL.",
+    });
+  });
+});
+
 describe("createAssetEnvironmentAtoms", () => {
   it.effect.each([
+    {
+      name: "markdown image belongs to its remote environment",
+      path: "/tmp/frame.png",
+      mediaOnly: true,
+    },
     { name: "missing video", path: "/tmp/clip.mp4", fallback: true },
     { name: "literal filename characters", path: "/tmp/frame#one?two.png", fallback: true },
     { name: "windows path", path: "C:\\Users\\demo\\clip.mp4", fallback: true },
@@ -81,6 +115,7 @@ describe("createAssetEnvironmentAtoms", () => {
         _tag: "media-file" as const,
         threadId: ThreadId.make("foreign-thread"),
         path: scenario.path,
+        ...("mediaOnly" in scenario ? { mediaOnly: scenario.mediaOnly } : {}),
       };
       const error =
         scenario.error === "auth"
