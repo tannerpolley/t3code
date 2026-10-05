@@ -87,6 +87,33 @@ describe("DesktopUpdates", () => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("keeps fork builds off the upstream update feed", () => {
+    const harness = makeHarness({
+      appVersion: "0.0.45-v2.1",
+      env: { T3CODE_DISABLE_AUTO_UPDATE: "false" },
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const result = yield* updates.check("manual");
+        assert.equal(result.checked, false);
+        yield* TestClock.adjust(Duration.hours(2));
+
+        const state = yield* updates.getState;
+        assert.equal(state.enabled, false);
+        assert.equal(state.status, "disabled");
+        assert.deepEqual(
+          yield* updates.disabledReason,
+          Option.some("Automatic updates are disabled for fork builds."),
+        );
+        assert.equal(harness.checkCount(), 0);
+        assert.equal(harness.listenerCount(), 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
       const linuxState = (packageType: string | undefined) =>
