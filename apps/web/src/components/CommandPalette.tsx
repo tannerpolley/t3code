@@ -55,6 +55,7 @@ import {
   FolderPlusIcon,
   MessageSquareDashedIcon,
   LinkIcon,
+  ListIcon,
   MessageSquareIcon,
   MonitorIcon,
   MoonIcon,
@@ -2020,6 +2021,23 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
+
+  if (
+    activeThread !== null &&
+    activeThreadServerConfig?.environment.capabilities.githubIssues === true
+  ) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-thread-issues",
+      searchTerms: ["issues", "github", "browse", "side panel"],
+      title: "Show issues beside thread",
+      icon: <ListIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "issues");
+      },
+    });
   }
 
   if (activeThread !== null) {

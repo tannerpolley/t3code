@@ -227,22 +227,21 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           ) : null}
 
           {density === "full" && !props.draftId ? (
-            <ThreadDetailsIssueRows
-              environmentId={props.environmentId}
-              threadId={props.threadId}
-              repositoryIdentity={props.activeProjectRepositoryIdentity}
-            />
-          ) : null}
-
-          {density === "full" && !props.draftId ? (
-            <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />
-          ) : null}
-
-          {density === "full" && !props.draftId ? (
-            <ThreadRelationshipsPanel
-              environmentId={props.environmentId}
-              threadId={props.threadId}
-            />
+            <div data-thread-details-lists>
+              <ThreadDetailsIssueRows
+                environmentId={props.environmentId}
+                threadId={props.threadId}
+                repositoryIdentity={props.activeProjectRepositoryIdentity}
+              />
+              <ThreadAutomationsPanel
+                environmentId={props.environmentId}
+                threadId={props.threadId}
+              />
+              <ThreadRelationshipsPanel
+                environmentId={props.environmentId}
+                threadId={props.threadId}
+              />
+            </div>
           ) : null}
         </>
       )}

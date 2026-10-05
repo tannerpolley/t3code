@@ -180,6 +180,11 @@ A thread's details also list its repository's open issues in an **Issues** secti
 collapsible milestones, and open them beside the thread. For a fork checkout, these are the fork's
 issues. Turn either view off in **Settings → Customizations**.
 
+To browse every issue without leaving a thread, choose **Browse all issues** in that section, pick
+**Issues** (shortcut `I`) from the empty right panel or its **+** menu, or run **Show issues beside
+thread** from the command palette. The full list opens in the right panel with the same grouping
+and filters, and an issue you select opens in a tab next to it.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,

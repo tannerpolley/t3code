@@ -947,6 +947,25 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps one issue-list tab beside the issues it opens, across a reload", () => {
+    const target = { host: "github.com", repository: "pingdotgg/t3code", number: 4909 };
+    const store = useRightPanelStore.getState();
+    store.open(refA, "issues");
+    store.openIssue(refA, target);
+    store.open(refA, "issues");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    const surfaces = [
+      { id: "issues", kind: "issues" },
+      issueSurface({ ...target, environmentId: "env-1" }),
+    ];
+    expect(state).toMatchObject({ isOpen: true, activeSurfaceId: "issues", surfaces });
+    expect(
+      migratePersistedRightPanelState(JSON.parse(JSON.stringify({ byThreadKey: { a: state } })))
+        .byThreadKey.a,
+    ).toEqual({ isOpen: true, activeSurfaceId: "issues", surfaces });
+  });
+
   it("closes the final issue surface and hides the panel", () => {
     const target = {
       environmentId: "env-1",

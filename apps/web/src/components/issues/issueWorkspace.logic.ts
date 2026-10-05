@@ -132,6 +132,13 @@ export function repositoryKey(host: string, repository: string): string {
   return `${host.trim().toLowerCase()}/${repository.trim().toLowerCase()}`;
 }
 
+export function sameRepository(
+  left: { readonly host: string; readonly repository: string },
+  right: { readonly host: string; readonly repository: string },
+): boolean {
+  return repositoryKey(left.host, left.repository) === repositoryKey(right.host, right.repository);
+}
+
 /**
  * Merges each environment's repositories in environment order; a repository reachable from two
  * environments is read through the first. Most recently pushed repositories come first.

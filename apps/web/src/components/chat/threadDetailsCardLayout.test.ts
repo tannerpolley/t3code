@@ -22,9 +22,10 @@ describe("workspace card", () => {
     });
     expect(resolve(1344, 900)).toMatchObject({ x: 1052, width: 280 });
   });
-  it("hides when a readable chat lane cannot fit beside it", () => {
-    expect(resolve(984, 900)).toMatchObject({ x: 692 });
-    expect(resolve(983, 900)).toBeNull();
+  it("docks beside a narrower chat lane, as when a right panel is open, until it would cover chat", () => {
+    // 280 card + 12 gap + 32 clearance + 20 padding + 400 chat.
+    expect(resolve(744, 900)).toMatchObject({ x: 452 });
+    expect(resolve(743, 900)).toBeNull();
   });
   it("keeps the card at the top right while the preview is freely dragged vertically", () => {
     for (const y of [12, 170, 250, 400, 648]) {
