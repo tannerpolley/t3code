@@ -4111,7 +4111,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const runtimeRequests = (yield* decodeRows(
               decodeRuntimeRequestPayload,
               threadId,
-            )(rows)).filter((request) => request.responseCapability.type !== "message");
+            )(rows)).filter((request) => request.responseCapability.type === "live");
             if (runtimeRequests.length === 0) return { runtimeRequests, nodes: [], turnItems: [] };
             const nodeRows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_nodes
@@ -5768,7 +5768,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               request.providerTurnId === providerTurnId &&
               request.kind === "user_input" &&
               request.status === "pending" &&
-              request.responseCapability.type !== "message",
+              request.responseCapability.type === "live",
           );
           const requestIds = new Set(runtimeRequests.map((request) => request.id));
           const nodeIds = new Set(runtimeRequests.map((request) => request.nodeId));

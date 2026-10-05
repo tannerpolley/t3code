@@ -10,6 +10,8 @@ import {
   RuntimeMode,
   ProviderInteractionMode,
   RuntimeRequestId,
+  OrchestrationV2UserInputQuestion,
+  OrchestrationV2UserInputQuestions,
   ProviderUserInputAnswers,
   IsoDateTime,
   OrchestratorMcpFailure,
@@ -26,6 +28,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
@@ -125,25 +128,24 @@ const QueuePromoteTool = Tool.make("t3_queue_promote_to_steer", {
 }).annotate(Tool.Destructive, true);
 
 const requestTarget = { threadId: Schema.optional(ThreadId), requestId: RuntimeRequestId };
-const question = Schema.Struct({
-  id: Schema.String,
-  header: Schema.String,
-  question: Schema.String,
-  options: Schema.Array(
-    Schema.Struct({
-      label: Schema.String,
-      description: Schema.String,
-      value: Schema.optional(Schema.String),
-    }),
-  ),
-  multiSelect: Schema.optional(Schema.Boolean),
-  allowCustomAnswer: Schema.optional(Schema.Boolean),
-  required: Schema.optional(Schema.Boolean),
-});
+const question = OrchestrationV2UserInputQuestion;
 const pendingRequest = Schema.Struct({
   requestId: RuntimeRequestId,
   questions: Schema.Array(question),
 });
+const RequestUserInputTool = Tool.make("t3_request_user_input", {
+  description:
+    "Ask the user 1–3 questions in the calling thread's pending question card and return their exact answers. " +
+    "Use an empty options array for free text; set multiSelect=true for multiple selections. " +
+    "Custom text is allowed by default. This never approves a permission request.",
+  parameters: Schema.Struct({ questions: OrchestrationV2UserInputQuestions }),
+  success: ProviderUserInputAnswers,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [...commandTool.dependencies, Orchestrator.OrchestratorV2],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
 const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   ...commandTool,
   description:
@@ -275,6 +277,7 @@ export const ThreadToolkit = Toolkit.make(
   ThreadTransfersTool,
   ThreadConfigurationTool,
   ThreadConfigureTool,
+  RequestUserInputTool,
   PendingRequestListTool,
   PendingRequestReadTool,
   PendingRequestRespondTool,

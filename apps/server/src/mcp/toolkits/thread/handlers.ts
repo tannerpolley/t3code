@@ -1,6 +1,7 @@
 import {
   type CommandId,
-  type RuntimeRequestId,
+  ProviderSessionId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type RunId,
@@ -8,12 +9,15 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import {
   newCommandId,
   readCaller,
   readFullAccessCaller,
+  readMutationCaller,
   readThread,
   readWritableThread,
   unavailable,
@@ -21,6 +25,7 @@ import {
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -193,6 +198,59 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         })
         .pipe(Effect.mapError(unavailable));
       return { sequence: result.sequence };
+    }),
+  t3_request_user_input: (input) =>
+    Effect.gen(function* () {
+      const { scope, caller, threads } = yield* readMutationCaller();
+      if (caller === undefined || scope.thread === undefined || caller.activeRunId === null)
+        return yield* new OrchestratorMcpFailure({
+          code: "parent_not_active",
+          message: "Only an agent's active thread run can ask the user.",
+        });
+      // The orchestrator checks that this run's live turn belongs to the session.
+      const commandId = yield* newCommandId();
+      const requestId = RuntimeRequestId.make(`${commandId}:user-input`);
+      const created = yield* threads
+        .dispatch({
+          type: "runtime-request.create-user-input",
+          commandId,
+          threadId: caller.id,
+          requestId,
+          runId: caller.activeRunId,
+          providerSessionId: ProviderSessionId.make(scope.thread.providerSessionId),
+          questions: input.questions,
+        })
+        .pipe(Effect.mapError(unavailable));
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const resolution = yield* orchestrator
+        .streamStoredEventsFrom({ threadId: caller.id, afterSequence: created.sequence })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "runtime-request.updated" &&
+              stored.event.payload.id === requestId &&
+              stored.event.payload.status !== "pending",
+          ),
+          Stream.runHead,
+          Effect.mapError(unavailable),
+        );
+      const event = Option.getOrUndefined(resolution)?.event;
+      if (event?.type !== "runtime-request.updated")
+        return yield* new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "The user-input request ended before it was answered.",
+        });
+      // Dismissed, interrupted, or its run or session ended.
+      if (
+        event.payload.status !== "resolved" ||
+        event.payload.decision !== undefined ||
+        event.payload.answers === undefined
+      )
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The user dismissed the question or the turn ended before it was answered.",
+        });
+      return event.payload.answers;
     }),
   t3_pending_request_list: (input) =>
     Effect.gen(function* () {
