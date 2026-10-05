@@ -2,6 +2,7 @@ import type {
   EditorId,
   EnvironmentId,
   ProjectScript,
+  RepositoryIdentity,
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
@@ -25,6 +26,7 @@ import { Button } from "../ui/button";
 import type { ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
+import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
@@ -44,6 +46,8 @@ export interface ThreadDetailsPanelProps extends Pick<
   threadId: ThreadId;
   draftId?: DraftId;
   activeProjectName: string | undefined;
+  /** Where the project's issues live; the Issues section lists them. */
+  activeProjectRepositoryIdentity: RepositoryIdentity | null | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
@@ -220,6 +224,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 ) : null}
               </div>
             </ThreadDetailsSection>
+          ) : null}
+
+          {density === "full" && !props.draftId ? (
+            <ThreadDetailsIssueRows
+              environmentId={props.environmentId}
+              threadId={props.threadId}
+              repositoryIdentity={props.activeProjectRepositoryIdentity}
+            />
           ) : null}
 
           {density === "full" && !props.draftId ? (

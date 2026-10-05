@@ -24,6 +24,7 @@ vi.mock("../ProjectScriptsControl", () => ({
 vi.mock("./ThreadAutomationsPanel", () => ({
   ThreadAutomationsPanel: () => null,
 }));
+vi.mock("./ThreadDetailsIssueRows", () => ({ ThreadDetailsIssueRows: () => null }));
 vi.mock("./ThreadRelationshipsControl", () => ({
   ThreadRelationshipsPanel: () => null,
 }));
@@ -59,6 +60,7 @@ describe("ThreadDetailsPanel", () => {
       environmentId,
       threadId: "thread:thread-details" as ThreadId,
       activeProjectName: undefined,
+      activeProjectRepositoryIdentity: undefined,
       activeProjectScripts: [],
       preferredScriptId: null,
       keybindings: [],

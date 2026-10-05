@@ -112,6 +112,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       servers from before the pull-request workspace shipped, so clients must not probe them. */
   pullRequests: Schema.optionalKey(Schema.Boolean),
   pullRequestChecks: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes the GitHub issue repository, list, and detail APIs. */
+  githubIssues: Schema.optionalKey(Schema.Boolean),
   /** Server understands canonical inline context links plus their message context records.
       Absent on servers from before inline context shipped, which drop the records and forward
       the links as literal text -- so a client must serialize context the legacy way for them. */
@@ -237,6 +239,11 @@ export const RepositoryIdentity = Schema.Struct({
   provider: Schema.optionalKey(TrimmedNonEmptyString),
   owner: Schema.optionalKey(TrimmedNonEmptyString),
   name: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * `owner/name` of the `origin` remote when the identity came from another remote on the same
+   * host, i.e. origin is the user's fork of `upstream`. Issue lists read the fork.
+   */
+  originRepository: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RepositoryIdentity = typeof RepositoryIdentity.Type;
 

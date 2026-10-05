@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
+  CircleDot,
   Smartphone,
   ChevronDown,
   ChevronLeft,
@@ -594,6 +595,8 @@ function surfaceTitle(
       );
     case "pull-request":
       return `#${surface.number}`;
+    case "issue":
+      return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
     case "device":
@@ -677,6 +680,8 @@ function SurfaceIcon({
           seed={pullRequestStatusSeeds?.[surface.id]}
         />
       );
+    case "issue":
+      return <CircleDot className="size-3 shrink-0" />;
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "device":

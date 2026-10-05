@@ -153,6 +153,33 @@ server, but the host's own site will not show them, and the count reads **viewed
 The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
 does not show its diff, so marks are made and read on web and desktop.
 
+## Browse GitHub issues
+
+When a connected environment has GitHub Issues support, open **Issues** from the sidebar. It lists
+issues from every repository your GitHub account owns and every organization repository you
+administer, whether or not the repository is a T3 Code project. Repositories you only collaborate
+on, including the upstream of a fork, are left out. Issues are grouped by owner, then repository,
+then milestone; your own account comes first.
+
+Use **Filter** to choose what is shown: open and closed issues; archived, forked, empty, public,
+private, personal, and organization repositories; milestone and assignment; and how issues are
+sorted. Open issues are shown by default, with archived, forked, and empty repositories hidden.
+Filter choices are remembered in that browser. The search box matches repository names and issue
+details.
+
+To keep one repository visible while its kind is hidden, such as a single fork, show it once, then
+use the pin button on its row. A pinned repository ignores the repository filters but still follows
+the issue filters and search. Pins are remembered with your filter choices.
+
+Select an issue to open it in a resizable panel with its comments and the pull requests linked to
+it; a linked pull request opens in the pull request panel. **Start in worktree** opens a new thread
+for the issue's project in a worktree on a branch named after the issue. Use **Open on GitHub** to
+comment or make other changes.
+
+A thread's details also list its repository's open issues in an **Issues** section, grouped by
+collapsible milestones, and open them beside the thread. For a fork checkout, these are the fork's
+issues. Turn either view off in **Settings → Customizations**.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
