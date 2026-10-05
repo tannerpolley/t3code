@@ -9,6 +9,7 @@ import { migrationManifest, runMigrations } from "./Migrations.ts";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import RemoveRedundantProjectionIndexes from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
 import OrchestrationV2 from "./Migrations/055_OrchestrationV2.ts";
+import ProjectionMessagesLatestAssistant from "./Migrations/057_ProjectionMessagesLatestAssistant.ts";
 
 // The V2 schema is unchanged from the published September 15–16 previews.
 const seedPreview = Effect.gen(function* () {
@@ -37,6 +38,7 @@ describe("V2 preview upgrade", () => {
         [53, "PullRequestFilesViewed"],
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
         [56, "RemoveRedundantProjectionIndexes"],
+        [57, "ProjectionMessagesLatestAssistant"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -92,6 +94,90 @@ describe("V2 preview upgrade", () => {
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("reconciles the fork ledger atomically and preserves timestamps", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 53 });
+      yield* Migrator.make({})({
+        loader: Migrator.fromRecord({
+          "54_OrchestrationV2": OrchestrationV2,
+          "55_RemoveRedundantProjectionIndexes": RemoveRedundantProjectionIndexes,
+          "56_ProjectionMessagesLatestAssistant": ProjectionMessagesLatestAssistant,
+        }),
+      });
+      yield* sql`UPDATE effect_sql_migrations SET created_at = '2026-10-02 00:00:' || migration_id WHERE migration_id >= 54`;
+      const original =
+        yield* sql`SELECT name, created_at FROM effect_sql_migrations WHERE migration_id >= 54 ORDER BY migration_id`;
+      const forkHistory = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      yield* sql`
+        CREATE TRIGGER fail_fork_upgrade BEFORE INSERT ON effect_sql_migrations
+        WHEN NEW.migration_id = 54
+        BEGIN SELECT RAISE(ABORT, 'injected failure'); END
+      `;
+      assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+        forkHistory,
+      );
+      const rolledBackColumns = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(projection_threads)`;
+      assert.ok(!rolledBackColumns.some((column) => column.name === "auto_settle_disabled_at"));
+      yield* sql`DROP TRIGGER fail_fork_upgrade`;
+      assert.deepStrictEqual(yield* runMigrations(), [
+        [54, "ProjectionThreadsAutoSettleDisabledAt"],
+      ]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT name, created_at FROM effect_sql_migrations WHERE migration_id >= 55 ORDER BY migration_id`,
+        original,
+      );
+      const ledger = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+        ledger,
+      );
+      const history = yield* sql<{
+        readonly migration_id: number;
+        readonly name: string;
+      }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
+      assert.deepStrictEqual(
+        history.map((row) => [row.migration_id, row.name] as const),
+        migrationManifest,
+      );
+      const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(projection_threads)`;
+      assert.ok(columns.some((column) => column.name === "auto_settle_disabled_at"));
+      assert.strictEqual(
+        (yield* sql`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'orchestration_v2_projection_messages_latest_assistant_idx'`)
+          .length,
+        1,
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect.each(["UnknownFork", "ProjectionMessagesLatestAssistant"])(
+    "rejects a migration 56 collision with an incomplete fork ledger: %s",
+    (name) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 53 });
+        yield* Migrator.make({})({
+          loader: Migrator.fromRecord({ "54_OrchestrationV2": OrchestrationV2 }),
+        });
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (56, ${name})`;
+        const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+        assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
+        assert.deepStrictEqual(
+          yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+          history,
+        );
+        const columns = yield* sql<{
+          readonly name: string;
+        }>`PRAGMA table_info(projection_threads)`;
+        assert.ok(!columns.some((column) => column.name === "auto_settle_disabled_at"));
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("rolls back schema and ledger together on failure and can retry", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -116,6 +202,7 @@ describe("V2 preview upgrade", () => {
         [53, "PullRequestFilesViewed"],
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
         [56, "RemoveRedundantProjectionIndexes"],
+        [57, "ProjectionMessagesLatestAssistant"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

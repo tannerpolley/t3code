@@ -23,13 +23,25 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
           row.name === "OrchestrationV2" && (row.migration_id === 53 || row.migration_id === 54),
       );
       if (!legacy) return [];
-      const valid = history.every(
-        (row) =>
-          row === legacy ||
-          (legacy.migration_id === 54 &&
-            ((row.migration_id === 53 && row.name === "PullRequestFilesViewed") ||
-              (row.migration_id === 55 && row.name === "RemoveRedundantProjectionIndexes"))),
-      );
+      const forkLedger =
+        history.length === 4 &&
+        history.some((row) => row.migration_id === 53 && row.name === "PullRequestFilesViewed") &&
+        history.some((row) => row.migration_id === 54 && row.name === "OrchestrationV2") &&
+        history.some(
+          (row) => row.migration_id === 55 && row.name === "RemoveRedundantProjectionIndexes",
+        ) &&
+        history.some(
+          (row) => row.migration_id === 56 && row.name === "ProjectionMessagesLatestAssistant",
+        );
+      const valid =
+        forkLedger ||
+        history.every(
+          (row) =>
+            row === legacy ||
+            (legacy.migration_id === 54 &&
+              ((row.migration_id === 53 && row.name === "PullRequestFilesViewed") ||
+                (row.migration_id === 55 && row.name === "RemoveRedundantProjectionIndexes"))),
+        );
       if (!valid) {
         return yield* new Migrator.MigrationError({
           kind: "BadState",
@@ -43,7 +55,10 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
       }
       yield* AutoSettleDisabledAt;
       executed.push([54, "ProjectionThreadsAutoSettleDisabledAt"]);
-      // Move the later entry first to avoid a primary-key collision.
+      // Move later entries first to avoid primary-key collisions and preserve timestamps.
+      if (forkLedger) {
+        yield* sql`UPDATE effect_sql_migrations SET migration_id = 57 WHERE migration_id = 56 AND name = 'ProjectionMessagesLatestAssistant'`;
+      }
       yield* sql`UPDATE effect_sql_migrations SET migration_id = 56 WHERE migration_id = 55 AND name = 'RemoveRedundantProjectionIndexes'`;
       yield* sql`UPDATE effect_sql_migrations SET migration_id = 55 WHERE migration_id = ${legacy.migration_id} AND name = 'OrchestrationV2'`;
       if (legacy.migration_id === 53) {
