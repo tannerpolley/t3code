@@ -9,6 +9,7 @@ import type {
   OrchestrationV2ProviderRef,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
   ProviderThreadId,
@@ -215,9 +216,7 @@ export function delegatedTaskProgress(projection: {
   readonly subagents: ReadonlyArray<
     Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
   >;
-  readonly providerThreads: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
-  >;
+  readonly pendingBackgroundTasks: ReadonlyArray<Pick<OrchestrationV2ThreadShell["pendingBackgroundTasks"][number], "kind">>;
 }) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
@@ -239,7 +238,7 @@ export function delegatedTaskProgress(projection: {
         task.completionDelivery?.state === "pending" ||
         task.completionDelivery?.state === "claimed",
     ) ||
-    projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
+    projection.pendingBackgroundTasks.some((task) => task.kind !== "monitor");
   const resultRun = workRuns
     .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];

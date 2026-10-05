@@ -8935,7 +8935,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
-      const progress = delegatedTaskProgress(childControls);
+      const childShell = yield* projectionStore.getThreadShell(childThreadId);
+      const progress = delegatedTaskProgress({ ...childControls, pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [] });
       if (progress.state !== "result_available") return;
       const childRun = progress.resultRun;
       if (childRun === undefined) return;
@@ -10174,7 +10175,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
         { messageRoles: ["user"] },
       );
-      const progress = delegatedTaskProgress(child);
+      const childShell = yield* projectionStore.getThreadShell(childThreadId);
+      const progress = delegatedTaskProgress({ ...child, pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [] });
       // A caller's older read saw a result; newer work since then means it is not final.
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;

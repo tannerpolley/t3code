@@ -1504,6 +1504,66 @@ const reportedRuns = (parentThreadId: ThreadId, childThreadId: ThreadId) =>
   });
 
 it.layer(TestLayer)("resumed delegated child", (it) => {
+  it.effect("reports a parent's follow-up from its later background wake turn exactly once", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const seeded = yield* seedReportedChild("resumed-background");
+      const child = yield* orchestrator.getThreadProjection(seeded.childThreadId);
+      const now = yield* DateTime.now;
+      const command = {
+        id: TurnItemId.make("item:resumed-background-command"),
+        threadId: seeded.childThreadId,
+        runId: RunId.make("run:resumed-background-child-2"),
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        type: "command_execution" as const,
+        status: "running" as const,
+        title: "Build",
+        input: "make build",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      const writeCommand = (status: "running" | "completed") =>
+        sink.write({
+          events: [
+            {
+              id: EventId.make(`event:resumed-background-command-${status}`),
+              type: "turn-item.updated",
+              threadId: seeded.childThreadId,
+              occurredAt: now,
+              payload: { ...command, status },
+            },
+          ],
+        });
+      yield* writeCommand("running");
+      yield* seeded.finishTurn(2, seeded.parentThreadId, seeded.commandId);
+      yield* orchestrator.recoverDelegatedTasks;
+      assert.deepEqual(yield* reportedRuns(seeded.parentThreadId, seeded.childThreadId), [
+        child.runs[0]!.id,
+      ]);
+      const before = yield* sink.latestSequence();
+      yield* writeCommand("completed");
+      // The background notification has no sender, but the parent's run 2 request is still owed.
+      yield* seeded.finishTurn(3, undefined);
+      yield* nextResultTransfer(seeded.parentThreadId, before);
+      yield* orchestrator.recoverDelegatedTasks;
+      assert.deepEqual(yield* reportedRuns(seeded.parentThreadId, seeded.childThreadId), [
+        child.runs[0]!.id,
+        RunId.make("run:resumed-background-child-3"),
+      ]);
+      const parent = yield* orchestrator.getThreadProjection(seeded.parentThreadId);
+      assert.equal(parent.subagents[0]?.result, "Result 3.");
+      assert.deepEqual(parent.runs[0]?.delegatedCompletion?.delivery?.taskIds, [seeded.taskId]);
+    }),
+  );
+
+
   it.effect("a turn the parent sends reports back and wakes the parent once", () =>
     Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;
