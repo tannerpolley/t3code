@@ -58,9 +58,10 @@ from its menu. Removing a project clears its saved conversations after confirmat
 and keeps its files on disk.
 
 In **Settings → General**, **Organize by folder** builds sections and subsections
-from a root folder. Automatic organization places new, unsorted projects there;
-projects you move by hand stay where you put them. The same page controls project
-row style, folder colors, default icons, and revealing the thread you open.
+from a root folder; the same page sets default icons. **Settings → Customizations**
+turns on automatic organization, which places new, unsorted projects there;
+projects you move by hand stay where you put them. It also controls the Projects
+view, project row style, folder colors, and revealing the thread you open.
 
 Drag a thread from Projects onto the composer to add it as context for your next
 message. Running subagents and background tasks appear beneath their parent
@@ -240,8 +241,9 @@ retry and the normal snooze choices.
 On web and desktop, open **Agents** to follow delegated work and inspect
 **Lineage** for parent and fork relationships. Expand a row for its model, effort, progress, and workspace details.
 Use **Clear** under **Previous agents** to hide finished agents, and **Show** to restore them. To clear
-them automatically, set **Settings → General → Clear finished agents automatically**
-to a number of minutes; zero keeps them visible. Background shell summaries appear
+them automatically, set **Settings → Customizations → Clear finished agents automatically**
+to 30 minutes or 1 hour. Turn off **Redesigned Lineage** there for the original
+rows without details or clearing. Background shell summaries appear
 alongside the agents.
 
 Click a Codex or Claude background command or monitor in Projects, Lineage, or

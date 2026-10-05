@@ -290,6 +290,8 @@ export function ThreadRelationshipsPanel(props: {
   const expandDetailsByDefault = useClientSettings((settings) => settings.lineageDetailsExpanded);
   const autoClearMinutes = useClientSettings((settings) => settings.lineageAutoClearMinutes);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
+  // Off restores the original rows: title, corner status badge, no details or clearing.
+  const redesign = useClientSettings((settings) => settings.threadDetailsRedesign);
   const nowMinute = useNowMinute();
   const navigate = useNavigate();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
@@ -322,11 +324,13 @@ export function ThreadRelationshipsPanel(props: {
   const { related, active, previous, clearedCount } = groupThreadLineageRows({
     rows: relationshipRows,
     currentThreadId: props.threadId,
-    clearedAt: resolveLineageClearedAt({
-      stored: lineageAgentsClearedAtById[threadKey],
-      autoClearMinutes,
-      now: Date.parse(`${nowMinute}:00.000Z`),
-    }),
+    clearedAt: redesign
+      ? resolveLineageClearedAt({
+          stored: lineageAgentsClearedAtById[threadKey],
+          autoClearMinutes,
+          now: Date.parse(`${nowMinute}:00.000Z`),
+        })
+      : null,
     finishedAt,
   });
   const clearPrevious = () =>
@@ -349,7 +353,9 @@ export function ThreadRelationshipsPanel(props: {
       expanded: previousExpanded,
       onToggle: () => setPreviousOpenFor(previousExpanded ? null : threadKey),
       footer:
-        (previousExpanded && previous.length > 0) || (previous.length === 0 && clearedCount > 0) ? (
+        redesign &&
+        ((previousExpanded && previous.length > 0) ||
+          (previous.length === 0 && clearedCount > 0)) ? (
           <div className="flex h-7 items-center gap-1 px-2 text-2xs text-muted-foreground/70">
             {clearedCount > 0 ? (
               <>
@@ -437,7 +443,7 @@ export function ThreadRelationshipsPanel(props: {
   const detailsKey = (threadId: ThreadId) =>
     scopedThreadKey(scopeThreadRef(props.environmentId, threadId));
   const detailsExpanded = (threadId: ThreadId) =>
-    lineageDetailsExpandedById[detailsKey(threadId)] ?? expandDetailsByDefault;
+    redesign && (lineageDetailsExpandedById[detailsKey(threadId)] ?? expandDetailsByDefault);
   const shownRows = [...related, ...active, ...(previousExpanded ? previous : [])].filter(
     ({ threadId }) => !graph.nodes.get(threadId)?.missing,
   );
@@ -462,7 +468,7 @@ export function ThreadRelationshipsPanel(props: {
           data-thread-relationships-panel
           actions={
             <>
-              {shownRows.length > 0 ? (
+              {redesign && shownRows.length > 0 ? (
                 <ThreadDetailsControl
                   size="icon-xs"
                   variant="ghost"
@@ -612,8 +618,9 @@ export function ThreadRelationshipsPanel(props: {
                         driver={isSubagent && !isParent ? providerDriver : undefined}
                         provider={provider}
                         fallbackIcon={RelationshipIcon}
+                        {...(redesign ? {} : { status })}
                       />
-                      {model ? (
+                      {redesign && model ? (
                         <span className="max-w-32 shrink-0 truncate text-2xs font-normal text-foreground/75">
                           {shownModelLabel}
                           {effortLabel ? ` · ${effortLabel}` : ""}
@@ -638,26 +645,27 @@ export function ThreadRelationshipsPanel(props: {
                           {threadRelationshipStatusLabel(status)}
                         </span>
                       ) : null}
-                      <ThreadStatusMark status={lineageStatusMark(status)} />
+                      {redesign ? <ThreadStatusMark status={lineageStatusMark(status)} /> : null}
                     </>
                   );
                   const rowExpanded = !node?.missing && detailsExpanded(threadId);
-                  const detailsToggle = node?.missing ? null : (
-                    <ThreadDetailsControl
-                      size="icon-xs"
-                      variant="ghost"
-                      part="icon"
-                      aria-expanded={rowExpanded}
-                      aria-label={`${rowExpanded ? "Hide" : "Show"} details for ${threadTitle}`}
-                      onClick={() =>
-                        setLineageDetailsExpanded([detailsKey(threadId)], !rowExpanded)
-                      }
-                    >
-                      <ChevronDownIcon
-                        className={`size-3.5 transition-transform ${rowExpanded ? "" : "-rotate-90"}`}
-                      />
-                    </ThreadDetailsControl>
-                  );
+                  const detailsToggle =
+                    node?.missing || !redesign ? null : (
+                      <ThreadDetailsControl
+                        size="icon-xs"
+                        variant="ghost"
+                        part="icon"
+                        aria-expanded={rowExpanded}
+                        aria-label={`${rowExpanded ? "Hide" : "Show"} details for ${threadTitle}`}
+                        onClick={() =>
+                          setLineageDetailsExpanded([detailsKey(threadId)], !rowExpanded)
+                        }
+                      >
+                        <ChevronDownIcon
+                          className={`size-3.5 transition-transform ${rowExpanded ? "" : "-rotate-90"}`}
+                        />
+                      </ThreadDetailsControl>
+                    );
                   return (
                     <li key={threadId} className="group rounded-lg">
                       <div className="flex h-8 items-center">

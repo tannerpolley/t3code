@@ -23,7 +23,12 @@ const state = vi.hoisted(() => {
     projects: [] as unknown[],
     configs: new Map<string, unknown>(),
     showTooltips: false,
-    settings: { lineageDetailsExpanded: false, lineageAutoClearMinutes: 0, shortModelNames: true },
+    settings: {
+      lineageDetailsExpanded: false,
+      lineageAutoClearMinutes: 0,
+      shortModelNames: true,
+      threadDetailsRedesign: true,
+    },
     nowMinute: "2026-10-05T12:00",
     uiState,
   };

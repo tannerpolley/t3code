@@ -134,24 +134,6 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
-    id: "projects-view",
-    title: "Projects view",
-    to: "/settings/general",
-    searchTerms: ["sections projects activity"],
-  },
-  {
-    id: "codex-style-sidebar",
-    title: "Compact project rows",
-    to: "/settings/general",
-    searchTerms: ["codex folder projects style"],
-  },
-  {
-    id: "section-folder-colors",
-    title: "Section folder colors",
-    to: "/settings/general",
-    searchTerms: ["folder icon color"],
-  },
-  {
     id: "project-icon-fallback",
     title: "Default project icon",
     to: "/settings/general",
@@ -164,40 +146,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["left right"],
   },
   {
-    id: "top-back-button",
-    title: "Top Back button",
-    to: "/settings/general",
-    searchTerms: ["navigation back"],
-  },
-  {
-    id: "auto-organize-by-folder",
-    title: "Organize new projects by folder",
-    to: "/settings/general",
-    searchTerms: ["automatic sections folders"],
-  },
-  {
     id: "organize-by-folder",
     title: "Organize by folder",
     to: "/settings/general",
     searchTerms: ["root folder sections subsections"],
-  },
-  {
-    id: "reveal-open-thread-in-sidebar",
-    title: "Reveal open thread",
-    to: "/settings/general",
-    searchTerms: ["sidebar reveal scroll"],
-  },
-  {
-    id: "lineage-details-expanded",
-    title: "Expand agent details",
-    to: "/settings/general",
-    searchTerms: ["lineage agents model effort"],
-  },
-  {
-    id: "lineage-auto-clear-minutes",
-    title: "Clear finished agents automatically",
-    to: "/settings/general",
-    searchTerms: ["lineage agents previous minutes"],
   },
 
   {
@@ -417,6 +369,44 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "projects-view",
+    title: "Projects view",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork projects view sections activity sidebar mode"],
+  },
+  {
+    id: "codex-style-sidebar",
+    title: "Codex-style project sidebar",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork codex projects view chevron drag grip spinner dots"],
+  },
+  {
+    id: "section-folder-colors",
+    title: "Section folder colors",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork section folder color tint icon"],
+  },
+  {
+    id: "auto-organize-by-folder",
+    title: "Keep projects organized by folder",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork sections folders automatic organize sort new projects"],
+  },
+  {
+    id: "reveal-open-thread-in-sidebar",
+    title: "Reveal the open thread in the sidebar",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork sidebar scroll expand collapsed project section follow active thread link navigate",
+    ],
+  },
+  {
+    id: "top-back-button",
+    title: "Back button at the top",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork back button settings sidebar top left"],
+  },
+  {
     id: "onboarding-codex-settings",
     title: "Codex settings during onboarding",
     to: "/settings/customizations",
@@ -427,6 +417,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Background process output",
     to: "/settings/customizations",
     searchTerms: ["background command monitor shell task terminal follow logs stop cpu memory"],
+  },
+  {
+    id: "thread-details-redesign",
+    title: "Redesigned Lineage",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork lineage subagent status model effort details clear"],
+  },
+  {
+    id: "lineage-details-expanded",
+    title: "Expand agent details by default",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork lineage subagent model effort details expand"],
+  },
+  {
+    id: "lineage-auto-clear",
+    title: "Clear finished agents automatically",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork lineage previous agents clear hide auto minutes hour"],
   },
   {
     id: "short-model-names",
@@ -522,6 +530,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "customization fork usage limits weekly quota left sidebar footer claude codex 7d",
     ],
+  },
+  {
+    id: "fast-shimmer",
+    title: "Faster activity shimmer",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork shimmer animation running activity speed motion"],
   },
   {
     id: "idle-agent-session",
