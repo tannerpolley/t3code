@@ -79,7 +79,6 @@ const ProjectLucideIcon = Schema.Struct({
   kind: Schema.Literal("lucide"),
   name: ProjectLucideIconName,
   color: ProjectIconColor,
-  folder: Schema.optional(Schema.Boolean),
 });
 const ProjectEmojiIcon = Schema.Struct({
   kind: Schema.Literal("emoji"),
@@ -130,12 +129,7 @@ export const ProjectIconOverride = Schema.Union([
         if (icon.folder === true) return { kind: "folder", color: icon.color };
         const text = icon.monogramText ?? icon.monogram;
         return text === undefined
-          ? {
-              kind: "lucide",
-              name: icon.name,
-              color: icon.color,
-              ...(icon.folder === undefined ? {} : { folder: icon.folder }),
-            }
+          ? { kind: "lucide", name: icon.name, color: icon.color }
           : { kind: "monogram", text, color: icon.color };
       },
       encode: (icon) => {
