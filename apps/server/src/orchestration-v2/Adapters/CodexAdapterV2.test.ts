@@ -38,7 +38,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
