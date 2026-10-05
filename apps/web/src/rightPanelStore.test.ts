@@ -947,16 +947,17 @@ describe("rightPanelStore", () => {
     });
   });
 
-  it("keeps one issue-list tab beside the issues it opens, across a reload", () => {
+  it("keeps one issue-list tab, scoped to its repository, beside the issues it opens across a reload", () => {
     const target = { host: "github.com", repository: "pingdotgg/t3code", number: 4909 };
+    const scope = { host: "github.com", repository: "pingdotgg/t3code" };
     const store = useRightPanelStore.getState();
-    store.open(refA, "issues");
+    store.openIssueList(refA, null);
     store.openIssue(refA, target);
-    store.open(refA, "issues");
+    store.openIssueList(refA, scope);
 
     const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
     const surfaces = [
-      { id: "issues", kind: "issues" },
+      { id: "issues", kind: "issues", scope },
       issueSurface({ ...target, environmentId: "env-1" }),
     ];
     expect(state).toMatchObject({ isOpen: true, activeSurfaceId: "issues", surfaces });
@@ -964,6 +965,11 @@ describe("rightPanelStore", () => {
       migratePersistedRightPanelState(JSON.parse(JSON.stringify({ byThreadKey: { a: state } })))
         .byThreadKey.a,
     ).toEqual({ isOpen: true, activeSurfaceId: "issues", surfaces });
+
+    store.openIssueList(refA, null);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces[0],
+    ).toEqual({ id: "issues", kind: "issues" });
   });
 
   it("closes the final issue surface and hides the panel", () => {

@@ -278,6 +278,7 @@ import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { IssueListPanel } from "./issues/IssueBrowser";
+import { threadIssueRepository } from "./chat/ThreadDetailsIssueRows";
 import { IssueDetailPanel } from "./issues/IssueDetailPanel";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
@@ -5297,8 +5298,10 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread && serverConfig?.environment.capabilities.githubIssues === true;
   const addIssuesSurface = useCallback(() => {
     if (!activeThreadRef || !issuesSurfaceAvailable) return;
-    useRightPanelStore.getState().open(activeThreadRef, "issues");
-  }, [activeThreadRef, issuesSurfaceAvailable]);
+    useRightPanelStore
+      .getState()
+      .openIssueList(activeThreadRef, threadIssueRepository(activeProject?.repositoryIdentity));
+  }, [activeProject?.repositoryIdentity, activeThreadRef, issuesSurfaceAvailable]);
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );

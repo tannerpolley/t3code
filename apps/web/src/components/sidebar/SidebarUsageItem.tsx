@@ -6,7 +6,7 @@ import {
   collectLimitPools,
   formatDuration,
 } from "@t3tools/shared/usageLimits";
-import { useMemo, type ReactNode } from "react";
+import { useMemo } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -107,28 +107,23 @@ function leftClass(leftPercent: number): string {
 /**
  * The footer's Usage readouts, each provider's quota left (`5h 62%`, `1d 40%`, `7d 75%`) for the
  * readouts that are switched on. They take their own row above the footer's icon buttons, one
- * button per provider that wraps when the sidebar is too narrow for both. Renders `fallback`, the
- * plain button, when none is on and until a limit is known.
+ * button per provider that wraps when the sidebar is too narrow for both. Renders nothing when none
+ * is on and until a limit is known; the footer's Usage icon button is separate and always shown.
  */
-export function SidebarUsageItem(props: { readonly fallback: ReactNode }) {
+export function SidebarUsageItem() {
   const session = useClientSettings((settings) => settings.sidebarFiveHourUsage);
   const daily = useClientSettings((settings) => settings.dailyUsageMeter);
   const weekly = useClientSettings((settings) => settings.sidebarWeeklyUsage);
   return session || daily || weekly ? (
-    <UsageReadoutItem fallback={props.fallback} enabled={{ session, daily, weekly }} />
-  ) : (
-    props.fallback
-  );
+    <UsageReadoutItem enabled={{ session, daily, weekly }} />
+  ) : null;
 }
 
-function UsageReadoutItem(props: {
-  readonly fallback: ReactNode;
-  readonly enabled: Parameters<typeof useLimitReadoutRows>[0];
-}) {
+function UsageReadoutItem(props: { readonly enabled: Parameters<typeof useLimitReadoutRows>[0] }) {
   const { rows, now } = useLimitReadoutRows(props.enabled);
   const openLimits = useOpenUsageLimits();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
-  if (rows.length === 0) return props.fallback;
+  if (rows.length === 0) return null;
   const when = (at: number) =>
     `${formatUpcomingTimestamp(new Date(at).toISOString(), timestampFormat, now)}${
       at > now ? ` · in ${formatDuration(at - now)}` : ""

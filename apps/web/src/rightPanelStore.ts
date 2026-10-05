@@ -51,6 +51,9 @@ export type IssueSurface = {
   url?: string;
 };
 
+/** The repository an issue-list surface is narrowed to. */
+export type IssueListScope = { host: string; repository: string };
+
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
@@ -98,8 +101,11 @@ export type RightPanelSurface =
   | IssueSurface
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
-  /** The GitHub issue list beside a thread; its issues open as `issue` tabs next to it. */
-  | { id: "issues"; kind: "issues" };
+  /**
+   * The GitHub issue list beside a thread; its issues open as `issue` tabs next to it. A `scope`
+   * narrows it to one repository, usually the thread's; without one it lists every repository.
+   */
+  | { id: "issues"; kind: "issues"; scope?: IssueListScope };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -158,8 +164,10 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue" | "issues">,
   ) => void;
+  /** Opens the issue list narrowed to `scope`, or widened to every repository when null. */
+  openIssueList: (ref: ScopedThreadRef, scope: IssueListScope | null) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
@@ -198,7 +206,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue" | "issues">,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -221,7 +229,10 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "issue">,
+  kind: Exclude<
+    RightPanelKind,
+    "file" | "preview" | "terminal" | "pull-request" | "issue" | "issues"
+  >,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -230,8 +241,6 @@ const singletonSurface = (
       return { id: "files", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
-    case "issues":
-      return { id: "issues", kind };
     case "device":
       return { id: "device", kind };
   }
@@ -676,6 +685,21 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               return upsertSurface(current, existing ?? browserSurface(null));
             }
             return upsertSurface(current, singletonSurface(kind));
+          }),
+        ),
+      openIssueList: (ref, scope) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface: RightPanelSurface =
+              scope === null
+                ? { id: "issues", kind: "issues" }
+                : { id: "issues", kind: "issues", scope };
+            const next = upsertSurface(current, surface);
+            // Reopening the list re-scopes the existing tab rather than adding a second one.
+            return {
+              ...next,
+              surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
+            };
           }),
         ),
       openDevice: (ref, target, automatic = false) =>

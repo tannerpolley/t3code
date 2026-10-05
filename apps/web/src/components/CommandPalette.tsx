@@ -194,6 +194,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
+import { threadIssueRepository } from "./chat/ThreadDetailsIssueRows";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
@@ -2028,6 +2029,10 @@ function OpenCommandPaletteDialog(props: {
     activeThreadServerConfig?.environment.capabilities.githubIssues === true
   ) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    const scope = threadIssueRepository(
+      projectByKey.get(`${activeThread.environmentId}:${activeThread.projectId}`)
+        ?.repositoryIdentity,
+    );
     actionItems.push({
       kind: "action",
       value: "action:open-thread-issues",
@@ -2035,7 +2040,7 @@ function OpenCommandPaletteDialog(props: {
       title: "Show issues beside thread",
       icon: <ListIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        useRightPanelStore.getState().open(threadRef, "issues");
+        useRightPanelStore.getState().openIssueList(threadRef, scope);
       },
     });
   }
