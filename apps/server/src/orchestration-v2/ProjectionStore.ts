@@ -521,7 +521,14 @@ function needsRecovery(
           runs: projection.runs,
           messages: projection.messages,
           parentThreadId,
-          reportedRunIds: projection.contextTransfers.filter((transfer) => transfer.type === "subagent_result" && transfer.sourceThreadId === projection.thread.id && transfer.targetThreadId === parentThreadId).map((transfer) => transfer.sourcePoint.runId),
+          reportedRunIds: projection.contextTransfers
+            .filter(
+              (transfer) =>
+                transfer.type === "subagent_result" &&
+                transfer.sourceThreadId === projection.thread.id &&
+                transfer.targetThreadId === parentThreadId,
+            )
+            .map((transfer) => transfer.sourcePoint.runId),
           resultRun: latestRun,
         })
       );
@@ -940,6 +947,7 @@ type SettlementThreadRow = Pick<
   ShellThreadRow,
   | "thread_id"
   | "payload_json"
+  | "native_subagent_payload_json"
   | "latest_run_id"
   | "latest_run_status"
   | "latest_run_requested_at"
@@ -1543,7 +1551,11 @@ function nativeSubagentShellFields(
   if (latestRunId !== null || pendingRuntimeRequest !== null || subagent === null) return {};
 
   const status = shellStatusFromStoredRunStatus(
-    subagent.status === "idle" ? null : subagent.status === "pending" ? "starting" : subagent.status,
+    subagent.status === "idle"
+      ? null
+      : subagent.status === "pending"
+        ? "starting"
+        : subagent.status,
   );
   const activityRunStatus =
     status === "starting" || status === "running" || status === "waiting" ? status : null;
@@ -4904,6 +4916,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    const nativeSubagentPayload = sql`
+              (
+                SELECT subagent.payload_json
+                FROM orchestration_v2_projection_subagents AS subagent
+                WHERE subagent.child_thread_id = t.thread_id
+                  AND subagent.origin = 'provider_native'
+                ORDER BY subagent.updated_at DESC, subagent.subagent_id DESC
+                LIMIT 1
+              )`;
+
     const selectShellThreadRows = (
       threadId?: ThreadId,
       location?: "active" | "archive",
@@ -4913,14 +4935,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
-              (
-                SELECT subagent.payload_json
-                FROM orchestration_v2_projection_subagents AS subagent
-                WHERE subagent.child_thread_id = t.thread_id
-                  AND subagent.origin = 'provider_native'
-                ORDER BY subagent.updated_at DESC, subagent.subagent_id DESC
-                LIMIT 1
-              ) AS native_subagent_payload_json,
+              ${nativeSubagentPayload} AS native_subagent_payload_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
@@ -5216,6 +5231,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             // threads before loading the remaining candidates' background work.
             const rows = yield* sql<SettlementThreadRow>`
             SELECT t.thread_id, t.payload_json,
+              ${nativeSubagentPayload} AS native_subagent_payload_json,
               r.run_id AS latest_run_id,
               r.status AS latest_run_status,
               r.requested_at AS latest_run_requested_at,
@@ -5269,6 +5285,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return yield* Effect.forEach(rows, (row) =>
               Effect.gen(function* () {
                 const thread = yield* decodeThreadPayload(row.payload_json);
+                const nativeSubagent =
+                  row.native_subagent_payload_json === null
+                    ? null
+                    : yield* decodeSubagentPayload(row.native_subagent_payload_json);
                 const status = shellStatusFromStoredRunStatus(row.latest_run_status);
                 const latestRunId =
                   row.latest_run_id === null ? null : RunId.make(row.latest_run_id);
@@ -5303,6 +5323,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       : DateTime.makeUnsafe(row.latest_user_authored_message_at),
                   activityRunStatus: null,
                   activityRunStartedAt: null,
+                  ...nativeSubagentShellFields(latestRunId, null, nativeSubagent),
                   pendingRuntimeRequest: null,
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:
@@ -5736,7 +5757,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 .getThreadProjection(threadId)
                 .pipe(
                   Effect.map((projection) =>
-                    threadShellFromProjection(projection, nativeSubagentForChild(existing, projection)),
+                    threadShellFromProjection(
+                      projection,
+                      nativeSubagentForChild(existing, projection),
+                    ),
                   ),
                 ),
           );
@@ -5787,7 +5811,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 !runtimeRequests.some((request) => request.status === "pending"),
             )
             .map((projection) => {
-              const shell = threadShellFromProjection(projection);
+              const shell = threadShellFromProjection(
+                projection,
+                nativeSubagentForChild(projections, projection),
+              );
               return {
                 ...shell,
                 latestUserAuthoredMessageAt: shell.latestUserAuthoredMessageAt ?? null,
@@ -5835,7 +5862,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   thread.archivedAt === null &&
                   thread.settledOverride !== "settled",
               )
-              .map(threadShellFromProjection)
+              .map((projection) =>
+                threadShellFromProjection(
+                  projection,
+                  nativeSubagentForChild(state.projections, projection),
+                ),
+              )
               .filter(
                 (thread) =>
                   thread.status === "failed" &&
@@ -5877,8 +5909,21 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               const parentId = projection.thread.lineage.parentThreadId;
               const parent = parentId === null ? undefined : projections.get(parentId);
               const latestRun = projection.runs.at(-1);
-              const reported = projection.contextTransfers.some((transfer) => transfer.type === "subagent_result" && transfer.sourceThreadId === projection.thread.id && transfer.targetThreadId === parentId);
-              return !reported || latestRun?.completedAt == null || !parent?.runs.some((run) => DateTime.toEpochMillis(run.requestedAt) > DateTime.toEpochMillis(latestRun.completedAt!));
+              const reported = projection.contextTransfers.some(
+                (transfer) =>
+                  transfer.type === "subagent_result" &&
+                  transfer.sourceThreadId === projection.thread.id &&
+                  transfer.targetThreadId === parentId,
+              );
+              return (
+                !reported ||
+                latestRun?.completedAt == null ||
+                !parent?.runs.some(
+                  (run) =>
+                    DateTime.toEpochMillis(run.requestedAt) >
+                    DateTime.toEpochMillis(latestRun.completedAt!),
+                )
+              );
             })
             .toSorted(
               (left, right) =>
