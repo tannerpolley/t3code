@@ -22,6 +22,8 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    /** Markdown embeds permit only bounded image and video files. */
+    mediaOnly: Schema.optionalKey(Schema.Boolean),
   }),
   // A workspace file named by a draft that has no thread yet. The draft names
   // its workspace root explicitly instead of resolving one from a thread.
@@ -189,9 +191,21 @@ export class AssetPreviewTypeValidationError extends Schema.TaggedError<AssetPre
   override get message(): string {
     // Draft resources serve absolute paths through the same host-media
     // validation as media files, so they share its message.
+    if (this.resource._tag === "media-file" && this.resource.mediaOnly) {
+      return "Only images and videos can be embedded.";
+    }
     return this.resource._tag === "media-file" || this.resource._tag === "draft-workspace-file"
       ? "Only images, videos, audio, HTML, and PDF files can be previewed."
       : "Only browser documents and images can be previewed.";
+  }
+}
+
+export class AssetMediaSizeValidationError extends Schema.TaggedError<AssetMediaSizeValidationError>()(
+  "AssetMediaSizeValidationError",
+  { resource: AssetResource, maxBytes: NonNegativeInt },
+) {
+  override get message(): string {
+    return `Media file exceeds the ${this.maxBytes / (1024 * 1024)} MiB limit.`;
   }
 }
 
@@ -307,6 +321,7 @@ export const AssetAccessError = Schema.Union([
   AssetWorkspaceRootNormalizationError,
   AssetWorkspacePathValidationError,
   AssetPreviewTypeValidationError,
+  AssetMediaSizeValidationError,
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceResolutionError,

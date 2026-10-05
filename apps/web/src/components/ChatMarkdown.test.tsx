@@ -8,6 +8,7 @@ import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { normalizeProviderMathDelimiters } from "../markdown-math";
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
@@ -72,6 +73,76 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown math", () => {
+  it("renders inline, display, and provider math while leaving code examples literal", () => {
+    const markdown = [
+      "Inline $x^2 + y^2$.",
+      "",
+      "$$",
+      "\\frac{a}{b}",
+      "$$",
+      "",
+      "Provider \\(z + 1\\) and \\(a\\,b_1 * c_2\\).",
+      "",
+      "\\[w^2\\]",
+    ].join("\n");
+    const html = renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={markdown} />);
+
+    const formulas = [...html.matchAll(/<annotation encoding="application\/x-tex">([^<]*)</gu)].map(
+      (match) => match[1],
+    );
+    expect(formulas).toEqual(["x^2 + y^2", "\\frac{a}{b}", "z + 1", "a\\,b_1 * c_2", "w^2"]);
+    expect(html.match(/class="katex-display"/gu)).toHaveLength(2);
+    expect(normalizeProviderMathDelimiters("`\\(literal\\)`\n\n```tex\n\\[literal\\]\n```")).toBe(
+      "`\\(literal\\)`\n\n```tex\n\\[literal\\]\n```",
+    );
+  });
+
+  it("keeps dollar amounts as text while dollar math still renders", () => {
+    for (const text of [
+      "It costs $5 and $10 total.",
+      "Price: $5.00, then $6.",
+      "Budget $1,200 or $5k.",
+      "Plans are $5/mo or $20+ and $10/hour.",
+      // Plugin skill references, even when the skill list isn't loaded.
+      "have more agents use $cse:research and use the $cse:zotero to get them",
+    ]) {
+      expect(renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={text} />)).not.toContain(
+        'class="katex"',
+      );
+    }
+    expect(
+      renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Area $2\\pi r$ and $x$."} />),
+    ).toContain('<annotation encoding="application/x-tex">2\\pi r</annotation>');
+    for (const [text, formula] of [
+      ["Half is $1/2$ at $5/mo.", "1/2"],
+      ["Slope $2/x$ here.", "2/x"],
+      ["Rate $1/a$ here.", "1/a"],
+      ["$$2/x$$", "2/x"],
+      ["Plans are $5/mo and $x^2$ grows.", "x^2"],
+    ] as const) {
+      const html = renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={text} />);
+      expect(html).toContain(`<annotation encoding="application/x-tex">${formula}</annotation>`);
+      expect(html).not.toContain("katex-error");
+    }
+    expect(
+      renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={"Maps $x:y$ here."} />),
+    ).toContain('<annotation encoding="application/x-tex">x:y</annotation>');
+  });
+
+  it("renders provider math once a streaming delimiter closes", () => {
+    const incomplete = renderToStaticMarkup(
+      <ChatMarkdown cwd={undefined} text={"\\(x^2"} isStreaming />,
+    );
+    const complete = renderToStaticMarkup(
+      <ChatMarkdown cwd={undefined} text={"\\(x^2\\)"} isStreaming />,
+    );
+
+    expect(incomplete).not.toContain('class="katex"');
+    expect(complete).toContain('<annotation encoding="application/x-tex">x^2</annotation>');
+  });
+});
 
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {

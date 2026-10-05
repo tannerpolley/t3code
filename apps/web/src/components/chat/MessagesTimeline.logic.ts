@@ -1,3 +1,4 @@
+import { DOLLAR_MATH_SPAN } from "../../markdown-math";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import * as Equal from "effect/Equal";
@@ -651,6 +652,39 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
+const SUBSTANTIAL_TEXT_LENGTH = 280;
+// Headings, list items, blockquotes, table rows, code fences, images, display
+// or bracketed math, and paragraph breaks.
+const SUBSTANTIAL_MARKDOWN =
+  /^ {0,3}(?:#{1,6}\s|[-*+]\s+\S|\d+[.)]\s+\S|>|\||```|~~~)|!\[[^\]]*\]\(|\$\$|\\\[|\\\(|\n[ \t]*\n/m;
+
+/**
+ * Whether an assistant message carries real content (a summary, answer, or
+ * structured output) rather than a short progress note like "Checking X…".
+ * Settled turns keep substantial messages outside the "Worked for" fold.
+ */
+export function assistantTextIsSubstantial(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    trimmed.length > SUBSTANTIAL_TEXT_LENGTH ||
+    SUBSTANTIAL_MARKDOWN.test(trimmed) ||
+    DOLLAR_MATH_SPAN.test(trimmed)
+  );
+}
+
+const SHORT_CLOSING_LENGTH = 120;
+
+/** A short, unstructured final line such as "Done." or "Waiting on CI." */
+function assistantTextIsShortClosing(text: string): boolean {
+  return text.trim().length <= SHORT_CLOSING_LENGTH && !assistantTextIsSubstantial(text);
+}
+
+/** Codex's commentary/final_answer marker; other providers leave it unset. */
+function assistantMessagePhase(entry: TimelineEntry) {
+  const item = entry.kind === "message" ? entry.projectedItem?.item : undefined;
+  return item?.type === "assistant_message" ? item.phase : undefined;
+}
+
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
   let nullTurnResponseIndex = 0;
@@ -852,8 +886,9 @@ function failedTimelineRunIds(
 
 /**
  * Settled turns fold activity before their terminal assistant message behind
- * a "Worked for ..." row. Ordinary trailing work joins the fold, while failures
- * and work still in progress stay visible. A prompt without a run (a
+ * a "Worked for ..." row. Ordinary trailing work joins the fold, while failures,
+ * work still in progress, and substantial assistant messages stay visible. The
+ * one fold row sits at the turn's start; visible messages follow in order. A prompt without a run (a
  * provider-native subagent, or a turn imported from V1) folds its response
  * the same way.
  */
@@ -960,6 +995,22 @@ function deriveTurnFolds(input: {
       continue;
     }
     const hiddenEntryIds = new Set<string>();
+    // Before a short closing line ("Done."), the previous message stays visible unless it
+    // is itself a short line: a plain summary under the substantial length still shows.
+    const terminal = group.terminalEntry;
+    const beforeClosing =
+      terminal &&
+      assistantMessagePhase(terminal) === undefined &&
+      assistantTextIsShortClosing(terminal.message.text)
+        ? group.entries.findLast(
+            (entry): entry is Extract<TimelineEntry, { kind: "message" }> =>
+              entry.kind === "message" && entry.id !== terminal.id,
+          )
+        : undefined;
+    const keptBeforeClosingId =
+      beforeClosing && !assistantTextIsShortClosing(beforeClosing.message.text)
+        ? beforeClosing.id
+        : undefined;
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
@@ -982,6 +1033,15 @@ function deriveTurnFolds(input: {
         continue;
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
+      // Real answers stay readable in place; only progress notes fold. A provider phase
+      // decides when present; otherwise the text does.
+      if (entry.kind === "message") {
+        const phase = assistantMessagePhase(entry);
+        const visible = phase
+          ? phase === "final_answer"
+          : entry.id === keptBeforeClosingId || assistantTextIsSubstantial(entry.message.text);
+        if (visible) continue;
+      }
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {

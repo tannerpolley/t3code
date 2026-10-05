@@ -3,6 +3,7 @@ import {
   AssetAttachmentNotFoundError,
   AssetGitHubMediaUrlValidationError,
   AssetPreviewTypeValidationError,
+  AssetMediaSizeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
   AssetProjectFaviconResolutionError,
@@ -18,6 +19,7 @@ import {
 import {
   audioMimeTypeFromExtension,
   hostPreviewMimeTypeFromExtension,
+  mediaMimeTypeFromExtension,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
@@ -58,6 +60,8 @@ import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaF
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
+export const MARKDOWN_MEDIA_MAX_BYTES = 100 * 1024 * 1024;
+
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
@@ -101,6 +105,7 @@ const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
     version: Schema.Literal(1),
     kind: Schema.Literal("media-file-exact"),
+    mediaOnly: Schema.optionalKey(Schema.Boolean),
     filePath: Schema.String,
     device: Schema.String,
     inode: Schema.String,
@@ -161,6 +166,7 @@ export type ResolvedAsset =
       readonly fileName?: string;
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
+      readonly maxBytes?: number;
     }
   | {
       readonly kind: "github-media";
@@ -294,28 +300,39 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
     if (!canonicalFile) {
       return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
     }
-    if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
+    const mediaOnly = input.resource._tag === "media-file" && input.resource.mediaOnly === true;
+    const mimeType = (mediaOnly ? mediaMimeTypeFromExtension : hostPreviewMimeTypeFromExtension)(
+      path.extname(canonicalFile),
+    );
+    if (mimeType === null) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
     }
     const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(path.extname(canonicalFile).toLowerCase());
     const opened = yield* openMediaFile(canonicalFile).pipe(
-      Effect.flatMap((file) =>
-        file === null
-          ? Effect.succeed(null)
-          : Effect.map(
-              wantsDimensions
-                ? readImageDimensionsFromOpenFile(canonicalFile, file)
-                : Effect.succeed(null),
-              (dimensions) => ({
-                identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
-                dimensions,
-              }),
-            ),
-      ),
-      Effect.scoped,
       Effect.mapError(
         (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
       ),
+      Effect.flatMap((file) => {
+        if (file === null) return Effect.succeed(null);
+        if (mediaOnly && file.info.size > BigInt(MARKDOWN_MEDIA_MAX_BYTES)) {
+          return Effect.fail(
+            new AssetMediaSizeValidationError({
+              resource: input.resource,
+              maxBytes: MARKDOWN_MEDIA_MAX_BYTES,
+            }),
+          );
+        }
+        return Effect.map(
+          wantsDimensions
+            ? readImageDimensionsFromOpenFile(canonicalFile, file)
+            : Effect.succeed(null),
+          (dimensions) => ({
+            identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
+            dimensions,
+          }),
+        );
+      }),
+      Effect.scoped,
     );
     if (!opened) {
       return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
@@ -324,6 +341,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       claims: {
         version: 1 as const,
         kind: "media-file-exact" as const,
+        ...(mediaOnly ? { mediaOnly: true } : {}),
         filePath: canonicalFile,
         ...opened.identity,
         expiresAt: input.expiresAt,
@@ -827,7 +845,9 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     if (canonicalFile !== claims.filePath) return null;
-    const mimeType = hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
+    const mimeType = (
+      claims.mediaOnly ? mediaMimeTypeFromExtension : hostPreviewMimeTypeFromExtension
+    )(path.extname(canonicalFile));
     if (!mimeType) return null;
     const file = yield* openMediaFile(canonicalFile, claims).pipe(
       Effect.tapError((cause) =>
@@ -835,9 +855,15 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => null),
     );
-    return file
-      ? ({ kind: "file", path: canonicalFile, mimeType, file } satisfies ResolvedAsset)
-      : null;
+    if (!file || (claims.mediaOnly && file.info.size > BigInt(MARKDOWN_MEDIA_MAX_BYTES)))
+      return null;
+    return {
+      kind: "file",
+      path: canonicalFile,
+      mimeType,
+      file,
+      ...(claims.mediaOnly ? { maxBytes: MARKDOWN_MEDIA_MAX_BYTES } : {}),
+    } satisfies ResolvedAsset;
   }
   if (claims.kind === "workspace-file-exact") {
     if (decodedPath !== path.basename(claims.relativePath)) return null;

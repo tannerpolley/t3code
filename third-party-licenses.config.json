@@ -626,6 +626,18 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
       }
+    },
+    {
+      "name": "rehype-katex",
+      "generatedNotice": {
+        "licenseId": "MIT"
+      }
+    },
+    {
+      "name": "remark-math",
+      "generatedNotice": {
+        "licenseId": "MIT"
+      }
     }
   ]
 }

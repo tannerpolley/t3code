@@ -82,8 +82,10 @@ import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
+import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
+import remarkMath from "remark-math";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
@@ -91,12 +93,14 @@ import remarkGfm from "remark-gfm";
 import type { Processor } from "unified";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
+import { normalizeProviderMathDelimiters, remarkProviderMath } from "../markdown-math";
 import {
   artifactTemplateFromHastProperties,
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
   renderCodexFileCitationsAsMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
+import { markdownImageUnavailableLabel } from "./markdownImageState";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
   resolveMarkdownMediaPreview,
@@ -474,9 +478,22 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    code: [
+      ...(defaultSchema.attributes?.code ?? []).filter(
+        (attribute) => !(Array.isArray(attribute) && attribute[0] === "className"),
+      ),
+      // Math classes must survive to rehype-katex, which reads them for display mode.
+      ["className", /^language-./, "math-inline", "math-display"],
+      "dataCodeMeta",
+      "dataInlineCode",
+    ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
-    div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
+    div: [
+      ...(defaultSchema.attributes?.div ?? []),
+      ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
+      ["className", "math", "math-display"],
+    ],
+    span: [...(defaultSchema.attributes?.span ?? []), ["className", "math", "math-inline"]],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
     img: [
       ...(defaultSchema.attributes?.img ?? []),
@@ -492,9 +509,84 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
+/** Admits KaTeX's generated HTML and MathML after it renders sanitized math. */
+const CHAT_MARKDOWN_KATEX_SANITIZE_SCHEMA = {
+  ...CHAT_MARKDOWN_SANITIZE_SCHEMA,
+  tagNames: [
+    ...(CHAT_MARKDOWN_SANITIZE_SCHEMA.tagNames ?? []),
+    "annotation",
+    "math",
+    "menclose",
+    "mglyph",
+    "mi",
+    "mn",
+    "mo",
+    "mover",
+    "mpadded",
+    "mphantom",
+    "mroot",
+    "mrow",
+    "mspace",
+    "msqrt",
+    "mstyle",
+    "msub",
+    "msubsup",
+    "msup",
+    "mtable",
+    "mtd",
+    "mtext",
+    "mtr",
+    "munder",
+    "munderover",
+    "path",
+    "semantics",
+    "svg",
+  ],
+  attributes: {
+    ...CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes,
+    span: [
+      ...(CHAT_MARKDOWN_SANITIZE_SCHEMA.attributes?.span ?? []),
+      "ariaHidden",
+      "className",
+      "style",
+    ],
+    math: ["display", "xmlns"],
+    annotation: ["encoding"],
+    mi: ["mathvariant"],
+    mo: [
+      "accent",
+      "fence",
+      "largeop",
+      "lspace",
+      "maxsize",
+      "minsize",
+      "rspace",
+      "separator",
+      "stretchy",
+    ],
+    mspace: ["height", "linebreak", "width"],
+    mstyle: [
+      "displaystyle",
+      "mathbackground",
+      "mathcolor",
+      "mathsize",
+      "mathvariant",
+      "scriptlevel",
+    ],
+    mtable: ["columnalign", "columnlines", "columnspacing", "rowlines", "rowspacing"],
+    mtd: ["columnspan", "rowspan"],
+    menclose: ["notation"],
+    mpadded: ["depth", "height", "lspace", "voffset", "width"],
+    svg: ["ariaHidden", "height", "preserveAspectRatio", "style", "viewBox", "width"],
+    path: ["d"],
+  },
+} satisfies Parameters<typeof rehypeSanitize>[0];
+
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
   remarkKeepWindowsPathDestinations,
+  remarkMath,
+  remarkProviderMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -505,6 +597,8 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
   remarkKeepWindowsPathDestinations,
+  remarkMath,
+  remarkProviderMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -513,11 +607,29 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
-const CHAT_MARKDOWN_REHYPE_PLUGINS = [
+// Without rehype-raw, HTML in the source stays inert text; sanitizing here would drop those
+// nodes and blank the message. KaTeX output is generated, not taken from the source.
+const CHAT_MARKDOWN_REHYPE_PLUGINS = [rehypeKatex] satisfies NonNullable<
+  ReactMarkdownOptions["rehypePlugins"]
+>;
+
+// With the "Math in chat" setting off, markdown renders without any math plugin.
+const CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW_NO_MATH = [
   rehypeRaw,
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW = [
+  ...CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW_NO_MATH,
+  rehypeKatex,
+  [rehypeSanitize, CHAT_MARKDOWN_KATEX_SANITIZE_SCHEMA],
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const notMathPlugin = (plugin: unknown) => plugin !== remarkMath && plugin !== remarkProviderMath;
+const CHAT_MARKDOWN_REMARK_PLUGINS_NO_MATH = CHAT_MARKDOWN_REMARK_PLUGINS.filter(notMathPlugin);
+const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS_NO_MATH =
+  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS.filter(notMathPlugin);
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -1559,18 +1671,22 @@ function ChatMarkdownMediaUnavailableLabel(props: {
 function ChatMarkdownImageFallback(props: {
   readonly alt: string;
   readonly copyMarkdown?: string | undefined;
-  readonly kind?: "image" | "video";
+  readonly kind?: "image" | "video" | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
+  readonly unavailableLabel?: string | undefined;
 }) {
   const content = (
     <span
       data-markdown-copy={props.copyMarkdown}
+      role="alert"
       className={cn(
         CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
         "rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
       )}
     >
-      <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} />
+      {props.unavailableLabel ?? (
+        <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} />
+      )}
     </span>
   );
   return props.actionsSource ? (
@@ -1588,9 +1704,9 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
 
 /**
  * A standalone image holds a 16:9 slot (or its authored size) until it has
- * decoded, and keeps that slot if it fails, so a timeline row moves at most
- * once: when the natural size arrives. A bare `<img>` is zero height until
- * then. Once decoded the image renders bare again so its box, hit area, and
+ * decoded, showing the image as it arrives (a bare `<img>` is zero height
+ * until then). A failure replaces it with a small chip naming the path and
+ * the reason. Once decoded the image renders bare again so its box, hit area, and
  * alignment are exactly the image's own. Inline images (badges, icons in a
  * sentence) skip the slot: a placeholder taller than the image would move the
  * page more than the image does.
@@ -1602,7 +1718,7 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
 function ChatMarkdownImage(props: {
   /** Null while the URL is being resolved; the last decoded image stays up. */
   readonly src: string | null;
-  readonly sourceFailed?: boolean | undefined;
+  readonly sourcePath?: string | undefined;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly standalone: boolean;
@@ -1619,9 +1735,12 @@ function ChatMarkdownImage(props: {
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const src = props.src ?? loadedSrc;
-  const failed = props.sourceFailed === true || (src !== null && failedSrc === src);
-  // A failure forgets the decoded image so the next URL loads behind the slot.
-  const settled = src !== null && !failed && (!props.standalone || loadedSrc !== null);
+  const unavailableLabel = markdownImageUnavailableLabel({
+    path: props.sourcePath ?? props.alt,
+    loadFailed: src !== null && failedSrc === src,
+    reason: "Could not load or decode the image.",
+  });
+  const settled = src !== null && (!props.standalone || loadedSrc !== null);
   // Cached images are complete before `onLoad` can fire.
   const markLoadedIfComplete = useCallback(
     (image: HTMLImageElement | null) => {
@@ -1647,6 +1766,16 @@ function ChatMarkdownImage(props: {
     },
   });
 
+  if (unavailableLabel) {
+    return (
+      <ChatMarkdownImageFallback
+        alt={props.alt}
+        copyMarkdown={props.copyMarkdown}
+        actionsSource={props.actionsSource}
+        unavailableLabel={unavailableLabel}
+      />
+    );
+  }
   if (settled) {
     return (
       <MediaActions source={props.actionsSource}>
@@ -1671,20 +1800,15 @@ function ChatMarkdownImage(props: {
     );
   }
   if (!props.standalone) {
-    return failed ? (
-      <ChatMarkdownImageFallback
-        alt={props.alt}
-        copyMarkdown={props.copyMarkdown}
-        actionsSource={props.actionsSource}
-      />
-    ) : (
+    return (
       <span
         id={props.imageProps?.id}
         data-markdown-copy={props.copyMarkdown}
         role="status"
-        aria-label="Loading image"
-        className={CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME}
-      />
+        className={cn(CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME, "text-xs text-muted-foreground")}
+      >
+        Loading image: {props.sourcePath ?? props.alt}
+      </span>
     );
   }
   return (
@@ -1698,25 +1822,24 @@ function ChatMarkdownImage(props: {
           "relative",
         )}
         style={props.style}
-        {...(failed
-          ? { role: "alert" as const }
-          : { role: "status" as const, "aria-label": "Loading image" })}
+        role="status"
+        aria-label="Loading image"
       >
-        {failed ? (
-          <span className="flex size-full items-center justify-center p-2 text-center text-xs text-muted-foreground">
-            <ChatMarkdownMediaUnavailableLabel alt={props.alt} />
-          </span>
-        ) : src !== null ? (
+        {src !== null ? (
           <img
             ref={markLoadedIfComplete}
             src={src}
             alt={props.alt}
             decoding="async"
             draggable={false}
-            className="invisible absolute inset-0 size-full"
+            className="absolute inset-0 size-full object-contain"
             {...imageEvents(src)}
           />
-        ) : null}
+        ) : (
+          <span className="p-2 text-xs text-muted-foreground">
+            Loading image: {props.sourcePath ?? props.alt}
+          </span>
+        )}
       </span>
     </MediaActions>
   );
@@ -1843,6 +1966,24 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : {}),
   };
 
+  const unavailableLabel = markdownImageUnavailableLabel({
+    path: path ?? props.originalUrl ?? props.alt,
+    sourceFailed: assetUrl._tag === "Failure" && fallbackSrc === undefined,
+    reason: assetUrl._tag === "Failure" ? assetUrl.reason : undefined,
+    kind: props.kind,
+  });
+  if (unavailableLabel) {
+    return (
+      <ChatMarkdownImageFallback
+        alt={props.alt}
+        copyMarkdown={props.copyMarkdown}
+        kind={props.kind}
+        actionsSource={actionsSource}
+        unavailableLabel={unavailableLabel}
+      />
+    );
+  }
+
   if (props.kind === "video") {
     return (
       <ChatMarkdownVideo
@@ -1863,7 +2004,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     <ChatMarkdownImage
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
-      sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+      sourcePath={path ?? props.originalUrl}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
@@ -3370,6 +3511,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <ChatMarkdownImage
           key={mediaSrc}
           src={mediaSrc}
+          sourcePath={srcString}
           alt={altText}
           copyMarkdown={copyMarkdown}
           standalone={standalone}
@@ -3390,6 +3532,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             _tag: "media-file",
             threadId: threadRef.threadId,
             path: imageSource.path,
+            mediaOnly: true,
           }}
           alt={altText}
           kind={kind}
@@ -3402,7 +3545,24 @@ const CHAT_MARKDOWN_COMPONENTS = {
         />
       );
     }
-    return <ChatMarkdownImageFallback alt={altText} copyMarkdown={copyMarkdown} kind={kind} />;
+    return (
+      <ChatMarkdownImageFallback
+        alt={altText}
+        copyMarkdown={copyMarkdown}
+        kind={kind}
+        unavailableLabel={
+          markdownImageUnavailableLabel({
+            path: srcString,
+            sourceFailed: true,
+            reason:
+              imageSource._tag === "WorkspaceFile"
+                ? "No owning thread is available."
+                : "Unsupported image source.",
+            kind,
+          }) ?? undefined
+        }
+      />
+    );
   },
   table: function MarkdownTableRenderer({ node: _node, ...props }) {
     return <MarkdownTable {...props} />;
@@ -3492,17 +3652,34 @@ function ChatMarkdown({
     localMediaPreview,
     setLocalMediaPreview,
   } = useChatMarkdownState({ text, ...props });
+  const chatMath = useClientSettings((settings) => settings.chatMath);
+  const renderedText = useMemo(
+    () =>
+      chatMath
+        ? normalizeProviderMathDelimiters(
+            text,
+            props.skills?.map((skill) => skill.name),
+          )
+        : text,
+    [chatMath, props.skills, text],
+  );
   const incrementalParsing =
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
   const remarkPlugins = useMemo(
     () => [
-      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      ...(lineBreaks
+        ? chatMath
+          ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS
+          : CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS_NO_MATH
+        : chatMath
+          ? CHAT_MARKDOWN_REMARK_PLUGINS
+          : CHAT_MARKDOWN_REMARK_PLUGINS_NO_MATH),
       ...extraRemarkPlugins,
       ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
     ],
-    [extraRemarkPlugins, incrementalParsing, lineBreaks],
+    [chatMath, extraRemarkPlugins, incrementalParsing, lineBreaks],
   );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
@@ -3522,12 +3699,20 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+          rehypePlugins={
+            parseRawHtml
+              ? chatMath
+                ? CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW
+                : CHAT_MARKDOWN_REHYPE_PLUGINS_WITH_RAW_NO_MATH
+              : chatMath
+                ? CHAT_MARKDOWN_REHYPE_PLUGINS
+                : undefined
+          }
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
-          {text}
+          {renderedText}
         </ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (

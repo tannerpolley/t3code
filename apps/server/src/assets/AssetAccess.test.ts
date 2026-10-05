@@ -3,7 +3,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
-import { AssetAccessError, AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
+import {
+  AssetAccessError,
+  AssetPreviewTypeValidationError,
+  AssetMediaSizeValidationError,
+  ThreadId,
+} from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -24,7 +29,12 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
-import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  MARKDOWN_MEDIA_MAX_BYTES,
+  issueAssetUrl,
+  resolveAsset,
+} from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -136,6 +146,60 @@ describe("AssetAccess", () => {
         expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
         expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
       }
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "refuses document and audio files in Markdown embeds without removing their preview support",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-markdown-types-" });
+        for (const name of ["report.html", "report.pdf", "recording.mp3"]) {
+          const filePath = path.join(outside, name);
+          yield* fs.writeFileString(filePath, "preview");
+          const resource = {
+            _tag: "media-file" as const,
+            threadId: ThreadId.make("thread"),
+            path: filePath,
+          };
+          expect(
+            yield* Effect.flip(issueAssetUrl({ resource: { ...resource, mediaOnly: true } })),
+          ).toBeInstanceOf(AssetPreviewTypeValidationError);
+          expect((yield* issueAssetUrl({ resource })).relativeUrl).toContain(ASSET_ROUTE_PREFIX);
+        }
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("caps Markdown media when signing and when a signed file grows", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-markdown-size-" });
+      const filePath = path.join(outside, "clip.mp4");
+      yield* fs.writeFileString(filePath, "video");
+      const resource = {
+        _tag: "media-file" as const,
+        threadId: ThreadId.make("thread"),
+        path: filePath,
+        mediaOnly: true,
+      };
+      const resize = (size: number) => Effect.promise(() => NodeFSP.truncate(filePath, size));
+      yield* resize(MARKDOWN_MEDIA_MAX_BYTES);
+      const result = yield* issueAssetUrl({ resource });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const resolve = () => resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      const asset = yield* resolve();
+      expect(asset?.kind).toBe("file");
+      if (asset?.kind !== "file") throw new Error("Expected signed media file");
+      yield* resize(MARKDOWN_MEDIA_MAX_BYTES + 1);
+      expect(yield* Effect.flip(issueAssetUrl({ resource }))).toBeInstanceOf(
+        AssetMediaSizeValidationError,
+      );
+      expect(yield* resolve()).toBeNull();
+      expect((yield* assetFileResponse(asset)).status).toBe(413);
     }).pipe(Effect.provide(testLayer)),
   );
 

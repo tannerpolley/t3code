@@ -19,6 +19,7 @@ import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
 import { MessageId, RunId } from "@t3tools/contracts";
 import {
+  assistantTextIsSubstantial,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
@@ -338,6 +339,35 @@ describe("shouldPreserveAssistantLineBreaks", () => {
       ),
     ).toBe(true);
     expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
+  });
+});
+
+describe("assistantTextIsSubstantial", () => {
+  it.each([
+    "## Summary\nShipped.",
+    "Changes:\n- one\n- two",
+    "Steps:\n1. Build",
+    "| a | b |\n|---|---|",
+    "```ts\nconst x = 1;\n```",
+    "![Chart](/tmp/chart.png)",
+    "> Quoted note",
+    "$$\nE = mc^2\n$$",
+    "Area is \\(\\pi r^2\\).",
+    "Done with the first part.\n\nThe second part needs review.",
+    "word ".repeat(60),
+    "The result is $x+1$.",
+  ])("keeps %j visible", (text) => {
+    expect(assistantTextIsSubstantial(text)).toBe(true);
+  });
+
+  it.each([
+    "Checking the deployment config…",
+    "Now the logic edits.",
+    "Waiting on CI.\nThen I'll merge.",
+    "It costs $5 - that's fine.",
+    "Between $5 and $10 total.",
+  ])("folds %j", (text) => {
+    expect(assistantTextIsSubstantial(text)).toBe(false);
   });
 });
 
@@ -1244,7 +1274,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
-  it("folds the first assistant message and settled work before the terminal response", () => {
+  it("folds a short progress note and settled work before the terminal response", () => {
     const timelineEntries = [
       {
         id: "user-entry",
@@ -1267,7 +1297,7 @@ describe("deriveMessagesTimelineRows", () => {
         message: {
           id: "assistant-first" as never,
           role: "assistant" as const,
-          text: "Synthetic deployment checklist\n1. Confirm the deployment is ready.",
+          text: "Checking the deployment config…",
           runId: "turn-1" as never,
           createdAt: "2026-01-01T00:00:05Z",
           updatedAt: "2026-01-01T00:00:06Z",
@@ -1343,6 +1373,108 @@ describe("deriveMessagesTimelineRows", () => {
     expect(
       expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
     ).toBeDefined();
+  });
+
+  describe("settled turn folds keep real answers visible", () => {
+    const runId = RunId.make("turn-1");
+    const message = (
+      id: string,
+      text: string,
+      at: string,
+      phase?: "commentary" | "final_answer",
+    ): TimelineEntry => ({
+      id: `${id}-entry`,
+      kind: "message",
+      createdAt: at,
+      message: {
+        id: id as never,
+        role: "assistant",
+        text,
+        runId,
+        createdAt: at,
+        updatedAt: at,
+        streaming: false,
+      },
+      ...(phase ? { projectedItem: { item: { type: "assistant_message", phase } } as never } : {}),
+    });
+    const work = (id: string, at: string): TimelineEntry => ({
+      id: `${id}-entry`,
+      kind: "work",
+      createdAt: at,
+      entry: { id, createdAt: at, runId, label: "Ran command", tone: "tool" },
+    });
+    const visibleRowIds = (entries: TimelineEntry[]) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            id: "user-entry",
+            kind: "message",
+            createdAt: "2026-01-01T00:00:00Z",
+            message: {
+              id: "user-1" as never,
+              role: "user",
+              text: "Build it",
+              runId: null,
+              createdAt: "2026-01-01T00:00:00Z",
+              updatedAt: "2026-01-01T00:00:00Z",
+              streaming: false,
+            },
+          },
+          ...entries,
+        ],
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      }).map((row) => row.id);
+
+    it("keeps a substantial summary visible when a tool call and a short closing line follow it", () => {
+      expect(
+        visibleRowIds([
+          message("progress", "Checking the build…", "2026-01-01T00:00:01Z"),
+          work("work-1", "2026-01-01T00:00:02Z"),
+          message(
+            "summary",
+            "## Summary\n- Built the feature\n- Tests pass",
+            "2026-01-01T00:00:03Z",
+          ),
+          work("work-2", "2026-01-01T00:00:04Z"),
+          message("closing", "Waiting on CI.", "2026-01-01T00:00:05Z"),
+        ]),
+      ).toEqual(["user-entry", "turn-fold:turn-1", "summary-entry", "closing-entry"]);
+    });
+
+    it("keeps a plain summary under the length threshold visible before a short closing line", () => {
+      const summary =
+        "Round 1 of the fit is complete: the offset settled at -10.83922 and the log constant at " +
+        "5.88696, both within tolerance of the reference values, and the residuals show no trend.";
+      expect(
+        visibleRowIds([
+          message("progress", "Running the fit…", "2026-01-01T00:00:01Z"),
+          work("work-1", "2026-01-01T00:00:02Z"),
+          message("summary", summary, "2026-01-01T00:00:03Z"),
+          work("work-2", "2026-01-01T00:00:04Z"),
+          message("closing", "Done.", "2026-01-01T00:00:05Z"),
+        ]),
+      ).toEqual(["user-entry", "turn-fold:turn-1", "summary-entry", "closing-entry"]);
+    });
+
+    it("lets a Codex phase decide: commentary folds even when long, final answers show", () => {
+      expect(
+        visibleRowIds([
+          message(
+            "commentary",
+            `## Plan\n${"word ".repeat(80)}`,
+            "2026-01-01T00:00:01Z",
+            "commentary",
+          ),
+          work("work-1", "2026-01-01T00:00:02Z"),
+          message("answer", "Fixed.", "2026-01-01T00:00:03Z", "final_answer"),
+          work("work-2", "2026-01-01T00:00:04Z"),
+          message("closing", "Done.", "2026-01-01T00:00:05Z", "commentary"),
+        ]),
+      ).toEqual(["user-entry", "turn-fold:turn-1", "answer-entry", "closing-entry"]);
+    });
   });
 
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {

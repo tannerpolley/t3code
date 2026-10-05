@@ -3674,6 +3674,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("stamps each agent message's phase on its turn item", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = finalAnswerTranscript("codex-message-phases", [
+          { id: "answer-commentary", text: "Working on it.", phase: "commentary" },
+          { id: "answer-final", text: "Fixed." },
+        ]);
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-codex-message-phases"),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            !event.turnItem.streaming
+              ? [[event.turnItem.text, event.turnItem.phase]]
+              : [],
+          ),
+          [
+            ["Working on it.", "commentary"],
+            ["Fixed.", "final_answer"],
+          ],
+        );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("suppresses an empty final answer after a non-empty unknown-phase answer", () =>
     Effect.scoped(
       Effect.gen(function* () {

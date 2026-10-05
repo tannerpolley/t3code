@@ -154,6 +154,8 @@ minimumReleaseAgeExclude:
   - expo-image-loader@58.0.3
 
 overrides:
+  # A split HAST type graph makes Shiki's 3.0.4 trees incompatible with unified plugins.
+  "@types/hast": 3.0.4
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
