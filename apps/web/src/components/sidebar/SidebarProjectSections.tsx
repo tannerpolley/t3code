@@ -1000,11 +1000,12 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           aria-expanded={props.isProjectExpanded}
           className={cn(
             "flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
-            !codexStyle && "pe-12",
+            // Codex style makes room for the actions menu only while it shows.
+            codexStyle
+              ? "group-hover/project-row:pe-8 group-focus-within/project-row:pe-8"
+              : "pe-12",
             props.selected && "bg-sidebar-row-selected text-sidebar-foreground",
           )}
-          // Codex style keeps the shared columns' end padding; the actions menu overlays the empty
-          // time and status slots.
           onClick={() => {
             props.onToggleProject(project.projectKey, !props.isProjectExpanded);
           }}
@@ -1217,6 +1218,7 @@ function SidebarProjectThreadRow(props: {
   const provider = useServerConfigs()
     .get(props.thread.environmentId)
     ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
+  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   return (
     <li
       className="relative list-none"
@@ -1266,19 +1268,26 @@ function SidebarProjectThreadRow(props: {
           />
         )}
         {props.codexStyle ? (
-          // The model sits right after the provider icon, as in Lineage; the title takes the rest.
-          <span className="max-w-[6.5rem] shrink-0 truncate text-2xs text-foreground/85">
-            {resolveSidebarThreadModelLabel(props.thread, provider)}
+          // The model sits right after the provider icon, as in Lineage. It gives way first: hidden
+          // in a narrow row, and in a wider one it shrinks before the title's 5rem basis does.
+          <span className="hidden min-w-0 max-w-[6.5rem] shrink-[100] truncate text-2xs text-foreground/85 @min-[16rem]/thread-row:block">
+            {resolveSidebarThreadModelLabel(props.thread, provider, shortModelNames)}
           </span>
         ) : null}
-        <span className={cn("min-w-0 flex-1 truncate", props.codexStyle && "text-xs")}>
+        <span
+          className={cn(
+            "min-w-0 truncate",
+            props.codexStyle ? "flex-[1_1_5rem] text-xs" : "flex-1",
+          )}
+        >
           {props.thread.title}
         </span>
         {props.codexStyle ? (
           <SidebarTrailingColumns
             count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
             time={<SidebarThreadTime thread={props.thread} status={status} />}
-            status={<ThreadStatusMark status={statusMark} />}
+            // An idle thread needs no mark; the time alone ends the row.
+            status={statusMark === "ready" ? undefined : <ThreadStatusMark status={statusMark} />}
           />
         ) : workRows.length > 0 ? (
           // Room for the work toggle, which sits over this spot because buttons cannot nest.

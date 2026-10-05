@@ -5,8 +5,8 @@ import { cn } from "~/lib/utils";
 
 /*
  * The Codex-style sidebar's shared columns. Every row (section header, project, thread, subagent,
- * shell) keeps an 8px start and end padding and renders every slot, empty or not, so carets,
- * counts, times and status marks line up across rows without per-row offsets.
+ * shell) keeps an 8px start and end padding and a caret slot, so carets and icons line up across
+ * rows; the trailing columns end flush at the row's end padding.
  */
 
 /** Projects uses the same compact height for top-level threads and their work rows. */
@@ -69,20 +69,23 @@ export function SidebarCaretToggle(props: {
 }
 
 /**
- * The right columns, last in the row: a right-aligned count, then time, then status mark. Widths
- * are in `ch` at a fixed size and weight, so they hold in any interface font; the time fits the
- * elapsed label, up to "00h 00m 00s", on one line; right-aligned so minutes and seconds line up whether or not a time shows hours.
+ * The right columns, last in the row: a count, then time, then status mark. Each renders only when
+ * given, and the group sizes to what it holds, so a narrow sidebar leaves the title its room and a
+ * header row reserves nothing it doesn't show.
  */
 export function SidebarTrailingColumns(props: {
   readonly count?: number | undefined;
   readonly time?: ReactNode;
   readonly status?: ReactNode;
 }) {
+  if (props.count === undefined && !props.time && !props.status) return null;
   return (
     <span className="ms-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-2xs font-normal tabular-nums">
-      <span className="w-[3ch] text-right text-sidebar-muted-foreground/55">{props.count}</span>
-      <span className="w-[11ch] text-right text-muted-foreground">{props.time}</span>
-      <span className="flex w-3.5 justify-center">{props.status}</span>
+      {props.count === undefined ? null : (
+        <span className="text-sidebar-muted-foreground/55">{props.count}</span>
+      )}
+      {props.time ? <span className="text-muted-foreground">{props.time}</span> : null}
+      {props.status ? <span className="flex w-3.5 justify-center">{props.status}</span> : null}
     </span>
   );
 }

@@ -191,6 +191,39 @@ describe("resolveSidebarThreadModelLabel", () => {
 
     expect(resolveSidebarThreadModelLabel(thread, provider)).toBe("Codex 6 · High");
   });
+
+  it("follows the short model names switch", () => {
+    const provider = {
+      driver: ProviderDriverKind.make("claudeAgent"),
+      models: [
+        {
+          slug: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                type: "select",
+                id: "effort",
+                label: "Effort",
+                options: [{ id: "medium", label: "Medium" }],
+              },
+            ],
+          },
+        },
+      ],
+    } satisfies Pick<ServerProvider, "driver" | "models">;
+    const thread = makeThreadFixture({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-5-5",
+        options: [{ id: "effort", value: "medium" }],
+      },
+    });
+
+    expect(resolveSidebarThreadModelLabel(thread, provider, true)).toBe("Sonnet 5.5 · Medium");
+    expect(resolveSidebarThreadModelLabel(thread, provider)).toBe("Claude Sonnet 5.5 · Medium");
+  });
 });
 
 describe("background task metadata", () => {
