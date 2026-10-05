@@ -8258,6 +8258,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "attempts",
           "turnItems",
           "subagents",
+          "runtimeRequests",
         ],
         // Thread-wide, like the Waiting strip: a settled thread's background
         // work can belong to an earlier run than the one Stop targets.
@@ -8303,6 +8304,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: `Run ${command.runId} is not interruptible.`,
         });
+      }
+      // Stop answers the run's own t3_request_user_input question with a cancel now;
+      // the provider may take a while to end the turn.
+      for (const request of projection.runtimeRequests) {
+        if (
+          request.status !== "pending" ||
+          request.kind !== "user_input" ||
+          request.responseCapability.type !== "app_owned" ||
+          projection.nodes.find((node) => node.id === request.nodeId)?.runId !== run.id
+        )
+          continue;
+        yield* dispatchRuntimeRequestRespond(
+          {
+            type: "runtime-request.respond",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            requestId: request.id,
+            decision: "cancel",
+          },
+          events,
+          effects,
+        );
       }
       const now = yield* DateTime.now;
       const completionMessage = projection.messages.find(

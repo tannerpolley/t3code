@@ -202,12 +202,23 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
   t3_request_user_input: (input) =>
     Effect.gen(function* () {
       const { scope, caller, threads } = yield* readMutationCaller();
+      const notActive = new OrchestratorMcpFailure({
+        code: "parent_not_active",
+        message: "The calling provider no longer owns an active thread run.",
+      });
       if (caller === undefined || scope.thread === undefined || caller.activeRunId === null)
-        return yield* new OrchestratorMcpFailure({
-          code: "parent_not_active",
-          message: "Only an agent's active thread run can ask the user.",
-        });
-      // The orchestrator checks that this run's live turn belongs to the session.
+        return yield* notActive;
+      // A stale session gets this code; the orchestrator checks the live turn itself.
+      const { providerThreads } = yield* threads
+        .getProjectThreadRecords({ projectId: caller.projectId, threadId: caller.id }, [
+          "providerThreads",
+        ])
+        .pipe(Effect.mapError(unavailable));
+      const activeProviderThread = providerThreads.find(
+        (thread) => thread.id === caller.activeProviderThreadId,
+      );
+      if (activeProviderThread?.providerSessionId !== scope.thread.providerSessionId)
+        return yield* notActive;
       const commandId = yield* newCommandId();
       const requestId = RuntimeRequestId.make(`${commandId}:user-input`);
       const created = yield* threads
