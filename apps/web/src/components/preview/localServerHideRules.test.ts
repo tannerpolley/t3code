@@ -1,36 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  addLocalServerHideRule,
-  isLocalServerHidden,
-  parseLocalServerHideRule,
-} from "./localServerHideRules";
-
-const serena = { port: 24_290, processName: "serena" };
-const preview = { port: 8770, processName: "deno" };
-
-describe("isLocalServerHidden", () => {
-  it("hides a single entry by its port only", () => {
-    const rules = [{ kind: "ports", from: 8770, to: 8770 }] as const;
-    expect(isLocalServerHidden(preview, rules)).toBe(true);
-    expect(isLocalServerHidden({ ...preview, port: 8771 }, rules)).toBe(false);
-  });
-
-  it("hides a process family regardless of case, and only that process", () => {
-    const rules = [{ kind: "process", processName: "Serena" }] as const;
-    expect(isLocalServerHidden(serena, rules)).toBe(true);
-    expect(isLocalServerHidden(preview, rules)).toBe(false);
-    expect(isLocalServerHidden({ port: 3000, processName: null }, rules)).toBe(false);
-  });
-
-  it("hides an inclusive port range", () => {
-    const rules = [{ kind: "ports", from: 24_282, to: 24_304 }] as const;
-    expect(isLocalServerHidden({ ...serena, port: 24_282 }, rules)).toBe(true);
-    expect(isLocalServerHidden({ ...serena, port: 24_304 }, rules)).toBe(true);
-    expect(isLocalServerHidden({ ...serena, port: 24_305 }, rules)).toBe(false);
-    expect(isLocalServerHidden(preview, [])).toBe(false);
-  });
-});
+import { addLocalServerHideRule, parseLocalServerHideRule } from "./localServerHideRules";
 
 describe("parseLocalServerHideRule", () => {
   it("reads ports, ranges in either order, and process names", () => {

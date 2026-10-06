@@ -1,10 +1,13 @@
 import * as NodeNet from "node:net";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
+
 import { it as effectIt } from "@effect/vitest";
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
   ProjectId,
+  ServerSettings,
   type DiscoveredLocalServer,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
@@ -19,6 +22,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -26,8 +30,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { FetchHttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettingsModule from "../serverSettings.ts";
 import * as PortScanner from "./PortScanner.ts";
 
 const makeProjectStore = (
@@ -77,6 +85,7 @@ const makeProbeFailureLayer = (
       Layer.mergeAll(
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
         makeProjectStore(),
+        ServerSettingsModule.layerTest(),
         Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
         Layer.succeed(Net.NetService, {
           canListenOnHost: () => Effect.succeed(true),
@@ -96,6 +105,7 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
     Layer.mergeAll(
       TestProcessRunner,
       makeProjectStore(),
+      ServerSettingsModule.layerTest(),
       Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
       TestIntegrationNet,
       Layer.succeed(HostProcessPlatform, "win32"),
@@ -106,17 +116,22 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
 
 const LSOF_TEST_PORT = 43_123;
 
-const makeLsofScannerLayer = (input: {
+const makeLsofScannerWithoutSettings = (input: {
   readonly pid: () => number;
   readonly fetch: typeof globalThis.fetch;
   readonly platform?: NodeJS.Platform;
-  readonly listeners?: ReadonlyArray<{ readonly pid: number; readonly port: number }>;
+  readonly listeners?: ReadonlyArray<{
+    readonly pid: number;
+    readonly port: number;
+    readonly name?: string;
+  }>;
   readonly parents?: () => ReadonlyMap<number, number>;
   readonly parentFailure?: boolean;
   readonly netProbes?: number[];
   readonly cgroups?: ReadonlyMap<number, string>;
   readonly cwds?: ReadonlyMap<number, string>;
   readonly projects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>;
+  readonly realPaths?: ReadonlyMap<string, string>;
 }) => {
   const parents = input.parents ?? (() => new Map([[input.pid(), process.pid]]));
   const platform = input.platform ?? "linux";
@@ -133,10 +148,10 @@ const makeLsofScannerLayer = (input: {
               stdout: parentProbe
                 ? [...parents()].map(([pid, ppid]) => `${pid} ${ppid}`).join("\n")
                 : listeners
-                    .map(({ pid, port }) =>
+                    .map(({ pid, port, name = "node" }) =>
                       platform === "win32"
-                        ? `127.0.0.1|${port}|${pid}|node`
-                        : `p${pid}\ncnode\nn*:${port}\n`,
+                        ? `127.0.0.1|${port}|${pid}|${name}`
+                        : `p${pid}\nc${name}\nn*:${port}\n`,
                     )
                     .join("\n"),
               stderr: "",
@@ -153,6 +168,7 @@ const makeLsofScannerLayer = (input: {
         Layer.succeed(
           FileSystem.FileSystem,
           FileSystem.makeNoop({
+            realPath: (path) => Effect.succeed(input.realPaths?.get(path) ?? path),
             readLink: (path) => {
               const cwd = input.cwds?.get(Number(path.split("/")[2]));
               return cwd === undefined
@@ -191,6 +207,9 @@ const makeLsofScannerLayer = (input: {
     ),
   );
 };
+
+const makeLsofScannerLayer = (input: Parameters<typeof makeLsofScannerWithoutSettings>[0]) =>
+  makeLsofScannerWithoutSettings(input).pipe(Layer.provide(ServerSettingsModule.layerTest()));
 
 for (const platform of ["linux", "darwin", "win32"] as const) {
   const unrelatedListener = { pid: 9876, port: 57_343 };
@@ -377,6 +396,111 @@ describe("listener attribution", () => {
         },
         { port: 24_282, reason: "project", systemdUnit: undefined, projectId: amine },
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  effectIt.effect(
+    "matches symlinked project roots by their target, first registration first",
+    () => {
+      const linked = ProjectId.make("project-linked");
+      const layer = makeLsofScannerLayer({
+        pid: () => 501,
+        fetch: (() =>
+          Promise.resolve(
+            new Response("app", { headers: { "content-type": "text/html" } }),
+          )) as typeof globalThis.fetch,
+        listeners: [{ pid: 501, port: 8770 }],
+        parents: () => new Map([[501, 1]]),
+        cwds: new Map([[501, "/home/u/Engineering/Amine/analyses"]]),
+        projects: [
+          { id: linked, workspaceRoot: "/home/u/links/amine" },
+          { id: amine, workspaceRoot: "/home/u/Engineering/Amine" },
+        ],
+        realPaths: new Map([["/home/u/links/amine", "/home/u/Engineering/Amine"]]),
+      });
+
+      return Effect.gen(function* () {
+        const scanner = yield* PortScanner.PortDiscovery;
+        const servers = yield* scanner.scan();
+        expect(servers.map(({ port, projectId }) => ({ port, projectId }))).toEqual([
+          { port: 8770, projectId: linked },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it("hides one port, a process family, or a port range", () => {
+    const serena = { port: 24_290, processName: "serena" };
+    const preview = { port: 8770, processName: "deno" };
+    const onePort = [{ kind: "ports", from: 8770, to: 8770 }] as const;
+    expect(PortScanner.isLocalServerHidden(preview, onePort)).toBe(true);
+    expect(PortScanner.isLocalServerHidden({ ...preview, port: 8771 }, onePort)).toBe(false);
+    const family = [{ kind: "process", processName: "Serena" }] as const;
+    expect(PortScanner.isLocalServerHidden(serena, family)).toBe(true);
+    expect(PortScanner.isLocalServerHidden(preview, family)).toBe(false);
+    expect(PortScanner.isLocalServerHidden({ port: 3000, processName: null }, family)).toBe(false);
+    const range = [{ kind: "ports", from: 24_282, to: 24_304 }] as const;
+    expect(PortScanner.isLocalServerHidden({ ...serena, port: 24_282 }, range)).toBe(true);
+    expect(PortScanner.isLocalServerHidden({ ...serena, port: 24_304 }, range)).toBe(true);
+    expect(PortScanner.isLocalServerHidden({ ...serena, port: 24_305 }, range)).toBe(false);
+  });
+
+  effectIt.effect("a saved hide rule keeps listeners unprobed across rescans until removed", () => {
+    const requests: string[] = [];
+    const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+      requests.push(String(input));
+      return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+    }) as typeof globalThis.fetch;
+    const layer = makeLsofScannerWithoutSettings({
+      pid: () => 501,
+      fetch: fetchFn,
+      listeners: [
+        { pid: 501, port: 8770, name: "deno" },
+        { pid: 502, port: 24_282, name: "serena" },
+        { pid: 503, port: 24_283, name: "serena" },
+      ],
+      parents: () => new Map([501, 502, 503].map((pid) => [pid, 1] as const)),
+      cgroups: new Map([[501, "0::/user.slice/app.slice/cse-preview-Amine-daf39727.service"]]),
+      cwds: new Map([
+        [502, "/home/u/Engineering/Amine"],
+        [503, "/home/u/Engineering/Amine"],
+      ]),
+      projects,
+    }).pipe(
+      Layer.provideMerge(
+        ServerSettingsModule.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+          Layer.provideMerge(
+            Layer.fresh(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3code-port-scanner-test-" }),
+            ),
+          ),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const { settingsPath } = yield* ServerConfig.ServerConfig;
+      const visiblePorts = scanner.scan().pipe(Effect.map((servers) => servers.map((s) => s.port)));
+      const serenaRule = { kind: "process", processName: "serena" } as const;
+
+      yield* settings.updateSettings({ localServerHideRules: [serenaRule] });
+      const saved = yield* FileSystem.FileSystem.pipe(
+        Effect.flatMap((fileSystem) => fileSystem.readFileString(settingsPath)),
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings))),
+        Effect.provide(NodeServices.layer),
+      );
+      expect(saved.localServerHideRules).toEqual([serenaRule]);
+      expect(yield* visiblePorts).toEqual([8770]);
+      expect(yield* visiblePorts).toEqual([8770]);
+      expect(requests.filter((url) => !url.includes(":8770"))).toEqual([]);
+
+      yield* settings.updateSettings({ localServerHideRules: [] });
+      expect(yield* visiblePorts).toEqual([8770, 24_282, 24_283]);
     }).pipe(Effect.provide(layer));
   });
 });

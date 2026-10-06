@@ -403,6 +403,7 @@ const CheckpointStoreLayerLive = CheckpointStore.layer.pipe(
 
 const PortScannerLayerLive = PortScanner.layer.pipe(
   Layer.provide(Layer.merge(ProcessRunner.layer, ProjectStore.layer)),
+  Layer.provide(ServerSettingsLayerLive),
 );
 
 const TerminalLayerLive = TerminalManager.layer.pipe(

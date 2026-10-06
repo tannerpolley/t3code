@@ -380,17 +380,19 @@ const lineageAutoClearLabel = (minutes: number) =>
   minutes === 0 ? "Off" : minutes === 60 ? "1 hour" : `${minutes} minutes`;
 
 function LocalServerHideRulesRow() {
-  const rules = useClientSettings((settings) => settings.browserLocalServerHideRules);
-  const updateSettings = useUpdateClientSettings();
+  const rules = useScopedSettings((settings) => settings.localServerHideRules);
+  const updateSettings = useUpdateScopedSettings();
   const [draft, setDraft] = useState("");
   const parsed = parseLocalServerHideRule(draft);
   const add = () => {
     if (!parsed) return;
-    void updateSettings({ browserLocalServerHideRules: addLocalServerHideRule(rules, parsed) });
+    updateSettings({ localServerHideRules: addLocalServerHideRule(rules, parsed) });
     setDraft("");
   };
   return (
     <SettingsRow
+      serverScoped
+      settingKeys={["localServerHideRules"]}
       {...searchableSetting("local-server-hide-rules")}
       description="Servers the browser's Local servers list leaves out. Hide one from its menu in the list, or add a process name (serena) or a port range (24282-24304) here. Remove a rule to bring its servers back."
     >
@@ -405,8 +407,8 @@ function LocalServerHideRulesRow() {
                 size="icon-xs"
                 aria-label={`Show ${label} again`}
                 onClick={() =>
-                  void updateSettings({
-                    browserLocalServerHideRules: rules.filter((existing) => existing !== rule),
+                  updateSettings({
+                    localServerHideRules: rules.filter((existing) => existing !== rule),
                   })
                 }
               >

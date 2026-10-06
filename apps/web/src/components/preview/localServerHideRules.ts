@@ -1,16 +1,6 @@
-import type { DiscoveredLocalServer, LocalServerHideRule } from "@t3tools/contracts";
+import type { LocalServerHideRule } from "@t3tools/contracts";
 
-export function isLocalServerHidden(
-  server: Pick<DiscoveredLocalServer, "port" | "processName">,
-  rules: ReadonlyArray<LocalServerHideRule>,
-): boolean {
-  const processName = server.processName?.toLowerCase();
-  return rules.some((rule) =>
-    rule.kind === "process"
-      ? rule.processName.toLowerCase() === processName
-      : server.port >= Math.min(rule.from, rule.to) && server.port <= Math.max(rule.from, rule.to),
-  );
-}
+// The server's port scanner owns matching; these helpers only edit the environment's rule list.
 
 /** Settings input: "5173" or "24282-24304" hides ports; anything else is a process name. */
 export function parseLocalServerHideRule(input: string): LocalServerHideRule | null {

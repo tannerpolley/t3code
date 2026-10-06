@@ -1,17 +1,9 @@
-import type {
-  ClientSettings,
-  DiscoveredLocalServer,
-  EnvironmentId,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { DiscoveredLocalServer, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { useMemo } from "react";
 
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
-import { useClientSettings } from "~/hooks/useSettings";
 import { useDiscoveredPortsState } from "~/portDiscoveryState";
-import { isLocalServerHidden } from "./localServerHideRules";
 
 export interface PreviewableServer extends DiscoveredLocalServer {
   source: "scanner" | "configured";
@@ -34,28 +26,21 @@ interface UseDiscoveredLocalServersInput {
   active?: ActiveScope;
 }
 
-const selectHideRules = (settings: ClientSettings) => settings.browserLocalServerHideRules;
-
 /**
  * Enrich the environment-level live server snapshot with matching configured
- * URLs, drop servers the user's hide rules cover, and return a stable ranked list.
+ * URLs and return a stable ranked list. The server already left out hidden servers.
  */
-export function useDiscoveredLocalServers(input: UseDiscoveredLocalServersInput): {
-  servers: ReadonlyArray<PreviewableServer>;
-  hiddenCount: number;
-} {
+export function useDiscoveredLocalServers(
+  input: UseDiscoveredLocalServersInput,
+): ReadonlyArray<PreviewableServer> {
   const scannerState = useDiscoveredPortsState(input.environmentId, input.configuredUrls);
-  const hideRules = useClientSettings(selectHideRules);
   const activeProjectId = input.active?.projectId ?? null;
   const activeThreadId = input.active?.threadId ?? null;
 
-  return useMemo(() => {
-    const visible = scannerState.servers.filter(
-      (server) => !isLocalServerHidden(server, hideRules),
-    );
-    return {
-      servers: mergeServers({
-        scanner: visible.map((server) => ({
+  return useMemo(
+    () =>
+      mergeServers({
+        scanner: scannerState.servers.map((server) => ({
           ...server,
           url: resolveDiscoveredServerUrl(input.environmentId, server.url),
           requestedUrl: server.url,
@@ -64,16 +49,8 @@ export function useDiscoveredLocalServers(input: UseDiscoveredLocalServersInput)
         configuredUrlProbing: scannerState.configuredUrlProbing,
         active: { projectId: activeProjectId, threadId: activeThreadId },
       }),
-      hiddenCount: scannerState.servers.length - visible.length,
-    };
-  }, [
-    input.environmentId,
-    scannerState,
-    input.configuredUrls,
-    hideRules,
-    activeProjectId,
-    activeThreadId,
-  ]);
+    [input.environmentId, scannerState, input.configuredUrls, activeProjectId, activeThreadId],
+  );
 }
 
 export function mergeServers(input: {
