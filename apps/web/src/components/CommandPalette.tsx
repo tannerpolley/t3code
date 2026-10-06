@@ -2045,6 +2045,39 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (
+    environments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.issueWork === true,
+    )
+  ) {
+    const scope =
+      activeThread && activeThreadServerConfig?.environment.capabilities.issueWork === true
+        ? threadIssueRepository(
+            projectByKey.get(`${activeThread.environmentId}:${activeThread.projectId}`)
+              ?.repositoryIdentity,
+          )
+        : null;
+    actionItems.push({
+      kind: "action",
+      value: "action:start-agent-on-issue",
+      searchTerms: ["start", "agent", "issue", "github", "worktree", "worker"],
+      title: "Start agent on issue…",
+      description: scope
+        ? `Choose an issue in ${scope.repository}, then Start agent`
+        : "Choose an issue, then Start agent",
+      icon: <ListIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        if (activeThread && scope !== null) {
+          useRightPanelStore
+            .getState()
+            .openIssueList(scopeThreadRef(activeThread.environmentId, activeThread.id), scope);
+        } else {
+          await navigate({ to: "/issues", search: {} });
+        }
+      },
+    });
+  }
+
   if (activeThread !== null) {
     const thread = activeThread;
     actionItems.push({

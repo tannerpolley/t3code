@@ -1,13 +1,12 @@
-import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
-  ISSUE_WORK_STATUS_LABELS,
   type EnvironmentId,
   type IssueRef,
   type ProjectId,
   type ScopedThreadRef,
-  type ThreadId,
+  type IssueWorkStartResult,
 } from "@t3tools/contracts";
+import { issueWorkPresentation } from "@t3tools/client-runtime/state/issue-work";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { BotIcon } from "lucide-react";
@@ -20,6 +19,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { randomUUID } from "~/lib/utils";
+import { ThreadWorktreeIndicator } from "../ThreadStatusIndicators";
 import { Button } from "../ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
@@ -47,12 +47,15 @@ function IssueStartControls({
   closed,
 }: IssueStartActionProps) {
   const navigate = useNavigate();
-  const [acceptedRootId, setAcceptedRootId] = useState<ThreadId | null>(null);
+  const [accepted, setAccepted] = useState<{
+    result: IssueWorkStartResult;
+    previousStatusAt: number;
+  } | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
   const projects = useProjects();
   const thread = useThreadShell(threadRef);
   const roles = useEnvironmentSettings(environmentId, (settings) => settings.modelRoles);
   const statusAtom = issueEnvironment.workStatus({ environmentId, input: reference });
-  const statusResult = useAtomValue(statusAtom);
   const statusQuery = useEnvironmentQuery(statusAtom);
   const status = statusQuery.data;
   const matchingProjects = projects.filter(
@@ -75,7 +78,16 @@ function IssueStartControls({
     matchingProjects.find((entry) => entry.id === selectedProjectId) ?? preferredProject;
   const role = roles.find((entry) => entry.id === selectedRoleId) ?? roles[0];
   const startIssue = useAtomCommand(issueEnvironment.start, { reportFailure: false });
-  const openThreadId = status?.threadId ?? status?.rootThreadId ?? acceptedRootId;
+  const awaitingAcceptedStatus =
+    accepted !== null && statusQuery.dataUpdatedAt <= accepted.previousStatusAt;
+  const work = issueWorkPresentation(
+    awaitingAcceptedStatus ? null : status,
+    awaitingAcceptedStatus ? accepted.result : null,
+  );
+  const openThreadId = work.threadId;
+  const worker = useThreadShell(
+    openThreadId === null ? null : scopeThreadRef(environmentId, openThreadId),
+  );
   const openWorkThread = () => {
     if (openThreadId === null) return;
     const target = scopeThreadRef(environmentId, openThreadId);
@@ -91,6 +103,7 @@ function IssueStartControls({
     const input = { ...reference, projectId: project.id, modelRoleId: role.id, workspace };
     const key = JSON.stringify(input);
     if (request.current?.key !== key) request.current = { key, id: randomUUID() };
+    setStartError(null);
     setStarting(true);
     const result = await startIssue({
       environmentId,
@@ -98,15 +111,10 @@ function IssueStartControls({
     });
     setStarting(false);
     if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: "Could not start issue work",
-        description: formatEnvironmentQueryError(result.cause),
-      });
+      setStartError(formatEnvironmentQueryError(result.cause));
       return;
     }
-    setAcceptedRootId(result.value.rootThreadId);
-    request.current = null;
+    setAccepted({ result: result.value, previousStatusAt: statusQuery.dataUpdatedAt });
     setExpanded(false);
     toastManager.add({
       type: "success",
@@ -116,21 +124,27 @@ function IssueStartControls({
 
   return (
     <div className="flex flex-col items-end gap-1.5">
-      <div className="flex items-center gap-2">
-        {status?.status ? (
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {work.label ? (
           <span className="text-xs text-muted-foreground" role="status">
-            {ISSUE_WORK_STATUS_LABELS[status.status]}
-            {status.publishing === "pending" ? " · GitHub update pending" : null}
-            {status.publishing === "failed" ? " · GitHub update will retry" : null}
+            {work.label}
+            {statusQuery.error ? " (last known)" : null}
+            {work.publishingLabel ? ` · ${work.publishingLabel}` : null}
           </span>
         ) : null}
         {openThreadId !== null ? (
-          <Button onClick={openWorkThread} size="xs" variant="ghost">
-            Open work thread
-          </Button>
+          <div className="flex min-w-0 items-center gap-1">
+            {work.isWorker && worker ? <ThreadWorktreeIndicator thread={worker} /> : null}
+            <Button onClick={openWorkThread} size="xs" variant="ghost">
+              <span className="max-w-56 truncate">
+                {worker?.title ??
+                  (work.isWorker ? "Open worker thread" : "Open repository orchestrator")}
+              </span>
+            </Button>
+          </div>
         ) : null}
         <Button
-          disabled={closed || matchingProjects.length === 0 || roles.length === 0}
+          disabled={closed || starting}
           onClick={() => setExpanded((value) => !value)}
           size="xs"
           variant="outline"
@@ -140,6 +154,23 @@ function IssueStartControls({
           Start agent
         </Button>
       </div>
+      {statusQuery.error ? (
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
+          <span>Work status unavailable: {statusQuery.error}</span>
+          <Button onClick={statusQuery.refresh} size="xs" variant="ghost">
+            Retry status
+          </Button>
+        </div>
+      ) : statusQuery.data === null && work.label === null ? (
+        <p className="text-xs text-muted-foreground" role="status">
+          Checking work status…
+        </p>
+      ) : null}
+      {startError ? (
+        <p className="max-w-72 text-xs text-destructive" role="alert">
+          Start request failed: {startError}. Retry uses the same request.
+        </p>
+      ) : null}
       {expanded ? (
         <form
           className="flex w-72 flex-col gap-2 rounded-lg border border-border bg-background p-3"
@@ -148,6 +179,16 @@ function IssueStartControls({
             void start();
           }}
         >
+          {matchingProjects.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Add a project for this repository in this environment to start work.
+            </p>
+          ) : null}
+          {roles.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Configure a model role in Customizations to start work.
+            </p>
+          ) : null}
           <label className="flex flex-col gap-1 text-xs">
             Model role
             <Select value={role?.id ?? null} onValueChange={setSelectedRoleId}>
@@ -209,13 +250,19 @@ function IssueStartControls({
             Starting authorizes one updated T3 status comment and one closeout comment per finished
             attempt. Issue content and state changes require separate approval.
           </p>
-          {statusResult._tag === "Failure" ? (
+          {statusQuery.error ? (
             <p className="text-xs text-muted-foreground">
               Work status is unavailable. The server will check ownership when starting.
             </p>
           ) : null}
           <div className="flex justify-end gap-1.5">
-            <Button onClick={() => setExpanded(false)} size="xs" type="button" variant="ghost">
+            <Button
+              disabled={starting}
+              onClick={() => setExpanded(false)}
+              size="xs"
+              type="button"
+              variant="ghost"
+            >
               Cancel
             </Button>
             <Button

@@ -176,14 +176,16 @@ it; a linked pull request opens in the pull request panel. **Prepare draft** ope
 for the issue's project in a worktree on a branch named after the issue, with an unsent prompt.
 Use **Open on GitHub** to comment or make other changes.
 
-To run issue work, choose **Start agent**, a model role, and a repository workspace. Work goes to
-the repository's existing orchestrator, which keeps its issue workers linked to GitHub. Later
-starts use that orchestrator's project. You can choose a new worktree or that project's checkout
-for the worker. Starting
-allows T3 to update one status comment and publish a closeout comment for each finished attempt;
-the publishing policy is shown before you start. **Open work thread** keeps the issue beside its
-conversation. A worker marked done may still need review, publishing, or merge approval; T3 does
-not automatically close the GitHub issue.
+To run issue work, open an issue, choose **Start agent**, then a model role and a
+repository workspace. **Start agent on issue…** in the command palette opens the current
+repository’s issues beside the thread, or the Issues page when there is no current repository.
+Work goes to the repository's existing orchestrator, which keeps its issue workers linked to GitHub.
+Later starts use that orchestrator's project. You can choose a new worktree or that project's checkout
+for the worker. Starting allows T3 to update one status comment and publish a closeout comment for
+each finished attempt; the publishing policy is shown before you start. Select the worker’s name
+to open its conversation with the issue beside it; before a worker exists, open the repository orchestrator instead.
+**Linked issue** in thread details opens the issue beside that thread. A worker marked done may
+still need review, publishing, or merge approval; T3 does not automatically close the GitHub issue.
 
 A thread's details also list its repository's open issues in an **Issues** section, grouped by
 collapsible milestones, and open them beside the thread. For a fork checkout, these are the fork's
