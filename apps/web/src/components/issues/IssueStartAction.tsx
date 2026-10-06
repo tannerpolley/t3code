@@ -248,7 +248,8 @@ function IssueStartControls({
           </Select>
           <p className="text-xs text-muted-foreground">
             Starting authorizes one updated T3 status comment and one closeout comment per finished
-            attempt. Issue content and state changes require separate approval.
+            attempt. Agents can create and split issues and move milestones. Body edits,
+            close/reopen, and standalone parent changes require your approval of the exact preview.
           </p>
           {statusQuery.error ? (
             <p className="text-xs text-muted-foreground">

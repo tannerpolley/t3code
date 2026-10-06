@@ -225,6 +225,7 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as IssueService from "./issues/IssueService.ts";
 import * as IssueWorkService from "./issues/IssueWorkService.ts";
+import * as IssueChangeService from "./issues/IssueChangeService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -1226,6 +1227,7 @@ const makeWsRpcLayer = (
       const pullRequests = yield* PullRequestService.PullRequestService;
       const issues = yield* IssueService.IssueService;
       const issueWork = yield* IssueWorkService.IssueWorkService;
+      const issueChanges = yield* IssueChangeService.IssueChangeService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
@@ -2754,6 +2756,24 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.issuesSetPaused, issueWork.setPaused(input), {
             "rpc.aggregate": "issues",
           }),
+        [WS_METHODS.issueChangesList]: (input) =>
+          observeRpcEffect(WS_METHODS.issueChangesList, issueChanges.list(input), {
+            "rpc.aggregate": "issues",
+          }),
+        [WS_METHODS.issueChangesSubscribe]: (input) =>
+          observeRpcStream(WS_METHODS.issueChangesSubscribe, issueChanges.subscribe(input), {
+            "rpc.aggregate": "issues",
+          }),
+        [WS_METHODS.issueChangesDecide]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.issueChangesDecide,
+            issueChanges.decide(input, {
+              kind: "user",
+              subject: currentSession.subject,
+              scopes: currentSession.scopes,
+            }),
+            { "rpc.aggregate": "issues" },
+          ),
         [WS_METHODS.issuesRepositories]: () =>
           observeRpcEffect(WS_METHODS.issuesRepositories, issues.repositories(), {
             "rpc.aggregate": "issues",

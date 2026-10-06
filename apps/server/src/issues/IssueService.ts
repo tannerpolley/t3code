@@ -26,6 +26,8 @@ import {
   type IssueSummary as IssueSummaryType,
   ThreadLinkedIssue,
   type IssueWorkRead,
+  type IssueChangeBaseline,
+  type IssueRepositoryRef,
   type ThreadLinkedIssue as ThreadLinkedIssueType,
 } from "@t3tools/contracts";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
@@ -142,8 +144,10 @@ const encodeGraphQlRequest = Schema.encodeSync(
     }),
   ),
 );
-const encodeCommentRequestBody = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Struct({ body: Schema.String })),
+const encodeWriteRequestBody = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Null])),
+  ),
 );
 
 /** A connection whose nodes GitHub may null out, e.g. when an organization's SSO hides one. */
@@ -681,6 +685,32 @@ function encodeCursor(cursor: IssueCursor): string {
 export class IssueService extends Context.Service<
   IssueService,
   {
+    readonly readChangeState: (
+      input: import("@t3tools/contracts").IssueRef,
+    ) => Effect.Effect<IssueChangeBaseline, IssueReadError>;
+    readonly createIssue: (
+      input: IssueRepositoryRef & {
+        readonly title: string;
+        readonly body: string;
+        readonly milestoneNumber: number | null;
+        readonly writeKey: string;
+        readonly recover?: boolean;
+      },
+    ) => Effect.Effect<IssueChangeBaseline, IssueReadError>;
+    readonly updateBody: (
+      input: import("@t3tools/contracts").IssueRef & { readonly body: string },
+    ) => Effect.Effect<void, IssueReadError>;
+    readonly setMilestone: (
+      input: import("@t3tools/contracts").IssueRef & { readonly milestoneNumber: number | null },
+    ) => Effect.Effect<void, IssueReadError>;
+    readonly setState: (
+      input: import("@t3tools/contracts").IssueRef & { readonly state: "open" | "closed" },
+    ) => Effect.Effect<void, IssueReadError>;
+    readonly setSubIssue: (input: {
+      readonly parent: ThreadLinkedIssueType;
+      readonly child: ThreadLinkedIssueType;
+      readonly action: "add" | "remove";
+    }) => Effect.Effect<void, IssueReadError>;
     readonly repositories: () => Effect.Effect<IssueRepositoriesResultType, IssueReadError>;
     readonly list: (
       input: IssueListInputType,
@@ -761,8 +791,8 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       readonly query: string;
       readonly variables: Readonly<Record<string, string | number>>;
     };
-    readonly requestMethod?: "POST" | "PATCH";
-    readonly requestBody?: { readonly body: string };
+    readonly requestMethod?: "POST" | "PATCH" | "DELETE";
+    readonly requestBody?: Readonly<Record<string, string | number | null>>;
   }): Effect.fn.Return<ApiResponse, IssueReadError> {
     const key = { provider: "github" as const, host: input.scope.host };
     const lease = yield* rateLimits
@@ -815,7 +845,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         ...(graphql === undefined
           ? input.requestBody === undefined
             ? {}
-            : { stdin: encodeCommentRequestBody(input.requestBody) }
+            : { stdin: encodeWriteRequestBody(input.requestBody) }
           : { stdin: encodeGraphQlRequest(graphql) }),
         timeoutMs: API_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes,
@@ -875,14 +905,18 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               return yield* readError(
                 input.operation,
                 "inaccessible",
-                "The GitHub repository is not accessible.",
+                input.requestMethod === undefined
+                  ? "The GitHub repository is not accessible."
+                  : "GitHub issue write denied. Check repository access and Issues write permission.",
               );
             }
             if (response.status < 200 || response.status >= 300) {
               return yield* readError(
                 input.operation,
                 "upstream",
-                "GitHub could not complete the read.",
+                input.requestMethod === undefined
+                  ? "GitHub could not complete the read."
+                  : "GitHub could not complete the issue write.",
               );
             }
             return response;
@@ -1553,7 +1587,182 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         ),
       );
   });
+  const ChangeIssue = Schema.Struct({
+    ...RawIssueIdentitySchema.fields,
+    body: Schema.NullOr(Schema.String),
+    state: Schema.Literals(["open", "closed"]),
+    milestone: Schema.NullOr(Schema.Struct({ number: IssueNumber })),
+  });
+  const baseline = (
+    scope: IssueRepositoryScope,
+    repositoryId: string,
+    raw: typeof ChangeIssue.Type,
+  ): IssueChangeBaseline => ({
+    issue: {
+      host: scope.host,
+      repository: scope.repository,
+      repositoryId,
+      id: String(raw.id),
+      nodeId: raw.node_id,
+      number: raw.number,
+      title: raw.title,
+      url: raw.html_url,
+    },
+    body: raw.body ?? "",
+    state: raw.state,
+    milestoneNumber: raw.milestone?.number ?? null,
+  });
+  const verified = <A>(scope: IssueRepositoryScope, effect: Effect.Effect<A, IssueReadError>) =>
+    githubPullRequests
+      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () => effect)
+      .pipe(
+        Effect.mapError((error) =>
+          isIssueReadError(error) ? error : mapGitHubError("detail", error),
+        ),
+      );
+  const readChangeState: IssueService["Service"]["readChangeState"] = Effect.fn(
+    "IssueService.readChangeState",
+  )(function* (input) {
+    const scope = yield* resolveScope("detail", input);
+    return yield* verified(
+      scope,
+      Effect.gen(function* () {
+        const repository = yield* readRepositoryIdentity(scope);
+        const response = yield* executeApi({
+          operation: "detail",
+          scope,
+          endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.number}`,
+          maxOutputBytes: 256 * 1024,
+        });
+        const raw = yield* decodeApiResponse(
+          "detail",
+          ChangeIssue,
+          response,
+          "GitHub returned an invalid issue.",
+        );
+        if (Object.hasOwn(raw, "pull_request") || raw.number !== input.number)
+          return yield* readError(
+            "detail",
+            "unsupported",
+            "The target is not the requested GitHub issue.",
+          );
+        return baseline(scope, repository.repositoryId, raw);
+      }),
+    );
+  });
+  const createIssue: IssueService["Service"]["createIssue"] = Effect.fn("IssueService.createIssue")(
+    function* (input) {
+      const scope = yield* resolveScope("detail", input);
+      return yield* verified(
+        scope,
+        Effect.gen(function* () {
+          const repository = yield* readRepositoryIdentity(scope);
+          const endpoint = `repos/${encodeRepositoryPath(scope.repository)}/issues`;
+          const marker = `<!-- t3-issue-change:${input.writeKey} -->`;
+          // Recover an accepted create whose response or local receipt was lost. Never infer ownership from author login.
+          for (let page = 1; input.recover !== false && page <= COMMENT_MAX_PAGES; page++) {
+            const response = yield* executeApi({
+              operation: "detail",
+              scope,
+              endpoint: `${endpoint}?state=all&per_page=100&page=${page}`,
+              maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+            });
+            const rows = yield* decodeApiResponse(
+              "detail",
+              Schema.Array(ChangeIssue),
+              response,
+              "GitHub returned an incomplete issue recovery page.",
+            );
+            const existing = rows.find(
+              (row) => !Object.hasOwn(row, "pull_request") && row.body?.includes(marker),
+            );
+            if (existing !== undefined) return baseline(scope, repository.repositoryId, existing);
+            if (rows.length < 100) break;
+            if (page === COMMENT_MAX_PAGES)
+              return yield* readError(
+                "detail",
+                "invalid-response",
+                "Issue recovery pagination is incomplete; creation was not retried.",
+              );
+          }
+          const response = yield* executeApi({
+            operation: "detail",
+            scope,
+            endpoint,
+            requestMethod: "POST",
+            requestBody: {
+              title: input.title,
+              body: `${input.body}\n\n${marker}`,
+              milestone: input.milestoneNumber,
+            },
+            maxOutputBytes: 256 * 1024,
+          });
+          return baseline(
+            scope,
+            repository.repositoryId,
+            yield* decodeApiResponse(
+              "detail",
+              ChangeIssue,
+              response,
+              "GitHub returned an invalid created issue.",
+            ),
+          );
+        }),
+      );
+    },
+  );
+  const patchIssue = Effect.fn("IssueService.patchIssue")(function* (
+    input: import("@t3tools/contracts").IssueRef,
+    payload: Readonly<Record<string, string | number | null>>,
+  ) {
+    const scope = yield* resolveScope("detail", input);
+    yield* verified(
+      scope,
+      executeApi({
+        operation: "detail",
+        scope,
+        endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.number}`,
+        requestMethod: "PATCH",
+        requestBody: payload,
+        maxOutputBytes: 256 * 1024,
+      }),
+    );
+  });
+  const setSubIssue: IssueService["Service"]["setSubIssue"] = Effect.fn("IssueService.setSubIssue")(
+    function* (input) {
+      const scope = yield* resolveScope("detail", input.parent);
+      const childId = Number(input.child.id);
+      if (
+        input.child.host !== input.parent.host ||
+        input.child.repositoryId !== input.parent.repositoryId ||
+        !Number.isSafeInteger(childId) ||
+        childId < 1
+      )
+        return yield* readError(
+          "detail",
+          "unsupported",
+          "Sub-issues must belong to this repository and have a valid GitHub ID.",
+        );
+      yield* verified(
+        scope,
+        executeApi({
+          operation: "detail",
+          scope,
+          endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.parent.number}/${input.action === "add" ? "sub_issues" : "sub_issue"}`,
+          requestMethod: input.action === "add" ? "POST" : "DELETE",
+          requestBody: { sub_issue_id: childId },
+          maxOutputBytes: 256 * 1024,
+        }),
+      );
+    },
+  );
   return IssueService.of({
+    readChangeState,
+    createIssue,
+    updateBody: (input) => patchIssue(input, { body: input.body }),
+    setMilestone: (input) => patchIssue(input, { milestone: input.milestoneNumber }),
+    setState: (input) => patchIssue(input, { state: input.state }),
+    setSubIssue,
     repositories,
     list,
     detail,

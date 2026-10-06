@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, IssueChangeError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -31,6 +31,7 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IssueService from "../issues/IssueService.ts";
+import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
@@ -39,9 +40,11 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
   {
     effectId: Schema.String,
     effectType: Schema.String,
+    retryAt: Schema.optional(Schema.Finite),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+const isIssueChangeError = Schema.is(IssueChangeError);
 
 /**
  * Pure interrupt races with hard process teardown or a dead session produce
@@ -112,6 +115,7 @@ export const executorLayer: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const issues = yield* Effect.serviceOption(IssueService.IssueService);
+    const issueChanges = yield* Effect.serviceOption(IssueChangeService.IssueChangeService);
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const eventSink = yield* EventSink.EventSinkV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -138,6 +142,29 @@ export const executorLayer: Layer.Layer<
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
+          case "issue.change.execute":
+            return (
+              Option.isNone(issueChanges)
+                ? Effect.fail(
+                    new IssueChangeError({
+                      code: "github",
+                      message: "IssueChangeService is unavailable in this runtime.",
+                    }),
+                  )
+                : issueChanges.value.execute(effect.request.changeId)
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                    ...(isIssueChangeError(cause) && cause.retryAt !== undefined
+                      ? { retryAt: cause.retryAt }
+                      : {}),
+                  }),
+              ),
+            );
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
@@ -831,6 +858,11 @@ export const layerWithOptions = (
           }
 
           const error = Cause.pretty(exit.cause);
+          const retryAt = Option.getOrUndefined(Cause.findErrorOption(exit.cause))?.retryAt;
+          const retryDelayMs =
+            retryAt === undefined
+              ? 0
+              : Math.max(0, retryAt - DateTime.toEpochMillis(yield* DateTime.now));
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* Effect.logWarning("Orchestration effect execution failed", {
             effectId: effect.id,
@@ -854,7 +886,10 @@ export const layerWithOptions = (
                     effectId: effect.id,
                     workerId,
                     error,
-                    delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
+                    delayMs: Math.max(
+                      retryDelayMs,
+                      Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
+                    ),
                   })
                   .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (!updated) {

@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createPullRequestRefreshAtomFamily } from "./pullRequests.ts";
-import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "./runtime.ts";
 
 /** How often an issue someone is looking at re-reads GitHub, besides after agent turns. */
 const LIVE_ISSUE_REFRESH_MS = 60_000;
@@ -23,7 +27,21 @@ export function createIssueEnvironmentAtoms<R, E>(
     refreshIntervalMs: 5_000,
     refreshTrigger,
   });
+  const changeRefreshes = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:issues:change-refreshes",
+    tag: WS_METHODS.issueChangesSubscribe,
+  });
   return {
+    changes: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:issues:changes",
+      tag: WS_METHODS.issueChangesList,
+      staleTimeMs: 60_000,
+      refreshTrigger: (target) => changeRefreshes(target),
+    }),
+    decideChange: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:decide-change",
+      tag: WS_METHODS.issueChangesDecide,
+    }),
     repositoryStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:repository-status",
       tag: WS_METHODS.issuesRepositoryStatus,

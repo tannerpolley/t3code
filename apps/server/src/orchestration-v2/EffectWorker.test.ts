@@ -9,6 +9,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  IssueChangeError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -36,6 +37,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IssueService from "../issues/IssueService.ts";
+import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 
@@ -275,6 +277,7 @@ function makeExecutorLayer(input: {
   readonly failFirstStart?: Ref.Ref<boolean>;
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
+  readonly changes?: Partial<IssueChangeService.IssueChangeService["Service"]>;
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const dependencies = Layer.mergeAll(
@@ -348,6 +351,7 @@ function makeExecutorLayer(input: {
         Layer.mock(IssueService.IssueService)({
           writeManagedComment: () => Effect.die("Issue comments are unused in this test"),
         }),
+        Layer.mock(IssueChangeService.IssueChangeService)(input.changes ?? {}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getIssueWorkCommentState: () => Effect.succeed(null),
           getIssueCommentReceipt: () => Effect.succeed(null),
@@ -363,6 +367,59 @@ function makeExecutorLayer(input: {
     ),
   );
 }
+
+it.effect(
+  "issue changes execute through their service and retry no earlier than GitHub's deadline",
+  () =>
+    Effect.gen(function* () {
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const retryAt = DateTime.toEpochMillis(yield* DateTime.now) + 60_000;
+      let calls = 0;
+      const executor = makeExecutorLayer({
+        events,
+        changes: {
+          execute: () =>
+            Effect.gen(function* () {
+              calls++;
+              if (calls === 1)
+                return yield* new IssueChangeError({
+                  code: "github",
+                  message: "Rate limited",
+                  retryAt,
+                });
+            }),
+        },
+      });
+      const workerLayer = EffectWorker.layer.pipe(
+        Layer.provideMerge(EffectOutbox.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+        Layer.provide(executor),
+      );
+      yield* Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* outbox.enqueue([
+          {
+            id: "change:rate-limit",
+            commandId: CommandId.make("change:rate-limit"),
+            threadId,
+            request: { type: "issue.change.execute", changeId: "proposal" },
+          },
+        ]);
+        assert.isTrue(yield* worker.runOnceInLane("issue-comment"));
+        assert.isFalse(yield* worker.runOnceInLane("issue-comment"));
+        const saved = yield* outbox.get("change:rate-limit");
+        assert.isTrue(Option.isSome(saved));
+        if (Option.isSome(saved))
+          assert.equal(
+            DateTime.toEpochMillis(DateTime.makeUnsafe(saved.value.availableAt)),
+            retryAt,
+          );
+        yield* TestClock.adjust(60_000);
+        assert.isTrue(yield* worker.runOnceInLane("issue-comment"));
+        assert.equal(calls, 2);
+      }).pipe(Effect.provide(workerLayer));
+    }),
+);
 
 it("does not retry pure interrupt races where the turn is already gone", () => {
   assert.isTrue(

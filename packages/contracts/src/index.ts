@@ -34,6 +34,7 @@ export * from "./projectClone.ts";
 export * from "./pullRequest.ts";
 export * from "./issue.ts";
 export * from "./issueWork.ts";
+export * from "./issueChange.ts";
 export * from "./issueComment.ts";
 export * from "./orchestrationDispatch.ts";
 export * from "./orchestrationProject.ts";

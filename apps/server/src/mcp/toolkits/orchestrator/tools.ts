@@ -31,6 +31,8 @@ import {
   RepositoryWorkControlInput,
   RepositoryWorkResult,
   IssueRepositoryRef,
+  IssueChangeProposeInput,
+  IssueChange,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
@@ -46,6 +48,18 @@ const threadMetadataDependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadMetadataMcpService.ThreadMetadataMcpService,
 ];
+const ProposeIssueChangeTool = Tool.make("propose_issue_change", {
+  description:
+    "Propose an exact GitHub issue change from a repository-managed thread. Use a stable clientRequestId on retries. Create/split and milestone moves execute automatically; body edits, close/reopen, and standalone parent changes wait for the user's durable in-app approval. The returned change includes the exact preview, decision and result. Agents cannot approve changes. A conflict needs a new proposal and preview. Labels and assignees are outside this tool's scope.",
+  parameters: IssueChangeProposeInput,
+  success: IssueChange,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Propose an issue change")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
@@ -244,6 +258,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Destructive, true);
 
 export const OrchestratorToolkit = Toolkit.make(
+  ProposeIssueChangeTool,
   Tool.make("work_through_milestone", {
     description:
       "Authorize the registered repository orchestrator to work through this milestone. Parent ownership, blockers and shared worker capacity are enforced by the server.",

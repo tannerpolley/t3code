@@ -187,6 +187,12 @@ to open its conversation with the issue beside it; before a worker exists, open 
 **Linked issue** in thread details opens the issue beside that thread. A worker marked done may
 still need review, publishing, or merge approval; T3 does not automatically close the GitHub issue.
 
+Issue agents can create issues, split work into sub-issues, and move issues between milestones.
+Body edits, closing or reopening issues, and other parent changes wait for your approval. Review
+the exact change in the requesting thread or issue detail, then approve or reject it. Results stay
+visible there, and failed changes can retry their remaining steps. If the issue changed since the
+preview, the agent must propose a new change.
+
 A thread's details also list its repository's open issues in an **Issues** section, grouped by
 collapsible milestones, and open them beside the thread. For a fork checkout, these are the fork's
 issues. Turn either view off in **Settings → Customizations**.
