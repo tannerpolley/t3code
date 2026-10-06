@@ -1286,8 +1286,8 @@ function SidebarProjectThreadRow(props: {
           <SidebarTrailingColumns
             count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
             time={<SidebarThreadTime thread={props.thread} status={status} />}
-            // An idle thread needs no mark; the time alone ends the row.
-            status={statusMark === "ready" ? undefined : <ThreadStatusMark status={statusMark} />}
+            // Every thread fills the status slot (idle is a gray dot), so times share one column.
+            status={<ThreadStatusMark status={statusMark} />}
           />
         ) : workRows.length > 0 ? (
           // Room for the work toggle, which sits over this spot because buttons cannot nest.

@@ -125,7 +125,7 @@ export function describeSidebarBackgroundWork(
       taskId: child.id,
       label: child.title,
       kind: "subagent",
-      startedAt: resolveThreadWorkingStartedAt(child),
+      startedAt: resolveThreadWorkingStartedAt({ ...child, waiting: status === "waiting" }),
       childThreadId: child.id,
       status,
       child,

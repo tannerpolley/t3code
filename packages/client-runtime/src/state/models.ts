@@ -323,14 +323,19 @@ export function resolveThreadWorkingStartedAt(input: {
     "runId" | "startedAt" | "requestedAt" | "completedAt"
   > | null;
   readonly runtime: Pick<ThreadRuntimeSummary, "activeRunId" | "activityStartedAt"> | null;
+  /** Waiting on its own background work: keep counting from the run that started it. */
+  readonly waiting?: boolean;
 }): string | null {
   const valid = (value: string | null | undefined) =>
     value != null && Number.isFinite(Date.parse(value)) ? value : null;
-  if (input.runtime?.activityStartedAt !== undefined) return valid(input.runtime.activityStartedAt);
-  // Older servers can supply a timestamp only if the newest run owns the work.
   const run = input.latestRun;
-  if (run?.completedAt === null && run.runId === input.runtime?.activeRunId) {
-    return valid(run.startedAt) ?? valid(run.requestedAt);
-  }
-  return null;
+  const runStartedAt = valid(run?.startedAt) ?? valid(run?.requestedAt);
+  const working =
+    input.runtime?.activityStartedAt !== undefined
+      ? valid(input.runtime.activityStartedAt)
+      : // Older servers can supply a timestamp only if the newest run owns the work.
+        run?.completedAt === null && run.runId === input.runtime?.activeRunId
+        ? runStartedAt
+        : null;
+  return working ?? (input.waiting ? runStartedAt : null);
 }

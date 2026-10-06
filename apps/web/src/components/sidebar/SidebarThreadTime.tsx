@@ -18,7 +18,7 @@ export function SidebarThreadTime(props: {
   const status = props.status ?? resolveSidebarThreadStatus(props.thread);
   const startedAt =
     status === "working" || status === "waiting"
-      ? resolveThreadWorkingStartedAt(props.thread)
+      ? resolveThreadWorkingStartedAt({ ...props.thread, waiting: status === "waiting" })
       : null;
   const duration = startedAt ? (
     <AgentElapsed agent={{ status: "running", startedAt, completedAt: null }} />
