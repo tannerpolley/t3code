@@ -148,13 +148,15 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  className,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  className?: string;
 }) {
   return (
-    <SidebarMenuItem className="shrink-0">
+    <SidebarMenuItem className={cn("shrink-0", className)}>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -235,19 +237,21 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          {issuesSupported ? (
-            <SidebarUtilityItem
-              icon={<CircleDotIcon />}
-              label="Issues"
-              onClick={handleIssuesClick}
-            />
-          ) : null}
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
             onClick={handleUsageClick}
           />
           <SidebarUsageItem />
+          {/* Issues sits at the far right, so it never shifts the buttons before it. */}
+          {issuesSupported ? (
+            <SidebarUtilityItem
+              className="ms-auto"
+              icon={<CircleDotIcon />}
+              label="Issues"
+              onClick={handleIssuesClick}
+            />
+          ) : null}
         </>
       )}
       <SidebarUpdatePill />
