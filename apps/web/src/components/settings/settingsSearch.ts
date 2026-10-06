@@ -471,6 +471,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork browser preview agent tabs cap three stuck reload retry"],
   },
   {
+    id: "local-server-hide-rules",
+    title: "Hidden local servers",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork browser preview local servers hide hidden restore process port range serena",
+    ],
+  },
+  {
     id: "version-control-issues",
     title: "Issues in thread details",
     to: "/settings/customizations",

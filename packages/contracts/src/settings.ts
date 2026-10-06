@@ -29,6 +29,7 @@ import {
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   FILL_PREVIEW_VIEWPORT,
+  LocalServerHideRule,
   PreviewAppearancePreference,
   PreviewViewportSetting,
   PreviewZoomFactor,
@@ -351,6 +352,10 @@ export const ClientSettingsSchema = Schema.Struct({
    */
   browserAutoShowFloatingPreview: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW)),
+  ),
+  /** Browser panel Local servers entries the user hid; restorable in Settings → Customizations. */
+  browserLocalServerHideRules: Schema.Array(LocalServerHideRule).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
   ),
   /**
    * User-created browser profiles. The built-in Default and Incognito profiles
@@ -1978,6 +1983,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserRecordingShowMousePresses: Schema.optionalKey(Schema.Boolean),
   browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
+  browserLocalServerHideRules: Schema.optionalKey(Schema.Array(LocalServerHideRule)),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),

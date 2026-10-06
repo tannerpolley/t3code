@@ -345,6 +345,17 @@ export const DiscoveredLocalServer = Schema.Struct({
 });
 export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
 
+/**
+ * Hides Local servers entries in the browser panel: every listener whose
+ * process name matches (case-insensitive), or every port in an inclusive range.
+ * Hiding one entry is a single-port range.
+ */
+export const LocalServerHideRule = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("process"), processName: TrimmedNonEmptyString }),
+  Schema.Struct({ kind: Schema.Literal("ports"), from: LocalServerPort, to: LocalServerPort }),
+]);
+export type LocalServerHideRule = typeof LocalServerHideRule.Type;
+
 export const DiscoveredLocalServerList = Schema.Struct({
   servers: Schema.Array(DiscoveredLocalServer),
   scannedAt: Schema.String,
