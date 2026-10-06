@@ -1,3 +1,7 @@
+import { IssueRef, OrchestratorMcpTarget } from "@t3tools/contracts";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import { deriveIssueWorkStatus } from "../issues/IssueWorkStatus.ts";
+import { issueThreadTitle } from "@t3tools/contracts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -424,6 +428,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.background-work.settle":
     case "provider.switch":
       return command.threadId;
+    case "issue.work.start":
+      return command.threadId;
     case "delegated_task.request":
     case "delegated_task.wake-policy":
     case "delegated_task.completion-delivery.acknowledge":
@@ -452,6 +458,8 @@ function pendingThreadTitleGenerationEffect(
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+const encodeIssueArgument = Schema.encodeEffect(Schema.fromJsonString(IssueRef));
+const encodeTargetArgument = Schema.encodeEffect(Schema.fromJsonString(OrchestratorMcpTarget));
 
 /** A reopened preparation item drops the output and exit code of the attempt it replaces. */
 function withoutPreparationResult(
@@ -764,6 +772,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const idAllocator = yield* IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
+  const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
@@ -2159,7 +2168,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       creationSource: command.creationSource,
       id: command.threadId,
       projectId: command.projectId,
-      title: command.title,
+      title:
+        command.linkedIssue === undefined ? command.title : issueThreadTitle(command.linkedIssue),
+      ...(command.linkedIssue === undefined ? {} : { linkedIssue: command.linkedIssue }),
+      ...(command.repositoryOrchestration === undefined
+        ? {}
+        : { repositoryOrchestration: command.repositoryOrchestration }),
       providerInstanceId: command.modelSelection.instanceId,
       modelSelection: command.modelSelection,
       runtimeMode: command.runtimeMode,
@@ -2325,6 +2339,53 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const guardRepositoryRootLifecycle = Effect.fn("orchestrationV2.guardRepositoryRootLifecycle")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.archive" | "thread.delete" }
+      >,
+      thread: OrchestrationV2AppThread,
+    ) {
+      if (thread.repositoryOrchestration === undefined) return;
+      if (command.type === "thread.delete")
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "The registered repository root cannot be deleted. Retain its ownership and history.",
+        });
+      const projection = yield* projectionStore
+        .getThreadRecords(thread.id, ["runs", "subagents"])
+        .pipe(mapDispatchError(command));
+      const unfinished =
+        projection.runs.some(
+          (run) =>
+            !["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(
+              run.status,
+            ),
+        ) ||
+        projection.subagents.some(
+          (task) =>
+            !["completed", "failed", "cancelled", "interrupted"].includes(task.status) ||
+            task.completionDelivery?.state === "pending" ||
+            task.completionDelivery?.state === "claimed",
+        );
+      const unclaimed = Option.isSome(issueWorkStore)
+        ? yield* issueWorkStore.value
+            .hasUnclaimedRequests(thread.id)
+            .pipe(mapDispatchError(command))
+        : true;
+      if (unfinished || unclaimed)
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "This repository root owns unfinished issue work or pending final delivery. Finish or cancel it before archiving.",
+        });
+    },
+  );
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
@@ -2368,6 +2429,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
       ),
     );
+    if (command.type === "thread.archive") yield* guardRepositoryRootLifecycle(command, thread);
+    if (
+      thread.linkedIssue !== undefined &&
+      ((command.type === "thread.metadata.update" &&
+        (command.regenerateTitle === true ||
+          (command.title !== undefined &&
+            command.title !== issueThreadTitle(thread.linkedIssue)))) ||
+        command.type === "thread.title.regeneration.complete")
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is linked to an issue; its issue title is enforced.`,
+      });
+    }
     if (thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -4526,6 +4602,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         !isNativeMaintenanceCommand(command) &&
         // A title the user typed before the first message is kept.
+        projection.thread.linkedIssue === undefined &&
         projection.thread.titleSource !== "user" &&
         ((command.titleSeed !== undefined &&
           (yield* projectionStore
@@ -6410,6 +6487,98 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
     });
 
+  const dispatchIssueWorkStart = Effect.fn("orchestrationV2.dispatch.issueWorkStart")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "issue.work.start" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    if (Option.isNone(issueWorkStore))
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Issue ownership service is unavailable.",
+      });
+    const store = issueWorkStore.value;
+    const repository = yield* store.repositoryOwner(command.issue).pipe(mapDispatchError(command));
+    if (repository?.rootThreadId !== command.threadId || repository.paused)
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The repository root is unavailable or paused.",
+      });
+    const root = yield* projectionStore
+      .getThreadShell(command.threadId)
+      .pipe(mapDispatchError(command));
+    if (root === null || root.archivedAt !== null || root.deletedAt !== null)
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The registered repository root must be restored before starting work.",
+      });
+    const owner = yield* store.issueOwner(command.issue).pipe(mapDispatchError(command));
+    let issueThreadId: ThreadId | null = null;
+    if (owner !== null) {
+      const current = yield* projectionStore
+        .getThreadRecords(owner, ["runs", "messages", "subagents"])
+        .pipe(mapDispatchError(command));
+      const shell = yield* projectionStore.getThreadShell(owner).pipe(mapDispatchError(command));
+      if (
+        delegatedTaskProgress({
+          ...current,
+          pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
+        }).state !== "result_available"
+      )
+        issueThreadId = owner;
+    }
+    const attemptKey = issueThreadId === null ? (owner ?? "first") : `active:${issueThreadId}`;
+    const alreadyQueued = yield* store
+      .hasAttempt(command.issue, attemptKey)
+      .pipe(mapDispatchError(command));
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "issue.work.requested",
+      threadId: command.threadId,
+      occurredAt: now,
+      payload: {
+        requestId: command.commandId,
+        issue: command.issue,
+        rootThreadId: command.threadId,
+        issueThreadId,
+        attemptKey,
+        modelSelection: command.workerModelSelection,
+        workspace: command.workspace,
+      },
+    });
+    if (issueThreadId !== null || alreadyQueued) return;
+    const issueArgument = yield* encodeIssueArgument(command.issue).pipe(mapDispatchError(command));
+    const targetArgument = yield* encodeTargetArgument({
+      providerInstanceId: command.workerModelSelection.instanceId,
+      model: command.workerModelSelection.model,
+      ...(command.workerModelSelection.options === undefined
+        ? {}
+        : { options: command.workerModelSelection.options }),
+    }).pipe(mapDispatchError(command));
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: idAllocator.derive.delegatedTaskMessage({ commandId: command.commandId }),
+        text: `Start issue #${command.issue.number}: ${command.issue.title}\n${command.issue.url}\nRead the issue and delegate its authorized work through delegate_task with issue=${issueArgument}, mode=async, target=${targetArgument}, workspace=${command.workspace === "worktree" ? "worktree" : "inherit"}. Finish your turn while the worker runs. Status and closeout comments are authorized. Other GitHub mutations and publishing retain separate approval.`,
+        attachments: [],
+        modelSelection: root.modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: command.createdBy,
+        creationSource: command.creationSource,
+      },
+      events,
+      effects,
+    );
+  });
+
   const dispatchDelegatedTaskRequest = Effect.fn("orchestrationV2.dispatch.delegatedTaskRequest")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
@@ -6459,6 +6628,67 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
+      const managed =
+        parentProjection.thread.repositoryOrchestration !== undefined ||
+        parentProjection.thread.linkedIssue !== undefined;
+      if (managed && command.issue === undefined)
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Repository-managed children require an explicit issue.",
+        });
+      if (command.issue !== undefined) {
+        if (Option.isNone(issueWorkStore))
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Issue ownership service is unavailable.",
+          });
+        const issueStore = issueWorkStore.value;
+        const repositoryOwner = yield* issueStore
+          .repositoryOwner(command.issue)
+          .pipe(mapDispatchError(command));
+        if (repositoryOwner?.rootThreadId !== command.parentThreadId || repositoryOwner.paused)
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Only the active registered repository root can delegate issue work in slice 1.",
+          });
+        const currentOwner = yield* issueStore
+          .issueOwner(command.issue)
+          .pipe(mapDispatchError(command));
+        if (
+          !(yield* issueStore
+            .hasAttempt(command.issue, currentOwner ?? "first")
+            .pipe(mapDispatchError(command)))
+        )
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Start this issue through the Issues action before delegating it.",
+          });
+        if (currentOwner !== null) {
+          const current = yield* projectionStore
+            .getThreadRecords(currentOwner, ["runs", "messages", "subagents"])
+            .pipe(mapDispatchError(command));
+          const shell = yield* projectionStore
+            .getThreadShell(currentOwner)
+            .pipe(mapDispatchError(command));
+          if (
+            delegatedTaskProgress({
+              ...current,
+              pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
+            }).state !== "result_available"
+          )
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause:
+                "This issue already has a current worker. Wait for its final delegated result before starting another attempt.",
+            });
+        }
+      }
+
       const targetAdapter = yield* providerAdapters.get(command.modelSelection.instanceId).pipe(
         Effect.mapError(
           (cause) =>
@@ -6483,12 +6713,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const taskTurnItemId = idAllocator.derive.delegatedTaskTurnItem({
         commandId: command.commandId,
       });
-      const taskTitle = subagentThreadTitle({
-        parentTitle: parentProjection.thread.title,
-        prompt: command.task,
-        ...(command.title === undefined ? {} : { title: command.title }),
-        ordinal: parentProjection.subagents.length + 1,
-      });
+      const taskTitle =
+        command.issue === undefined
+          ? subagentThreadTitle({
+              parentTitle: parentProjection.thread.title,
+              prompt: command.task,
+              ...(command.title === undefined ? {} : { title: command.title }),
+              ordinal: parentProjection.subagents.length + 1,
+            })
+          : issueThreadTitle(command.issue);
       const childThread: OrchestrationV2AppThread = {
         ...makeSubagentChildThread({
           parentThread: parentProjection.thread,
@@ -6502,6 +6735,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdBy: command.createdBy,
           creationSource: command.creationSource,
         }),
+        ...(command.issue === undefined
+          ? {}
+          : { linkedIssue: command.issue, titleSource: "generated" as const }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
         // A child with its own worktree has no checkout until its deferred run's
@@ -9330,6 +9566,53 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedTask,
         now,
       });
+      const issueWriteEffects: Array<PendingOrchestrationEffectV2> = [];
+      const linkedIssue = childControls.thread.linkedIssue;
+      if (linkedIssue !== undefined) {
+        const repositoryOwner = yield* projectionStore
+          .getThread(childControls.thread.lineage.rootThreadId)
+          .pipe(Effect.option);
+        const writePolicy = Option.isSome(repositoryOwner)
+          ? repositoryOwner.value.repositoryOrchestration
+          : undefined;
+        const branch = childControls.thread.branch;
+        const model = childControls.thread.modelSelection.model;
+        const status = deriveIssueWorkStatus({
+          shell: childShell,
+          paused: false,
+          waitingOnSubIssues: false,
+          resultAvailable: progress.state === "result_available",
+        });
+        if (writePolicy?.publishCloseoutComments === true) {
+          const closeoutWriteKey = `issue-closeout:${linkedIssue.host}:${linkedIssue.repositoryId}:${linkedIssue.id}:${childThreadId}:${childRun.id}`;
+          const closeoutMarker = `<!-- t3-issue-closeout:${linkedIssue.host}:${linkedIssue.repositoryId}:${linkedIssue.id}:${childThreadId}:${childRun.id} -->`;
+          issueWriteEffects.push({
+            id: `effect:issue-comment:${closeoutWriteKey}`,
+            commandId: CommandId.make(`command:issue-comment:${closeoutWriteKey}`),
+            threadId: childThreadId,
+            request: {
+              type: "issue.github.comment",
+              operation: "closeout_create",
+              issue: linkedIssue,
+              writeKey: closeoutWriteKey,
+              resultEventId: String(childRun.id),
+              marker: closeoutMarker,
+              body: [
+                `## T3 Code closeout: ${status}`,
+                `Issue: [#${linkedIssue.number} ${linkedIssue.title}](${linkedIssue.url})`,
+                `Thread: ${childThreadId}`,
+                `Model: ${model}`,
+                ...(branch === null ? [] : [`Branch: ${branch}`]),
+                `Completed: ${DateTime.formatIso(now)}`,
+                "",
+                result.text,
+                "",
+                closeoutMarker,
+              ].join("\n"),
+            },
+          });
+        }
+      }
       const parentRunUpdate =
         completionPlan.parentRun ?? (parentRun === ownerRun ? undefined : parentRun);
       const resultTransferId = yield* idAllocator.allocate.contextTransfer({
@@ -9406,108 +9689,111 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         consumedAt: now,
       };
 
-      yield* writeSystemEvents([
-        {
-          type: "subagent.updated",
-          threadId: parentThreadId,
-          ...(task.runId === null ? {} : { runId: task.runId }),
-          nodeId: task.id,
-          driver: task.driver,
-          occurredAt: now,
-          payload: completionPlan.task,
-        },
-        ...(parentRunUpdate === undefined
-          ? []
-          : [
-              {
-                type: "run.updated" as const,
-                threadId: parentThreadId,
-                runId: parentRunUpdate.id,
-                ...(parentRunUpdate.rootNodeId === null
-                  ? {}
-                  : { nodeId: parentRunUpdate.rootNodeId }),
-                providerInstanceId: parentRunUpdate.providerInstanceId,
-                occurredAt: now,
-                payload: parentRunUpdate,
-              },
-            ]),
-        ...(completionPlan.message === undefined
-          ? []
-          : [
-              {
-                type: "message.updated" as const,
-                threadId: parentThreadId,
-                ...(completionPlan.message.runId === null
-                  ? {}
-                  : { runId: completionPlan.message.runId }),
-                ...(completionPlan.message.nodeId === null
-                  ? {}
-                  : { nodeId: completionPlan.message.nodeId }),
-                providerInstanceId:
-                  completionPlan.parentRun?.providerInstanceId ??
-                  parentProjection.thread.providerInstanceId,
-                occurredAt: now,
-                payload: completionPlan.message,
-              },
-            ]),
-        ...(parentNode === undefined
-          ? []
-          : [
-              {
-                type: "node.updated" as const,
-                threadId: parentThreadId,
-                ...(parentNode.runId === null ? {} : { runId: parentNode.runId }),
-                nodeId: parentNode.id,
-                driver: task.driver,
-                occurredAt: now,
-                payload: {
-                  ...parentNode,
-                  status: terminalStatus,
-                  providerThreadId: childRun.providerThreadId,
-                  completedAt: now,
+      yield* writeSystemEvents(
+        [
+          {
+            type: "subagent.updated",
+            threadId: parentThreadId,
+            ...(task.runId === null ? {} : { runId: task.runId }),
+            nodeId: task.id,
+            driver: task.driver,
+            occurredAt: now,
+            payload: completionPlan.task,
+          },
+          ...(parentRunUpdate === undefined
+            ? []
+            : [
+                {
+                  type: "run.updated" as const,
+                  threadId: parentThreadId,
+                  runId: parentRunUpdate.id,
+                  ...(parentRunUpdate.rootNodeId === null
+                    ? {}
+                    : { nodeId: parentRunUpdate.rootNodeId }),
+                  providerInstanceId: parentRunUpdate.providerInstanceId,
+                  occurredAt: now,
+                  payload: parentRunUpdate,
                 },
-              },
-            ]),
-        ...(parentTurnItem === undefined
-          ? []
-          : [
-              {
-                type: "turn-item.updated" as const,
-                threadId: parentThreadId,
-                ...(parentTurnItem.runId === null ? {} : { runId: parentTurnItem.runId }),
-                ...(parentTurnItem.nodeId === null ? {} : { nodeId: parentTurnItem.nodeId }),
-                driver: task.driver,
-                occurredAt: now,
-                payload: {
-                  ...parentTurnItem,
-                  status: terminalStatus,
-                  result: result.text,
-                  completedAt: now,
-                  updatedAt: now,
+              ]),
+          ...(completionPlan.message === undefined
+            ? []
+            : [
+                {
+                  type: "message.updated" as const,
+                  threadId: parentThreadId,
+                  ...(completionPlan.message.runId === null
+                    ? {}
+                    : { runId: completionPlan.message.runId }),
+                  ...(completionPlan.message.nodeId === null
+                    ? {}
+                    : { nodeId: completionPlan.message.nodeId }),
+                  providerInstanceId:
+                    completionPlan.parentRun?.providerInstanceId ??
+                    parentProjection.thread.providerInstanceId,
+                  occurredAt: now,
+                  payload: completionPlan.message,
                 },
-              },
-            ]),
-        ...(resultHandoff === null
-          ? []
-          : [
-              {
-                type: "context-handoff.updated" as const,
-                threadId: parentThreadId,
-                ...(parentRun === undefined ? {} : { runId: parentRun.id }),
-                providerInstanceId: childRun.providerInstanceId,
-                occurredAt: now,
-                payload: resultHandoff,
-              },
-            ]),
-        {
-          type: "context-transfer.created",
-          threadId: parentThreadId,
-          ...(parentRun === undefined ? {} : { runId: parentRun.id }),
-          providerInstanceId: childRun.providerInstanceId,
-          occurredAt: now,
-          payload: resultTransfer,
-        },
-      ]);
+              ]),
+          ...(parentNode === undefined
+            ? []
+            : [
+                {
+                  type: "node.updated" as const,
+                  threadId: parentThreadId,
+                  ...(parentNode.runId === null ? {} : { runId: parentNode.runId }),
+                  nodeId: parentNode.id,
+                  driver: task.driver,
+                  occurredAt: now,
+                  payload: {
+                    ...parentNode,
+                    status: terminalStatus,
+                    providerThreadId: childRun.providerThreadId,
+                    completedAt: now,
+                  },
+                },
+              ]),
+          ...(parentTurnItem === undefined
+            ? []
+            : [
+                {
+                  type: "turn-item.updated" as const,
+                  threadId: parentThreadId,
+                  ...(parentTurnItem.runId === null ? {} : { runId: parentTurnItem.runId }),
+                  ...(parentTurnItem.nodeId === null ? {} : { nodeId: parentTurnItem.nodeId }),
+                  driver: task.driver,
+                  occurredAt: now,
+                  payload: {
+                    ...parentTurnItem,
+                    status: terminalStatus,
+                    result: result.text,
+                    completedAt: now,
+                    updatedAt: now,
+                  },
+                },
+              ]),
+          ...(resultHandoff === null
+            ? []
+            : [
+                {
+                  type: "context-handoff.updated" as const,
+                  threadId: parentThreadId,
+                  ...(parentRun === undefined ? {} : { runId: parentRun.id }),
+                  providerInstanceId: childRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: resultHandoff,
+                },
+              ]),
+          {
+            type: "context-transfer.created",
+            threadId: parentThreadId,
+            ...(parentRun === undefined ? {} : { runId: parentRun.id }),
+            providerInstanceId: childRun.providerInstanceId,
+            occurredAt: now,
+            payload: resultTransfer,
+          },
+        ],
+        issueWriteEffects,
+      );
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
@@ -9846,6 +10132,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
+        yield* guardRepositoryRootLifecycle(command, projection.thread);
         return yield* mapDispatchError(command)(
           planThreadDeletion({
             command,
@@ -10019,6 +10306,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
+        break;
+      case "issue.work.start":
+        yield* dispatchIssueWorkStart(command, events, effects);
         break;
       case "delegated_task.request":
         yield* dispatchDelegatedTaskRequest(command, events, effects);

@@ -43,6 +43,20 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
     Effect.gen(function* () {
       const context = yield* readMutationCaller();
       const { caller, limits } = context;
+      if (caller !== undefined) {
+        const projection = yield* context.threads
+          .getThreadRecords(caller.id, [])
+          .pipe(Effect.mapError(unavailable));
+        if (
+          projection.thread.linkedIssue !== undefined ||
+          projection.thread.repositoryOrchestration !== undefined
+        )
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "Managed issue sessions start workers through delegate_task with an explicit issue.",
+          });
+      }
       // A thread caller launches only as itself (full-access/default), as before. A client
       // launches anything up to its ceiling.
       if (

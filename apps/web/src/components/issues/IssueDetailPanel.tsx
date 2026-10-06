@@ -43,6 +43,7 @@ import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { issueEnvironment } from "~/state/issues";
 import { useEnvironmentQuery } from "~/state/query";
+import { IssueStartAction } from "./IssueStartAction";
 
 export interface IssueDetailPanelProps {
   readonly environmentId: EnvironmentId;
@@ -264,7 +265,7 @@ function StartInWorktree({
         variant="outline"
       >
         <GitBranchPlusIcon aria-hidden />
-        Start in worktree
+        Prepare draft
       </Button>
     );
   }
@@ -427,13 +428,20 @@ export function IssueDetailPanel({
             <MessageSquareIcon aria-hidden className="size-3" />
             {issue.commentCount} {issue.commentCount === 1 ? "comment" : "comments"}
           </span>
-          <span className="ml-auto flex flex-wrap items-center gap-1.5">
+          <div className="ml-auto flex flex-wrap items-start gap-1.5">
             {canOpenBesideThread ? (
               <Button onClick={onOpenBesideThread} size="xs" variant="outline">
                 <PanelRightIcon aria-hidden />
                 Open beside thread
               </Button>
             ) : null}
+            <IssueStartAction
+              key={`${environmentId}:${repository.host}:${repository.repository}:${issue.number}`}
+              environmentId={environmentId}
+              reference={{ ...repository, number: issue.number }}
+              threadRef={threadRef}
+              closed={issue.state === "closed"}
+            />
             <StartInWorktree
               environmentId={environmentId}
               host={repository.host}
@@ -441,7 +449,7 @@ export function IssueDetailPanel({
               issue={issue}
               threadRef={threadRef}
             />
-          </span>
+          </div>
         </div>
       </header>
 

@@ -1,3 +1,19 @@
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import { RuntimeRequestId, type OrchestrationV2RuntimeRequest } from "@t3tools/contracts";
+import * as EventSink from "./EventSink.ts";
+import { EventId } from "@t3tools/contracts";
+import * as IssueWorkService from "../issues/IssueWorkService.ts";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import * as IssueService from "../issues/IssueService.ts";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
@@ -99,6 +115,7 @@ const adapter = {
 } as ProviderAdapterV2Shape;
 
 interface HarnessOptions {
+  readonly projectRepositoryIdentity?: import("@t3tools/contracts").RepositoryIdentity;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
@@ -161,9 +178,17 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some(project)
+            ? Option.some(
+                options.projectRepositoryIdentity === undefined
+                  ? project
+                  : { ...project, repositoryIdentity: options.projectRepositoryIdentity },
+              )
             : id === otherProjectId
-              ? Option.some(otherProject)
+              ? Option.some(
+                  options.projectRepositoryIdentity === undefined
+                    ? otherProject
+                    : { ...otherProject, repositoryIdentity: options.projectRepositoryIdentity },
+                )
               : Option.none(),
         ),
       getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
@@ -228,6 +253,7 @@ function makeHarness(options: HarnessOptions = {}) {
   return {
     layer: Layer.mergeAll(
       launch,
+      orchestrator,
       threadManagement,
       titleRegeneration,
       outbox,
@@ -2560,3 +2586,506 @@ describe("delegate_task workspace", () => {
     },
   );
 });
+
+it.effect(
+  "issue starts share one durable root and queued request, and retries cannot start another attempt",
+  () => {
+    const provider: ServerProvider = {
+      instanceId: modelSelection.instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-05T00:00:00Z",
+      availability: "available",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    const issue = {
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      repositoryId: "repository:8",
+      id: "issue:8",
+      nodeId: "node:8",
+      number: 8,
+      url: "https://github.com/tannerpolley/t3code/issues/8",
+      title: "Single issue",
+    };
+    const harness = makeHarness({
+      providers: [provider],
+      projectRepositoryIdentity: {
+        canonicalKey: "github.com/tannerpolley/t3code",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://github.com/tannerpolley/t3code.git",
+        },
+        provider: "github",
+        owner: "tannerpolley",
+        name: "t3code",
+        displayName: "tannerpolley/t3code",
+      },
+      serverSettings: {
+        modelRoles: [
+          {
+            id: "worker",
+            name: "Worker",
+            description: "Issue worker",
+            targets: [
+              { providerInstanceId: modelSelection.instanceId, model: modelSelection.model },
+            ],
+          },
+        ],
+      },
+    });
+    const store = IssueWorkStore.layer.pipe(Layer.provide(harness.layer));
+    const published = new Map<string, { commentId: string; body: string }>();
+    const writeCalls: Array<
+      Parameters<IssueService.IssueService["Service"]["writeManagedComment"]>[0]
+    > = [];
+    const issueReads = Layer.mock(IssueService.IssueService)({
+      writeManagedComment: (request) =>
+        Effect.sync(() => {
+          writeCalls.push(request);
+          const commentId =
+            published.get(request.marker)?.commentId ?? `comment-${published.size + 1}`;
+          published.set(request.marker, { commentId, body: request.body });
+          return { commentId };
+        }),
+      resolveLinkedIssue: () => Effect.succeed(issue),
+      detail: () =>
+        Effect.succeed({
+          repository: { host: issue.host, repository: issue.repository },
+          viewer: null,
+          fetchedAt: "2026-10-05T00:00:00Z",
+          issue: {
+            number: issue.number,
+            title: issue.title,
+            url: issue.url,
+            state: "open",
+            stateReason: null,
+            author: null,
+            assignees: [],
+            labels: [],
+            milestone: null,
+            createdAt: "2026-10-05T00:00:00Z",
+            updatedAt: "2026-10-05T00:00:00Z",
+            commentCount: 0,
+          },
+          body: "Finish this issue",
+          comments: [],
+          linkedPullRequests: [],
+        }),
+    });
+    const dependencies = Layer.mergeAll(
+      harness.layer,
+      store,
+      issueReads,
+      IdAllocator.layer,
+      ProviderAdapterRegistry.makeLayer([adapter]),
+    );
+    const service = IssueWorkService.layer.pipe(Layer.provide(dependencies));
+    const realExecutor = Layer.fresh(EffectWorker.executorLayer).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          dependencies,
+          ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
+          Layer.mock(RunFinalizationService.RunFinalizationService)({}),
+          Layer.mock(CheckpointRollbackService.CheckpointRollbackServiceV2)({}),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+          Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({}),
+          Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
+          Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
+        ),
+      ),
+    );
+    // Exercise the real comment executor/worker; provider subprocess effects are
+    // deliberately inert in this offline proof.
+    const commentExecutor = Layer.effect(
+      EffectWorker.OrchestrationEffectExecutorV2,
+      Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        return EffectWorker.OrchestrationEffectExecutorV2.of({
+          execute: (effect, options) =>
+            effect.request.type === "issue.github.comment"
+              ? executor.execute(effect, options)
+              : Effect.void,
+        });
+      }),
+    ).pipe(Layer.provide(realExecutor));
+    const commentWorker = EffectWorker.layerWithOptions({}).pipe(
+      Layer.provide(Layer.mergeAll(dependencies, commentExecutor)),
+    );
+    const testLayer = Layer.mergeAll(service, commentExecutor, commentWorker).pipe(
+      Layer.provideMerge(dependencies),
+    );
+    return Effect.gen(function* () {
+      const issues = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sql = yield* SqlClient.SqlClient;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const input = {
+        host: issue.host,
+        repository: issue.repository,
+        number: issue.number,
+        projectId,
+        modelRoleId: "worker",
+        workspace: "project" as const,
+      };
+      const starts = yield* Effect.all(
+        [
+          issues.start({ ...input, clientRequestId: CommandId.make("issue-click:first") }),
+          issues.start({ ...input, clientRequestId: CommandId.make("issue-click:second") }),
+        ],
+        { concurrency: 2 },
+      );
+      assert.equal(starts[0].rootThreadId, starts[1].rootThreadId);
+      assert.equal(
+        (yield* sql`SELECT * FROM orchestration_v2_projection_repository_orchestration`).length,
+        1,
+      );
+      const root = yield* threads.getThreadProjection(starts[0].rootThreadId);
+      assert.equal(root.messages.length, 1);
+      assert.equal((yield* issues.workStatus(input)).status, "queued_preparing");
+      assert.equal((yield* issues.workStatus(input)).projectId, projectId);
+      const unstartedIssue = yield* issues.workStatus({
+        host: issue.host,
+        repository: issue.repository,
+        number: 9,
+      });
+      assert.equal(unstartedIssue.projectId, projectId);
+      assert.equal(unstartedIssue.rootThreadId, root.thread.id);
+      assert.isNull(unstartedIssue.status);
+      assert.isNull(yield* (yield* IssueWorkStore.IssueWorkStore).issueOwner(issue));
+      const otherProjectStart = yield* issues
+        .start({
+          ...input,
+          projectId: otherProjectId,
+          clientRequestId: CommandId.make("issue-click:other-project"),
+        })
+        .pipe(Effect.result);
+      assert.isTrue(otherProjectStart._tag === "Failure");
+      assert.equal(
+        (yield* sql`SELECT * FROM orchestration_v2_projection_repository_orchestration`).length,
+        1,
+      );
+      yield* worker.drain();
+      assert.equal(published.size, 1);
+      assert.isNull(yield* (yield* IssueWorkStore.IssueWorkStore).issueOwner(issue));
+      const parentRun = root.runs[0]!;
+      const command = {
+        type: "delegated_task.request" as const,
+        commandId: CommandId.make("issue-delegate:first"),
+        parentThreadId: root.thread.id,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        issue,
+        task: "Finish the issue",
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        completionWake: "always" as const,
+        createdBy: "agent" as const,
+        creationSource: "mcp" as const,
+      };
+      const missingIssue = yield* threads
+        .dispatch({
+          ...command,
+          commandId: CommandId.make("issue-delegate:missing"),
+          issue: undefined,
+        })
+        .pipe(Effect.result);
+      assert.isTrue(missingIssue._tag === "Failure");
+      const concurrent = yield* Effect.all(
+        [
+          threads.dispatch(command).pipe(Effect.result),
+          threads
+            .dispatch({ ...command, commandId: CommandId.make("issue-delegate:concurrent") })
+            .pipe(Effect.result),
+        ],
+        { concurrency: 2 },
+      );
+      const successful = concurrent.filter((result) => result._tag === "Success");
+      assert.equal(successful.length, 1);
+      assert.equal(concurrent.filter((result) => result._tag === "Failure").length, 1);
+      const acceptedDelegate = successful[0];
+      if (acceptedDelegate?._tag !== "Success")
+        return yield* Effect.die("No accepted issue worker");
+      const delegated = acceptedDelegate.success;
+      const taskEvent = delegated.storedEvents.find(
+        (stored) => stored.event.type === "subagent.updated",
+      );
+      assert.isDefined(taskEvent);
+      if (
+        taskEvent?.event.type !== "subagent.updated" ||
+        taskEvent.event.payload.childThreadId === null
+      )
+        return yield* Effect.die("No issue worker");
+      const child = yield* threads.getThreadProjection(taskEvent.event.payload.childThreadId);
+      assert.deepEqual(child.thread.linkedIssue, issue);
+      assert.equal(child.thread.title, "#8 Single issue");
+      const duplicate = yield* threads
+        .dispatch({ ...command, commandId: CommandId.make("issue-delegate:duplicate") })
+        .pipe(Effect.result);
+      assert.isTrue(duplicate._tag === "Failure");
+      assert.equal((yield* threads.getThreadProjection(root.thread.id)).subagents.length, 1);
+      const archive = yield* threads
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("issue-root:archive"),
+          threadId: root.thread.id,
+        })
+        .pipe(Effect.result);
+      assert.isTrue(archive._tag === "Failure");
+      const deletion = yield* threads
+        .dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("issue-root:delete"),
+          threadId: root.thread.id,
+        })
+        .pipe(Effect.result);
+      assert.isTrue(deletion._tag === "Failure");
+      const childRun = child.runs[0]!;
+      const now = yield* DateTime.now;
+      if (childRun.activeAttemptId === null) return yield* Effect.die("No current worker attempt");
+      const running = { ...childRun, status: "running" as const, startedAt: now };
+      const started = yield* sink.writeIfRunCurrent({
+        threadId: child.thread.id,
+        runId: childRun.id,
+        activeAttemptId: childRun.activeAttemptId,
+        expectedStatus: childRun.status,
+        events: [
+          {
+            id: EventId.make("issue-worker:running"),
+            type: "run.updated",
+            threadId: child.thread.id,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: running,
+          },
+        ],
+      });
+      assert.isTrue(started.committed);
+      assert.equal((yield* issues.workStatus(input)).status, "working");
+      yield* worker.drain();
+      const request: OrchestrationV2RuntimeRequest = {
+        id: RuntimeRequestId.make("issue-native-permission"),
+        nodeId: childRun.rootNodeId!,
+        providerTurnId: null,
+        nativeRequestRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "permission-1",
+          strength: "strong",
+        },
+        kind: "permission",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: now,
+        resolvedAt: null,
+      };
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("issue-worker:native-permission"),
+            type: "runtime-request.updated",
+            threadId: child.thread.id,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: request,
+          },
+        ],
+      });
+      assert.equal((yield* issues.workStatus(input)).status, "waiting_on_you");
+      const dynamicRequest: OrchestrationV2RuntimeRequest = {
+        ...request,
+        id: RuntimeRequestId.make("issue-native-dynamic-tool"),
+        nativeRequestRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "dynamic-1",
+          strength: "strong",
+        },
+        kind: "dynamic_tool_call",
+        createdAt: DateTime.add(now, { milliseconds: 1 }),
+      };
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("issue-worker:newer-dynamic-tool"),
+            type: "runtime-request.updated",
+            threadId: child.thread.id,
+            runId: childRun.id,
+            occurredAt: dynamicRequest.createdAt,
+            payload: dynamicRequest,
+          },
+        ],
+      });
+      assert.equal((yield* issues.workStatus(input)).status, "waiting_on_you");
+      assert.equal(
+        (yield* threads.getThreadShell(child.thread.id))?.pendingRuntimeRequest?.kind,
+        "dynamic_tool_call",
+      );
+      const waitingRows = yield* sql<{
+        effect_id: string;
+      }>`SELECT effect_id FROM orchestration_v2_effect_outbox WHERE effect_type = 'issue.github.comment' AND json_extract(payload_json, '$.status') = 'waiting_on_you' ORDER BY rowid DESC LIMIT 1`;
+      const staleWaiting = Option.getOrThrow(yield* outbox.get(waitingRows[0]!.effect_id));
+      yield* worker.drain();
+      assert.isTrue(
+        [...published.values()].some((comment) => comment.body.includes("Waiting on you")),
+      );
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("issue-worker:permission-answered"),
+            type: "runtime-request.updated",
+            threadId: child.thread.id,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: { ...request, status: "resolved", resolvedAt: now },
+          },
+        ],
+      });
+      assert.equal((yield* issues.workStatus(input)).status, "working");
+      yield* worker.drain();
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("issue-worker:dynamic-resolved"),
+            type: "runtime-request.updated",
+            threadId: child.thread.id,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: { ...dynamicRequest, status: "resolved", resolvedAt: now },
+          },
+          {
+            id: EventId.make("issue-worker:permission-resolved"),
+            type: "runtime-request.updated",
+            threadId: child.thread.id,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: { ...request, status: "resolved", resolvedAt: now },
+          },
+          {
+            id: EventId.make("issue-worker:final-message"),
+            type: "message.updated",
+            threadId: child.thread.id,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make("issue-final-message"),
+              threadId: child.thread.id,
+              runId: childRun.id,
+              nodeId: childRun.rootNodeId,
+              role: "assistant",
+              text: "Implementation complete. Focused checks passed; push approval remains.",
+              attachments: [],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+              createdBy: "agent",
+              creationSource: "provider",
+            },
+          },
+          {
+            id: EventId.make("issue-worker:finished"),
+            type: "run.updated",
+            threadId: child.thread.id,
+            runId: childRun.id,
+            occurredAt: now,
+            payload: { ...running, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      const beforeStaleRetry = writeCalls.length;
+      yield* executor.execute(staleWaiting);
+      assert.equal(writeCalls.length, beforeStaleRetry);
+      yield* orchestrator.recoverDelegatedTask(child.thread.id, childRun.id);
+      yield* worker.drain();
+      assert.equal(published.size, 2);
+      assert.equal(writeCalls.filter((call) => call.operation === "closeout_create").length, 1);
+      assert.equal(
+        (yield* sql`SELECT * FROM orchestration_v2_projection_issue_comment_receipts`).length,
+        1,
+      );
+      const closeouts = yield* sql<{
+        effect_id: string;
+      }>`SELECT effect_id FROM orchestration_v2_effect_outbox WHERE json_extract(payload_json, '$.operation') = 'closeout_create'`;
+      assert.equal(closeouts.length, 1);
+      const closeout = Option.getOrThrow(yield* outbox.get(closeouts[0]!.effect_id));
+      yield* executor.execute(closeout);
+      yield* orchestrator.recoverDelegatedTask(child.thread.id, childRun.id);
+      yield* worker.drain();
+      assert.equal(writeCalls.filter((call) => call.operation === "closeout_create").length, 1);
+      assert.equal(
+        (yield* sql`SELECT * FROM orchestration_v2_projection_issue_comment_receipts`).length,
+        1,
+      );
+      assert.equal((yield* issues.workStatus(input)).status, "done");
+      const retry = yield* issues.start({
+        ...input,
+        clientRequestId: CommandId.make("issue-click:first"),
+      });
+      assert.equal(retry.rootThreadId, root.thread.id);
+      assert.equal(
+        (yield* threads.getThreadProjection(root.thread.id)).messages.filter((message) =>
+          message.text.startsWith("Start issue #8:"),
+        ).length,
+        1,
+      );
+      assert.equal(
+        (yield* sql`SELECT * FROM orchestration_v2_projection_issue_work_requests`).length,
+        2,
+      );
+      const issueStore = yield* IssueWorkStore.IssueWorkStore;
+      const successor = yield* issues.start({
+        ...input,
+        clientRequestId: CommandId.make("issue-click:successor"),
+      });
+      assert.equal(successor.rootThreadId, root.thread.id);
+      assert.equal(yield* issueStore.issueOwner(issue), child.thread.id);
+      assert.equal((yield* issues.workStatus(input)).status, "queued_preparing");
+      assert.isNull((yield* issues.workStatus(input)).threadId);
+      yield* issues.start({
+        ...input,
+        clientRequestId: CommandId.make("issue-click:successor-duplicate"),
+      });
+      assert.equal(
+        (yield* threads.getThreadProjection(root.thread.id)).messages.filter((message) =>
+          message.text.startsWith("Start issue #8:"),
+        ).length,
+        2,
+      );
+      yield* issues.start({ ...input, clientRequestId: CommandId.make("issue-click:first") });
+      assert.equal(
+        (yield* threads.getThreadProjection(root.thread.id)).messages.filter((message) =>
+          message.text.startsWith("Start issue #8:"),
+        ).length,
+        2,
+      );
+      const successorResult = yield* threads.dispatch({
+        ...command,
+        commandId: CommandId.make("issue-delegate:successor"),
+      });
+      const successorTask = successorResult.storedEvents.find(
+        (stored) => stored.event.type === "subagent.updated",
+      );
+      if (
+        successorTask?.event.type !== "subagent.updated" ||
+        successorTask.event.payload.childThreadId === null
+      )
+        return yield* Effect.die("No successor worker");
+      assert.equal(yield* issueStore.issueOwner(issue), successorTask.event.payload.childThreadId);
+      assert.deepEqual(
+        (yield* threads.getThreadProjection(child.thread.id)).thread.lineage,
+        child.thread.lineage,
+      );
+      assert.equal((yield* threads.getThreadProjection(root.thread.id)).subagents.length, 2);
+    }).pipe(Effect.provide(testLayer));
+  },
+);

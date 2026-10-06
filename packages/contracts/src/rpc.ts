@@ -152,6 +152,13 @@ import {
   IssueRepositoriesResult,
 } from "./issue.ts";
 import {
+  IssueWorkError,
+  IssueWorkStartInput,
+  IssueWorkStartResult,
+  IssueWorkStatusInput,
+  IssueWorkStatusResult,
+} from "./issueWork.ts";
+import {
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestCommentInput,
@@ -497,6 +504,8 @@ export const WS_METHODS = {
   issuesRepositories: "issues.repositories",
   issuesList: "issues.list",
   issuesDetail: "issues.detail",
+  issuesStart: "issues.start",
+  issuesWorkStatus: "issues.workStatus",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -906,7 +915,7 @@ const PullRequestRpcError = Schema.Union([
   EnvironmentAuthorizationError,
 ]);
 
-const IssueRpcError = Schema.Union([IssueReadError, EnvironmentAuthorizationError]);
+const IssueRpcError = Schema.Union([IssueReadError, IssueWorkError, EnvironmentAuthorizationError]);
 
 const WsIssuesRepositoriesRpc = Rpc.make(WS_METHODS.issuesRepositories, {
   payload: Schema.Struct({}),
@@ -923,6 +932,18 @@ const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
 const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
   payload: IssueDetailInput,
   success: IssueDetailResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesStartRpc = Rpc.make(WS_METHODS.issuesStart, {
+  payload: IssueWorkStartInput,
+  success: IssueWorkStartResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesWorkStatusRpc = Rpc.make(WS_METHODS.issuesWorkStatus, {
+  payload: IssueWorkStatusInput,
+  success: IssueWorkStatusResult,
   error: IssueRpcError,
 });
 
@@ -1841,6 +1862,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsIssuesRepositoriesRpc,
   WsIssuesListRpc,
   WsIssuesDetailRpc,
+  WsIssuesStartRpc,
+  WsIssuesWorkStatusRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

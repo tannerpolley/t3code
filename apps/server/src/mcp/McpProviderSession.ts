@@ -33,6 +33,8 @@ export interface McpProviderSessionConfig {
    * the orchestration instructions.
    */
   readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
+  /** Repository-owned roots and issue workers must delegate through T3. */
+  readonly managedIssue?: boolean;
 }
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */

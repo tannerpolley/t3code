@@ -848,6 +848,7 @@ export function makeClaudeQueryOptions(input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly modelRoles?: ReadonlyArray<OrchestratorMcpModelRole>;
+  readonly managedIssue?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -941,7 +942,9 @@ export function makeClaudeQueryOptions(input: {
       preset: "claude_code" as const,
       append:
         buildRuntimeInstructions({ harness: "Claude Code" }) +
-        (input.mcpServers === undefined ? "" : t3OrchestrationInstructions(input.modelRoles)),
+        (input.mcpServers === undefined
+          ? ""
+          : t3OrchestrationInstructions(input.modelRoles, input.managedIssue)),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -998,6 +1001,8 @@ export function claudeMcpQueryOverrides(input: {
   readonly allowedTools?: ReadonlyArray<string>;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
+  readonly disallowedTools?: ReadonlyArray<string>;
+  readonly managedIssue?: boolean;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
 } {
   const session = McpProviderSession.readMcpProviderSession(input.threadId);
@@ -1009,6 +1014,9 @@ export function claudeMcpQueryOverrides(input: {
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
+    ...(session.managedIssue === true
+      ? { disallowedTools: ["Agent", "Task", "TeamCreate"], managedIssue: true }
+      : {}),
     mcpServers: {
       "t3-code": {
         type: "http",
@@ -1593,6 +1601,8 @@ export function claudeEffectiveQueryPolicyKey(
   queryPolicy: ClaudeRuntimeQueryPolicy,
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
+    readonly disallowedTools?: ReadonlyArray<string>;
+    readonly managedIssue?: boolean;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   },
 ): string {
@@ -1604,6 +1614,8 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    disallowedTools: mcpOverrides.disallowedTools,
+    managedIssue: mcpOverrides.managedIssue,
   });
 }
 

@@ -17,6 +17,8 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
+import * as IssueWorkStore from "../../issues/IssueWorkStore.ts";
+import * as IssueService from "../../issues/IssueService.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
@@ -413,6 +415,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         checkpointServiceProvided,
+        IssueWorkStore.layer.pipe(Layer.provide(databaseLayer)),
         CommandPolicy.layer,
         contextHandoffServiceProvided,
         persistenceLayer,
@@ -449,6 +452,13 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const effectExecutorProvided = EffectWorker.executorLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        storesLayer,
+        eventSinkProvided,
+        IdAllocator.layer,
+        Layer.mock(IssueService.IssueService)({
+          writeManagedComment: () =>
+            Effect.die("Issue comments are unused in provider replay tests"),
+        }),
         runFinalizationServiceProvided,
         checkpointRollbackServiceProvided,
         providerSessionManagerProvided,

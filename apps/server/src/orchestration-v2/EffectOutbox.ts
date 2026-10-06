@@ -1,3 +1,4 @@
+import { IssueWorkStatus } from "@t3tools/contracts";
 import {
   CheckpointId,
   CheckpointScopeId,
@@ -11,6 +12,7 @@ import {
   ProviderTurnId,
   RunId,
   RuntimeRequestId,
+  ThreadLinkedIssue,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -102,6 +104,19 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
       Schema.Struct({ type: Schema.Literal("regenerate") }),
     ]),
   }),
+  Schema.Struct({
+    type: Schema.Literal("issue.github.comment"),
+    operation: Schema.Literals(["status_sync", "closeout_create"]),
+    status: Schema.optional(IssueWorkStatus),
+    revision: Schema.optional(Schema.Number),
+    model: Schema.optional(Schema.String),
+    branch: Schema.optional(Schema.NullOr(Schema.String)),
+    issue: ThreadLinkedIssue,
+    writeKey: Schema.String,
+    resultEventId: Schema.optional(Schema.String),
+    marker: Schema.String,
+    body: Schema.String,
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -113,6 +128,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "terminal.cleanup",
   "attachment.cleanup",
   "thread-title.generate",
+  "issue.github.comment",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [

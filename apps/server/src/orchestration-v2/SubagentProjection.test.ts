@@ -49,6 +49,16 @@ function makeParentThread(): OrchestrationV2AppThread {
     id: parentThreadId,
     projectId: ProjectId.make("project:subagent-snooze"),
     title: "Snoozed parent",
+    linkedIssue: {
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      repositoryId: "repo:8",
+      id: "issue:8",
+      nodeId: "node:8",
+      number: 8,
+      url: "https://github.com/tannerpolley/t3code/issues/8",
+      title: "Single issue",
+    },
     providerInstanceId: parentProviderInstanceId,
     modelSelection: parentModelSelection,
     runtimeMode: "full-access",
@@ -103,6 +113,8 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   assert.deepEqual(childThread.modelSelection, childModelSelection);
   assert.equal(childThread.activeProviderThreadId, childProviderThreadId);
   assert.isUndefined(childThread.historyOrigin);
+  assert.isUndefined(childThread.linkedIssue);
+  assert.isUndefined(childThread.repositoryOrchestration);
   assert.deepEqual(childThread.lineage, {
     parentThreadId,
     relationshipToParent: "subagent",

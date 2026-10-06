@@ -8,6 +8,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type ThreadLinkedIssue,
+  issueThreadTitle,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -170,7 +172,7 @@ const everyCandidate = {
   fallbackEvaluatedAt: "1960-01-01T00:00:00.000Z",
 };
 
-const createThread = (name: string) =>
+const createThread = (name: string, linkedIssue?: ThreadLinkedIssue) =>
   Effect.gen(function* () {
     const orchestrator = yield* OrchestratorV2;
     const threadId = ThreadId.make(`thread:${name}`);
@@ -180,6 +182,7 @@ const createThread = (name: string) =>
       threadId,
       projectId: ProjectId.make("project:title-refresh"),
       title: name,
+      ...(linkedIssue === undefined ? {} : { linkedIssue }),
       modelSelection: { instanceId, model: "gpt-5.4" },
       runtimeMode: "full-access",
       interactionMode: "default",
@@ -461,5 +464,59 @@ it.effect(
       const sameTitle = yield* projections.getThread(ThreadId.make("thread:same-title"));
       assert.equal(sameTitle.titleSource, "user");
       assert.isNotOk(sameTitle.titleRegeneration);
+    }).pipe(Effect.provide(orchestratorLayer)),
+);
+
+it.effect(
+  "issue titles bypass initial and periodic generation, reject late results, and survive replay",
+  () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStoreV2;
+      const orchestrator = yield* OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const linkedIssue = {
+        host: "github.com",
+        repository: "tannerpolley/t3code",
+        repositoryId: "repository:8",
+        id: "issue:8",
+        nodeId: "node:8",
+        number: 8,
+        url: "https://github.com/tannerpolley/t3code/issues/8",
+        title: "  Keep   the issue\nnumber  ",
+      } satisfies ThreadLinkedIssue;
+      assert.equal(issueThreadTitle(linkedIssue), "#8 Keep the issue number");
+      const threadId = yield* createThread("issue-title", linkedIssue);
+      yield* sendMessage(threadId, "issue-title", "Generated first-message title");
+      const thread = yield* projections.getThread(threadId);
+      assert.equal(thread.title, "#8 Keep the issue number");
+      assert.isNotOk(thread.titleRegeneration);
+      assert.deepEqual(
+        selectTitleRefreshThreads([{ thread, latestMessageAt: "2100-01-01T00:00:00Z" }], {
+          nowMs: NOW_MS,
+          fallbackEvaluatedAtMs: minutesAgo(30),
+        }),
+        [],
+      );
+      assert.equal(
+        (yield* metadata(threadId, "issue-rename", { title: "Lose the number" }))._tag,
+        "Failure",
+      );
+      assert.equal(
+        (yield* metadata(threadId, "issue-refresh", { regenerateTitle: true }))._tag,
+        "Failure",
+      );
+      const late = yield* Effect.exit(
+        orchestrator.dispatch({
+          type: "thread.title.regeneration.complete",
+          commandId: CommandId.make("issue-late-title"),
+          threadId,
+          requestId: CommandId.make("message:issue-title"),
+          title: "Stale result",
+        }),
+      );
+      assert.equal(late._tag, "Failure");
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal((yield* projections.getThread(threadId)).title, "#8 Keep the issue number");
+      assert.deepEqual((yield* projections.getThreadShell(threadId))?.linkedIssue, linkedIssue);
     }).pipe(Effect.provide(orchestratorLayer)),
 );

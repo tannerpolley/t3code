@@ -14,10 +14,12 @@ import {
   type ProviderDriverKind,
   type ProviderInteractionMode,
   ProjectId,
+  type RepositoryOrchestration,
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
   ThreadId,
+  type ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -73,6 +75,8 @@ export interface ThreadLaunchInput {
   readonly reuseExistingThread?: boolean;
   readonly projectId: ProjectId;
   readonly title: string;
+  readonly linkedIssue?: ThreadLinkedIssue;
+  readonly repositoryOrchestration?: RepositoryOrchestration;
   readonly generateTitle?: boolean;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
@@ -461,7 +465,7 @@ const make = Effect.gen(function* () {
               commandId: CommandId.make(`${input.commandId}:branch-rename`),
               threadId,
               branch: renamed.branch,
-              worktreePath: worktreeCwd,
+              expectedWorktreePath: worktreeCwd,
             }),
           ),
           Effect.catchCause((cause) =>
@@ -817,6 +821,10 @@ const make = Effect.gen(function* () {
                 interactionMode: input.interactionMode,
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
+                ...(input.linkedIssue === undefined ? {} : { linkedIssue: input.linkedIssue }),
+                ...(input.repositoryOrchestration === undefined
+                  ? {}
+                  : { repositoryOrchestration: input.repositoryOrchestration }),
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),

@@ -1,3 +1,5 @@
+import * as IssueWorkService from "../issues/IssueWorkService.ts";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EventStoreCompaction from "./EventStoreCompaction.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ThreadTitleRefreshWorker from "./ThreadTitleRefreshWorker.ts";
@@ -200,6 +202,7 @@ const orchestratorProvided = orchestratorLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
       checkpointServiceProvided,
+      IssueWorkStore.layer,
       commandPolicyLayer,
       storesLayer,
       eventSinkProvided,
@@ -280,6 +283,9 @@ const effectExecutorProvided = effectExecutorLayer.pipe(
       runtimeRequestServiceProvided,
       threadTitleRegenerationProvided,
       threadManagementProvided,
+      projectionStoreLayer,
+      eventSinkProvided,
+      idAllocatorLayer,
     ),
   ),
 );
@@ -314,6 +320,19 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   ProjectServiceLayerLive,
   managedProjectFoldersProvided,
   threadLaunchProvided,
+  IssueWorkStore.layer,
+  IssueWorkService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectServiceLayerLive,
+        IssueWorkStore.layer,
+        threadLaunchProvided,
+        threadManagementProvided,
+        idAllocatorLayer,
+        providerAdapterRegistryProvided,
+      ),
+    ),
+  ),
   threadLifecycleProvided,
   scheduledTaskProvided,
   UsageLimitRecoveryWorker.workerLive.pipe(

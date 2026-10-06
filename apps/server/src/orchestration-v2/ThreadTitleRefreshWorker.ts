@@ -38,6 +38,7 @@ export function selectTitleRefreshThreads(
   return candidates
     .flatMap(({ thread, latestMessageAt }) => {
       if (
+        thread.linkedIssue !== undefined ||
         thread.titleSource === "user" ||
         thread.titleRegeneration != null ||
         latestMessageAt === null

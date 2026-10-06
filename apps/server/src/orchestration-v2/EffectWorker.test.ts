@@ -32,6 +32,10 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as EventSink from "./EventSink.ts";
+import * as IdAllocator from "./IdAllocator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as IssueService from "../issues/IssueService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 
@@ -44,6 +48,72 @@ const providerThreadId = ProviderThreadId.make("provider-thread:effect-worker-re
 const providerTurnId = ProviderTurnId.make("provider-turn:effect-worker-restart");
 const attemptId = RunAttemptId.make("run-attempt:effect-worker-restart");
 const runId = RunId.make("run:effect-worker-restart");
+
+it.effect("keeps managed issue comment writes retryable past the lifecycle attempt limit", () =>
+  Effect.gen(function* () {
+    const marker = "<!-- t3-issue-closeout:github.com:1:2:thread:issue:run:1 -->";
+    const workerLayer = EffectWorker.layerWithOptions({ maxAttempts: 1 }).pipe(
+      Layer.provideMerge(EffectOutbox.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+      Layer.provide(
+        Layer.succeed(
+          EffectWorker.OrchestrationEffectExecutorV2,
+          EffectWorker.OrchestrationEffectExecutorV2.of({
+            execute: (effect) =>
+              Effect.fail(
+                new EffectWorker.OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  cause: "temporary GitHub failure",
+                }),
+              ),
+          }),
+        ),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* outbox.enqueue([
+        {
+          id: "effect:issue-closeout-retry",
+          commandId: CommandId.make("command:issue-closeout-retry"),
+          threadId,
+          request: {
+            type: "issue.github.comment",
+            operation: "closeout_create",
+            issue: {
+              host: "github.com",
+              repository: "owner/repo",
+              repositoryId: "1",
+              id: "2",
+              nodeId: "I_kwDOIssue2",
+              number: 8,
+              url: "https://github.com/owner/repo/issues/8",
+              title: "Retry comment",
+            },
+            writeKey: "issue-closeout:github.com:1:2:thread:issue:run:1",
+            resultEventId: "run:1",
+            marker,
+            body: `Final result\n\n${marker}`,
+          },
+        },
+      ]);
+
+      assert.isTrue(yield* worker.runOnce);
+      const first = Option.getOrThrow(yield* outbox.get("effect:issue-closeout-retry"));
+      assert.equal(first.status, "pending");
+      assert.equal(first.attemptCount, 1);
+      yield* TestClock.adjust("100 millis");
+
+      assert.isTrue(yield* worker.runOnce);
+      const retried = Option.getOrThrow(yield* outbox.get("effect:issue-closeout-retry"));
+      assert.equal(retried.status, "pending");
+      assert.equal(retried.attemptCount, 2);
+    }).pipe(Effect.provide(workerLayer));
+  }),
+);
 
 it.effect("a stalled title cannot occupy the lifecycle worker lane", () =>
   Effect.gen(function* () {
@@ -227,6 +297,17 @@ function makeExecutorLayer(input: {
       Layer.mergeAll(
         dependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
+        Layer.mock(IssueService.IssueService)({
+          writeManagedComment: () => Effect.die("Issue comments are unused in this test"),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getIssueWorkCommentState: () => Effect.succeed(null),
+          getIssueCommentReceipt: () => Effect.succeed(null),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          commitCommand: () => Effect.die("Issue comment receipts are unused in this test"),
+        }),
+        IdAllocator.layer,
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),

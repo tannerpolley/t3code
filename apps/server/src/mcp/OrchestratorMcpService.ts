@@ -63,6 +63,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as IssueService from "../issues/IssueService.ts";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { deriveDelegatedTaskNode } from "../orchestration-v2/IdAllocator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -574,6 +576,7 @@ function listItemFromShell(shell: OrchestrationV2ThreadShell): OrchestratorMcpTh
     model: shell.modelSelection.model,
     runtimeMode: shell.runtimeMode,
     interactionMode: shell.interactionMode,
+    ...(shell.linkedIssue === undefined ? {} : { linkedIssue: shell.linkedIssue }),
     linkedPullRequest: shell.linkedPullRequest ?? null,
     ...threadSettlement(shell),
     parentThreadId: shell.lineage.parentThreadId,
@@ -603,6 +606,9 @@ function threadDetail(
     model: projection.thread.modelSelection.model,
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
+    ...(projection.thread.linkedIssue === undefined
+      ? {}
+      : { linkedIssue: projection.thread.linkedIssue }),
     linkedPullRequest: projection.thread.linkedPullRequest ?? null,
     titleRegeneration:
       projection.thread.titleRegeneration === undefined ||
@@ -754,6 +760,8 @@ const make = Effect.gen(function* () {
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
+  const issueService = yield* Effect.serviceOption(IssueService.IssueService);
+  const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   // Optional like settings: only worktree delegation needs it, and production always provides it.
   const threadLaunch = yield* Effect.serviceOption(ThreadLaunchService.ThreadLaunchService);
@@ -1556,7 +1564,9 @@ const make = Effect.gen(function* () {
             appOwnedSubagents: true,
             asyncPolling: true,
             cancellation: true,
-            batchThreadCreation: true,
+            batchThreadCreation:
+              parent?.thread.repositoryOrchestration === undefined &&
+              parent?.thread.linkedIssue === undefined,
             threadManagement: true,
             incrementalThreadRead: true,
             scheduledTasks: true,
@@ -1579,6 +1589,43 @@ const make = Effect.gen(function* () {
             "parent_not_active",
             "Delegated tasks require an active run owned by this MCP provider session.",
           );
+        }
+        const managed =
+          parent.thread.repositoryOrchestration !== undefined ||
+          parent.thread.linkedIssue !== undefined;
+        if (managed && input.issue === undefined)
+          return yield* failure(
+            "invalid_request",
+            "Repository-managed children require an explicit issue argument.",
+          );
+        if (managed && input.mode === "wait")
+          return yield* failure(
+            "invalid_request",
+            "Managed issue delegation uses async mode so the root can finish its turn while workers run.",
+          );
+        let linkedIssue: import("@t3tools/contracts").ThreadLinkedIssue | undefined;
+        if (input.issue !== undefined) {
+          if (Option.isNone(issueService) || Option.isNone(issueWorkStore))
+            return yield* failure(
+              "orchestration_error",
+              "Issue-managed delegation is unavailable on this server.",
+            );
+          const detail = yield* issueService.value
+            .detail(input.issue)
+            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+          if (detail.issue.state !== "open")
+            return yield* failure("invalid_request", "Only open issues can be delegated.");
+          linkedIssue = yield* issueService.value
+            .resolveLinkedIssue({ ...input.issue, host: input.issue.host ?? "github.com" })
+            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+          const repositoryOwner = yield* issueWorkStore.value
+            .repositoryOwner(linkedIssue)
+            .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+          if (repositoryOwner?.rootThreadId !== parent.thread.id || repositoryOwner.paused)
+            return yield* failure(
+              "invalid_request",
+              "Slice 1 issue workers must be delegated by the active registered repository orchestrator.",
+            );
         }
         const providers = yield* loadProviders;
         const target = yield* resolveTarget({
@@ -1603,6 +1650,7 @@ const make = Effect.gen(function* () {
         const result = yield* threadManagement
           .dispatch({
             type: "delegated_task.request",
+            ...(linkedIssue === undefined ? {} : { issue: linkedIssue }),
             createdBy: "agent",
             creationSource: "mcp",
             commandId,
@@ -1812,6 +1860,14 @@ const make = Effect.gen(function* () {
     createThreads: (callerScope, input) =>
       Effect.gen(function* () {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
+        if (
+          parent.thread.repositoryOrchestration !== undefined ||
+          parent.thread.linkedIssue !== undefined
+        )
+          return yield* failure(
+            "invalid_request",
+            "Managed issue sessions create workers through delegate_task with an explicit issue, not create_threads.",
+          );
         const parentRun = ThreadManagementService.latestActiveRun(parent);
         if (
           parentRun === undefined ||
