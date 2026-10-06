@@ -1,5 +1,7 @@
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as EventStore from "./EventStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -72,7 +74,10 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "./IdAllocator.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import {
+  ProviderAdapterCapabilitiesError,
+  type ProviderAdapterV2Shape,
+} from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -3856,3 +3861,542 @@ it.effect(
     }).pipe(Effect.provide(Layer.mergeAll(dependencies, serviceLayer)));
   },
 );
+
+describe("fresh-thread repository handoff", () => {
+  const reference = { host: "github.com", repository: "tannerpolley/t3code" };
+  const rootId = ThreadId.make("handoff-root");
+  const linked = (number: number) => ({
+    ...reference,
+    repositoryId: "repo:handoff",
+    id: `issue:${number}`,
+    nodeId: `node:${number}`,
+    number,
+    title: `Issue ${number}`,
+    url: `https://github.com/tannerpolley/t3code/issues/${number}`,
+  });
+  const plan = {
+    number: 1,
+    modelRoleId: "worker",
+    workspace: "project" as const,
+    status: "running" as const,
+    fingerprint: "",
+  };
+  const config = {
+    ...reference,
+    repositoryId: "repo:handoff",
+    projectId,
+    workspace: "project" as const,
+    launchCommandId: CommandId.make("handoff-root-create"),
+    revision: 1,
+    paused: false,
+    workerLimit: 4,
+    publishStatusComments: true,
+    publishCloseoutComments: true,
+    milestones: [plan],
+    suspendedIssues: [],
+  };
+  const summary = (number: number) => ({
+    ...linked(number),
+    state: "open" as const,
+    stateReason: null,
+    author: null,
+    assignees: [],
+    labels: [],
+    milestone: {
+      number: 1,
+      title: "First milestone",
+      state: "open" as const,
+      dueAt: null,
+      url: "https://github.com/tannerpolley/t3code/milestone/1",
+      openCount: 3,
+      closedCount: 0,
+    },
+    createdAt: "2026-10-05T00:00:00Z",
+    updatedAt: "2026-10-05T00:00:00Z",
+    commentCount: 0,
+  });
+  const provider: ServerProvider = {
+    instanceId: modelSelection.instanceId,
+    driver: ProviderDriverKind.make("codex"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-05T00:00:00Z",
+    availability: "available",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  };
+  const fixture = (
+    options: {
+      inventoryComplete?: () => boolean;
+      providerAvailable?: () => boolean;
+      continuation?: boolean;
+      inventoryIssues?: () => number[];
+    } = {},
+  ) => {
+    const reads = Layer.mock(IssueService.IssueService)({
+      workRead: (input) =>
+        Effect.succeed({
+          issue: linked(input.number),
+          state: "open" as const,
+          milestoneNumber: 1,
+          parent: input.number === 2 ? linked(1) : null,
+          subIssues: input.number === 1 ? [linked(2)] : [],
+          blockedBy: [],
+          parentComplete: true,
+          subIssuesComplete: true,
+          blockersComplete: true,
+        }),
+      milestoneIssues: () =>
+        Effect.succeed({
+          issues: (options.inventoryIssues?.() ?? [1, 2, 9]).map(summary),
+          complete: options.inventoryComplete?.() ?? true,
+        }),
+    });
+    const handoffAdapter = {
+      ...adapter,
+      getCapabilities: () =>
+        options.providerAvailable?.() === false
+          ? Effect.fail(new ProviderAdapterCapabilitiesError({ driver: adapter.driver }))
+          : Effect.succeed(CodexProviderCapabilitiesV2),
+    };
+    const harness = makeHarness({
+      providers: [provider],
+      adapters: [handoffAdapter],
+      issueServiceLayer: reads,
+      runContinuationWorker: options.continuation ?? false,
+    });
+    const dependencies = Layer.mergeAll(
+      harness.layer,
+      reads,
+      NodeCrypto.layer,
+      IdAllocator.layer,
+      ProviderAdapterRegistry.makeLayer([handoffAdapter]),
+      IssueWorkStore.layer.pipe(Layer.provide(harness.layer)),
+      EventStore.layer.pipe(Layer.provide(harness.layer)),
+      ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
+      Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
+    );
+    const service = IssueWorkService.layer.pipe(Layer.provideMerge(dependencies));
+    return Layer.mergeAll(
+      service,
+      OrchestratorMcp.layer.pipe(Layer.provide(service)),
+      ProjectionMaintenance.layer.pipe(Layer.provide(dependencies)),
+    );
+  };
+  const createRoot = Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: config.launchCommandId,
+      threadId: rootId,
+      projectId,
+      title: "Repository orchestrator",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      repositoryOrchestration: config,
+      createdBy: "user",
+      creationSource: "web",
+    });
+  });
+  const scope = (threadId: ThreadId): McpInvocationScope => ({
+    environmentId: EnvironmentId.make("environment:handoff"),
+    requestNamespace: "handoff",
+    thread: {
+      threadId,
+      providerSessionId: "handoff-session",
+      providerInstanceId: modelSelection.instanceId,
+    },
+    client: undefined,
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  });
+  const finish = (threadId: ThreadId, key: string) =>
+    Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const run = (yield* threads.getThreadRecords(threadId, ["runs"])).runs.findLast((entry) =>
+        ["starting", "running", "waiting"].includes(entry.status),
+      )!;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`${key}:result`),
+            type: "message.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make(`${key}:result`),
+              threadId,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              role: "assistant",
+              text: `Finished ${key}. Evidence retained.`,
+              attachments: [],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+              createdBy: "agent",
+              creationSource: "provider",
+            },
+          },
+          {
+            id: EventId.make(`${key}:finish`),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+          },
+        ],
+      });
+    });
+  const awaitFollowup = (threadId: ThreadId, afterSequence: number) =>
+    EventSink.EventSinkV2.use((sink) =>
+      sink.stream({ afterSequence }).pipe(
+        Stream.filter(
+          (stored) =>
+            (stored.event.type === "run.updated" || stored.event.type === "run.created") &&
+            stored.event.threadId === threadId &&
+            stored.event.payload.status === "starting",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      ),
+    );
+
+  it.effect(
+    "only one concurrent revision wins, installs inventory first, and retains ownership/history through compacted rebuild",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        yield* createRoot;
+        const results = yield* Effect.all(
+          ["one", "two"].map((key) =>
+            service
+              .handoff({
+                ...reference,
+                action: "approve",
+                expectedRevision: 1,
+                summary: `Continue approved decisions ${key}.`,
+                clientRequestId: CommandId.make(`handoff:${key}`),
+              })
+              .pipe(Effect.result),
+          ),
+          { concurrency: 2 },
+        );
+        assert.equal(results.filter((result) => result._tag === "Success").length, 1);
+        assert.equal(results.filter((result) => result._tag === "Failure").length, 1);
+        const first = yield* service.repositoryStatus(reference);
+        assert.notEqual(first.rootThreadId, rootId);
+        assert.deepEqual(
+          first.orchestration!.handoffHistory?.map((entry) => entry.threadId),
+          [rootId],
+        );
+        const firstThread = yield* threads.getThreadRecords(first.rootThreadId!, ["messages"]);
+        assert.include(firstThread.messages[0]!.text, "Server recovery inventory:");
+        assert.include(firstThread.messages[0]!.text, "Milestones:");
+        assert.include(firstThread.messages[0]!.text, "#9 Issue 9");
+        assert.include(firstThread.messages[0]!.text, "Pending changes:");
+        assert.equal(firstThread.messages.filter((message) => message.role === "user").length, 1);
+        const retired = yield* threads
+          .dispatch({
+            type: "issue.work.start",
+            commandId: CommandId.make("retired:start"),
+            threadId: rootId,
+            issue: linked(9),
+            workerModelSelection: modelSelection,
+            workspace: "project",
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(Effect.result);
+        assert.equal(retired._tag, "Failure");
+        if (retired._tag === "Failure") assert.include(retired.failure.message, "retired");
+        yield* finish(first.rootThreadId!, "first-root-closeout");
+        const second = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: first.orchestration!.revision,
+          summary: "Continue with the retained repository decisions.",
+          clientRequestId: CommandId.make("handoff:second-generation"),
+        });
+        assert.notEqual(second.rootThreadId, first.rootThreadId);
+        yield* finish(second.rootThreadId!, "second-root-closeout");
+        const paused = yield* service.setPaused({
+          ...reference,
+          paused: true,
+          clientRequestId: CommandId.make("latest-root-pause"),
+        });
+        // These later complete-state events supersede the transfer metadata during compaction.
+        for (const threadId of [rootId, first.rootThreadId!, second.rootThreadId!])
+          yield* threads.dispatch({
+            type: "thread.archive",
+            threadId,
+            commandId: CommandId.make(`archive:${threadId}`),
+          });
+        yield* threads.dispatch({
+          type: "thread.unarchive",
+          threadId: second.rootThreadId!,
+          commandId: CommandId.make("restore-latest-root"),
+        });
+        yield* maintenance.compactEventStore;
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        const rebuilt = yield* service.repositoryStatus(reference);
+        assert.equal(rebuilt.rootThreadId, second.rootThreadId);
+        assert.equal(rebuilt.orchestration!.revision, paused.orchestration!.revision);
+        assert.isTrue(rebuilt.orchestration!.paused);
+        assert.deepEqual(
+          rebuilt.orchestration!.handoffHistory?.map((entry) => entry.threadId),
+          [rootId, first.rootThreadId],
+        );
+        assert.equal((yield* store.configuration(rootId))!.retiredToThreadId, first.rootThreadId);
+        assert.equal(
+          (yield* store.configuration(first.rootThreadId!))!.retiredToThreadId,
+          second.rootThreadId,
+        );
+      }).pipe(Effect.provide(fixture())),
+  );
+
+  it.effect(
+    "waits for nested workers and their final deliveries, keeps lineage, rejects retired MCP calls and guards archive/delete",
+    () => {
+      let githubIssues: number[] = [];
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
+        const sink = yield* EventSink.EventSinkV2;
+        yield* createRoot;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("root:start"),
+          threadId: rootId,
+          messageId: MessageId.make("root:start"),
+          text: "Work through milestone 1",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const delegate = (threadId: ThreadId, number: number) =>
+          Effect.gen(function* () {
+            const run = (yield* threads.getThreadRecords(threadId, ["runs"])).runs.at(-1)!;
+            const result = yield* threads.dispatch({
+              type: "delegated_task.request",
+              commandId: CommandId.make(`delegate:${number}`),
+              parentThreadId: threadId,
+              parentRunId: run.id,
+              parentNodeId: run.rootNodeId!,
+              issue: linked(number),
+              task: `Finish issue ${number}`,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              completionWake: "always",
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            const created = result.storedEvents.find(
+              (stored) => stored.event.type === "thread.created",
+            )!;
+            return created.event.threadId;
+          });
+        const parent = yield* delegate(rootId, 1);
+        const child = yield* delegate(parent, 2);
+        yield* service.reconcile(rootId);
+        const revision = (yield* service.repositoryStatus(reference)).orchestration!.revision;
+        const pending = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: revision,
+          summary: "Retain nested issue outcomes and continue issue 9.",
+          clientRequestId: CommandId.make("handoff:nested"),
+        });
+        githubIssues = [1, 2, 9];
+        assert.equal(pending.rootThreadId, rootId);
+        assert.equal(pending.orchestration!.handoff?.status, "draining");
+        const nextId = pending.orchestration!.handoff!.nextThreadId;
+        assert.isNull(yield* threads.getThreadShell(nextId));
+        for (const type of ["thread.archive", "thread.delete"] as const) {
+          const blocked = yield* threads
+            .dispatch({ type, threadId: rootId, commandId: CommandId.make(`blocked:${type}`) })
+            .pipe(Effect.result);
+          assert.equal(blocked._tag, "Failure");
+          if (blocked._tag === "Failure") assert.match(blocked.failure.message, /hand.?off/i);
+        }
+        yield* finish(rootId, "root-waits");
+        yield* finish(parent, "parent-waits");
+        const beforeChild = yield* sink.latestSequence();
+        yield* finish(child, "nested-child");
+        yield* awaitFollowup(parent, beforeChild);
+        yield* service.reconcile(rootId);
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
+        assert.isNull(yield* threads.getThreadShell(nextId));
+        const beforeParent = yield* sink.latestSequence();
+        yield* finish(parent, "parent-delivery");
+        yield* awaitFollowup(rootId, beforeParent);
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
+        const beforeRoot = yield* sink.latestSequence();
+        yield* finish(rootId, "root-delivery");
+        yield* sink.stream({ afterSequence: beforeRoot, eventType: "thread.created" }).pipe(
+          Stream.filter((stored) => stored.event.threadId === nextId),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
+        assert.equal(
+          (yield* threads.getThreadRecords(child, [])).thread.lineage.parentThreadId,
+          parent,
+        );
+        assert.equal(
+          (yield* threads.getThreadRecords(parent, [])).thread.lineage.rootThreadId,
+          rootId,
+        );
+        const inventory = (yield* threads.getThreadRecords(nextId, ["messages"])).messages[0]!.text;
+        assert.include(inventory, "Completed attempts:");
+        assert.include(inventory, "Evidence retained.");
+        assert.include(inventory, "#9 Issue 9");
+        const milestone = yield* mcp
+          .workMilestone(scope(rootId), {
+            ...reference,
+            projectId,
+            modelRoleId: "worker",
+            workspace: "project",
+            milestoneNumber: 1,
+            clientRequestId: CommandId.make("retired:milestone"),
+          })
+          .pipe(Effect.result);
+        assert.equal(milestone._tag, "Failure");
+        if (milestone._tag === "Failure") assert.include(milestone.failure.message, "retired");
+        const delegation = yield* mcp
+          .delegateTask(scope(rootId), {
+            issue: { ...reference, number: 9 },
+            task: "Try to delegate after retirement",
+            mode: "async",
+            clientRequestId: "retired:delegate",
+          })
+          .pipe(Effect.result);
+        assert.equal(delegation._tag, "Failure");
+        if (delegation._tag === "Failure") assert.include(delegation.failure.message, "retired");
+        const authority = yield* service.assertCurrentCaller(parent).pipe(Effect.result);
+        assert.equal(authority._tag, "Failure");
+        if (authority._tag === "Failure") assert.equal(authority.failure.code, "retired-root");
+      }).pipe(Effect.provide(fixture({ continuation: true, inventoryIssues: () => githubIssues })));
+    },
+  );
+
+  it.effect(
+    "MCP requests require exact user approval and can be cancelled without moving ownership",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const mcp = yield* OrchestratorMcp.OrchestratorMcpService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* createRoot;
+        const input = {
+          ...reference,
+          expectedRevision: 1,
+          summary: "Decisions to preserve.",
+          clientRequestId: CommandId.make("handoff:proposal"),
+        };
+        const proposed = yield* mcp.requestRepositoryHandoff(scope(rootId), input);
+        assert.equal(proposed.orchestration!.handoff?.status, "awaiting_approval");
+        assert.isFalse(proposed.orchestration!.paused);
+        assert.isNull(yield* threads.getThreadShell(proposed.orchestration!.handoff!.nextThreadId));
+        const stale = yield* service
+          .handoff({
+            ...input,
+            action: "approve",
+            expectedRevision: proposed.orchestration!.revision,
+            summary: "A different proposal",
+            clientRequestId: CommandId.make("handoff:wrong-approval"),
+          })
+          .pipe(Effect.result);
+        assert.equal(stale._tag, "Failure");
+        const paused = yield* service.setPaused({
+          ...reference,
+          paused: true,
+          clientRequestId: CommandId.make("handoff:pause-before-approval"),
+        });
+        const approved = yield* service.handoff({
+          ...input,
+          action: "approve",
+          expectedRevision: paused.orchestration!.revision,
+          clientRequestId: CommandId.make("handoff:user-approved"),
+        });
+        assert.notEqual(approved.rootThreadId, rootId);
+        assert.isTrue(approved.orchestration!.paused);
+        const nextProposal = yield* mcp.requestRepositoryHandoff(scope(approved.rootThreadId!), {
+          ...input,
+          expectedRevision: approved.orchestration!.revision,
+          clientRequestId: CommandId.make("handoff:next-proposal"),
+        });
+        const cancelled = yield* service.handoff({
+          ...reference,
+          action: "cancel",
+          expectedRevision: nextProposal.orchestration!.revision,
+          clientRequestId: CommandId.make("handoff:cancel"),
+        });
+        assert.equal(cancelled.rootThreadId, approved.rootThreadId);
+        assert.isUndefined(cancelled.orchestration!.handoff);
+        assert.isTrue(cancelled.orchestration!.paused);
+      }).pipe(Effect.provide(fixture())),
+  );
+
+  it.effect(
+    "retries incomplete inventory and rejected transfer attempts until the first prompt is committed",
+    () => {
+      let complete = false;
+      let available = false;
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        yield* createRoot;
+        const failed = yield* service
+          .handoff({
+            ...reference,
+            action: "approve",
+            expectedRevision: 1,
+            summary: "Recover this handoff after access returns.",
+            clientRequestId: CommandId.make("handoff:recovery"),
+          })
+          .pipe(Effect.result);
+        assert.equal(failed._tag, "Failure");
+        const waiting = yield* service.repositoryStatus(reference);
+        const nextId = waiting.orchestration!.handoff!.nextThreadId;
+        assert.include(yield* store.activeRoots(), rootId);
+        assert.equal(waiting.rootThreadId, rootId);
+        assert.isNull(yield* threads.getThreadShell(nextId));
+        complete = true;
+        assert.equal((yield* service.reconcile(rootId).pipe(Effect.result))._tag, "Failure");
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
+        assert.isNull(yield* threads.getThreadShell(nextId));
+        available = true;
+        yield* service.reconcile(rootId);
+        yield* service.reconcile(rootId);
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
+        const messages = (yield* threads.getThreadRecords(nextId, ["messages"])).messages;
+        assert.equal(messages.length, 1);
+        assert.include(messages[0]!.text, "Recover this handoff after access returns.");
+        assert.include(messages[0]!.text, "Server recovery inventory:");
+      }).pipe(
+        Effect.provide(
+          fixture({ inventoryComplete: () => complete, providerAvailable: () => available }),
+        ),
+      );
+    },
+  );
+});

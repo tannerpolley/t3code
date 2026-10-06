@@ -32,6 +32,25 @@ export const RepositoryOrchestration = Schema.Struct({
   suspendedIssues: Schema.Array(Schema.Struct({ id: Schema.String, reason: Schema.String })).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
+  handoff: Schema.optional(
+    Schema.Struct({
+      requestId: CommandId,
+      nextThreadId: ThreadId,
+      summary: TrimmedNonEmptyString,
+      modelSelection: ModelSelection,
+      status: Schema.Literals(["awaiting_approval", "draining"]),
+      wasPaused: Schema.Boolean,
+    }),
+  ),
+  handoffHistory: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        threadId: ThreadId,
+        transferredAt: Schema.String,
+      }),
+    ),
+  ),
+  retiredToThreadId: Schema.optional(ThreadId),
 });
 export type RepositoryOrchestration = typeof RepositoryOrchestration.Type;
 export const RepositoryWorkTarget = Schema.Struct({
@@ -54,6 +73,24 @@ export const RepositoryWorkControlInput = Schema.Struct({
   clientRequestId: CommandId,
 });
 export type RepositoryWorkControlInput = typeof RepositoryWorkControlInput.Type;
+export const RepositoryHandoffRequestInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  summary: TrimmedNonEmptyString,
+  modelSelection: Schema.optional(ModelSelection),
+  clientRequestId: CommandId,
+});
+export type RepositoryHandoffRequestInput = typeof RepositoryHandoffRequestInput.Type;
+export const RepositoryHandoffInput = Schema.Union([
+  Schema.Struct({ ...RepositoryHandoffRequestInput.fields, action: Schema.Literal("approve") }),
+  Schema.Struct({
+    ...IssueRepositoryRef.fields,
+    expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    clientRequestId: CommandId,
+    action: Schema.Literal("cancel"),
+  }),
+]);
+export type RepositoryHandoffInput = typeof RepositoryHandoffInput.Type;
 export const RepositoryWorkResult = Schema.Struct({
   rootThreadId: Schema.NullOr(ThreadId),
   orchestration: Schema.NullOr(RepositoryOrchestration),
@@ -124,6 +161,7 @@ export class IssueWorkError extends Schema.TaggedError<IssueWorkError>()("IssueW
     "invalid-request",
     "issue-unavailable",
     "repository-owner-conflict",
+    "retired-root",
     "orchestration-error",
   ]),
   message: Schema.String,

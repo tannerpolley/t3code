@@ -4,7 +4,13 @@ import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskError, ThreadId, ProjectId, ScheduledTaskId } from "@t3tools/contracts";
+import {
+  CommandId,
+  ScheduledTaskError,
+  ThreadId,
+  ProjectId,
+  ScheduledTaskId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -351,7 +357,7 @@ it.effect(
 );
 
 it.effect(
-  "repository schedules resolve the current owner at each firing and refuse paused work",
+  "repository and legacy root-bound schedules follow ownership at each firing and refuse paused work",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -372,11 +378,29 @@ it.effect(
             }),
         }),
         Layer.mock(IssueWorkStore.IssueWorkStore)({
+          configuration: () =>
+            Effect.succeed({
+              host: "github.com",
+              repository: "tannerpolley/t3code",
+              repositoryId: "repo:1",
+              projectId: ProjectId.make("project:test"),
+              workspace: "project" as const,
+              launchCommandId: CommandId.make("original-root"),
+              revision: 1,
+              paused: false,
+              workerLimit: 4,
+              publishStatusComments: true,
+              publishCloseoutComments: true,
+              milestones: [],
+              suspendedIssues: [],
+              retiredToThreadId: ThreadId.make(root),
+            }),
           repositoryOwner: () =>
             Effect.succeed({
               rootThreadId: ThreadId.make(root),
               projectId: ProjectId.make("project:test"),
               paused,
+              revision: 1,
             }),
         }),
       );
@@ -397,10 +421,23 @@ it.effect(
         root = "repository-owner-2";
         yield* tasks.runNow({ id });
         assert.deepEqual(sent, ["repository-owner-1", "repository-owner-2"]);
+        yield* insertRow(
+          sql,
+          { id: "legacy-root-task", next: null, enabled: 0, status: "never" },
+          "2026-09-09T12:00:00.000Z",
+        );
+        yield* sql`UPDATE scheduled_tasks SET thread_id = 'repository-owner-1' WHERE task_id = 'legacy-root-task'`;
+        const legacy = ScheduledTaskId.make("legacy-root-task");
+        yield* tasks.runNow({ id: legacy });
+        assert.equal(sent.at(-1), "repository-owner-2");
+        root = "repository-owner-3";
+        yield* tasks.runNow({ id: legacy });
+        assert.equal(sent.at(-1), "repository-owner-3");
         paused = true;
         const blocked = yield* tasks.runNow({ id });
         assert.equal(blocked.task.lastRunStatus, "failed");
-        assert.equal(sent.length, 2);
+        assert.equal((yield* tasks.runNow({ id: legacy })).task.lastRunStatus, "failed");
+        assert.equal(sent.length, 4);
       }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

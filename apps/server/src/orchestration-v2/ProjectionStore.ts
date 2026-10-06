@@ -1945,13 +1945,51 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `;
             }
             if (
-              event.type === "thread.metadata-updated" &&
-              event.payload.repositoryOrchestration !== undefined
+              event.payload.repositoryOrchestration !== undefined &&
+              event.payload.repositoryOrchestration.retiredToThreadId === undefined
             ) {
               const owner = event.payload.repositoryOrchestration;
-              yield* sql`UPDATE orchestration_v2_projection_repository_orchestration
+              const updated = yield* sql<{
+                root_thread_id: string;
+              }>`UPDATE orchestration_v2_projection_repository_orchestration
                 SET paused = ${owner.paused ? 1 : 0}, revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
-                WHERE root_thread_id = ${event.threadId}`;
+                WHERE root_thread_id = ${event.threadId} RETURNING root_thread_id`;
+              if (updated.length === 0) {
+                // The command checks the exact owner/revision under the repository
+                // lock before committing. Compacted replay can skip intermediate
+                // owners, so a complete snapshot may advance past any earlier root.
+                const previous = owner.handoffHistory?.at(-1);
+                const transferred =
+                  previous === undefined
+                    ? []
+                    : yield* sql<{ root_thread_id: string }>`
+                  UPDATE orchestration_v2_projection_repository_orchestration
+                  SET root_thread_id = ${event.threadId}, launch_command_id = ${owner.launchCommandId},
+                    paused = ${owner.paused ? 1 : 0}, revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
+                  WHERE host = ${owner.host} AND repository_id = ${owner.repositoryId}
+                    AND root_thread_id IN ${sql.in(owner.handoffHistory!.map((entry) => entry.threadId))}
+                    AND revision < ${owner.revision}
+                  RETURNING root_thread_id
+                `;
+                if (transferred.length === 0)
+                  return yield* new ProjectionStoreApplyEventError({
+                    eventType: event.type,
+                    cause: "Repository ownership revision conflict during handoff.",
+                  });
+                // Only unclaimed admissions move. Attempts and child lineage stay historical.
+                yield* sql`
+                  UPDATE orchestration_v2_projection_issue_work_requests
+                  SET root_thread_id = ${event.threadId}, payload_json = json_set(payload_json, '$.rootThreadId', ${event.threadId})
+                  WHERE root_thread_id IN ${sql.in(owner.handoffHistory!.map((entry) => entry.threadId))} AND (NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_issue_work work
+                    WHERE work.host = orchestration_v2_projection_issue_work_requests.host
+                      AND work.repository_id = orchestration_v2_projection_issue_work_requests.repository_id
+                      AND work.issue_id = orchestration_v2_projection_issue_work_requests.issue_id
+                      AND work.owner_thread_id IS NOT NULL
+                      AND work.owner_thread_id <> orchestration_v2_projection_issue_work_requests.attempt_key
+                  ))
+                `;
+              }
             }
             const payloadJson = yield* encodeThreadPayload(event.payload);
             const payload = parseEncodedPayload(payloadJson);
