@@ -1,5 +1,7 @@
 import { IssueRef, OrchestratorMcpTarget } from "@t3tools/contracts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import * as IssueService from "../issues/IssueService.ts";
+import { issueEligibility } from "../issues/IssueEligibility.ts";
 import { deriveIssueWorkStatus } from "../issues/IssueWorkStatus.ts";
 import { issueThreadTitle } from "@t3tools/contracts";
 import {
@@ -429,6 +431,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "provider.switch":
       return command.threadId;
     case "issue.work.start":
+    case "repository.work.update":
+    case "repository.work.continue":
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.wake-policy":
@@ -773,6 +777,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
+  const issueReads = yield* Effect.serviceOption(IssueService.IssueService);
+  const canStartIssueRun = (thread: OrchestrationV2AppThread) =>
+    Effect.gen(function* () {
+      const issue = thread.linkedIssue;
+      if (issue === undefined) return true;
+      if (Option.isNone(issueWorkStore) || Option.isNone(issueReads)) return false;
+      const store = issueWorkStore.value;
+      if (
+        !(yield* store.canAdmit(issue, thread.id)) ||
+        (yield* store.issueOwner(issue)) !== thread.id
+      )
+        return false;
+      const read = yield* issueReads.value.workRead(issue);
+      if (
+        issueEligibility(read) !== "eligible" ||
+        read.issue.id !== issue.id ||
+        read.issue.repositoryId !== issue.repositoryId
+      )
+        return false;
+      const parent =
+        read.parent === null
+          ? (yield* store.repositoryOwner(issue))?.rootThreadId
+          : yield* store.issueOwner(read.parent);
+      return parent === thread.lineage.parentThreadId;
+    }).pipe(Effect.catch(() => Effect.succeed(false)));
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
@@ -798,7 +827,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSwitchService = yield* ProviderSwitchServiceV2;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
-  const threadDispatch = yield* ThreadCommandExecutor;
+  const threadExecutor = yield* ThreadCommandExecutor;
+  const threadDispatch: ThreadCommandExecutor["Service"] = {
+    activeKeys: threadExecutor.activeKeys,
+    withLock: (threadId, effect) =>
+      Effect.gen(function* () {
+        const shell = yield* projectionStore.getThreadShell(threadId).pipe(Effect.orDie);
+        // Run starts across every managed descendant share the root's planning lock.
+        // Provider updates do not create admissions, and retain their ordinary thread lock.
+        return yield* threadExecutor.withLock(
+          shell?.linkedIssue === undefined ? threadId : shell.lineage.rootThreadId,
+          effect,
+        );
+      }),
+  };
 
   const mapDispatchError =
     (command: OrchestrationV2ServerCommand) =>
@@ -1262,6 +1304,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const queuedRun = nextQueuedRun(projection);
       if (queuedRun === undefined) {
+        return;
+      }
+      if (!(yield* canStartIssueRun(projection.thread))) return;
+      if (queuedRun.workspacePreparation !== undefined && projection.thread.worktreePath === null) {
+        const now = yield* DateTime.now;
+        const preparation = (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+          turnItemRunId: queuedRun.id,
+          turnItemTypes: ["command_execution"],
+        })).turnItems.find(
+          (item) => item.type === "command_execution" && item.input === WORKSPACE_PREPARATION_INPUT,
+        );
+        yield* writeSystemEvents([
+          {
+            type: "run.updated",
+            threadId,
+            runId: queuedRun.id,
+            occurredAt: now,
+            payload: { ...queuedRun, status: "preparing", queuePosition: null },
+          },
+          ...(preparation === undefined
+            ? []
+            : [
+                {
+                  type: "turn-item.updated" as const,
+                  threadId,
+                  runId: queuedRun.id,
+                  occurredAt: now,
+                  payload: {
+                    ...preparation,
+                    status: "running" as const,
+                    startedAt: now,
+                    updatedAt: now,
+                  },
+                },
+              ]),
+        ]);
         return;
       }
       // A provider that just failed will likely fail the next message too.
@@ -2376,7 +2454,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .hasUnclaimedRequests(thread.id)
             .pipe(mapDispatchError(command))
         : true;
-      if (unfinished || unclaimed)
+      const activePlan =
+        !thread.repositoryOrchestration.paused &&
+        thread.repositoryOrchestration.milestones.some((plan) => plan.status !== "complete");
+      if (unfinished || unclaimed || activePlan)
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -4829,6 +4910,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             });
 
       if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
+        const targetRunId = dispatchMode.targetRunId;
         yield* dispatchSteerIntoRun({
           command,
           events,
@@ -4837,10 +4919,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           modelSelection:
             delegatedCompletion === undefined
               ? modelSelection
-              : (projection.runs.find((run) => run.id === dispatchMode.targetRunId)
-                  ?.modelSelection ?? modelSelection),
+              : (projection.runs.find((run) => run.id === targetRunId)?.modelSelection ??
+                modelSelection),
           delegatedCompletion,
-          targetRunId: dispatchMode.targetRunId,
+          targetRunId,
           messageId: command.messageId,
           text: dispatchText,
           ...(command.context ? { context: command.context } : {}),
@@ -4858,10 +4940,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
-      const activeProviderThread = projection.providerThreads.find(
+      const priorProviderThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
       const activeRun = projection.runs.find(isBlockingRun);
+      const preparation =
+        projection.thread.linkedIssue !== undefined &&
+        projection.thread.worktreePath === null &&
+        activeRun === undefined
+          ? projection.runs.findLast((run) => run.workspacePreparation !== undefined)
+              ?.workspacePreparation
+          : undefined;
+      if (preparation !== undefined)
+        dispatchMode = { type: "defer_start", workspaceStrategy: preparation };
+      // An unprepared workspace has no provider history to transfer. Skip its
+      // reserved provider thread so a new selection still prepares first.
+      const activeProviderThread =
+        preparation !== undefined && priorProviderThread?.nativeThreadRef === null
+          ? undefined
+          : priorProviderThread;
+      const admissionQueued =
+        activeRun === undefined &&
+        ((projection.thread.linkedIssue !== undefined &&
+          projection.runs.some((run) => run.status === "queued")) ||
+          !(yield* canStartIssueRun(projection.thread)));
       const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
       const shouldQueue =
         activeRun !== undefined &&
@@ -5292,7 +5394,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
         const rootNodeId = idAllocator.derive.rootNode({ runId });
         const checkpointScope =
-          dispatchMode.type === "defer_start"
+          dispatchMode.type === "defer_start" || admissionQueued
             ? null
             : yield* runtimePolicy
                 .resolve({
@@ -5326,8 +5428,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           userMessageId: command.messageId,
           rootNodeId,
           activeAttemptId: attemptId,
-          status: dispatchMode.type === "defer_start" ? "preparing" : "starting",
-          queuePosition: null,
+          status: admissionQueued
+            ? "queued"
+            : dispatchMode.type === "defer_start"
+              ? "preparing"
+              : "starting",
+          queuePosition: admissionQueued ? ordinal : null,
           requestedAt: now,
           startedAt: null,
           completedAt: null,
@@ -5338,7 +5444,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
           ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
-            ? { workspacePreparation: dispatchMode.workspaceStrategy }
+            ? {
+                workspacePreparation: dispatchMode.workspaceStrategy,
+                workspacePreparationCommandId: command.commandId,
+              }
             : {}),
           ...wakeWorkStartedAt(projection.runs, command),
         };
@@ -5440,9 +5549,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 nativeItemRef: null,
                 parentItemId: null,
                 ordinal: turnItem.ordinal + 1,
-                status: "running",
+                status: admissionQueued ? "waiting" : "running",
                 title: WORKSPACE_PREPARATION_INPUT,
-                startedAt: now,
+                startedAt: admissionQueued ? null : now,
                 completedAt: null,
                 updatedAt: now,
                 type: "command_execution",
@@ -5542,7 +5651,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           request: { type: "provider-turn.start", runId },
         } satisfies PendingOrchestrationEffectV2;
-        if (dispatchMode.type !== "defer_start") {
+        if (dispatchMode.type !== "defer_start" && !admissionQueued) {
           yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
         }
         return;
@@ -6018,8 +6127,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         userMessageId: command.messageId,
         rootNodeId,
         activeAttemptId: attemptId,
-        status: "starting",
-        queuePosition: null,
+        status: admissionQueued ? "queued" : "starting",
+        queuePosition: admissionQueued ? ordinal : null,
         requestedAt: now,
         startedAt: null,
         completedAt: null,
@@ -6484,7 +6593,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: command.threadId,
         request: { type: "provider-turn.start", runId },
       } satisfies PendingOrchestrationEffectV2;
-      yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
+      if (!admissionQueued) yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
     });
 
   const dispatchIssueWorkStart = Effect.fn("orchestrationV2.dispatch.issueWorkStart")(function* (
@@ -6553,6 +6662,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     });
     if (issueThreadId !== null || alreadyQueued) return;
+    const read = Option.isNone(issueReads)
+      ? null
+      : yield* issueReads.value.workRead(command.issue).pipe(mapDispatchError(command));
+    const recipientId =
+      read?.parent == null
+        ? command.threadId
+        : yield* store.issueOwner(read.parent).pipe(mapDispatchError(command));
+    // Keep the leaf request durable until its ancestor owns a thread. The plan reactor
+    // wakes that owner; attaching the leaf to the repository root would break lineage.
+    if (recipientId === null) return;
+    const recipient = yield* projectionStore
+      .getThreadShell(recipientId)
+      .pipe(mapDispatchError(command));
+    if (recipient === null) return;
     const issueArgument = yield* encodeIssueArgument(command.issue).pipe(mapDispatchError(command));
     const targetArgument = yield* encodeTargetArgument({
       providerInstanceId: command.workerModelSelection.instanceId,
@@ -6565,11 +6688,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       {
         type: "message.dispatch",
         commandId: command.commandId,
-        threadId: command.threadId,
+        threadId: recipientId,
         messageId: idAllocator.derive.delegatedTaskMessage({ commandId: command.commandId }),
         text: `Start issue #${command.issue.number}: ${command.issue.title}\n${command.issue.url}\nRead the issue and delegate its authorized work through delegate_task with issue=${issueArgument}, mode=async, target=${targetArgument}, workspace=${command.workspace === "worktree" ? "worktree" : "inherit"}. Finish your turn while the worker runs. Status and closeout comments are authorized. Other GitHub mutations and publishing retain separate approval.`,
         attachments: [],
-        modelSelection: root.modelSelection,
+        modelSelection: recipient.modelSelection,
         dispatchMode: { type: "queue_after_active" },
         createdBy: command.createdBy,
         creationSource: command.creationSource,
@@ -6648,19 +6771,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const repositoryOwner = yield* issueStore
           .repositoryOwner(command.issue)
           .pipe(mapDispatchError(command));
-        if (repositoryOwner?.rootThreadId !== command.parentThreadId || repositoryOwner.paused)
+        if (repositoryOwner === null || repositoryOwner.paused || Option.isNone(issueReads))
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
-            cause: "Only the active registered repository root can delegate issue work in slice 1.",
+            cause: "The repository is paused or issue relationships are unavailable.",
+          });
+        const read = yield* issueReads.value
+          .workRead(command.issue)
+          .pipe(mapDispatchError(command));
+        const expectedParent =
+          read.parent === null
+            ? repositoryOwner.rootThreadId
+            : yield* issueStore.issueOwner(read.parent).pipe(mapDispatchError(command));
+        if (
+          issueEligibility(read) !== "eligible" ||
+          read.issue.id !== command.issue.id ||
+          read.issue.repositoryId !== command.issue.repositoryId ||
+          expectedParent !== command.parentThreadId
+        )
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "Issue work must be eligible and delegated by the current owner of its immediate GitHub parent (or the repository root for a top-level issue).",
           });
         const currentOwner = yield* issueStore
           .issueOwner(command.issue)
           .pipe(mapDispatchError(command));
+        const config = yield* issueStore
+          .configuration(repositoryOwner.rootThreadId)
+          .pipe(mapDispatchError(command));
         if (
           !(yield* issueStore
             .hasAttempt(command.issue, currentOwner ?? "first")
-            .pipe(mapDispatchError(command)))
+            .pipe(mapDispatchError(command))) &&
+          !config?.milestones.some((plan) => plan.number === read.milestoneNumber)
         )
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -8332,6 +8478,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "Another run is active on this thread.",
         });
       }
+      const admitted = yield* canStartIssueRun(projection.thread);
       const now = yield* DateTime.now;
       const emitEvent = emit(events, command);
       const scope = {
@@ -8351,7 +8498,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "turn-item.updated",
         payload: {
           ...withoutPreparationResult(state.preparationItem),
-          status: "running",
+          status: admitted ? "running" : "waiting",
           title: WORKSPACE_PREPARATION_INPUT,
           completedAt: null,
           updatedAt: now,
@@ -8370,7 +8517,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* emitEvent({
         ...scope,
         type: "run.updated",
-        payload: { ...state.run, status: "preparing", completedAt: null },
+        payload: {
+          ...state.run,
+          status: admitted ? "preparing" : "queued",
+          queuePosition: admitted ? null : state.run.ordinal,
+          completedAt: null,
+          workspacePreparationCommandId: command.commandId,
+        },
       });
     });
 
@@ -10305,6 +10458,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
         break;
+      case "repository.work.update": {
+        const projection = yield* projectionStore
+          .getThreadRecords(command.threadId, [])
+          .pipe(mapDispatchError(command));
+        const shell = projection.thread;
+        const prior = shell.repositoryOrchestration;
+        if (
+          prior === undefined ||
+          prior.revision !== command.expectedRevision ||
+          prior.repositoryId !== command.orchestration.repositoryId ||
+          prior.host !== command.orchestration.host ||
+          prior.projectId !== command.orchestration.projectId ||
+          prior.launchCommandId !== command.orchestration.launchCommandId
+        )
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Repository ownership changed. Refresh before updating work.",
+          });
+        const now = yield* DateTime.now;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: {
+            ...shell,
+            repositoryOrchestration: { ...command.orchestration, revision: prior.revision + 1 },
+            updatedAt: now,
+          },
+        });
+        break;
+      }
+      case "repository.work.continue": {
+        const projection = yield* projectionStore
+          .getThreadRecords(command.threadId, [])
+          .pipe(mapDispatchError(command));
+        if (projection.thread.repositoryOrchestration === undefined)
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This thread is not a repository orchestrator.",
+          });
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: projection.thread,
+        });
+        break;
+      }
       case "issue.work.start":
         yield* dispatchIssueWorkStart(command, events, effects);
         break;
@@ -10386,6 +10595,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       if (command.type === "queue.resume") {
         yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+      }
+      if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
+        for (const threadId of yield* issueWorkStore.value
+          .workerThreads(command.threadId)
+          .pipe(mapDispatchError(command)))
+          yield* mapDispatchError(command)(startNextQueuedRun(threadId));
       }
       return {
         sequence: receipt.resultSequence,
@@ -10504,6 +10719,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (command.type === "queue.resume") {
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+    }
+    if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
+      for (const threadId of yield* issueWorkStore.value
+        .workerThreads(command.threadId)
+        .pipe(mapDispatchError(command)))
+        yield* mapDispatchError(command)(startNextQueuedRun(threadId));
+    }
+    for (const stored of committed.storedEvents) {
+      if (stored.event.type !== "run.created" || stored.event.payload.status !== "queued") continue;
+      const shell = yield* projectionStore
+        .getThreadShell(stored.event.threadId)
+        .pipe(mapDispatchError(command));
+      if (shell?.linkedIssue !== undefined)
+        yield* mapDispatchError(command)(startNextQueuedRun(stored.event.threadId));
     }
     if (command.type === "notification.delivery.accept") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
@@ -10663,6 +10892,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ),
   );
 
+  const promoteOtherIssueQueues = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const shell = yield* projectionStore.getThreadShell(threadId);
+      if (shell?.linkedIssue !== undefined && Option.isSome(issueWorkStore)) {
+        const owner = yield* issueWorkStore.value.repositoryOwner(shell.linkedIssue);
+        if (owner !== null)
+          for (const queuedThreadId of yield* issueWorkStore.value.workerThreads(
+            owner.rootThreadId,
+          )) {
+            if (queuedThreadId !== threadId)
+              yield* threadDispatch.withLock(queuedThreadId, startNextQueuedRun(queuedThreadId));
+          }
+      }
+    });
+
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
@@ -10695,6 +10939,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : undefined,
         ),
       );
+      yield* promoteOtherIssueQueues(threadId);
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Failed to react to terminal V2 run", {
@@ -10725,6 +10970,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             stored.event.payload.status === "rolled_back"),
       ),
       Stream.runForEach(handleTerminalRun),
+      Effect.forkDetach,
+    );
+
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "runtime-request.updated" })
+    .pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "runtime-request.updated" &&
+          stored.event.payload.status !== "pending",
+      ),
+      Stream.runForEach((stored) =>
+        promoteOtherIssueQueues(stored.event.threadId).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to resume issue work after a user response", { cause }),
+          ),
+        ),
+      ),
       Effect.forkDetach,
     );
 

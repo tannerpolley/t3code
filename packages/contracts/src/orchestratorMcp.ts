@@ -1,3 +1,4 @@
+import { RepositoryWorkTarget } from "./issueWork.ts";
 import { IssueRef } from "./issue.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -561,6 +562,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
+  repositoryTarget: Schema.optional(Schema.NullOr(RepositoryWorkTarget)),
   projectId: OrchestratorMcpProjectTarget,
   prompt: OrchestratorMcpPrompt.annotate({
     description: "Prompt executed on every scheduled run.",
@@ -587,6 +589,7 @@ export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTas
 
 /** Summary of a scheduled task returned by the schedule/list/update tools. */
 export const OrchestratorMcpScheduledTask = Schema.Struct({
+  repositoryTarget: Schema.optional(Schema.NullOr(RepositoryWorkTarget)),
   scheduledTaskId: ScheduledTaskId,
   title: Schema.String,
   prompt: Schema.String,
@@ -620,6 +623,7 @@ export type OrchestratorMcpListScheduledTasksResult =
   typeof OrchestratorMcpListScheduledTasksResult.Type;
 
 export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
+  repositoryTarget: Schema.optional(Schema.NullOr(RepositoryWorkTarget)),
   scheduledTaskId: ScheduledTaskId,
   prompt: Schema.optional(OrchestratorMcpPrompt),
   title: Schema.optional(OrchestratorMcpTitle),

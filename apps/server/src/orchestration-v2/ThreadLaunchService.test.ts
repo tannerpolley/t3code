@@ -115,6 +115,7 @@ const adapter = {
 } as ProviderAdapterV2Shape;
 
 interface HarnessOptions {
+  readonly adapters?: ReadonlyArray<ProviderAdapterV2Shape>;
   readonly projectRepositoryIdentity?: import("@t3tools/contracts").RepositoryIdentity;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
@@ -127,15 +128,24 @@ interface HarnessOptions {
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly issueServiceLayer?: Layer.Layer<IssueService.IssueService>;
+  readonly runContinuationWorker?: boolean;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
   const database = SqlitePersistenceMemory;
-  const registry = ProviderAdapterRegistry.makeLayer([adapter]);
+  const registry = ProviderAdapterRegistry.makeLayer(options.adapters ?? [adapter]);
   const orchestrator = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "thread-launch" },
     registry,
-    { databaseLayer: database, runEffectWorker: false },
+    {
+      databaseLayer: database,
+      runEffectWorker: false,
+      runContinuationWorker: options.runContinuationWorker ?? false,
+      ...(options.issueServiceLayer === undefined
+        ? {}
+        : { issueServiceLayer: options.issueServiceLayer }),
+    },
   );
   const threadManagement = ThreadManagement.layer.pipe(Layer.provide(orchestrator));
   const receipts = CommandReceiptStore.layer.pipe(Layer.provide(database));
@@ -2613,7 +2623,20 @@ describe("managed issue work", () => {
       url: "https://github.com/tannerpolley/t3code/issues/8",
       title: "Single issue",
     };
+    const workRead = (input: { number: number }) =>
+      Effect.succeed({
+        issue: { ...issue, number: input.number },
+        state: "open" as const,
+        milestoneNumber: null,
+        parent: null,
+        subIssues: [],
+        blockedBy: [],
+        parentComplete: true,
+        subIssuesComplete: true,
+        blockersComplete: true,
+      });
     const harness = makeHarness({
+      issueServiceLayer: Layer.mock(IssueService.IssueService)({ workRead }),
       providers: [provider],
       projectRepositoryIdentity: {
         canonicalKey: "github.com/tannerpolley/t3code",
@@ -2646,6 +2669,7 @@ describe("managed issue work", () => {
       Parameters<IssueService.IssueService["Service"]["writeManagedComment"]>[0]
     > = [];
     const issueReads = Layer.mock(IssueService.IssueService)({
+      workRead,
       writeManagedComment: (request) =>
         Effect.sync(() => {
           writeCalls.push(request);
@@ -3198,3 +3222,637 @@ describe("managed issue work", () => {
     () => exercise("deletion"),
   );
 });
+
+it.effect(
+  "shares four slots across a nested issue tree, guards parents and eligibility, queues resumes, pauses admission, and wakes the root on completion",
+  () => {
+    const issue = (number: number) => ({
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      repositoryId: "repo:milestone",
+      id: `issue:${number}`,
+      nodeId: `node:${number}`,
+      number,
+      title: `Issue ${number}`,
+      url: `https://github.com/tannerpolley/t3code/issues/${number}`,
+    });
+    const workRead = (input: { number: number }) =>
+      Effect.succeed({
+        issue: issue(input.number),
+        state: "open" as const,
+        milestoneNumber: 1,
+        parent: input.number === 4 ? issue(1) : null,
+        subIssues: input.number === 1 ? [issue(4)] : [],
+        blockedBy: input.number === 6 ? [{ issue: issue(99), state: "open" as const }] : [],
+        parentComplete: true,
+        subIssuesComplete: true,
+        blockersComplete: input.number !== 7,
+      });
+    const harness = makeHarness({
+      runContinuationWorker: true,
+      adapters: [adapter, { ...adapter, instanceId: ProviderInstanceId.make("codex-second") }],
+      issueServiceLayer: Layer.mock(IssueService.IssueService)({ workRead }),
+    });
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const rootId = ThreadId.make("milestone-root");
+      const config = {
+        host: "github.com",
+        repository: "tannerpolley/t3code",
+        repositoryId: "repo:milestone",
+        projectId,
+        workspace: "project" as const,
+        launchCommandId: CommandId.make("milestone-root-create"),
+        revision: 1,
+        paused: false,
+        workerLimit: 4,
+        publishStatusComments: true,
+        publishCloseoutComments: true,
+        milestones: [
+          {
+            number: 1,
+            modelRoleId: "worker",
+            workspace: "project" as const,
+            status: "running" as const,
+            fingerprint: "",
+          },
+        ],
+        suspendedIssues: [],
+      };
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: config.launchCommandId,
+        threadId: rootId,
+        projectId,
+        title: "Repository orchestrator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        repositoryOrchestration: config,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("milestone-root-start"),
+        threadId: rootId,
+        messageId: MessageId.make("milestone-root-start"),
+        text: "Work through milestone 1",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const delegate = (
+        number: number,
+        parentThreadId = rootId,
+        key = `milestone-delegate:${number}`,
+        withWorktree = false,
+      ) =>
+        Effect.gen(function* () {
+          const projection = yield* threads.getThreadRecords(parentThreadId, ["runs"]);
+          const run = projection.runs.findLast((entry) =>
+            ["starting", "running", "waiting"].includes(entry.status),
+          )!;
+          const result = yield* threads.dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make(key),
+            parentThreadId,
+            parentRunId: run.id,
+            parentNodeId: run.rootNodeId!,
+            issue: issue(number),
+            task: `Finish issue ${number}`,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "always",
+            ...(withWorktree ? { worktree: { baseRef: "main", branch: "issue-worker" } } : {}),
+            createdBy: "agent",
+            creationSource: "mcp",
+          });
+          const created = result.storedEvents.find(
+            (stored) => stored.event.type === "thread.created",
+          );
+          if (created?.event.type !== "thread.created")
+            return yield* Effect.die("No worker created");
+          return created.event.threadId;
+        });
+      const first = yield* delegate(1);
+      const second = yield* delegate(2);
+      const third = yield* delegate(3);
+      assert.equal(
+        (yield* delegate(4, rootId, "wrong-parent").pipe(Effect.result))._tag,
+        "Failure",
+      );
+      const waitingRun = (yield* threads.getThreadRecords(first, ["runs"])).runs[0]!;
+      const questionAt = yield* DateTime.now;
+      const question: OrchestrationV2RuntimeRequest = {
+        id: RuntimeRequestId.make("milestone-question"),
+        nodeId: waitingRun.rootNodeId!,
+        providerTurnId: null,
+        nativeRequestRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "milestone-question",
+          strength: "strong",
+        },
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: questionAt,
+        resolvedAt: null,
+      };
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("milestone-question"),
+            type: "runtime-request.updated",
+            threadId: first,
+            runId: waitingRun.id,
+            occurredAt: questionAt,
+            payload: question,
+          },
+          {
+            id: EventId.make("milestone-waiting"),
+            type: "run.updated",
+            threadId: first,
+            runId: waitingRun.id,
+            occurredAt: questionAt,
+            payload: { ...waitingRun, status: "waiting" },
+          },
+        ],
+      });
+      const [nested, fifth] = yield* Effect.all([delegate(4, first), delegate(5)], {
+        concurrency: 2,
+      });
+      assert.equal(
+        (yield* threads.getThreadRecords(nested, [])).thread.lineage.parentThreadId,
+        first,
+      );
+      const status = (id: ThreadId) =>
+        threads
+          .getThreadRecords(id, ["runs"])
+          .pipe(Effect.map((projection) => projection.runs.at(-1)!.status));
+      assert.deepEqual([yield* status(nested), yield* status(fifth)].sort(), [
+        "queued",
+        "starting",
+      ]);
+      const queued = (yield* status(nested)) === "queued" ? nested : fifth;
+      const sql = yield* SqlClient.SqlClient;
+      const starts = yield* sql<{
+        thread_id: string;
+      }>`SELECT thread_id FROM orchestration_v2_effect_outbox WHERE thread_id = ${queued} AND effect_type = 'provider-turn.start'`;
+      assert.equal(starts.length, 0);
+      assert.equal((yield* delegate(6).pipe(Effect.result))._tag, "Failure");
+      assert.equal((yield* delegate(7).pipe(Effect.result))._tag, "Failure");
+      const finish = (id: ThreadId, key: string) =>
+        Effect.gen(function* () {
+          const run = (yield* threads.getThreadRecords(id, ["runs"])).runs.findLast(
+            (entry) => entry.status !== "queued",
+          )!;
+          const now = yield* DateTime.now;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${key}:result`),
+                type: "message.updated",
+                threadId: id,
+                runId: run.id,
+                occurredAt: now,
+                payload: {
+                  id: MessageId.make(`${key}:result`),
+                  threadId: id,
+                  runId: run.id,
+                  nodeId: run.rootNodeId,
+                  role: "assistant",
+                  text: "Finished.",
+                  attachments: [],
+                  streaming: false,
+                  createdAt: now,
+                  updatedAt: now,
+                  createdBy: "agent",
+                  creationSource: "provider",
+                },
+              },
+              {
+                id: EventId.make(`${key}:finish`),
+                type: "run.updated",
+                threadId: id,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+        });
+      const waitForStart = (id: ThreadId, sequence: number) =>
+        sink.stream({ afterSequence: sequence, eventType: "run.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.threadId === id &&
+              stored.event.type === "run.updated" &&
+              stored.event.payload.status === "starting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+      assert.equal(yield* status(first), "waiting");
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("milestone-answer"),
+            type: "runtime-request.updated",
+            threadId: first,
+            runId: waitingRun.id,
+            occurredAt: questionAt,
+            payload: { ...question, status: "resolved", resolvedAt: questionAt },
+          },
+        ],
+      });
+      const beforeFirstFinish = yield* sink.latestSequence();
+      yield* finish(first, "parent-turn-ended");
+      yield* waitForStart(queued, beforeFirstFinish);
+      assert.equal(yield* status(queued), "starting");
+      // The parent owns unfinished nested work, but its completed turn released its slot.
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("parent-resume"),
+        threadId: first,
+        messageId: MessageId.make("parent-resume"),
+        text: "Continue",
+        attachments: [],
+        modelSelection: { ...modelSelection, instanceId: ProviderInstanceId.make("codex-second") },
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.equal(yield* status(first), "queued");
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        commandId: CommandId.make("pause-plan"),
+        threadId: rootId,
+        expectedRevision: 1,
+        orchestration: { ...config, paused: true },
+      });
+      yield* finish(rootId, "root-waits");
+      const beforeLeafFinish = yield* sink.latestSequence();
+      yield* finish(second, "second-done");
+      yield* sink.stream({ afterSequence: beforeLeafFinish, eventType: "run.created" }).pipe(
+        Stream.filter((stored) => stored.event.threadId === rootId),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      yield* threads.dispatch({
+        type: "queue.resume",
+        threadId: first,
+        commandId: CommandId.make("resume-while-paused"),
+      });
+      assert.equal(yield* status(first), "queued");
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        commandId: CommandId.make("resume-plan"),
+        threadId: rootId,
+        expectedRevision: 2,
+        orchestration: { ...config, revision: 2, paused: false },
+      });
+      yield* threads.dispatch({
+        type: "queue.resume",
+        threadId: first,
+        commandId: CommandId.make("resume-after-pause"),
+      });
+      assert.equal(yield* status(first), "starting");
+      const preparingWorker = yield* delegate(8, rootId, "worktree-worker", true);
+      assert.equal(yield* status(preparingWorker), "queued");
+      const beforePreparation = yield* sink.latestSequence();
+      yield* finish(third, "release-preparation-slot");
+      yield* sink.stream({ afterSequence: beforePreparation, eventType: "run.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.threadId === preparingWorker &&
+            stored.event.type === "run.updated" &&
+            stored.event.payload.status === "preparing",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const preparing = (yield* threads.getThreadRecords(preparingWorker, ["runs"])).runs[0]!;
+      const failedAt = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("workspace-preparation-failed"),
+            type: "run.updated",
+            threadId: preparingWorker,
+            runId: preparing.id,
+            occurredAt: failedAt,
+            payload: { ...preparing, status: "failed", completedAt: failedAt },
+          },
+        ],
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("worktree-provider-resume"),
+        threadId: preparingWorker,
+        messageId: MessageId.make("worktree-provider-resume"),
+        text: "Retry using the other provider instance",
+        attachments: [],
+        modelSelection: { ...modelSelection, instanceId: ProviderInstanceId.make("codex-second") },
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const resumedPreparation = (yield* threads.getThreadRecords(preparingWorker, [
+        "runs",
+      ])).runs.at(-1)!;
+      assert.equal(resumedPreparation.status, "preparing");
+      assert.equal(resumedPreparation.workspacePreparation?.type, "worktree");
+      const prematureStarts =
+        yield* sql`SELECT 1 FROM orchestration_v2_effect_outbox WHERE thread_id = ${preparingWorker} AND effect_type = 'provider-turn.start'`;
+      assert.equal(prematureStarts.length, 0);
+      const root = yield* threads.getThreadRecords(rootId, ["runs", "messages"]);
+      assert.isTrue(root.runs.length > 1);
+      assert.isTrue(
+        root.messages.some(
+          (message) =>
+            message.notification !== undefined || message.delegatedCompletion !== undefined,
+        ),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect(
+  "starts ancestor owners for milestone work, reports blocked and unreadable plans, and suspends externally changed branches without rewriting lineage",
+  () => {
+    const linked = (number: number) => ({
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      repositoryId: "repo:plans",
+      id: `issue:${number}`,
+      nodeId: `node:${number}`,
+      number,
+      title: `Issue ${number}`,
+      url: `https://github.com/tannerpolley/t3code/issues/${number}`,
+    });
+    let newBlocker = false;
+    let reparented = false;
+    const milestoneNumber = (number: number) =>
+      number <= 2 ? 1 : number === 3 ? 2 : number === 4 ? 3 : number === 5 ? 4 : 6;
+    const summary = (number: number) => ({
+      number,
+      title: `Issue ${number}`,
+      url: linked(number).url,
+      state: "open" as const,
+      stateReason: null,
+      author: null,
+      assignees: [],
+      labels: [],
+      milestone: {
+        number: milestoneNumber(number),
+        title: `Milestone ${milestoneNumber(number)}`,
+        state: "open" as const,
+        dueAt: null,
+        url: "https://github.com/tannerpolley/t3code/milestone/1",
+        openCount: 1,
+        closedCount: 0,
+      },
+      createdAt: "2026-10-05T00:00:00Z",
+      updatedAt: "2026-10-05T00:00:00Z",
+      commentCount: 0,
+    });
+    const workRead = (input: { number: number }) =>
+      Effect.succeed({
+        issue: linked(input.number),
+        state: "open" as const,
+        milestoneNumber: milestoneNumber(input.number),
+        parent:
+          input.number === 2 && !reparented ? linked(1) : input.number === 3 ? linked(9) : null,
+        subIssues: input.number === 1 ? [linked(2)] : [],
+        blockedBy:
+          input.number === 4 || (input.number === 2 && newBlocker)
+            ? [{ issue: linked(99), state: "open" as const }]
+            : [],
+        parentComplete: true,
+        subIssuesComplete: true,
+        blockersComplete: input.number !== 5,
+      });
+    const reads = Layer.mock(IssueService.IssueService)({
+      workRead,
+      repositoryIdentity: () =>
+        Effect.succeed({
+          host: "github.com",
+          repository: "tannerpolley/t3code",
+          repositoryId: "repo:plans",
+        }),
+      milestoneIssues: (input) =>
+        Effect.succeed({
+          issues: [1, 2, 3, 4, 5]
+            .map(summary)
+            .filter((issue) => issue.milestone.number === input.milestoneNumber),
+          complete: true,
+        }),
+      detail: (input) =>
+        Effect.succeed({
+          repository: { host: "github.com", repository: "tannerpolley/t3code" },
+          viewer: null,
+          fetchedAt: "2026-10-05T00:00:00Z",
+          issue: summary(input.number),
+          body: "Finish this issue",
+          comments: [],
+          linkedPullRequests: [],
+        }),
+      resolveLinkedIssue: (input) => Effect.succeed(linked(input.number)),
+    });
+    const provider: ServerProvider = {
+      instanceId: modelSelection.instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-05T00:00:00Z",
+      availability: "available",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+    const harness = makeHarness({
+      issueServiceLayer: reads,
+      providers: [provider],
+      projectRepositoryIdentity: {
+        canonicalKey: "github.com/tannerpolley/t3code",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://github.com/tannerpolley/t3code.git",
+        },
+        provider: "github",
+        owner: "tannerpolley",
+        name: "t3code",
+        displayName: "tannerpolley/t3code",
+      },
+      serverSettings: {
+        modelRoles: [
+          {
+            id: "worker",
+            name: "Worker",
+            description: "Issue worker",
+            targets: [
+              { providerInstanceId: modelSelection.instanceId, model: modelSelection.model },
+            ],
+          },
+        ],
+      },
+    });
+    const dependencies = Layer.mergeAll(
+      harness.layer,
+      reads,
+      IssueWorkStore.layer.pipe(Layer.provide(harness.layer)),
+      IdAllocator.layer,
+      ProviderAdapterRegistry.makeLayer([adapter]),
+    );
+    const serviceLayer = IssueWorkService.layer.pipe(Layer.provide(dependencies));
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const input = {
+        host: "github.com",
+        repository: "tannerpolley/t3code",
+        projectId,
+        modelRoleId: "worker",
+        workspace: "project" as const,
+      };
+      const emptyPlan = yield* service.workMilestone({
+        ...input,
+        milestoneNumber: 5,
+        clientRequestId: CommandId.make("empty-plan"),
+      });
+      assert.isNotNull(emptyPlan.rootThreadId);
+      assert.equal(emptyPlan.orchestration?.milestones[0]?.status, "complete");
+      const plan = yield* service.workMilestone({
+        ...input,
+        milestoneNumber: 1,
+        clientRequestId: CommandId.make("plan:1"),
+      });
+      const rootId = plan.rootThreadId!;
+      const root = yield* threads.getThreadRecords(rootId, ["runs", "messages"]);
+      assert.equal(root.messages.length, 1);
+      assert.include(root.messages[0]!.text, "Start issue #1:");
+      const command = (
+        number: number,
+        parentThreadId: ThreadId,
+        run: (typeof root.runs)[number],
+      ) => ({
+        type: "delegated_task.request" as const,
+        commandId: CommandId.make(`plan:delegate:${number}`),
+        parentThreadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        issue: linked(number),
+        task: "Finish issue",
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        completionWake: "always" as const,
+        createdBy: "agent" as const,
+        creationSource: "mcp" as const,
+      });
+      const sequence = yield* sink.latestSequence();
+      const first = yield* threads.dispatch(command(1, rootId, root.runs[0]!));
+      const firstId = first.storedEvents.find((stored) => stored.event.type === "thread.created")!
+        .event.threadId;
+      yield* sink.stream({ afterSequence: sequence, eventType: "message.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.threadId === firstId &&
+            stored.event.type === "message.updated" &&
+            stored.event.payload.text.includes("Start your authorized sub-issue #2"),
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const parent = yield* threads.getThreadRecords(firstId, ["runs"]);
+      assert.equal(parent.runs[0]!.status, "starting");
+      const second = yield* threads.dispatch(command(2, firstId, parent.runs[0]!));
+      const secondId = second.storedEvents.find((stored) => stored.event.type === "thread.created")!
+        .event.threadId;
+      assert.equal(
+        (yield* threads.getThreadRecords(secondId, [])).thread.lineage.parentThreadId,
+        firstId,
+      );
+      newBlocker = true;
+      yield* service.reconcile(rootId);
+      let state = yield* service.repositoryStatus(input);
+      assert.isTrue(
+        state.orchestration!.suspendedIssues.some(
+          (entry) => entry.id === "issue:2" && entry.reason.includes("blocker"),
+        ),
+      );
+      assert.equal(
+        (yield* threads.getThreadRecords(secondId, ["runs"])).runs[0]?.status,
+        "interrupted",
+      );
+      newBlocker = false;
+      yield* service.setPaused({
+        ...input,
+        paused: false,
+        clientRequestId: CommandId.make("plan:resume-after-blocker"),
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        threadId: secondId,
+        commandId: CommandId.make("plan:worker-resume"),
+        messageId: MessageId.make("plan:worker-resume"),
+        text: "Resume the issue",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      reparented = true;
+      yield* service.setPaused({
+        ...input,
+        paused: true,
+        clientRequestId: CommandId.make("plan:pause"),
+      });
+      assert.isTrue((yield* service.repositoryStatus(input)).orchestration!.paused);
+      yield* service.setPaused({
+        ...input,
+        paused: false,
+        clientRequestId: CommandId.make("plan:resume"),
+      });
+      state = yield* service.repositoryStatus(input);
+      assert.isTrue(
+        state.orchestration!.suspendedIssues.some(
+          (entry) => entry.id === "issue:2" && entry.reason.includes("re-parented"),
+        ),
+      );
+      assert.equal(
+        (yield* threads.getThreadRecords(secondId, [])).thread.lineage.parentThreadId,
+        firstId,
+      );
+      for (const [number, status] of [
+        [2, "awaiting_approval"],
+        [3, "blocked"],
+        [4, "unreadable"],
+        [5, "complete"],
+      ] as const) {
+        const result = yield* service.workMilestone({
+          ...input,
+          milestoneNumber: number,
+          clientRequestId: CommandId.make(`plan:${number}`),
+        });
+        assert.equal(
+          result.orchestration!.milestones.find((entry) => entry.number === number)?.status,
+          status,
+        );
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(dependencies, serviceLayer)));
+  },
+);

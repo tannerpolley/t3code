@@ -9,6 +9,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { RepositoryWorkTarget } from "./issueWork.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
@@ -98,6 +99,7 @@ export const ScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   projectId: ProjectId,
   threadId: Schema.NullOr(ThreadId),
+  repositoryTarget: Schema.optional(Schema.NullOr(RepositoryWorkTarget)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -134,6 +136,7 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   schedule: ScheduledTaskUpsertSchedule,
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
+  repositoryTarget: Schema.optional(Schema.NullOr(RepositoryWorkTarget)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,

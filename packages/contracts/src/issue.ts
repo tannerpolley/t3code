@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ThreadLinkedIssue } from "./threadIssue.ts";
 
 const IssueNumber = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
@@ -121,6 +122,21 @@ export const IssueDetailInput = Schema.Struct({
   expectedAccountId: Schema.optional(TrimmedNonEmptyString),
 });
 export type IssueDetailInput = typeof IssueDetailInput.Type;
+
+export const IssueWorkRead = Schema.Struct({
+  issue: ThreadLinkedIssue,
+  state: Schema.Literals(["open", "closed"]),
+  milestoneNumber: Schema.NullOr(IssueNumber),
+  parent: Schema.NullOr(ThreadLinkedIssue),
+  subIssues: Schema.Array(ThreadLinkedIssue),
+  blockedBy: Schema.Array(
+    Schema.Struct({ issue: ThreadLinkedIssue, state: Schema.Literals(["open", "closed"]) }),
+  ),
+  parentComplete: Schema.Boolean,
+  subIssuesComplete: Schema.Boolean,
+  blockersComplete: Schema.Boolean,
+});
+export type IssueWorkRead = typeof IssueWorkRead.Type;
 
 export const IssueComment = Schema.Struct({
   author: Schema.NullOr(IssueActor),

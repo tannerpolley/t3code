@@ -142,6 +142,107 @@ const listInput = {
   repository: REPOSITORY,
 };
 
+it.effect("paginates only the selected milestone during repository reconciliation", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(1)], {
+          link: `<https://${HOST}/repos/${REPOSITORY}/issues?page=2>; rel="next"`,
+        }),
+        httpResponse([rawIssue(2)]),
+      ],
+    });
+    const result = yield* (yield* service(harness)).milestoneIssues({
+      ...listInput,
+      milestoneNumber: 7,
+    });
+    assert.deepEqual(
+      result.issues.map((issue) => issue.number),
+      [1, 2],
+    );
+    assert.isTrue(result.complete);
+    assert.isTrue(harness.calls.every((call) => call.at(-1)?.includes("milestone=7")));
+  }),
+);
+
+it.effect(
+  "reads native hierarchy and closed blockers, and rejects partial GraphQL permission errors",
+  () =>
+    Effect.gen(function* () {
+      const node = (number: number, state = "OPEN") => ({
+        id: `node:${number}`,
+        databaseId: number,
+        number,
+        title: `Issue ${number}`,
+        url: `https://${HOST}/${REPOSITORY}/issues/${number}`,
+        state,
+        repository: { databaseId: 123, nameWithOwner: REPOSITORY },
+      });
+      const connection = (nodes: unknown[], totalCount = nodes.length) => ({
+        nodes,
+        totalCount,
+        pageInfo: { hasNextPage: false, endCursor: null },
+      });
+      const payload = {
+        data: {
+          repository: {
+            issue: {
+              ...node(2),
+              milestone: { number: 1 },
+              parent: node(1),
+              subIssues: connection([node(3)]),
+              blockedBy: connection([node(4, "CLOSED")]),
+            },
+          },
+        },
+      };
+      const harness = makeHarness({ responses: [httpResponse(payload)] });
+      const read = yield* (yield* service(harness)).workRead({ ...listInput, number: 2 });
+      assert.equal(read.parent?.number, 1);
+      assert.equal(read.subIssues[0]?.number, 3);
+      assert.equal(read.blockedBy[0]?.state, "closed");
+      assert.isTrue(read.parentComplete && read.blockersComplete && read.subIssuesComplete);
+      const partial = makeHarness({
+        responses: [httpResponse({ ...payload, errors: [{ message: "Forbidden" }] })],
+      });
+      assert.equal(
+        (yield* (yield* service(partial)).workRead({ ...listInput, number: 2 }).pipe(Effect.result))
+          ._tag,
+        "Failure",
+      );
+      const missingNodes = makeHarness({
+        responses: Array.from({ length: 10 }, () =>
+          httpResponse({
+            data: {
+              repository: {
+                issue: {
+                  ...payload.data.repository.issue,
+                  blockedBy: connection([], 1),
+                },
+              },
+            },
+          }),
+        ),
+      });
+      assert.isFalse(
+        (yield* (yield* service(missingNodes)).workRead({ ...listInput, number: 2 }))
+          .blockersComplete,
+      );
+    }),
+);
+
+it.effect("resolves a repository identity without requiring an issue", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [httpResponse({ id: 123, full_name: REPOSITORY })],
+    });
+    const result = yield* (yield* service(harness)).repositoryIdentity(listInput);
+    assert.deepEqual(result, { host: HOST, repository: REPOSITORY, repositoryId: "123" });
+    assert.equal(harness.calls.length, 1);
+    assert.include(harness.calls[0]!.join(" "), "repos/acme/web");
+  }),
+);
+
 it.effect("resolves the stable GitHub repository and issue identities", () =>
   Effect.gen(function* () {
     const harness = makeHarness({

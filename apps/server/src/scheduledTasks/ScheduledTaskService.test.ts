@@ -1,9 +1,10 @@
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskError } from "@t3tools/contracts";
+import { ScheduledTaskError, ThreadId, ProjectId, ScheduledTaskId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -346,5 +347,60 @@ it.effect(
           yield* Deferred.succeed(releaseLast, undefined);
         }),
       );
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect(
+  "repository schedules resolve the current owner at each firing and refuse paused work",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      let root = "repository-owner-1";
+      let paused = false;
+      const sent: string[] = [];
+      const dependencies = Layer.mergeAll(
+        NodeCrypto.layer,
+        Layer.mock(Scheduler.Scheduler)({ register: () => Effect.void }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: () => Effect.die("Repository schedules must not create a second root"),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          sendToThread: (input) =>
+            Effect.sync(() => {
+              sent.push(input.threadId);
+              return {} as ThreadManagementService.ThreadManagementSendResult;
+            }),
+        }),
+        Layer.mock(IssueWorkStore.IssueWorkStore)({
+          repositoryOwner: () =>
+            Effect.succeed({
+              rootThreadId: ThreadId.make(root),
+              projectId: ProjectId.make("project:test"),
+              paused,
+            }),
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+        yield* insertRow(
+          sql,
+          { id: "repository-task", next: null, enabled: 0, status: "never" },
+          "2026-09-09T12:00:00.000Z",
+        );
+        yield* sql`UPDATE scheduled_tasks SET repository_target_json = '{"host":"github.com","repositoryId":"repo:1"}' WHERE task_id = 'repository-task'`;
+        const id = ScheduledTaskId.make("repository-task");
+        assert.deepEqual((yield* tasks.list()).tasks[0]?.repositoryTarget, {
+          host: "github.com",
+          repositoryId: "repo:1",
+        });
+        yield* tasks.runNow({ id });
+        root = "repository-owner-2";
+        yield* tasks.runNow({ id });
+        assert.deepEqual(sent, ["repository-owner-1", "repository-owner-2"]);
+        paused = true;
+        const blocked = yield* tasks.runNow({ id });
+        assert.equal(blocked.task.lastRunStatus, "failed");
+        assert.equal(sent.length, 2);
+      }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

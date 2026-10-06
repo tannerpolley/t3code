@@ -2742,6 +2742,18 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.issuesWorkStatus, issueWork.workStatus(input), {
             "rpc.aggregate": "issues",
           }),
+        [WS_METHODS.issuesWorkMilestone]: (input) =>
+          observeRpcEffect(WS_METHODS.issuesWorkMilestone, issueWork.workMilestone(input), {
+            "rpc.aggregate": "issues",
+          }),
+        [WS_METHODS.issuesRepositoryStatus]: (input) =>
+          observeRpcEffect(WS_METHODS.issuesRepositoryStatus, issueWork.repositoryStatus(input), {
+            "rpc.aggregate": "issues",
+          }),
+        [WS_METHODS.issuesSetPaused]: (input) =>
+          observeRpcEffect(WS_METHODS.issuesSetPaused, issueWork.setPaused(input), {
+            "rpc.aggregate": "issues",
+          }),
         [WS_METHODS.issuesRepositories]: () =>
           observeRpcEffect(WS_METHODS.issuesRepositories, issues.repositories(), {
             "rpc.aggregate": "issues",

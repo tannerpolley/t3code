@@ -133,6 +133,8 @@ export class OrchestratorV2ScenarioStepError extends Schema.TaggedError<Orchestr
 
 function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<ThreadId> {
   switch (command.type) {
+    case "repository.work.update":
+    case "repository.work.continue":
     case "issue.work.start":
     case "thread.create":
     case "thread.archive":

@@ -275,10 +275,17 @@ export const make = Effect.gen(function* () {
           cancelledBackgroundNativeIds.add(item.nativeItemRef.nativeId);
         }
       };
-      // Queued runs have not started provider work. Preserve their execution
-      // identities and order, but require explicit consent before draining them.
+      // Repository plans already authorize queued work. Preserve any user hold;
+      // fresh managed queues recover through the shared eligibility/admission gate.
+      // Ordinary queues still require explicit consent after process loss.
       for (const run of projection.runs) {
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+        if (
+          run.status !== "queued" ||
+          run.queueHeld === true ||
+          projection.thread.linkedIssue !== undefined ||
+          projection.thread.repositoryOrchestration !== undefined
+        )
+          continue;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",

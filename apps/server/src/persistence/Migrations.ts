@@ -74,6 +74,7 @@ import Migration0057 from "./Migrations/057_ProjectionMessagesLatestAssistant.ts
 import Migration0058 from "./Migrations/058_ProjectionTurnItemCounts.ts";
 import Migration0059 from "./Migrations/059_ThreadIssueWork.ts";
 import Migration0060 from "./Migrations/060_RepositoryOrchestration.ts";
+import Migration0061 from "./Migrations/061_RepositoryScheduledWork.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -148,6 +149,7 @@ export const migrationEntries = [
   [58, "ProjectionTurnItemCounts", Migration0058],
   [59, "ThreadIssueWork", Migration0059],
   [60, "RepositoryOrchestration", Migration0060],
+  [61, "RepositoryScheduledWork", Migration0061],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

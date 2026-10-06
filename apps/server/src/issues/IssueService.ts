@@ -25,6 +25,7 @@ import {
   type IssueRepositorySummary,
   type IssueSummary as IssueSummaryType,
   ThreadLinkedIssue,
+  type IssueWorkRead,
   type ThreadLinkedIssue as ThreadLinkedIssueType,
 } from "@t3tools/contracts";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
@@ -166,6 +167,40 @@ const RawGitHubCommentSchema = Schema.Struct({
   body: Schema.NullOr(Schema.String),
 });
 const RawGitHubCommentListSchema = Schema.Array(RawGitHubCommentSchema);
+const WorkIssueNode = Schema.Struct({
+  id: Schema.String,
+  databaseId: Schema.Int,
+  number: IssueNumber,
+  title: Schema.String,
+  url: GraphQlUrl,
+  state: Schema.Literals(["OPEN", "CLOSED"]),
+  repository: Schema.Struct({ databaseId: Schema.Int, nameWithOwner: Schema.String }),
+});
+const WorkIssueConnection = Schema.Struct({
+  totalCount: NonNegativeInt,
+  nodes: Schema.Array(Schema.NullOr(WorkIssueNode)),
+  pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean, endCursor: Schema.NullOr(Schema.String) }),
+});
+const WorkIssueResponse = Schema.Struct({
+  errors: Schema.optional(Schema.Array(Schema.Unknown)),
+  data: Schema.Struct({
+    repository: Schema.NullOr(
+      Schema.Struct({
+        issue: Schema.NullOr(
+          Schema.Struct({
+            ...WorkIssueNode.fields,
+            milestone: Schema.NullOr(Schema.Struct({ number: IssueNumber })),
+            parent: Schema.NullOr(WorkIssueNode),
+            subIssues: WorkIssueConnection,
+            blockedBy: WorkIssueConnection,
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+const WORK_ISSUE_FIELDS =
+  "id databaseId number title url state repository { databaseId nameWithOwner }";
 const GraphQlActorSchema = Schema.Struct({
   login: TrimmedNonEmptyString,
   avatarUrl: Schema.optional(Schema.NullOr(Schema.String)),
@@ -653,6 +688,24 @@ export class IssueService extends Context.Service<
     readonly detail: (
       input: IssueDetailInputType,
     ) => Effect.Effect<IssueDetailResultType, IssueReadError>;
+    readonly workRead: (
+      input: IssueDetailInputType,
+    ) => Effect.Effect<IssueWorkRead, IssueReadError>;
+    readonly milestoneIssues: (input: {
+      readonly host: string;
+      readonly repository: string;
+      readonly milestoneNumber: number;
+    }) => Effect.Effect<
+      { readonly issues: ReadonlyArray<IssueSummaryType>; readonly complete: boolean },
+      IssueReadError
+    >;
+    readonly repositoryIdentity: (input: {
+      readonly host: string;
+      readonly repository: string;
+    }) => Effect.Effect<
+      Pick<ThreadLinkedIssueType, "host" | "repository" | "repositoryId">,
+      IssueReadError
+    >;
     readonly resolveLinkedIssue: (input: {
       readonly host: string;
       readonly repository: string;
@@ -901,6 +954,156 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     return null;
   });
 
+  const workRead: IssueService["Service"]["workRead"] = Effect.fn("IssueService.workRead")(
+    function* (input) {
+      const scope = yield* resolveScope("detail", input);
+      return yield* githubPullRequests
+        .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
+          Effect.gen(function* () {
+            const [owner, name] = scope.repository.split("/");
+            const linked = (node: typeof WorkIssueNode.Type): ThreadLinkedIssueType => ({
+              host: scope.host,
+              repository: node.repository.nameWithOwner,
+              repositoryId: String(node.repository.databaseId),
+              id: String(node.databaseId),
+              nodeId: node.id,
+              number: node.number,
+              title: node.title,
+              url: node.url,
+            });
+            const children = new Map<string, ThreadLinkedIssueType>();
+            const blockers = new Map<string, IssueWorkRead["blockedBy"][number]>();
+            let subCursor: string | undefined;
+            let blockerCursor: string | undefined;
+            let result: IssueWorkRead | undefined;
+            // Bounded reads fail closed if GitHub changes connections during pagination.
+            for (let page = 0; page < 10; page++) {
+              const response = yield* executeApi({
+                operation: "detail",
+                scope,
+                endpoint: "graphql",
+                maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+                graphql: {
+                  query: `query($owner: String!, $name: String!, $number: Int!, $sub: String, $block: String) {
+              repository(owner: $owner, name: $name) { issue(number: $number) {
+                ${WORK_ISSUE_FIELDS} milestone { number } parent { ${WORK_ISSUE_FIELDS} }
+                subIssues(first: 100, after: $sub) { totalCount nodes { ${WORK_ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } }
+                blockedBy(first: 100, after: $block) { totalCount nodes { ${WORK_ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } }
+              } }
+            }`,
+                  variables: {
+                    owner: owner!,
+                    name: name!,
+                    number: input.number,
+                    ...(subCursor === undefined ? {} : { sub: subCursor }),
+                    ...(blockerCursor === undefined ? {} : { block: blockerCursor }),
+                  },
+                },
+              });
+              const decoded = yield* decodeApiResponse(
+                "detail",
+                WorkIssueResponse,
+                response,
+                "Issue hierarchy or dependencies could not be read.",
+              );
+              const node = decoded.data.repository?.issue;
+              if (node == null || (decoded.errors?.length ?? 0) > 0)
+                return yield* readError(
+                  "detail",
+                  "inaccessible",
+                  "Issue hierarchy or dependencies could not be read completely.",
+                );
+              for (const child of node.subIssues.nodes)
+                if (child !== null) children.set(child.id, linked(child));
+              for (const blocker of node.blockedBy.nodes)
+                if (blocker !== null)
+                  blockers.set(blocker.id, {
+                    issue: linked(blocker),
+                    state: blocker.state === "OPEN" ? "open" : "closed",
+                  });
+              result = {
+                issue: linked(node),
+                state: node.state === "OPEN" ? "open" : "closed",
+                milestoneNumber: node.milestone?.number ?? null,
+                parent: node.parent === null ? null : linked(node.parent),
+                parentComplete: true,
+                subIssues: [...children.values()],
+                blockedBy: [...blockers.values()],
+                subIssuesComplete:
+                  !node.subIssues.pageInfo.hasNextPage &&
+                  children.size === node.subIssues.totalCount,
+                blockersComplete:
+                  !node.blockedBy.pageInfo.hasNextPage &&
+                  blockers.size === node.blockedBy.totalCount,
+              };
+              if (result.subIssuesComplete && result.blockersComplete) break;
+              if (!node.subIssues.pageInfo.hasNextPage && !node.blockedBy.pageInfo.hasNextPage)
+                break;
+              const nextSub = node.subIssues.pageInfo.hasNextPage
+                ? node.subIssues.pageInfo.endCursor
+                : subCursor;
+              const nextBlock = node.blockedBy.pageInfo.hasNextPage
+                ? node.blockedBy.pageInfo.endCursor
+                : blockerCursor;
+              if (
+                (node.subIssues.pageInfo.hasNextPage &&
+                  (nextSub == null || nextSub === subCursor)) ||
+                (node.blockedBy.pageInfo.hasNextPage &&
+                  (nextBlock == null || nextBlock === blockerCursor))
+              )
+                break;
+              subCursor = nextSub ?? undefined;
+              blockerCursor = nextBlock ?? undefined;
+            }
+            return result!;
+          }),
+        )
+        .pipe(
+          Effect.mapError((error) =>
+            isIssueReadError(error) ? error : mapGitHubError("detail", error),
+          ),
+        );
+    },
+  );
+
+  const readRepositoryIdentity = Effect.fn("IssueService.readRepositoryIdentity")(function* (
+    scope: IssueRepositoryScope,
+  ) {
+    const response = yield* executeApi({
+      operation: "detail",
+      scope,
+      endpoint: `repos/${encodeRepositoryPath(scope.repository)}`,
+      maxOutputBytes: 256 * 1024,
+    });
+    const repository = yield* decodeApiResponse(
+      "detail",
+      RawRepositoryIdentitySchema,
+      response,
+      "GitHub returned an invalid repository identity.",
+    );
+    if (safeRepository(scope.host, repository.full_name) !== scope.repository)
+      return yield* readError("detail", "invalid-response", "GitHub returned another repository.");
+    return {
+      host: scope.host,
+      repository: repository.full_name,
+      repositoryId: String(repository.id),
+    };
+  });
+  const repositoryIdentity: IssueService["Service"]["repositoryIdentity"] = Effect.fn(
+    "IssueService.repositoryIdentity",
+  )(function* (input) {
+    const scope = yield* resolveScope("detail", input);
+    return yield* githubPullRequests
+      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
+        readRepositoryIdentity(scope),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isIssueReadError(error) ? error : mapGitHubError("detail", error),
+        ),
+      );
+  });
+
   const resolveLinkedIssue: IssueService["Service"]["resolveLinkedIssue"] = Effect.fn(
     "IssueService.resolveLinkedIssue",
   )(function* (input) {
@@ -908,18 +1111,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     return yield* githubPullRequests
       .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
         Effect.gen(function* () {
-          const repositoryResponse = yield* executeApi({
-            operation: "detail",
-            scope,
-            endpoint: `repos/${encodeRepositoryPath(scope.repository)}`,
-            maxOutputBytes: 256 * 1024,
-          });
-          const repository = yield* decodeApiResponse(
-            "detail",
-            RawRepositoryIdentitySchema,
-            repositoryResponse,
-            "GitHub returned an invalid repository identity.",
-          );
+          const repository = yield* readRepositoryIdentity(scope);
           const issueResponse = yield* executeApi({
             operation: "detail",
             scope,
@@ -942,17 +1134,8 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
           if (issue.number !== input.number) {
             return yield* readError("detail", "invalid-response", "GitHub returned another issue.");
           }
-          if (safeRepository(scope.host, repository.full_name) !== scope.repository) {
-            return yield* readError(
-              "detail",
-              "invalid-response",
-              "GitHub returned another repository.",
-            );
-          }
           return yield* decodeLinkedIssue({
-            host: scope.host,
-            repository: repository.full_name,
-            repositoryId: String(repository.id),
+            ...repository,
             id: String(issue.id),
             nodeId: issue.node_id,
             number: issue.number,
@@ -1051,11 +1234,12 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     scope: IssueRepositoryScope,
     state: IssueListState,
     page: number,
+    milestoneNumber?: number,
   ): Effect.fn.Return<PageResult<IssueSummaryType>, IssueReadError> {
     const response = yield* executeApi({
       operation: "list",
       scope,
-      endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}`,
+      endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}${milestoneNumber === undefined ? "" : `&milestone=${milestoneNumber}`}`,
       maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     });
     const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawIssueSchema)))(
@@ -1341,7 +1525,44 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       );
   });
 
-  return IssueService.of({ repositories, list, detail, resolveLinkedIssue, writeManagedComment });
+  const milestoneIssues: IssueService["Service"]["milestoneIssues"] = Effect.fn(
+    "IssueService.milestoneIssues",
+  )(function* (input) {
+    const scope = yield* resolveScope("list", input);
+    return yield* githubPullRequests
+      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
+        Effect.gen(function* () {
+          const issues: IssueSummaryType[] = [];
+          let page: number | null = 1;
+          for (let count = 0; count < 10 && page !== null; count++) {
+            const result: PageResult<IssueSummaryType> = yield* listIssuePage(
+              scope,
+              "all",
+              page,
+              input.milestoneNumber,
+            );
+            issues.push(...result.items);
+            page = result.nextPage;
+          }
+          return { issues, complete: page === null };
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isIssueReadError(error) ? error : mapGitHubError("list", error),
+        ),
+      );
+  });
+  return IssueService.of({
+    repositories,
+    list,
+    detail,
+    workRead,
+    milestoneIssues,
+    repositoryIdentity,
+    resolveLinkedIssue,
+    writeManagedComment,
+  });
 });
 
 export const layer: Layer.Layer<

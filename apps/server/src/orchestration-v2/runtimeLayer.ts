@@ -262,7 +262,9 @@ const threadLifecycleProvided = threadLifecycleServiceLayer.pipe(
   Layer.provide(threadManagementProvided),
 );
 const scheduledTaskProvided = scheduledTaskServiceLayer.pipe(
-  Layer.provide(Layer.mergeAll(threadLaunchProvided, threadManagementProvided)),
+  Layer.provide(
+    Layer.mergeAll(threadLaunchProvided, threadManagementProvided, IssueWorkStore.layer),
+  ),
 );
 const providerContinuationWorkerProvided = providerContinuationWorkerLive.pipe(
   Layer.provide(
@@ -330,6 +332,7 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
         threadManagementProvided,
         idAllocatorLayer,
         providerAdapterRegistryProvided,
+        eventSinkProvided,
       ),
     ),
   ),

@@ -99,6 +99,8 @@ it.effect(
                 workerLimit: 4,
                 publishStatusComments: true,
                 publishCloseoutComments: true,
+                milestones: [],
+                suspendedIssues: [],
               },
               lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
               forkedFrom: null,

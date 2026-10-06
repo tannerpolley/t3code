@@ -2,6 +2,7 @@ import {
   CommandId,
   MessageId,
   ScheduledTask,
+  RepositoryWorkTarget,
   ScheduledTaskError,
   ScheduledTaskId,
   ThreadId,
@@ -30,9 +31,12 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
+const encodeRepositoryTarget = Schema.encodeSync(Schema.fromJsonString(RepositoryWorkTarget));
+const decodeRepositoryTarget = Schema.decodeEffect(Schema.fromJsonString(RepositoryWorkTarget));
 const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
 const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
 const decodeScheduleJson = Schema.decodeUnknownEffect(
@@ -53,6 +57,7 @@ interface ScheduledTaskRow {
   readonly schedule_json: string;
   readonly project_id: string;
   readonly thread_id: string | null;
+  readonly repository_target_json: string | null;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
   readonly runtime_mode: string;
@@ -140,6 +145,10 @@ const decodeRow = (row: ScheduledTaskRow) =>
       schedule,
       projectId: row.project_id,
       threadId: row.thread_id,
+      repositoryTarget:
+        row.repository_target_json === null
+          ? null
+          : yield* decodeRepositoryTarget(row.repository_target_json),
       workspaceStrategy,
       modelSelection,
       runtimeMode: row.runtime_mode,
@@ -210,6 +219,7 @@ export const layer = Layer.effect(
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const scheduler = yield* Scheduler.Scheduler;
+    const issueWork = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
     // Sliding(1) coalesces the dirty-signal: every notification triggers a
     // full list() re-emit anyway, so a slow subscriber only ever needs the
@@ -226,6 +236,7 @@ export const layer = Layer.effect(
         schedule_json,
         project_id,
         thread_id,
+          repository_target_json,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -258,6 +269,7 @@ export const layer = Layer.effect(
         schedule_json,
         project_id,
         thread_id,
+        repository_target_json,
         workspace_strategy_json,
         model_selection_json,
         runtime_mode,
@@ -310,6 +322,7 @@ export const layer = Layer.effect(
           schedule_json,
           project_id,
           thread_id,
+        repository_target_json,
           workspace_strategy_json,
           model_selection_json,
           runtime_mode,
@@ -332,6 +345,7 @@ export const layer = Layer.effect(
           ${JSON.stringify(task.schedule)},
           ${task.projectId},
           ${task.threadId},
+          ${task.repositoryTarget == null ? null : encodeRepositoryTarget(task.repositoryTarget)},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
           ${task.runtimeMode},
@@ -355,6 +369,7 @@ export const layer = Layer.effect(
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
           thread_id = excluded.thread_id,
+          repository_target_json = excluded.repository_target_json,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -514,43 +529,58 @@ export const layer = Layer.effect(
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
-        const result =
-          active.threadId === null
-            ? yield* Effect.exit(
-                threadLaunch.launch({
-                  commandId,
-                  projectId: active.projectId,
-                  title: active.title,
-                  modelSelection: active.modelSelection,
-                  runtimeMode: active.runtimeMode,
-                  interactionMode: active.interactionMode,
-                  workspaceStrategy: active.workspaceStrategy,
-                  initialMessage: {
-                    messageId,
-                    scheduledTaskId: active.id,
-                    text: prompt,
-                    attachments: [],
-                  },
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
-              )
-            : yield* Effect.exit(
-                threadManagement.sendToThread({
-                  projectId: active.projectId,
-                  commandId,
-                  threadId: ThreadId.make(active.threadId),
+        const dispatch = Effect.gen(function* () {
+          let targetThreadId = active.threadId;
+          let targetProjectId = active.projectId;
+          if (active.repositoryTarget != null) {
+            if (Option.isNone(issueWork))
+              return yield* taskError("Repository scheduling is unavailable.");
+            const owner = yield* issueWork.value
+              .repositoryOwner(active.repositoryTarget)
+              .pipe(
+                Effect.mapError((cause) =>
+                  taskError("Could not resolve the repository owner.", { cause }),
+                ),
+              );
+            if (owner === null || owner.paused)
+              return yield* taskError("Repository work is unavailable or paused.");
+            targetThreadId = owner.rootThreadId;
+            targetProjectId = owner.projectId;
+          }
+          return targetThreadId === null
+            ? yield* threadLaunch.launch({
+                commandId,
+                projectId: targetProjectId,
+                title: active.title,
+                modelSelection: active.modelSelection,
+                runtimeMode: active.runtimeMode,
+                interactionMode: active.interactionMode,
+                workspaceStrategy: active.workspaceStrategy,
+                initialMessage: {
                   messageId,
                   scheduledTaskId: active.id,
                   text: prompt,
                   attachments: [],
-                  modelSelection: active.modelSelection,
-                  // Scheduled prompts must not interrupt tools in the bound thread.
-                  mode: "queue",
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
-              );
+                },
+                createdBy: active.createdBy,
+                creationSource: active.creationSource,
+              })
+            : yield* threadManagement.sendToThread({
+                projectId: targetProjectId,
+                commandId,
+                threadId: ThreadId.make(targetThreadId),
+                messageId,
+                scheduledTaskId: active.id,
+                text: prompt,
+                attachments: [],
+                modelSelection: active.modelSelection,
+                // Scheduled prompts must not interrupt tools in the bound thread.
+                mode: "queue",
+                createdBy: active.createdBy,
+                creationSource: active.creationSource,
+              });
+        });
+        const result = yield* Effect.exit(dispatch);
 
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success";
@@ -754,6 +784,10 @@ export const layer = Layer.effect(
           schedule: input.schedule,
           projectId: input.projectId,
           threadId: input.threadId ?? null,
+          repositoryTarget:
+            input.repositoryTarget === undefined
+              ? (existingTask?.repositoryTarget ?? null)
+              : input.repositoryTarget,
           workspaceStrategy: input.workspaceStrategy,
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
