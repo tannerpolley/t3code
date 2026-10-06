@@ -34,6 +34,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group"
 import { Spinner } from "../ui/spinner";
 import { IssueFilterMenu, useIssueFilterPreferences } from "./IssueFilterMenu";
 import { acceptIssueListPage, type IssueListSnapshot } from "./issuePaging.logic";
+import { IssueStartAction } from "./IssueStartAction";
 import { IssueTree, IssueTreeRow, IssueTreeTag } from "./IssueTree";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 import {
@@ -218,6 +219,7 @@ export function IssueBrowser({
   search,
   onSearchChange,
   onShowAllRepositories,
+  threadRef = null,
   selectedIssue = null,
   onSelectIssue,
   onRefresh,
@@ -231,6 +233,7 @@ export function IssueBrowser({
   readonly onSearchChange: (patch: IssueBrowserSearch) => void;
   /** Clears a repository scope. */
   readonly onShowAllRepositories?: () => void;
+  readonly threadRef?: ScopedThreadRef | null;
   readonly selectedIssue?: IssueTarget | null;
   readonly onSelectIssue: (target: IssueTarget) => void;
   readonly onRefresh?: () => void;
@@ -557,6 +560,14 @@ export function IssueBrowser({
             groups={groups}
             issuesComplete={snapshot.issuesComplete}
             onSelect={(issue) => selectIssue(issue, entry, snapshot)}
+            renderActions={(issue) => (
+              <IssueStartAction
+                environmentId={entry.environmentId}
+                reference={{ host: entry.host, repository: entry.repository, number: issue.number }}
+                threadRef={threadRef}
+                closed={issue.state === "closed"}
+              />
+            )}
             {...(entry.selectedIssueNumber === undefined
               ? {}
               : { selectedIssueNumber: entry.selectedIssueNumber })}
@@ -880,6 +891,7 @@ export function IssueListPanel({ threadRef }: { readonly threadRef: ScopedThread
   return (
     <IssueBrowser
       variant="panel"
+      threadRef={threadRef}
       repositories={repositories}
       search={scope === null ? search : { ...search, ...scope }}
       onSearchChange={(patch) => setSearch((current) => ({ ...current, ...patch }))}

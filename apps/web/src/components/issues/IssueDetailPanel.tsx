@@ -36,7 +36,6 @@ import { useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { findIssueProject, issueWorktreeBranchName } from "./issueWorktree.logic";
-import { Spinner } from "../ui/spinner";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
@@ -366,7 +365,9 @@ export function IssueDetailPanel({
   if (query.data === null) {
     return (
       <div className="flex min-h-64 flex-1 items-center justify-center" aria-label="Loading issue">
-        <Spinner className="size-4" />
+        <p className="text-xs text-muted-foreground" role="status">
+          Loading issue…
+        </p>
       </div>
     );
   }
@@ -405,7 +406,7 @@ export function IssueDetailPanel({
                 size="icon-xs"
                 variant="ghost"
               >
-                <RefreshCwIcon aria-hidden className={cn(query.isPending && "animate-spin")} />
+                <RefreshCwIcon aria-hidden />
               </Button>
               {issueUrl ? (
                 <a
@@ -532,7 +533,7 @@ export function IssueDetailPanel({
         ) : null}
         {query.isPending ? (
           <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-            <Spinner className="size-3" /> Refreshing issue…
+            Refreshing issue…
           </p>
         ) : null}
       </div>

@@ -191,6 +191,10 @@
       "types": "./src/state/providerInstanceDisplay.ts",
       "default": "./src/state/providerInstanceDisplay.ts"
     },
+    "./state/issue-work": {
+      "types": "./src/state/issueWork.ts",
+      "default": "./src/state/issueWork.ts"
+    },
     "./state/issues": {
       "types": "./src/state/issues.ts",
       "default": "./src/state/issues.ts"

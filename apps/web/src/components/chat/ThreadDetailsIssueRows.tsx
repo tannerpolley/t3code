@@ -5,9 +5,8 @@ import type {
   RepositoryIdentity,
   ThreadId,
 } from "@t3tools/contracts";
-import { pullRequestHostOf } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import { CheckCircle2Icon, CircleDotIcon, ListIcon, MinusIcon, PlusIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -39,17 +38,7 @@ const VISIBLE_ISSUE_COUNT = 5;
 
 const ExpandedIssueBlocks = Schema.Record(Schema.String, Schema.Boolean);
 
-/** The GitHub repository a thread's project pushes to, when the issue browser can read it. */
-export function threadIssueRepository(
-  identity: RepositoryIdentity | null | undefined,
-): { readonly host: string; readonly repository: string } | null {
-  if (identity?.provider !== "github") return null;
-  // A fork's checkout identifies as upstream for pull requests; its issues are the fork's own.
-  const repository = identity.originRepository ?? sourceControlRepositorySelector(identity);
-  const host = pullRequestHostOf(identity, "github");
-  // The issue browser reads github.com only.
-  return repository === null || host !== "github.com" ? null : { host, repository };
-}
+export { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 
 /**
  * The block's issues under the Filter menu's choices, grouped by milestone with "No Milestone" last,

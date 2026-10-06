@@ -26,6 +26,7 @@ import { Button } from "../ui/button";
 import type { ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
+import { ThreadLinkedIssueRow } from "./ThreadLinkedIssueRow";
 import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
@@ -224,6 +225,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 ) : null}
               </div>
             </ThreadDetailsSection>
+          ) : null}
+
+          {!props.draftId ? (
+            <ThreadLinkedIssueRow environmentId={props.environmentId} threadId={props.threadId} />
           ) : null}
 
           {density === "full" && !props.draftId ? (

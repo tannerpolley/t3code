@@ -346,6 +346,7 @@ function IssuesRouteView() {
   const listColumn = (
     <IssueBrowser
       variant="page"
+      threadRef={originThreadRef}
       repositories={repositories}
       search={search}
       onSearchChange={updateSearch}

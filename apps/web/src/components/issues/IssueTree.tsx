@@ -66,6 +66,7 @@ export interface IssueTreeProps {
   readonly issuesComplete: boolean;
   readonly selectedIssueNumber?: number;
   readonly onSelect: (issue: IssueSummary) => void;
+  readonly renderActions?: (issue: IssueSummary) => ReactNode;
 }
 
 function issueStateIcon(issue: IssueSummary) {
@@ -85,6 +86,7 @@ export function IssueTree({
   issuesComplete,
   selectedIssueNumber,
   onSelect,
+  renderActions,
 }: IssueTreeProps) {
   const [chosen, setChosen] = useState<ReadonlyMap<string, boolean>>(() => new Map());
 
@@ -148,6 +150,11 @@ export function IssueTree({
                           updated {formatRelativeTimeLabel(issue.updatedAt)}
                         </span>
                       </button>
+                      {renderActions ? (
+                        <div className={cn("pb-2 pe-2", LEVEL_PADDING[3])}>
+                          {renderActions(issue)}
+                        </div>
+                      ) : null}
                     </li>
                   );
                 })}
