@@ -480,6 +480,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "issue-upkeep-requires-approval",
+    title: "Ask before agents create, split or move issues",
+    to: "/settings/customizations",
+    scope: "environment-defaults",
+    searchTerms: ["github issues orchestration upkeep approval policy create split milestone"],
+  },
+  {
     id: "version-control-issues",
     title: "Issues in thread details",
     to: "/settings/customizations",

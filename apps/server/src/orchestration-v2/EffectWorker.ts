@@ -1,4 +1,4 @@
-import { CommandId, IssueChangeError } from "@t3tools/contracts";
+import { CommandId, IssueChangeError, MessageId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -165,6 +165,61 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
+          case "issue.suspension.interrupt": {
+            const runId = effect.request.runId;
+            return Effect.gen(function* () {
+              const shell = yield* threads.getThreadShell(effect.threadId);
+              if (shell?.activeRunId !== runId) return;
+              yield* threads.dispatch({
+                type: "run.interrupt",
+                threadId: effect.threadId,
+                runId,
+                retryInterruptUntilDone: true,
+                // A failed command has a rejected receipt. A new outbox attempt
+                // may retry it; the recorded run guards against stopping later work.
+                commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),
+              });
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
+          case "issue.suspension.notify": {
+            const request = effect.request;
+            return Effect.gen(function* () {
+              const messageId = MessageId.make(effect.id);
+              const prior = yield* threads.getThreadRecords(effect.threadId, ["messages"], {
+                messageIds: [messageId],
+              });
+              if (prior.messages.some((message) => message.id === messageId)) return;
+              yield* threads.sendToThread({
+                projectId: request.projectId,
+                threadId: effect.threadId,
+                commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),
+                messageId,
+                text: `Issue #${request.issue.number} paused: ${request.reason} Its workspace, link and results are retained. Ask through t3_request_user_input; do not reopen it or change the existing lineage.`,
+                attachments: [],
+                mode: "queue",
+                createdBy: "agent",
+                creationSource: "server",
+              });
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
             return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
@@ -831,9 +886,13 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (cancelledBeforeExecution) return true;
 
+          const retryUntilDone =
+            effect.request.type.startsWith("issue.suspension.") ||
+            (effect.request.type === "provider-turn.interrupt" &&
+              effect.request.retryUntilDone === true);
           const execution = executor
             .execute(effect, {
-              willRetry: effect.attemptCount < maxAttempts,
+              willRetry: retryUntilDone || effect.attemptCount < maxAttempts,
             })
             .pipe(Effect.as("executed" as const));
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
@@ -877,7 +936,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.attemptCount >= maxAttempts && !retryUntilDone
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
@@ -1024,6 +1083,7 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
           ...Array.from({ length: concurrency }, () => runWorker("lifecycle")),
           runWorker("title"),
           runWorker("issue-comment"),
+          runWorker("issue-change"),
         ],
         {
           concurrency: "unbounded",

@@ -702,20 +702,52 @@ const make = Effect.gen(function* () {
   ) {
     if (!(yield* reservePreparation(input.commandId))) return;
     yield* Effect.gen(function* () {
-      const preparationStillRequired =
-        runId === null
-          ? true
-          : yield* threads.getThreadRecords(threadId, ["runs"], { runIds: [runId] }).pipe(
-              Effect.map((current) =>
-                current.runs.some((run) => run.id === runId && run.status === "preparing"),
-              ),
-              Effect.mapError(mapError(input, "update-thread", threadId)),
-            );
-      if (preparationStillRequired) {
-        yield* schedulePreparation(input, threadId, runId);
-      } else {
+      const current = yield* threads
+        .getThreadRecords(threadId, ["runs"], runId === null ? {} : { runIds: [runId] })
+        .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+      const run = current.runs.find((candidate) => candidate.id === runId);
+      if (runId !== null && run?.status !== "preparing") {
         yield* releasePreparation(input.commandId);
+        return;
       }
+      const message =
+        input.initialMessage !== undefined || run === undefined
+          ? undefined
+          : (yield* threads
+              .getThreadRecords(threadId, ["messages"], { messageIds: [run.userMessageId] })
+              .pipe(Effect.mapError(mapError(input, "update-thread", threadId)))).messages[0];
+      // Explicit retries and reactor recovery reserve the same preparation and
+      // reuse the worktree recorded by the failed attempt.
+      const reuse =
+        input.workspaceStrategy.type === "worktree" &&
+        current.thread.worktreePath !== null &&
+        current.thread.branch !== null
+          ? {
+              workspaceStrategy: {
+                type: "existing_worktree" as const,
+                worktreePath: current.thread.worktreePath,
+                branch: current.thread.branch,
+              },
+              reusedWorktree: { baseRef: input.workspaceStrategy.baseRef },
+            }
+          : {};
+      yield* schedulePreparation(
+        {
+          ...input,
+          ...(input.initialMessage !== undefined || message === undefined
+            ? {}
+            : {
+                initialMessage: {
+                  text: message.text,
+                  attachments: message.attachments,
+                  ...(message.context === undefined ? {} : { context: message.context }),
+                },
+              }),
+          ...reuse,
+        },
+        threadId,
+        runId,
+      );
     }).pipe(Effect.onError(() => releasePreparation(input.commandId)));
   });
 
@@ -944,13 +976,20 @@ const make = Effect.gen(function* () {
     // From here the run is preparing again; anything that stops preparation
     // from being scheduled must fail it, or it would wait in preparing forever.
     const scheduled = yield* Effect.gen(function* () {
-      const projection = yield* threads.getThreadProjection(input.threadId);
+      const projection = yield* threads.getThreadRecords(input.threadId, ["runs"], {
+        runIds: [input.runId],
+      });
       const run = projection.runs.find((candidate) => candidate.id === input.runId);
       const workspacePreparation = run?.workspacePreparation;
       if (run?.status !== "preparing" || workspacePreparation === undefined) return;
-      if (!(yield* reservePreparation(input.commandId))) return;
-      yield* scheduleRetriedPreparation(input, projection, run, workspacePreparation).pipe(
-        Effect.onError(() => releasePreparation(input.commandId)),
+      yield* ensurePreparation(
+        {
+          commandId: input.commandId,
+          projectId: projection.thread.projectId,
+          workspaceStrategy: workspacePreparation,
+        },
+        input.threadId,
+        input.runId,
       );
     }).pipe(Effect.exit);
     if (Exit.isFailure(scheduled)) {
@@ -958,48 +997,6 @@ const make = Effect.gen(function* () {
     }
     return dispatched;
   });
-
-  const scheduleRetriedPreparation = (
-    input: ThreadLaunchRetryInput,
-    projection: OrchestrationV2ThreadProjection,
-    run: OrchestrationV2ThreadProjection["runs"][number],
-    workspacePreparation: ThreadLaunchWorkspaceStrategy,
-  ) => {
-    const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-    // A worktree the failed attempt already created is reused, not created again.
-    const reuse =
-      workspacePreparation.type === "worktree" &&
-      projection.thread.worktreePath !== null &&
-      projection.thread.branch !== null
-        ? {
-            strategy: {
-              type: "existing_worktree" as const,
-              worktreePath: projection.thread.worktreePath,
-              branch: projection.thread.branch,
-            },
-            reusedWorktree: { baseRef: workspacePreparation.baseRef },
-          }
-        : null;
-    return schedulePreparation(
-      {
-        commandId: input.commandId,
-        projectId: projection.thread.projectId,
-        workspaceStrategy: reuse?.strategy ?? workspacePreparation,
-        ...(reuse === null ? {} : { reusedWorktree: reuse.reusedWorktree }),
-        ...(message === undefined
-          ? {}
-          : {
-              initialMessage: {
-                text: message.text,
-                attachments: message.attachments,
-                ...(message.context ? { context: message.context } : {}),
-              },
-            }),
-      },
-      input.threadId,
-      run.id,
-    );
-  };
 
   const readCheckoutBranch: ThreadLaunchService["Service"]["readCheckoutBranch"] = Effect.fn(
     "ThreadLaunchService.readCheckoutBranch",

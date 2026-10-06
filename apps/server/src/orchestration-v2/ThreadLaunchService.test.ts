@@ -286,6 +286,50 @@ function makeHarness(options: HarnessOptions = {}) {
   };
 }
 
+function suspensionWorkerLayer(
+  dependencies: ReturnType<typeof makeHarness>["layer"],
+  failInterrupt?: (threadId: ThreadId) => boolean,
+) {
+  const realExecutor = Layer.fresh(EffectWorker.executorLayer).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        dependencies,
+        IdAllocator.layer,
+        ProjectionStore.layer.pipe(Layer.provide(dependencies)),
+        Layer.mock(RunFinalizationService.RunFinalizationService)({}),
+        Layer.mock(CheckpointRollbackService.CheckpointRollbackServiceV2)({}),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+        Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({}),
+        Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
+        Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
+      ),
+    ),
+  );
+  const executor = Layer.effect(
+    EffectWorker.OrchestrationEffectExecutorV2,
+    Effect.gen(function* () {
+      const real = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      return EffectWorker.OrchestrationEffectExecutorV2.of({
+        execute: (effect, options) =>
+          effect.request.type === "issue.suspension.interrupt" && failInterrupt?.(effect.threadId)
+            ? Effect.fail(
+                new EffectWorker.OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  cause: "Injected interrupt failure",
+                }),
+              )
+            : effect.request.type.startsWith("issue.suspension.")
+              ? real.execute(effect, options)
+              : Effect.void,
+      });
+    }),
+  ).pipe(Layer.provide(realExecutor));
+  return EffectWorker.layerWithOptions({ maxAttempts: 1 }).pipe(
+    Layer.provide(Layer.mergeAll(dependencies, executor)),
+  );
+}
+
 function launchInput(input: {
   readonly command: string;
   readonly thread: string;
@@ -3793,6 +3837,7 @@ it.effect(
       );
       newBlocker = true;
       yield* service.reconcile(rootId);
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
       let state = yield* service.repositoryStatus(input);
       assert.isTrue(
         state.orchestration!.suspendedIssues.some(
@@ -3859,7 +3904,640 @@ it.effect(
           status,
         );
       }
-    }).pipe(Effect.provide(Layer.mergeAll(dependencies, serviceLayer)));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(dependencies, serviceLayer, suspensionWorkerLayer(dependencies)),
+      ),
+    );
+  },
+);
+
+it.effect.each(["reactor-first", "retry-first"] as const)(
+  "preparation recovery reuses one recorded worktree when %s wins",
+  (order) =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const allowSetup = yield* Deferred.make<void>();
+      let attempts = 0;
+      const harness = makeHarness({
+        runSetup: () =>
+          ++attempts === 1
+            ? Effect.fail(new Error("setup failed") as never)
+            : Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Deferred.await(allowSetup)),
+                Effect.as({ status: "no-script" as const }),
+              ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        const input = launchInput({
+          command: `race:${order}`,
+          thread: `race:${order}`,
+          message: "Prepare once",
+          workspace: { type: "worktree", baseRef: "main" },
+        });
+        const launched = yield* launches.launch(input);
+        yield* sink.stream({ threadId: launched.threadId, eventType: "run.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* sink
+          .stream({ threadId: launched.threadId, eventType: "thread.metadata-updated" })
+          .pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "thread.metadata-updated" &&
+                stored.event.payload.branch === "generated-branch",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+        const failed = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(failed.thread.worktreePath, "/repo-worktrees/feature");
+        const retry = {
+          commandId: CommandId.make(`race:${order}:retry`),
+          threadId: launched.threadId,
+          runId: failed.runs[0]!.id,
+        };
+        const recover = launches.prepareDeferredRun({
+          ...retry,
+          projectId,
+          workspaceStrategy: failed.runs[0]!.workspacePreparation!,
+        });
+        if (order === "reactor-first") {
+          yield* threads.dispatch({ type: "prepared-run.retry", ...retry });
+          yield* recover;
+          yield* Deferred.await(entered);
+          yield* launches.retryPreparation(retry);
+        } else {
+          yield* launches.retryPreparation(retry);
+          yield* Deferred.await(entered);
+          yield* recover;
+        }
+        assert.equal(harness.createWorktree.mock.calls.length, 1);
+        assert.equal(harness.renameBranch.mock.calls.length, 1);
+        assert.equal(harness.runSetup.mock.calls.length, 2);
+        yield* Deferred.succeed(allowSetup, undefined);
+        yield* sink.stream({ threadId: launched.threadId, eventType: "run.updated" }).pipe(
+          Stream.filter(
+            (stored) => stored.commandId === CommandId.make(`${retry.commandId}:release`),
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const finished = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(finished.runs.length, 1);
+        assert.equal(finished.runs[0]!.status, "starting");
+        assert.equal(finished.thread.branch, failed.thread.branch);
+        assert.equal(finished.thread.worktreePath, failed.thread.worktreePath);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+const reviewIssue = (number: number, repository = "tannerpolley/t3code") => ({
+  host: "github.com",
+  repository,
+  repositoryId: `review-repo:${repository}`,
+  id: `review-issue:${repository}:${number}`,
+  nodeId: `node:${repository}:${number}`,
+  number,
+  title: `Issue ${number}`,
+  url: `https://github.com/${repository}/issues/${number}`,
+});
+const reviewRead = (issue: ReturnType<typeof reviewIssue>) => ({
+  issue,
+  state: "open" as const,
+  milestoneNumber: 1,
+  parent: null,
+  subIssues: [],
+  blockedBy: [],
+  parentComplete: true,
+  subIssuesComplete: true,
+  blockersComplete: true,
+});
+
+function reviewHarness(
+  workRead: IssueService.IssueService["Service"]["workRead"],
+  unsupportedRole = false,
+  failInterrupt?: (threadId: ThreadId) => boolean,
+) {
+  const openCode = {
+    ...adapter,
+    instanceId: ProviderInstanceId.make("opencode"),
+    driver: ProviderDriverKind.make("opencode"),
+  };
+  const claude = {
+    ...adapter,
+    instanceId: ProviderInstanceId.make("claude"),
+    driver: ProviderDriverKind.make("claude"),
+  };
+  const providers = [adapter, openCode, claude].map((entry): ServerProvider => ({
+    instanceId: entry.instanceId,
+    driver: entry.driver,
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-05T00:00:00Z",
+    availability: "available",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  }));
+  const reads = Layer.mock(IssueService.IssueService)({
+    workRead,
+    resolveLinkedIssue: (input) => Effect.succeed(reviewIssue(input.number, input.repository)),
+    detail: (input) =>
+      Effect.succeed({
+        repository: { host: input.host ?? "github.com", repository: input.repository },
+        viewer: null,
+        fetchedAt: "2026-10-05T00:00:00Z",
+        body: "Finish issue",
+        comments: [],
+        linkedPullRequests: [],
+        issue: {
+          number: input.number,
+          title: `Issue ${input.number}`,
+          url: reviewIssue(input.number, input.repository).url,
+          state: "open",
+          stateReason: null,
+          author: null,
+          assignees: [],
+          labels: [],
+          milestone: null,
+          createdAt: "2026-10-05T00:00:00Z",
+          updatedAt: "2026-10-05T00:00:00Z",
+          commentCount: 0,
+        },
+      }),
+    milestoneIssues: () => Effect.succeed({ issues: [], complete: true }),
+  });
+  const harness = makeHarness({
+    adapters: [adapter, openCode, claude],
+    providers,
+    issueServiceLayer: reads,
+    projectRepositoryIdentity: {
+      canonicalKey: "github.com/tannerpolley/t3code",
+      provider: "github",
+      owner: "tannerpolley",
+      name: "t3code",
+      displayName: "tannerpolley/t3code",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/tannerpolley/t3code.git",
+      },
+    },
+    serverSettings: {
+      modelRoles: [
+        {
+          id: "worker",
+          name: "Worker",
+          description: "Issue worker",
+          targets: [
+            {
+              providerInstanceId: unsupportedRole ? openCode.instanceId : adapter.instanceId,
+              model: "test-model",
+            },
+          ],
+        },
+      ],
+    },
+  });
+  const dependencies = Layer.mergeAll(
+    harness.layer,
+    reads,
+    IssueWorkStore.layer.pipe(Layer.provide(harness.layer)),
+    IdAllocator.layer,
+    ProviderAdapterRegistry.makeLayer([adapter, openCode, claude]),
+  );
+  return {
+    ...harness,
+    dependencies,
+    layer: Layer.mergeAll(
+      IssueWorkService.layer.pipe(Layer.provide(dependencies)),
+      suspensionWorkerLayer(dependencies, failInterrupt),
+    ).pipe(Layer.provideMerge(dependencies)),
+  };
+}
+
+const createReviewRoot = (repository = "tannerpolley/t3code") =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const issue = reviewIssue(1, repository);
+    const rootId = ThreadId.make(`review-root:${repository}`);
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`review-create:${repository}`),
+      threadId: rootId,
+      projectId,
+      title: "Repository orchestrator",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      repositoryOrchestration: {
+        host: issue.host,
+        repository,
+        repositoryId: issue.repositoryId,
+        projectId,
+        workspace: "project",
+        launchCommandId: CommandId.make(`review-create:${repository}`),
+        revision: 1,
+        paused: false,
+        workerLimit: 4,
+        publishStatusComments: false,
+        publishCloseoutComments: false,
+        milestones: [
+          {
+            number: 1,
+            modelRoleId: "worker",
+            workspace: "project",
+            status: "running",
+            fingerprint: "",
+          },
+        ],
+        suspendedIssues: [],
+      },
+    });
+    yield* threads.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`review-start:${repository}`),
+      threadId: rootId,
+      messageId: MessageId.make(`review-start:${repository}`),
+      text: "Start issue work",
+      attachments: [],
+      modelSelection,
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    return rootId;
+  });
+
+const delegateReviewIssue = (
+  parentId: ThreadId,
+  issue: ReturnType<typeof reviewIssue>,
+  key: string,
+  selection: import("@t3tools/contracts").ModelSelection = modelSelection,
+) =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const parent = yield* threads.getThreadRecords(parentId, ["runs"]);
+    const run = parent.runs.findLast((candidate) =>
+      ["starting", "running", "waiting"].includes(candidate.status),
+    )!;
+    return yield* threads.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make(key),
+      parentThreadId: parentId,
+      parentRunId: run.id,
+      parentNodeId: run.rootNodeId!,
+      issue,
+      task: "Finish issue",
+      modelSelection: selection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      completionWake: "always",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+  });
+
+it.effect(
+  "rejects an already-owned parent from another repository at start and delegation, and refuses mismatched lineage admission",
+  () => {
+    const parentIssue = reviewIssue(1, "owner/other");
+    const childIssue = reviewIssue(2);
+    const harness = reviewHarness((input) =>
+      Effect.succeed({
+        ...reviewRead(reviewIssue(input.number, input.repository)),
+        parent: input.number === 2 ? parentIssue : null,
+      }),
+    );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const sink = yield* EventSink.EventSinkV2;
+      const otherRoot = yield* createReviewRoot("owner/other");
+      const root = yield* createReviewRoot();
+      const delegated = yield* delegateReviewIssue(otherRoot, parentIssue, "cross-parent");
+      const owner = delegated.storedEvents.find((stored) => stored.event.type === "thread.created")!
+        .event.threadId;
+      const start = yield* service
+        .start({
+          ...childIssue,
+          projectId,
+          modelRoleId: "worker",
+          workspace: "project",
+          clientRequestId: CommandId.make("cross-start"),
+        })
+        .pipe(Effect.flip);
+      assert.include(start.message, "approval to expand");
+      const rejected = yield* delegateReviewIssue(owner, childIssue, "cross-delegate").pipe(
+        Effect.flip,
+      );
+      assert.include(rejected.message, "approval to expand");
+      assert.isNull(yield* store.issueOwner(childIssue));
+      const now = yield* DateTime.now;
+      const corruptId = ThreadId.make("cross-corrupt-history");
+      const source = (yield* threads.getThreadRecords(owner, [])).thread;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("cross-corrupt-create"),
+            type: "thread.created",
+            threadId: corruptId,
+            occurredAt: now,
+            payload: {
+              ...source,
+              id: corruptId,
+              linkedIssue: childIssue,
+              lineage: { ...source.lineage, parentThreadId: owner },
+            },
+          },
+        ],
+      });
+      assert.isFalse(yield* store.canAdmit(childIssue, corruptId));
+      assert.notInclude(yield* store.workerThreads(root), corruptId);
+      assert.notInclude(yield* store.workerThreads(otherRoot), corruptId);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect(
+  "rejects unsupported adapters at managed start, delegation and provider changes while allowing Claude",
+  () => {
+    const harness = reviewHarness(
+      (input) => Effect.succeed(reviewRead(reviewIssue(input.number, input.repository))),
+      true,
+    );
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const unsupported = { instanceId: ProviderInstanceId.make("opencode"), model: "test-model" };
+      const start = yield* service
+        .start({
+          ...reviewIssue(1),
+          projectId,
+          modelRoleId: "worker",
+          workspace: "project",
+          clientRequestId: CommandId.make("unsupported-start"),
+        })
+        .pipe(Effect.flip);
+      assert.include(start.message, "Codex or Claude");
+      const root = yield* createReviewRoot();
+      const directStart = yield* threads
+        .dispatch({
+          type: "issue.work.start",
+          commandId: CommandId.make("unsupported-direct-start"),
+          threadId: root,
+          issue: reviewIssue(1),
+          workerModelSelection: unsupported,
+          workspace: "project",
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.flip);
+      assert.include(directStart.message, "Codex or Claude");
+      const rejected = yield* delegateReviewIssue(
+        root,
+        reviewIssue(1),
+        "unsupported-delegate",
+        unsupported,
+      ).pipe(Effect.flip);
+      assert.include(rejected.message, "Codex or Claude");
+      const child = yield* delegateReviewIssue(root, reviewIssue(1), "claude-delegate", {
+        instanceId: ProviderInstanceId.make("claude"),
+        model: "test-model",
+      });
+      const childId = child.storedEvents.find((stored) => stored.event.type === "thread.created")!
+        .event.threadId;
+      for (const threadId of [root, childId]) {
+        const result = yield* threads
+          .dispatch({
+            type: "provider.switch",
+            commandId: CommandId.make(`unsupported-switch:${threadId}`),
+            threadId,
+            modelSelection: unsupported,
+          })
+          .pipe(Effect.flip);
+        assert.include(result.message, "Codex or Claude");
+      }
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect(
+  "GitHub relationship reads release command planning so interrupts can commit, and unknown reads never admit",
+  () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const proceed = yield* Deferred.make<void>();
+      let hold = false;
+      let unknown = false;
+      const harness = reviewHarness((input) =>
+        Effect.gen(function* () {
+          if (hold) {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(proceed);
+          }
+          return {
+            ...reviewRead(reviewIssue(input.number, input.repository)),
+            blockersComplete: !unknown,
+          };
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const root = yield* createReviewRoot();
+        const rootRun = (yield* threads.getThreadRecords(root, ["runs"])).runs[0]!;
+        const child = yield* delegateReviewIssue(root, reviewIssue(1), "io-first-child");
+        const childId = child.storedEvents.find((stored) => stored.event.type === "thread.created")!
+          .event.threadId;
+        hold = true;
+        const launch = yield* delegateReviewIssue(root, reviewIssue(2), "io-blocked-delegate").pipe(
+          Effect.result,
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(entered);
+        const stop = yield* threads.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("io-stop"),
+          threadId: root,
+          runId: rootRun.id,
+        });
+        assert.isTrue(
+          stop.storedEvents.some(
+            (stored) =>
+              stored.event.type === "run.updated" && stored.event.payload.status === "interrupted",
+          ),
+        );
+        yield* Deferred.succeed(proceed, undefined);
+        assert.equal((yield* Fiber.join(launch))._tag, "Failure");
+        hold = false;
+        unknown = true;
+        const childRun = (yield* threads.getThreadRecords(childId, ["runs"])).runs[0]!;
+        yield* threads.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("io-child-stop"),
+          threadId: childId,
+          runId: childRun.id,
+        });
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("io-unknown-resume"),
+          threadId: childId,
+          messageId: MessageId.make("io-unknown-resume"),
+          text: "Resume",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const runs = (yield* threads.getThreadRecords(childId, ["runs"])).runs;
+        assert.equal(runs.at(-1)!.status, "queued");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect(
+  "re-parenting durably interrupts the existing branch and retries a failed suspension without losing its decision or lineage",
+  () => {
+    let reparented = false;
+    let failures = 2;
+    let failingThread: ThreadId | undefined;
+    const harness = reviewHarness(
+      (input) =>
+        Effect.succeed({
+          ...reviewRead(reviewIssue(input.number, input.repository)),
+          parent:
+            input.number === 3
+              ? reviewIssue(2)
+              : input.number === 2 && !reparented
+                ? reviewIssue(1)
+                : null,
+        }),
+      false,
+      (threadId) => threadId === failingThread && failures-- > 0,
+    );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sql = yield* SqlClient.SqlClient;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const root = yield* createReviewRoot();
+      const ids: ThreadId[] = [];
+      let parent = root;
+      for (const number of [1, 2, 3]) {
+        const result = yield* delegateReviewIssue(
+          parent,
+          reviewIssue(number),
+          `suspend-child:${number}`,
+        );
+        parent = result.storedEvents.find((stored) => stored.event.type === "thread.created")!.event
+          .threadId;
+        ids.push(parent);
+      }
+      const before = (yield* threads.getThreadRecords(ids[2]!, [])).thread;
+      failingThread = ids[1];
+      reparented = true;
+      yield* service.reconcile(root);
+      const suspended = (yield* store.configuration(root))!;
+      assert.isTrue(
+        suspended.suspendedIssues.some(
+          (entry) => entry.id === reviewIssue(2).id && entry.reason.includes("re-parented"),
+        ),
+      );
+      const actions = yield* sql<{
+        effect_type: string;
+        status: string;
+      }>`SELECT effect_type, status FROM orchestration_v2_effect_outbox WHERE effect_type LIKE 'issue.suspension.%'`;
+      assert.equal(actions.length, 3);
+      assert.isTrue(actions.every((row) => row.status === "pending"));
+      yield* worker.drain();
+      const pending = yield* sql<{
+        status: string;
+        attempt_count: number;
+      }>`SELECT status, attempt_count FROM orchestration_v2_effect_outbox WHERE effect_type = 'issue.suspension.interrupt' AND thread_id = ${ids[1]!}`;
+      assert.deepEqual(pending, [{ status: "pending", attempt_count: 1 }]);
+      yield* service.reconcile(root); // Equal suspension reason still has durable work to finish.
+      yield* TestClock.adjust("100 millis");
+      yield* worker.drain();
+      yield* TestClock.adjust("200 millis");
+      yield* worker.drain();
+      for (const id of ids.slice(1))
+        assert.equal(
+          (yield* threads.getThreadRecords(id, ["runs"])).runs[0]!.status,
+          "interrupted",
+        );
+      const after = (yield* threads.getThreadRecords(ids[2]!, [])).thread;
+      assert.deepEqual(after.lineage, before.lineage);
+      assert.deepEqual(after.linkedIssue, before.linkedIssue);
+      assert.isFalse(yield* store.canAdmit(reviewIssue(3), ids[2]!));
+      const decisions = (yield* threads.getThreadRecords(root, ["messages"])).messages.filter(
+        (message) => message.text.includes("paused:") && message.text.includes("re-parented"),
+      );
+      assert.equal(decisions.length, 1);
+      const done = yield* sql<{
+        status: string;
+      }>`SELECT status FROM orchestration_v2_effect_outbox WHERE effect_type LIKE 'issue.suspension.%'`;
+      assert.isTrue(done.every((row) => row.status === "succeeded"));
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect(
+  "a burst of worker preparation events continues locally without full GitHub reconciliations",
+  () => {
+    const workRead = vi.fn(
+      (input: Parameters<IssueService.IssueService["Service"]["workRead"]>[0]) =>
+        Effect.succeed(reviewRead(reviewIssue(input.number, input.repository))),
+    );
+    const harness = reviewHarness(workRead);
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const root = yield* createReviewRoot();
+      const child = yield* delegateReviewIssue(root, reviewIssue(1), "burst-child");
+      const childId = child.storedEvents.find((stored) => stored.event.type === "thread.created")!
+        .event.threadId;
+      const run = (yield* threads.getThreadRecords(childId, ["runs"])).runs[0]!;
+      const now = yield* DateTime.now;
+      const before = workRead.mock.calls.length;
+      const sequence = yield* sink.latestSequence();
+      const events = Array.from({ length: 24 }, (_, i) => ({
+        id: EventId.make(`burst-prepare:${i}`),
+        type: "run.updated" as const,
+        threadId: childId,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "preparing" as const },
+      }));
+      const committed = yield* sink.write({ events });
+      const lastSequence = committed.at(-1)!.sequence;
+      yield* sink
+        .stream({ afterSequence: sequence, threadId: root, eventType: "thread.metadata-updated" })
+        .pipe(
+          Stream.filter((stored) => String(stored.commandId).endsWith(`:event:${lastSequence}`)),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+      assert.equal(workRead.mock.calls.length - before, 0);
+    }).pipe(Effect.provide(harness.layer));
   },
 );
 

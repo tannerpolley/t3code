@@ -257,7 +257,10 @@ function CustomizationsGroup({
   );
 }
 
-type ServerSwitchKey = "keepThreadTitlesCurrent" | "agentBrowserTabLimits";
+type ServerSwitchKey =
+  | "keepThreadTitlesCurrent"
+  | "agentBrowserTabLimits"
+  | "issueUpkeepRequiresApproval";
 
 /** A server setting: it applies to the environment running T3, not this client. */
 function ServerSwitchRow({
@@ -543,7 +546,13 @@ export function CustomizationsSettings() {
         />
       </CustomizationsGroup>
       <CustomizationsGroup title="Composer & chat" section="composer" />
-      <CustomizationsGroup title="Version control & issues" section="versionControl" />
+      <CustomizationsGroup title="Version control & issues" section="versionControl">
+        <ServerSwitchRow
+          settingKey="issueUpkeepRequiresApproval"
+          searchId="issue-upkeep-requires-approval"
+          description="Ask before agents create, split or move issues. Body edits and close/reopen always require your approval. Applies to new proposals on this server."
+        />
+      </CustomizationsGroup>
       <CustomizationsGroup title="Browser & preview" section="browser">
         <ServerSwitchRow
           settingKey="agentBrowserTabLimits"

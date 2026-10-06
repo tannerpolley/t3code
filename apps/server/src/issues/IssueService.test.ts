@@ -331,7 +331,6 @@ it.effect(
       const harness = makeHarness({
         responses: [
           httpResponse(repositoryIdentity),
-          httpResponse([]),
           httpResponse({ message: "response lost" }, {}, 500),
           httpResponse(repositoryIdentity),
           httpResponse([created]),
@@ -345,11 +344,13 @@ it.effect(
         milestoneNumber: 2,
         writeKey: "proposal:0",
       };
-      assert.isTrue(Result.isFailure(yield* Effect.result(issues.createIssue(input))));
+      assert.isTrue(
+        Result.isFailure(yield* Effect.result(issues.createIssue({ ...input, recover: false }))),
+      );
       const recovered = yield* issues.createIssue(input);
       assert.equal(recovered.issue.id, "456");
       assert.equal(harness.calls.filter((call) => call.includes("POST")).length, 1);
-      const payload = yield* decodeJson(harness.stdins[2]!);
+      const payload = yield* decodeJson(harness.stdins[1]!);
       assert.deepEqual(payload, {
         title: "Exact title",
         body: `Exact body\n\n${marker}`,
@@ -873,5 +874,133 @@ it.effect("rejects pull request detail responses", () =>
 
     assert.equal(error.code, "unsupported");
     assert.equal(harness.calls.length, 1);
+  }),
+);
+
+it.effect("an uncertain create cannot duplicate an issue after its marker is removed", () =>
+  Effect.gen(function* () {
+    const identity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
+    const existing = {
+      ...rawIssue(7),
+      id: 456,
+      node_id: "I_456",
+      html_url: `https://${HOST}/${REPOSITORY}/issues/7`,
+      body: "User replaced the issue body",
+    };
+    const harness = makeHarness({
+      responses: [
+        httpResponse(identity),
+        httpResponse({ message: "response lost" }, {}, 500),
+        httpResponse(identity),
+        httpResponse([existing]),
+      ],
+    });
+    const issues = yield* service(harness);
+    const input = {
+      ...listInput,
+      title: "Task",
+      body: "Task",
+      milestoneNumber: null,
+      writeKey: "proposal:0",
+    };
+    const first = yield* issues.createIssue({ ...input, recover: false }).pipe(Effect.flip);
+    assert.equal(first.createOutcome, "uncertain");
+    const recovery = yield* issues.createIssue({ ...input, recover: true }).pipe(Effect.flip);
+    assert.equal(recovery.createOutcome, "unresolved");
+    assert.equal(harness.calls.filter((call) => call.includes("POST")).length, 1);
+  }),
+);
+
+it.effect(
+  "create failure outcomes distinguish HTTP rejection and preflight denial from uncertain writes",
+  () =>
+    Effect.gen(function* () {
+      const identity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
+      const input = {
+        ...listInput,
+        title: "Task",
+        body: "Task",
+        milestoneNumber: null,
+        writeKey: "rejected:0",
+        recover: false,
+      };
+      for (const status of [401, 403, 404, 422, 429, 500]) {
+        const harness = makeHarness({
+          responses: [httpResponse(identity), httpResponse({ message: "Denied" }, {}, status)],
+        });
+        const issues = yield* service(harness);
+        const error = yield* issues.createIssue(input).pipe(Effect.flip);
+        assert.equal(error.createOutcome, status === 500 ? "uncertain" : "rejected");
+      }
+      const harness = makeHarness({ responses: [httpResponse({ message: "Denied" }, {}, 403)] });
+      const issues = yield* service(harness);
+      assert.equal((yield* issues.createIssue(input).pipe(Effect.flip)).createOutcome, "rejected");
+      assert.equal(harness.calls.filter((call) => call.includes("POST")).length, 0);
+    }),
+);
+
+it.effect("persists a created issue identity even when mutable response fields are invalid", () =>
+  Effect.gen(function* () {
+    const identity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
+    const created = {
+      ...rawIssue(7),
+      id: 456,
+      node_id: "I_456",
+      html_url: `https://${HOST}/${REPOSITORY}/issues/7`,
+      body: 42,
+    };
+    const harness = makeHarness({ responses: [httpResponse(identity), httpResponse(created)] });
+    const issues = yield* service(harness);
+    const receipts: string[] = [];
+    const error = yield* issues
+      .createIssue({
+        ...listInput,
+        title: "Task",
+        body: "Task",
+        milestoneNumber: null,
+        writeKey: "receipt:0",
+        recover: false,
+        onCreated: (issue) =>
+          Effect.sync(() => {
+            receipts.push(issue.id);
+          }),
+      })
+      .pipe(Effect.flip);
+    assert.equal(error.createOutcome, "uncertain");
+    assert.deepEqual(receipts, ["456"]);
+  }),
+);
+
+it.effect("a denied recovery read does not turn an uncertain create into a rejected create", () =>
+  Effect.gen(function* () {
+    const identity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
+    const harness = makeHarness({
+      responses: [
+        httpResponse(identity),
+        httpResponse({}, {}, 500),
+        httpResponse(identity),
+        httpResponse({}, {}, 403),
+        httpResponse(identity),
+        httpResponse([]),
+      ],
+    });
+    const issues = yield* service(harness);
+    const input = {
+      ...listInput,
+      title: "Task",
+      body: "Task",
+      milestoneNumber: null,
+      writeKey: "denied-recovery:0",
+    };
+    yield* issues.createIssue({ ...input, recover: false }).pipe(Effect.flip);
+    assert.equal(
+      (yield* issues.createIssue({ ...input, recover: true }).pipe(Effect.flip)).createOutcome,
+      "uncertain",
+    );
+    assert.equal(
+      (yield* issues.createIssue({ ...input, recover: true }).pipe(Effect.flip)).createOutcome,
+      "unresolved",
+    );
+    assert.equal(harness.calls.filter((call) => call.includes("POST")).length, 1);
   }),
 );

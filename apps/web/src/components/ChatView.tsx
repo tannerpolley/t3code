@@ -17,6 +17,7 @@ import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/q
 import {
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
+  shouldLoadIssueChanges,
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
@@ -11173,7 +11174,8 @@ export default function ChatView(props: ChatViewProps) {
                       </div>
                     </div>
                   ) : null}
-                  {activeThreadId !== null && activeThreadId !== undefined ? (
+                  {activeThreadId !== null &&
+                  shouldLoadIssueChanges(serverProjection?.thread ?? activeThread) ? (
                     <IssueChangeCards
                       environmentId={environmentId}
                       input={{ threadId: activeThreadId }}

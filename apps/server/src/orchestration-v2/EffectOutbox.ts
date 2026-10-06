@@ -4,6 +4,7 @@ import {
   CheckpointScopeId,
   CommandId,
   MessageId,
+  ProjectId,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -43,6 +44,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.interrupt"),
+    retryUntilDone: Schema.optional(Schema.Boolean),
     providerSessionId: ProviderSessionId,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
@@ -111,6 +113,16 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("issue.change.execute"), changeId: Schema.String }),
   Schema.Struct({
+    type: Schema.Literal("issue.suspension.interrupt"),
+    runId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("issue.suspension.notify"),
+    issue: ThreadLinkedIssue,
+    reason: Schema.String,
+    projectId: ProjectId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("issue.github.comment"),
     operation: Schema.Literals(["status_sync", "closeout_create"]),
     status: Schema.optional(IssueWorkStatus),
@@ -137,6 +149,8 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "issue.github.comment",
   "issue.status.refresh",
   "issue.change.execute",
+  "issue.suspension.interrupt",
+  "issue.suspension.notify",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
@@ -197,7 +211,8 @@ const isEffectOutboxError = Schema.is(EffectOutboxError);
 
 const independentLaneTypes = {
   title: ["thread-title.generate"],
-  "issue-comment": ["issue.github.comment", "issue.status.refresh", "issue.change.execute"],
+  "issue-comment": ["issue.github.comment", "issue.status.refresh"],
+  "issue-change": ["issue.change.execute"],
 } as const;
 export type EffectWorkerLane = "lifecycle" | keyof typeof independentLaneTypes;
 
@@ -310,6 +325,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
     const independentAvailable = {
       title: yield* Queue.dropping<void>(1),
       "issue-comment": yield* Queue.dropping<void>(1),
+      "issue-change": yield* Queue.dropping<void>(1),
     };
     const independentTypes = Object.values(independentLaneTypes).flat();
     const cancellationSignals = new Map<string, Deferred.Deferred<void>>();

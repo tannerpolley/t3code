@@ -166,6 +166,9 @@ const RawIssueIdentitySchema = Schema.Struct({
   html_url: GraphQlUrl,
   pull_request: Schema.optional(Schema.Unknown),
 });
+const decodeCreatedIssueIdentity = Schema.decodeEffect(
+  Schema.fromJsonString(RawIssueIdentitySchema),
+);
 const RawGitHubCommentSchema = Schema.Struct({
   id: Schema.Int.check(Schema.isGreaterThan(0)),
   body: Schema.NullOr(Schema.String),
@@ -335,12 +338,14 @@ function readError(
   code: IssueReadError["code"],
   message: string,
   retryAt?: number,
+  createOutcome?: IssueReadError["createOutcome"],
 ): IssueReadError {
   return new IssueReadError({
     code,
     operation,
     message,
     ...(retryAt === undefined ? {} : { retryAt }),
+    ...(createOutcome === undefined ? {} : { createOutcome }),
   });
 }
 
@@ -695,6 +700,7 @@ export class IssueService extends Context.Service<
         readonly milestoneNumber: number | null;
         readonly writeKey: string;
         readonly recover?: boolean;
+        readonly onCreated?: (issue: ThreadLinkedIssueType) => Effect.Effect<void, IssueReadError>;
       },
     ) => Effect.Effect<IssueChangeBaseline, IssueReadError>;
     readonly updateBody: (
@@ -791,6 +797,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       readonly query: string;
       readonly variables: Readonly<Record<string, string | number>>;
     };
+    readonly onRequest?: () => void;
     readonly requestMethod?: "POST" | "PATCH" | "DELETE";
     readonly requestBody?: Readonly<Record<string, string | number | null>>;
   }): Effect.fn.Return<ApiResponse, IssueReadError> {
@@ -826,6 +833,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               ),
             variables: input.graphql.variables,
           };
+    input.onRequest?.();
     return yield* github
       .execute({
         cwd: input.scope.cwd,
@@ -892,6 +900,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 "rate-limited",
                 "GitHub API rate limit is active.",
                 retryAt,
+                input.onRequest === undefined ? undefined : "rejected",
               );
             }
             if (response.status === 401) {
@@ -899,6 +908,8 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 input.operation,
                 "unauthenticated",
                 "GitHub authentication is unavailable.",
+                undefined,
+                input.onRequest === undefined ? undefined : "rejected",
               );
             }
             if (response.status === 403 || response.status === 404) {
@@ -908,6 +919,8 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 input.requestMethod === undefined
                   ? "The GitHub repository is not accessible."
                   : "GitHub issue write denied. Check repository access and Issues write permission.",
+                undefined,
+                input.onRequest === undefined ? undefined : "rejected",
               );
             }
             if (response.status < 200 || response.status >= 300) {
@@ -917,6 +930,12 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 input.requestMethod === undefined
                   ? "GitHub could not complete the read."
                   : "GitHub could not complete the issue write.",
+                undefined,
+                input.onRequest === undefined
+                  ? undefined
+                  : response.status >= 400 && response.status < 500
+                    ? "rejected"
+                    : "uncertain",
               );
             }
             return response;
@@ -1652,7 +1671,18 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
   });
   const createIssue: IssueService["Service"]["createIssue"] = Effect.fn("IssueService.createIssue")(
     function* (input) {
-      const scope = yield* resolveScope("detail", input);
+      let attempted = false;
+      const scope = yield* resolveScope("detail", input).pipe(
+        Effect.mapError((error) =>
+          readError(
+            error.operation,
+            error.code,
+            error.message,
+            error.retryAt,
+            input.recover !== false ? "uncertain" : "rejected",
+          ),
+        ),
+      );
       return yield* verified(
         scope,
         Effect.gen(function* () {
@@ -1685,10 +1715,21 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 "Issue recovery pagination is incomplete; creation was not retried.",
               );
           }
+          if (input.recover !== false)
+            return yield* readError(
+              "detail",
+              "upstream",
+              "The earlier create may have succeeded, but its marker was not found. Check GitHub and mark this change resolved; submit a new proposal only if another create is intended.",
+              undefined,
+              "unresolved",
+            );
           const response = yield* executeApi({
             operation: "detail",
             scope,
             endpoint,
+            onRequest: () => {
+              attempted = true;
+            },
             requestMethod: "POST",
             requestBody: {
               title: input.title,
@@ -1697,6 +1738,24 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
             },
             maxOutputBytes: 256 * 1024,
           });
+          // Persist the identity before decoding mutable issue fields: a malformed body
+          // or state must not discard a successful create receipt.
+          const identity = yield* decodeCreatedIssueIdentity(response.body).pipe(Effect.option);
+          if (Option.isSome(identity) && !Object.hasOwn(identity.value, "pull_request")) {
+            const raw = identity.value;
+            yield* (
+              input.onCreated?.({
+                host: scope.host,
+                repository: scope.repository,
+                repositoryId: repository.repositoryId,
+                id: String(raw.id),
+                nodeId: raw.node_id,
+                number: raw.number,
+                title: raw.title,
+                url: raw.html_url,
+              }) ?? Effect.void
+            );
+          }
           return baseline(
             scope,
             repository.repositoryId,
@@ -1708,6 +1767,22 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
             ),
           );
         }),
+      ).pipe(
+        Effect.mapError((error) =>
+          readError(
+            error.operation,
+            error.code,
+            error.message,
+            error.retryAt,
+            input.recover !== false
+              ? error.createOutcome === "unresolved"
+                ? "unresolved"
+                : "uncertain"
+              : attempted
+                ? (error.createOutcome ?? "uncertain")
+                : "rejected",
+          ),
+        ),
       );
     },
   );

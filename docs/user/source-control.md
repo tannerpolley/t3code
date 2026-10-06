@@ -177,7 +177,8 @@ for the issue's project in a worktree on a branch named after the issue, with an
 Use **Open on GitHub** to comment or make other changes.
 
 To run issue work, open an issue, choose **Start agent**, then a model role and a
-repository workspace. **Start agent on issue…** in the command palette opens the current
+repository workspace. Use a model role with an available Codex or Claude target.
+**Start agent on issue…** in the command palette opens the current
 repository’s issues beside the thread, or the Issues page when there is no current repository.
 Work goes to the repository's existing orchestrator, which keeps its issue workers linked to GitHub.
 Later starts use that orchestrator's project. You can choose a new worktree or that project's checkout
@@ -188,10 +189,15 @@ to open its conversation with the issue beside it; before a worker exists, open 
 still need review, publishing, or merge approval; T3 does not automatically close the GitHub issue.
 
 Issue agents can create issues, split work into sub-issues, and move issues between milestones.
-Body edits, closing or reopening issues, and other parent changes wait for your approval. Review
+To require approval for these too, turn on **Ask before agents create, split or move issues** in
+**Settings → Customizations → Version control & issues** for the server. This applies to new
+proposals; existing proposals keep their approval decision. Body edits, closing or reopening issues,
+and other parent changes always wait for your approval. Review
 the exact change in the requesting thread or issue detail, then approve or reject it. Results stay
 visible there, and failed changes can retry their remaining steps. If the issue changed since the
-preview, the agent must propose a new change.
+preview, the agent must propose a new change. If GitHub may have created an issue but T3 cannot
+recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
+its remaining writes. Propose another create only when you intend to create another issue.
 
 To replace the orchestrator's conversation, use **Hand off to fresh thread** in a milestone's
 repository controls and provide a summary. Your approval pauses new issue admissions until existing
