@@ -53,7 +53,7 @@ export function childWorktreeLabel(
   child: Pick<SidebarThreadSummary, "worktreePath">,
   parent: Pick<SidebarThreadSummary, "worktreePath"> | null | undefined,
 ): string | null {
-  if (child.worktreePath === null || child.worktreePath === (parent?.worktreePath ?? null)) {
+  if (child.worktreePath == null || child.worktreePath === (parent?.worktreePath ?? null)) {
     return null;
   }
   return fileBasename(child.worktreePath);
