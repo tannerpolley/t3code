@@ -1,4 +1,4 @@
-import { IssueMilestoneControls } from "./IssueMilestoneControls";
+import { IssueMilestoneControls, IssueRepositoryControls } from "./IssueMilestoneControls";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import {
@@ -662,7 +662,15 @@ export function IssueBrowser({
             </Button>
           </span>
         </div>
-        {repositoryOpen ? <div id={panelId}>{renderRepositoryBody(entry)}</div> : null}
+        {repositoryOpen ? (
+          <div id={panelId}>
+            <IssueRepositoryControls
+              environmentId={entry.environmentId}
+              reference={{ host: entry.host, repository: entry.repository }}
+            />
+            {renderRepositoryBody(entry)}
+          </div>
+        ) : null}
       </section>
     );
   });
