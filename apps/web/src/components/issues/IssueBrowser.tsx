@@ -38,7 +38,7 @@ import { IssueTree, IssueTreeRow, IssueTreeTag } from "./IssueTree";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 import {
   filterAndSortIssues,
-  groupRepositoriesByOwner,
+  viewerRepositoriesFirst,
   issueListStateFor,
   issueStateFilter,
   mergeIssueRepositoryTargets,
@@ -208,7 +208,7 @@ export interface IssueBrowserSearch {
 }
 
 /**
- * The GitHub issue list: owners, repositories and milestone groups under the Filter menu. The
+ * The GitHub issue list: repositories and milestone groups under the Filter menu. The
  * Issues page and the right panel's Issues surface both render it and decide where a selected
  * issue opens.
  */
@@ -494,7 +494,8 @@ export function IssueBrowser({
     ];
   });
   type RepositoryEntry = (typeof repositoryEntries)[number];
-  const ownerGroups = groupRepositoriesByOwner(repositoryEntries, viewerLogins);
+  const listedRepositories = viewerRepositoriesFirst(repositoryEntries, viewerLogins);
+  const viewerOwners = new Set(viewerLogins.map((login) => login.toLowerCase()));
   const openAll = explicitScope || query.trim() !== "";
   const totalCount = repositoryEntries.reduce((sum, entry) => sum + entry.count, 0);
   const totalIncomplete = repositoryEntries.some((entry) => !entry.settled);
@@ -508,12 +509,12 @@ export function IssueBrowser({
   const renderRepositoryBody = (entry: RepositoryEntry) => {
     const { scopeKey, state, snapshot, error, filteredIssues } = entry;
     const message = (text: string) => (
-      <p className="py-1.5 ps-10 pe-4 text-xs text-muted-foreground">{text}</p>
+      <p className="py-1.5 ps-6 pe-4 text-xs text-muted-foreground">{text}</p>
     );
     if (scopeKey === null) return message(`No ${filters.state} issues`);
     if (snapshot === null && error === null) {
       return (
-        <div className="flex items-center gap-2 py-1.5 ps-10 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 py-1.5 ps-6 text-xs text-muted-foreground">
           <Spinner className="size-3.5" />
           Loading issues
         </div>
@@ -577,7 +578,7 @@ export function IssueBrowser({
           </div>
         ) : null}
         {snapshot.nextCursor !== null ? (
-          <div className="py-1 ps-10">
+          <div className="py-1 ps-6">
             <Button
               disabled={pending}
               onClick={() => loadMore(scopeKey)}
@@ -593,100 +594,67 @@ export function IssueBrowser({
     );
   };
 
-  const ownerTree = ownerGroups.map((group) => {
-    const ownerOpen = isExpanded(
-      `owner:${group.key}`,
-      openAll ||
-        group.repositories.some(
-          (entry) => entry.error !== null || entry.selectedIssueNumber !== undefined,
-        ),
+  const repositoryTree = listedRepositories.map((entry) => {
+    const repositoryOpen = isExpanded(
+      `repository:${entry.key}`,
+      openAll || entry.error !== null || entry.selectedIssueNumber !== undefined,
     );
-    const ownerCount = group.repositories.reduce((sum, entry) => sum + entry.count, 0);
-    const ownerIncomplete = group.repositories.some((entry) => !entry.settled);
-    const ownerPanelId = `issue-owner-${group.key.replace(/[^a-z0-9_-]/gi, "-")}`;
+    const panelId = `issue-repository-${entry.key.replace(/[^a-z0-9_-]/gi, "-")}`;
     return (
-      <section key={group.key}>
-        <IssueTreeRow
-          level={0}
-          controls={ownerPanelId}
-          expanded={ownerOpen}
-          onToggle={() => toggleExpanded(`owner:${group.key}`, ownerOpen)}
-          count={`${group.repositories.length} ${group.repositories.length === 1 ? "repo" : "repos"} · ${ownerCount}${ownerIncomplete ? "+" : ""} ${stateNoun(ownerCount)}`}
-        >
-          <span className="min-w-0 truncate text-sm font-semibold">{group.owner}</span>
-          <IssueTreeTag>
-            {group.isOrganization ? "Org" : group.isViewer ? "Personal" : "User"}
-          </IssueTreeTag>
-          {hosts.length > 1 ? (
-            <span className="truncate text-2xs text-muted-foreground">{group.host}</span>
-          ) : null}
-        </IssueTreeRow>
-        {ownerOpen ? (
-          <div id={ownerPanelId}>
-            {group.repositories.map((entry) => {
-              const repositoryOpen = isExpanded(
-                `repository:${entry.key}`,
-                openAll || entry.error !== null || entry.selectedIssueNumber !== undefined,
-              );
-              const panelId = `issue-repository-${entry.key.replace(/[^a-z0-9_-]/gi, "-")}`;
-              return (
-                <section key={entry.key}>
-                  <div className="group/repository flex items-center">
-                    <IssueTreeRow
-                      level={1}
-                      controls={panelId}
-                      expanded={repositoryOpen}
-                      onToggle={() => toggleExpanded(`repository:${entry.key}`, repositoryOpen)}
-                      count={entry.countLabel}
-                    >
-                      <span className="min-w-0 truncate text-sm font-medium">
-                        {entry.repository.slice(entry.repository.indexOf("/") + 1)}
-                      </span>
-                      {entry.isPrivate ? (
-                        <LockIcon
-                          aria-label="Private"
-                          className="size-3 shrink-0 text-muted-foreground"
-                        />
-                      ) : null}
-                      {entry.isArchived ? <IssueTreeTag>Archived</IssueTreeTag> : null}
-                      {entry.isFork ? <IssueTreeTag>Fork</IssueTreeTag> : null}
-                      {entry.pinned ? <IssueTreeTag>Pinned</IssueTreeTag> : null}
-                      {capableEnvironmentList.length > 1 ? (
-                        <span className="truncate text-2xs text-muted-foreground">
-                          {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
-                        </span>
-                      ) : null}
-                    </IssueTreeRow>
-                    {/* Unpinned, the pin shows on row hover or focus; the wrapper owns that fade. */}
-                    <span
-                      className={
-                        entry.pinned
-                          ? "shrink-0"
-                          : "shrink-0 opacity-0 pointer-coarse:opacity-100 group-hover/repository:opacity-100 focus-within:opacity-100"
-                      }
-                    >
-                      <Button
-                        aria-label={
-                          entry.pinned
-                            ? `Unpin ${entry.repository}`
-                            : `Always show ${entry.repository}`
-                        }
-                        title={entry.pinned ? "Unpin" : "Always show, whatever the filters say"}
-                        aria-pressed={entry.pinned}
-                        onClick={() => togglePinned(entry.key, entry.pinned)}
-                        size="icon-xs"
-                        variant="ghost"
-                      >
-                        {entry.pinned ? <PinOffIcon /> : <PinIcon />}
-                      </Button>
-                    </span>
-                  </div>
-                  {repositoryOpen ? <div id={panelId}>{renderRepositoryBody(entry)}</div> : null}
-                </section>
-              );
-            })}
-          </div>
-        ) : null}
+      <section key={entry.key}>
+        <div className="group/repository flex items-center">
+          <IssueTreeRow
+            level={0}
+            controls={panelId}
+            expanded={repositoryOpen}
+            onToggle={() => toggleExpanded(`repository:${entry.key}`, repositoryOpen)}
+            count={entry.countLabel}
+          >
+            <span className="min-w-0 truncate text-sm font-medium">
+              {/* Another owner's repository keeps its owner so a fork and its upstream stay apart. */}
+              {viewerOwners.has(entry.owner.toLowerCase()) ? null : (
+                <span className="font-normal text-muted-foreground">{entry.owner}/</span>
+              )}
+              {entry.repository.slice(entry.repository.indexOf("/") + 1)}
+            </span>
+            {hosts.length > 1 ? (
+              <span className="truncate text-2xs text-muted-foreground">{entry.host}</span>
+            ) : null}
+            {entry.isPrivate ? (
+              <LockIcon aria-label="Private" className="size-3 shrink-0 text-muted-foreground" />
+            ) : null}
+            {entry.isArchived ? <IssueTreeTag>Archived</IssueTreeTag> : null}
+            {entry.isFork ? <IssueTreeTag>Fork</IssueTreeTag> : null}
+            {entry.pinned ? <IssueTreeTag>Pinned</IssueTreeTag> : null}
+            {capableEnvironmentList.length > 1 ? (
+              <span className="truncate text-2xs text-muted-foreground">
+                {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
+              </span>
+            ) : null}
+          </IssueTreeRow>
+          {/* Unpinned, the pin shows on row hover or focus; the wrapper owns that fade. */}
+          <span
+            className={
+              entry.pinned
+                ? "shrink-0"
+                : "shrink-0 opacity-0 pointer-coarse:opacity-100 group-hover/repository:opacity-100 focus-within:opacity-100"
+            }
+          >
+            <Button
+              aria-label={
+                entry.pinned ? `Unpin ${entry.repository}` : `Always show ${entry.repository}`
+              }
+              title={entry.pinned ? "Unpin" : "Always show, whatever the filters say"}
+              aria-pressed={entry.pinned}
+              onClick={() => togglePinned(entry.key, entry.pinned)}
+              size="icon-xs"
+              variant="ghost"
+            >
+              {entry.pinned ? <PinOffIcon /> : <PinIcon />}
+            </Button>
+          </span>
+        </div>
+        {repositoryOpen ? <div id={panelId}>{renderRepositoryBody(entry)}</div> : null}
       </section>
     );
   });
@@ -758,8 +726,8 @@ export function IssueBrowser({
           {repositoryEntries.length} of {repositoryTargets.length} shown
         </span>
       </div>
-      {ownerGroups.length > 0 ? (
-        <div className="px-2 pb-2">{ownerTree}</div>
+      {listedRepositories.length > 0 ? (
+        <div className="px-2 pb-2">{repositoryTree}</div>
       ) : (
         <Empty size="compact" className="min-h-40 flex-none">
           <EmptyHeader>

@@ -6,8 +6,8 @@ import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import type { IssueGroup } from "./issueTree.logic";
 
-/** Indentation for owner, repository, milestone and issue rows; the tree has no boxes. */
-const LEVEL_PADDING = ["ps-2", "ps-6", "ps-10", "ps-14"] as const;
+/** Indentation for repository, milestone and issue rows; the tree has no boxes. */
+const LEVEL_PADDING = ["ps-2", "ps-6", "ps-10"] as const;
 
 /** One disclosure row of the issue tree: chevron, label, and a right-aligned count. */
 export function IssueTreeRow({
@@ -19,7 +19,7 @@ export function IssueTreeRow({
   className,
   children,
 }: {
-  readonly level: 0 | 1 | 2;
+  readonly level: 0 | 1;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly controls: string;
@@ -52,7 +52,7 @@ export function IssueTreeRow({
   );
 }
 
-/** A small uppercase tag beside an owner or repository name. */
+/** A small uppercase tag beside a repository or milestone name. */
 export function IssueTreeTag({ children }: { readonly children: ReactNode }) {
   return (
     <span className="shrink-0 text-3xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -96,7 +96,7 @@ export function IssueTree({
         return (
           <section key={group.id}>
             <IssueTreeRow
-              level={2}
+              level={1}
               controls={panelId}
               expanded={isExpanded}
               onToggle={() => setChosen((current) => new Map(current).set(group.id, !isExpanded))}
@@ -112,7 +112,7 @@ export function IssueTree({
             {isExpanded && group.issues.length === 0 ? (
               <p
                 id={panelId}
-                className={cn("py-1.5 text-xs text-muted-foreground", LEVEL_PADDING[3])}
+                className={cn("py-1.5 text-xs text-muted-foreground", LEVEL_PADDING[2])}
               >
                 No matching issues
               </p>
@@ -127,7 +127,7 @@ export function IssueTree({
                         aria-current={selected ? "page" : undefined}
                         className={cn(
                           "flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-md py-1 pe-2 text-left text-sm hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                          LEVEL_PADDING[3],
+                          LEVEL_PADDING[2],
                           selected && "bg-accent text-accent-foreground hover:bg-accent",
                         )}
                         onClick={() => onSelect(issue)}

@@ -7,7 +7,7 @@ import {
   IssueFilterPreferences,
   changedIssueFilterCount,
   filterAndSortIssues,
-  groupRepositoriesByOwner,
+  viewerRepositoriesFirst,
   issueListStateFor,
   issueStateFilter,
   mergeIssueRepositoryTargets,
@@ -227,27 +227,21 @@ describe("issue repository targets", () => {
     expect(repositoryListed(empty, { ...preferences, empty: true }, true)).toBe(false);
   });
 
-  it("groups repositories under the signed-in account first, then owners alphabetically", () => {
-    const groups = groupRepositoriesByOwner(
+  it("lists the signed-in account's repositories first and keeps the rest in order", () => {
+    const listed = viewerRepositoriesFirst(
       [
-        repository("zeta/tool", { ownerIsOrganization: true }),
+        repository("zeta/tool"),
         repository("Me/new"),
-        repository("acme/site", { ownerIsOrganization: true }),
+        repository("acme/site"),
         repository("me/old"),
       ],
       ["me"],
     );
-    expect(
-      groups.map((group) => [
-        group.owner,
-        group.isViewer,
-        group.isOrganization,
-        group.repositories.map((target) => target.repository),
-      ]),
-    ).toEqual([
-      ["Me", true, false, ["Me/new", "me/old"]],
-      ["acme", false, true, ["acme/site"]],
-      ["zeta", false, true, ["zeta/tool"]],
+    expect(listed.map((target) => target.repository)).toEqual([
+      "Me/new",
+      "me/old",
+      "zeta/tool",
+      "acme/site",
     ]);
   });
 });

@@ -203,44 +203,12 @@ export function repositoryListed(
   return !entry.settled || entry.count > 0 || ((preferences.empty || entry.pinned) && !narrowed);
 }
 
-export interface IssueOwnerGroup<T> {
-  readonly key: string;
-  readonly host: string;
-  readonly owner: string;
-  readonly isOrganization: boolean;
-  readonly isViewer: boolean;
-  readonly repositories: T[];
-}
-
-/**
- * Groups repositories under their owner: the signed-in accounts first, then owners
- * alphabetically. Repositories keep their incoming order.
- */
-export function groupRepositoriesByOwner<
-  T extends Pick<IssueRepositorySummary, "host" | "owner" | "ownerIsOrganization">,
->(repositories: readonly T[], viewerLogins: readonly string[]): IssueOwnerGroup<T>[] {
+/** One flat repository list: the signed-in accounts' own repositories first, otherwise in order. */
+export function viewerRepositoriesFirst<T extends Pick<IssueRepositorySummary, "owner">>(
+  repositories: readonly T[],
+  viewerLogins: readonly string[],
+): T[] {
   const viewers = new Set(viewerLogins.map((login) => login.toLowerCase()));
-  const groups = new Map<string, IssueOwnerGroup<T>>();
-  for (const repository of repositories) {
-    const key = repositoryKey(repository.host, repository.owner);
-    let group = groups.get(key);
-    if (group === undefined) {
-      group = {
-        key,
-        host: repository.host,
-        owner: repository.owner,
-        isOrganization: repository.ownerIsOrganization,
-        isViewer: viewers.has(repository.owner.toLowerCase()),
-        repositories: [],
-      };
-      groups.set(key, group);
-    }
-    group.repositories.push(repository);
-  }
-  return [...groups.values()].toSorted(
-    (left, right) =>
-      Number(right.isViewer) - Number(left.isViewer) ||
-      left.owner.localeCompare(right.owner, undefined, { sensitivity: "base" }) ||
-      left.host.localeCompare(right.host),
-  );
+  const own = (repository: T) => Number(viewers.has(repository.owner.toLowerCase()));
+  return repositories.toSorted((left, right) => own(right) - own(left));
 }
