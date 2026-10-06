@@ -1024,6 +1024,7 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
           ...Array.from({ length: concurrency }, () => runWorker("lifecycle")),
           runWorker("title"),
           runWorker("issue-comment"),
+          runWorker("issue-change"),
         ],
         {
           concurrency: "unbounded",

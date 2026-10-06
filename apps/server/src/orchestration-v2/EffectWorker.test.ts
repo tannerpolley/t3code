@@ -405,8 +405,8 @@ it.effect(
             request: { type: "issue.change.execute", changeId: "proposal" },
           },
         ]);
-        assert.isTrue(yield* worker.runOnceInLane("issue-comment"));
-        assert.isFalse(yield* worker.runOnceInLane("issue-comment"));
+        assert.isTrue(yield* worker.runOnceInLane("issue-change"));
+        assert.isFalse(yield* worker.runOnceInLane("issue-change"));
         const saved = yield* outbox.get("change:rate-limit");
         assert.isTrue(Option.isSome(saved));
         if (Option.isSome(saved))
@@ -415,7 +415,7 @@ it.effect(
             retryAt,
           );
         yield* TestClock.adjust(60_000);
-        assert.isTrue(yield* worker.runOnceInLane("issue-comment"));
+        assert.isTrue(yield* worker.runOnceInLane("issue-change"));
         assert.equal(calls, 2);
       }).pipe(Effect.provide(workerLayer));
     }),

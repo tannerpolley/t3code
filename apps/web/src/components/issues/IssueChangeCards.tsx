@@ -1,4 +1,9 @@
-import type { EnvironmentId, IssueChange, IssueChangesListInput } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueChange,
+  IssueChangeDecisionInput,
+  IssueChangesListInput,
+} from "@t3tools/contracts";
 import { useState } from "react";
 import { useServerConfigs } from "~/state/entities";
 import { issueEnvironment } from "~/state/issues";
@@ -50,7 +55,7 @@ function Cards({
   const [error, setError] = useState<string | null>(null);
   const changes = query.data ?? [];
   if (changes.length === 0 && error === null && query.error === null) return null;
-  const respond = async (id: string, decision: "approved" | "rejected" | "retry") => {
+  const respond = async (id: string, decision: IssueChangeDecisionInput["decision"]) => {
     setResponding(id);
     setError(null);
     const result = await decide({ environmentId, input: { id, decision } });
@@ -64,7 +69,7 @@ function Cards({
       <p className="mt-1 text-muted-foreground" role="status">
         {change.decision === "pending"
           ? "Waiting for your approval"
-          : `${change.decision.replaceAll("_", " ")} · ${change.status}`}
+          : `${change.decision.replaceAll("_", " ")} · ${change.status.replaceAll("_", " ")}`}
         {change.result ? ` · ${change.result}` : ""}
       </p>
       <details className="mt-2" open={change.decision === "pending"}>
@@ -118,6 +123,21 @@ function Cards({
           </Button>
         </div>
       ) : null}
+      {change.status === "needs_attention" ? (
+        <div className="mt-3">
+          <p className="mb-2 text-muted-foreground">
+            Check GitHub before resolving. Mark resolved stops all remaining steps.
+          </p>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={responding !== null}
+            onClick={() => void respond(change.id, "resolved")}
+          >
+            Mark resolved
+          </Button>
+        </div>
+      ) : null}
       {change.status === "failed" ? (
         <div className="mt-3">
           <Button
@@ -132,8 +152,12 @@ function Cards({
       ) : null}
     </article>
   );
-  const pending = changes.filter((change) => change.decision === "pending");
-  const decided = changes.filter((change) => change.decision !== "pending");
+  const actionable = changes.filter(
+    (change) => change.decision === "pending" || change.status === "needs_attention",
+  );
+  const decided = changes.filter(
+    (change) => change.decision !== "pending" && change.status !== "needs_attention",
+  );
   return (
     <section aria-label="Issue changes" className="mb-3 max-h-96 overflow-y-auto">
       {(error ?? query.error) ? (
@@ -141,9 +165,9 @@ function Cards({
           {error ?? query.error}
         </p>
       ) : null}
-      <div className="space-y-2">{pending.map(card)}</div>
+      <div className="space-y-2">{actionable.map(card)}</div>
       {decided.length > 0 ? (
-        <details className="mt-2" open={!compact && pending.length === 0}>
+        <details className="mt-2" open={!compact && actionable.length === 0}>
           <summary className="cursor-pointer text-xs text-muted-foreground">
             Issue change results ({decided.length})
           </summary>

@@ -30,8 +30,12 @@ import * as ServerConfig from "./config.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import { EnvironmentToolkit } from "./mcp/toolkits/environment/tools.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
+const decodeAgentPreferences = Schema.decodeUnknownEffect(
+  EnvironmentToolkit.tools.t3_environment_preferences_update.parametersSchema,
+);
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
@@ -96,7 +100,36 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
     `;
   });
 
+it.effect("agents cannot change issue approval policy through environment preferences", () =>
+  Effect.gen(function* () {
+    const decoded = yield* decodeAgentPreferences({
+      issueUpkeepRequiresApproval: false,
+      enableProviderUpdateChecks: false,
+    });
+    assert.deepEqual(decoded, { enableProviderUpdateChecks: false });
+  }),
+);
+
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("issue upkeep approval defaults off and persists the user's choice", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      assert.isFalse((yield* service.getSettings).issueUpkeepRequiresApproval);
+      assert.isTrue(
+        (yield* service.updateSettings({ issueUpkeepRequiresApproval: true }))
+          .issueUpkeepRequiresApproval,
+      );
+      const saved = yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath));
+      assert.isTrue(saved.issueUpkeepRequiresApproval);
+      assert.isFalse(
+        (yield* service.updateSettings({ issueUpkeepRequiresApproval: false }))
+          .issueUpkeepRequiresApproval,
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("loads a saved agentBrowserTabLimits off", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

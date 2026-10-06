@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString, IsoDateTime, ThreadId } from "./baseSchemas.ts";
-import { IssueRef, IssueRepositoryRef } from "./issue.ts";
+import { IssueRef, IssueRepositoryRef, IssueReadError } from "./issue.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 
 const Number = Schema.Int.check(
@@ -72,6 +72,8 @@ export const IssueChange = Schema.Struct({
     "succeeded",
     "failed",
     "conflict",
+    "needs_attention",
+    "resolved",
     "rejected",
   ]),
   completedSteps: Schema.Record(
@@ -89,11 +91,12 @@ export const IssueChangesListInput = Schema.Union([
 export type IssueChangesListInput = typeof IssueChangesListInput.Type;
 export const IssueChangeDecisionInput = Schema.Struct({
   id: TrimmedNonEmptyString,
-  decision: Schema.Literals(["approved", "rejected", "retry"]),
+  decision: Schema.Literals(["approved", "rejected", "retry", "resolved"]),
 });
 export type IssueChangeDecisionInput = typeof IssueChangeDecisionInput.Type;
 export class IssueChangeError extends Schema.TaggedError<IssueChangeError>()("IssueChangeError", {
   code: Schema.Literals(["invalid-request", "forbidden", "storage", "github"]),
+  createOutcome: IssueReadError.fields.createOutcome,
   message: Schema.String,
   retryAt: Schema.optional(Schema.Finite),
 }) {}
