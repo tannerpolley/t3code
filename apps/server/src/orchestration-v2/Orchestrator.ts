@@ -9468,6 +9468,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messages: childResult.messages,
         turnItems: childResult.turnItems,
       };
+      const now = yield* DateTime.now;
+      const result = subagentResultForRun(childProjection, childRun);
+      const issueWriteEffects: Array<PendingOrchestrationEffectV2> = [];
+      const linkedIssue = childControls.thread.linkedIssue;
+      if (linkedIssue !== undefined) {
+        const repositoryOwner = yield* projectionStore
+          .getThread(childControls.thread.lineage.rootThreadId)
+          .pipe(Effect.option);
+        const writePolicy = Option.isSome(repositoryOwner)
+          ? repositoryOwner.value.repositoryOrchestration
+          : undefined;
+        const branch = childControls.thread.branch;
+        const model = childControls.thread.modelSelection.model;
+        const status = deriveIssueWorkStatus({
+          shell: childShell,
+          paused: false,
+          waitingOnSubIssues: false,
+          resultAvailable: progress.state === "result_available",
+        });
+        if (writePolicy?.publishCloseoutComments === true) {
+          const closeoutWriteKey = `issue-closeout:${linkedIssue.host}:${linkedIssue.repositoryId}:${linkedIssue.id}:${childThreadId}:${childRun.id}`;
+          const closeoutMarker = `<!-- t3-issue-closeout:${linkedIssue.host}:${linkedIssue.repositoryId}:${linkedIssue.id}:${childThreadId}:${childRun.id} -->`;
+          issueWriteEffects.push({
+            id: `effect:issue-comment:${closeoutWriteKey}`,
+            commandId: CommandId.make(`command:issue-comment:${closeoutWriteKey}`),
+            threadId: childThreadId,
+            request: {
+              type: "issue.github.comment",
+              operation: "closeout_create",
+              issue: linkedIssue,
+              writeKey: closeoutWriteKey,
+              resultEventId: String(childRun.id),
+              marker: closeoutMarker,
+              body: [
+                `## T3 Code closeout: ${status}`,
+                `Issue: [#${linkedIssue.number} ${linkedIssue.title}](${linkedIssue.url})`,
+                `Thread: ${childThreadId}`,
+                `Model: ${model}`,
+                ...(branch === null ? [] : [`Branch: ${branch}`]),
+                `Completed: ${DateTime.formatIso(now)}`,
+                "",
+                result.text,
+                "",
+                closeoutMarker,
+              ].join("\n"),
+            },
+          });
+        }
+      }
+      if (issueWriteEffects.length > 0) yield* writeSystemEvents([], issueWriteEffects);
       const parentThreadId = childControls.thread.lineage.parentThreadId;
       const parentProjection = yield* projectionStore.getThreadRecords(
         parentThreadId,
@@ -9511,8 +9561,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         return;
       const resumed = reportedRunIds.length > 0;
-      const now = yield* DateTime.now;
-      const result = subagentResultForRun(childProjection, childRun);
       const ownerRun =
         task.runId === null
           ? undefined
@@ -9566,53 +9614,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedTask,
         now,
       });
-      const issueWriteEffects: Array<PendingOrchestrationEffectV2> = [];
-      const linkedIssue = childControls.thread.linkedIssue;
-      if (linkedIssue !== undefined) {
-        const repositoryOwner = yield* projectionStore
-          .getThread(childControls.thread.lineage.rootThreadId)
-          .pipe(Effect.option);
-        const writePolicy = Option.isSome(repositoryOwner)
-          ? repositoryOwner.value.repositoryOrchestration
-          : undefined;
-        const branch = childControls.thread.branch;
-        const model = childControls.thread.modelSelection.model;
-        const status = deriveIssueWorkStatus({
-          shell: childShell,
-          paused: false,
-          waitingOnSubIssues: false,
-          resultAvailable: progress.state === "result_available",
-        });
-        if (writePolicy?.publishCloseoutComments === true) {
-          const closeoutWriteKey = `issue-closeout:${linkedIssue.host}:${linkedIssue.repositoryId}:${linkedIssue.id}:${childThreadId}:${childRun.id}`;
-          const closeoutMarker = `<!-- t3-issue-closeout:${linkedIssue.host}:${linkedIssue.repositoryId}:${linkedIssue.id}:${childThreadId}:${childRun.id} -->`;
-          issueWriteEffects.push({
-            id: `effect:issue-comment:${closeoutWriteKey}`,
-            commandId: CommandId.make(`command:issue-comment:${closeoutWriteKey}`),
-            threadId: childThreadId,
-            request: {
-              type: "issue.github.comment",
-              operation: "closeout_create",
-              issue: linkedIssue,
-              writeKey: closeoutWriteKey,
-              resultEventId: String(childRun.id),
-              marker: closeoutMarker,
-              body: [
-                `## T3 Code closeout: ${status}`,
-                `Issue: [#${linkedIssue.number} ${linkedIssue.title}](${linkedIssue.url})`,
-                `Thread: ${childThreadId}`,
-                `Model: ${model}`,
-                ...(branch === null ? [] : [`Branch: ${branch}`]),
-                `Completed: ${DateTime.formatIso(now)}`,
-                "",
-                result.text,
-                "",
-                closeoutMarker,
-              ].join("\n"),
-            },
-          });
-        }
-      }
       const parentRunUpdate =
         completionPlan.parentRun ?? (parentRun === ownerRun ? undefined : parentRun);
       const resultTransferId = yield* idAllocator.allocate.contextTransfer({
@@ -9689,111 +9690,108 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         consumedAt: now,
       };
 
-      yield* writeSystemEvents(
-        [
-          {
-            type: "subagent.updated",
-            threadId: parentThreadId,
-            ...(task.runId === null ? {} : { runId: task.runId }),
-            nodeId: task.id,
-            driver: task.driver,
-            occurredAt: now,
-            payload: completionPlan.task,
-          },
-          ...(parentRunUpdate === undefined
-            ? []
-            : [
-                {
-                  type: "run.updated" as const,
-                  threadId: parentThreadId,
-                  runId: parentRunUpdate.id,
-                  ...(parentRunUpdate.rootNodeId === null
-                    ? {}
-                    : { nodeId: parentRunUpdate.rootNodeId }),
-                  providerInstanceId: parentRunUpdate.providerInstanceId,
-                  occurredAt: now,
-                  payload: parentRunUpdate,
+      yield* writeSystemEvents([
+        {
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          ...(task.runId === null ? {} : { runId: task.runId }),
+          nodeId: task.id,
+          driver: task.driver,
+          occurredAt: now,
+          payload: completionPlan.task,
+        },
+        ...(parentRunUpdate === undefined
+          ? []
+          : [
+              {
+                type: "run.updated" as const,
+                threadId: parentThreadId,
+                runId: parentRunUpdate.id,
+                ...(parentRunUpdate.rootNodeId === null
+                  ? {}
+                  : { nodeId: parentRunUpdate.rootNodeId }),
+                providerInstanceId: parentRunUpdate.providerInstanceId,
+                occurredAt: now,
+                payload: parentRunUpdate,
+              },
+            ]),
+        ...(completionPlan.message === undefined
+          ? []
+          : [
+              {
+                type: "message.updated" as const,
+                threadId: parentThreadId,
+                ...(completionPlan.message.runId === null
+                  ? {}
+                  : { runId: completionPlan.message.runId }),
+                ...(completionPlan.message.nodeId === null
+                  ? {}
+                  : { nodeId: completionPlan.message.nodeId }),
+                providerInstanceId:
+                  completionPlan.parentRun?.providerInstanceId ??
+                  parentProjection.thread.providerInstanceId,
+                occurredAt: now,
+                payload: completionPlan.message,
+              },
+            ]),
+        ...(parentNode === undefined
+          ? []
+          : [
+              {
+                type: "node.updated" as const,
+                threadId: parentThreadId,
+                ...(parentNode.runId === null ? {} : { runId: parentNode.runId }),
+                nodeId: parentNode.id,
+                driver: task.driver,
+                occurredAt: now,
+                payload: {
+                  ...parentNode,
+                  status: terminalStatus,
+                  providerThreadId: childRun.providerThreadId,
+                  completedAt: now,
                 },
-              ]),
-          ...(completionPlan.message === undefined
-            ? []
-            : [
-                {
-                  type: "message.updated" as const,
-                  threadId: parentThreadId,
-                  ...(completionPlan.message.runId === null
-                    ? {}
-                    : { runId: completionPlan.message.runId }),
-                  ...(completionPlan.message.nodeId === null
-                    ? {}
-                    : { nodeId: completionPlan.message.nodeId }),
-                  providerInstanceId:
-                    completionPlan.parentRun?.providerInstanceId ??
-                    parentProjection.thread.providerInstanceId,
-                  occurredAt: now,
-                  payload: completionPlan.message,
+              },
+            ]),
+        ...(parentTurnItem === undefined
+          ? []
+          : [
+              {
+                type: "turn-item.updated" as const,
+                threadId: parentThreadId,
+                ...(parentTurnItem.runId === null ? {} : { runId: parentTurnItem.runId }),
+                ...(parentTurnItem.nodeId === null ? {} : { nodeId: parentTurnItem.nodeId }),
+                driver: task.driver,
+                occurredAt: now,
+                payload: {
+                  ...parentTurnItem,
+                  status: terminalStatus,
+                  result: result.text,
+                  completedAt: now,
+                  updatedAt: now,
                 },
-              ]),
-          ...(parentNode === undefined
-            ? []
-            : [
-                {
-                  type: "node.updated" as const,
-                  threadId: parentThreadId,
-                  ...(parentNode.runId === null ? {} : { runId: parentNode.runId }),
-                  nodeId: parentNode.id,
-                  driver: task.driver,
-                  occurredAt: now,
-                  payload: {
-                    ...parentNode,
-                    status: terminalStatus,
-                    providerThreadId: childRun.providerThreadId,
-                    completedAt: now,
-                  },
-                },
-              ]),
-          ...(parentTurnItem === undefined
-            ? []
-            : [
-                {
-                  type: "turn-item.updated" as const,
-                  threadId: parentThreadId,
-                  ...(parentTurnItem.runId === null ? {} : { runId: parentTurnItem.runId }),
-                  ...(parentTurnItem.nodeId === null ? {} : { nodeId: parentTurnItem.nodeId }),
-                  driver: task.driver,
-                  occurredAt: now,
-                  payload: {
-                    ...parentTurnItem,
-                    status: terminalStatus,
-                    result: result.text,
-                    completedAt: now,
-                    updatedAt: now,
-                  },
-                },
-              ]),
-          ...(resultHandoff === null
-            ? []
-            : [
-                {
-                  type: "context-handoff.updated" as const,
-                  threadId: parentThreadId,
-                  ...(parentRun === undefined ? {} : { runId: parentRun.id }),
-                  providerInstanceId: childRun.providerInstanceId,
-                  occurredAt: now,
-                  payload: resultHandoff,
-                },
-              ]),
-          {
-            type: "context-transfer.created",
-            threadId: parentThreadId,
-            ...(parentRun === undefined ? {} : { runId: parentRun.id }),
-            providerInstanceId: childRun.providerInstanceId,
-            occurredAt: now,
-            payload: resultTransfer,
-          },
-        ],
-        issueWriteEffects,
-      );
+              },
+            ]),
+        ...(resultHandoff === null
+          ? []
+          : [
+              {
+                type: "context-handoff.updated" as const,
+                threadId: parentThreadId,
+                ...(parentRun === undefined ? {} : { runId: parentRun.id }),
+                providerInstanceId: childRun.providerInstanceId,
+                occurredAt: now,
+                payload: resultHandoff,
+              },
+            ]),
+        {
+          type: "context-transfer.created",
+          threadId: parentThreadId,
+          ...(parentRun === undefined ? {} : { runId: parentRun.id }),
+          providerInstanceId: childRun.providerInstanceId,
+          occurredAt: now,
+          payload: resultTransfer,
+        },
+      ]);
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);

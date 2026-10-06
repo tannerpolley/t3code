@@ -489,6 +489,23 @@ export const executorLayer: Layer.Layer<
                     }),
                 ),
               );
+          case "issue.status.refresh":
+            return withIssueWriteLock(
+              effect.request.issue,
+              eventSink.refreshIssueStatus({
+                ...effect.request,
+                threadId: effect.threadId,
+              }),
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "issue.github.comment": {
             const request = effect.request;
             if (Option.isNone(issues)) {
@@ -519,6 +536,8 @@ export const executorLayer: Layer.Layer<
                     current.latestStatusWriteKey !== request.writeKey
                   )
                     return;
+                  const thread = yield* projections.getThread(effect.threadId);
+                  if (thread.deletedAt !== null && request.status !== "unavailable") return;
                   commentId = current.statusCommentId ?? undefined;
                 } else {
                   const receipt = yield* projections.getIssueCommentReceipt({
@@ -785,10 +804,9 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (cancelledBeforeExecution) return true;
 
-          const recoverableIssueWrite = effect.request.type === "issue.github.comment";
           const execution = executor
             .execute(effect, {
-              willRetry: recoverableIssueWrite || effect.attemptCount < maxAttempts,
+              willRetry: effect.attemptCount < maxAttempts,
             })
             .pipe(Effect.as("executed" as const));
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
@@ -827,7 +845,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts && !recoverableIssueWrite
+            : effect.attemptCount >= maxAttempts
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
@@ -895,7 +913,7 @@ export const layerWithOptions = (
 export const layer = layerWithOptions();
 
 export interface OrchestrationEffectDaemonOptions {
-  /** Provider lifecycle slots; title generation always has one separate slot. */
+  /** Provider lifecycle slots; each independent lane has one separate slot. */
   readonly concurrency?: number;
   readonly livenessPollIntervalMs?: number;
 }
@@ -967,7 +985,11 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
       });
 
       return yield* Effect.all(
-        [...Array.from({ length: concurrency }, () => runWorker("lifecycle")), runWorker("title")],
+        [
+          ...Array.from({ length: concurrency }, () => runWorker("lifecycle")),
+          runWorker("title"),
+          runWorker("issue-comment"),
+        ],
         {
           concurrency: "unbounded",
           discard: true,

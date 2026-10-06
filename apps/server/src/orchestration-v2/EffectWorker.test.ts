@@ -49,70 +49,118 @@ const providerTurnId = ProviderTurnId.make("provider-turn:effect-worker-restart"
 const attemptId = RunAttemptId.make("run-attempt:effect-worker-restart");
 const runId = RunId.make("run:effect-worker-restart");
 
-it.effect("keeps managed issue comment writes retryable past the lifecycle attempt limit", () =>
-  Effect.gen(function* () {
-    const marker = "<!-- t3-issue-closeout:github.com:1:2:thread:issue:run:1 -->";
-    const workerLayer = EffectWorker.layerWithOptions({ maxAttempts: 1 }).pipe(
-      Layer.provideMerge(EffectOutbox.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
-      Layer.provide(
-        Layer.succeed(
-          EffectWorker.OrchestrationEffectExecutorV2,
-          EffectWorker.OrchestrationEffectExecutorV2.of({
-            execute: (effect) =>
-              Effect.fail(
-                new EffectWorker.OrchestrationEffectExecutionError({
-                  effectId: effect.id,
-                  effectType: effect.request.type,
-                  cause: "temporary GitHub failure",
-                }),
-              ),
-          }),
+it.effect(
+  "isolates stalled and failing issue comments from lifecycle work and bounds retries",
+  () =>
+    Effect.gen(function* () {
+      const marker = "<!-- t3-issue-closeout:github.com:1:2:thread:issue:run:1 -->";
+      const started = yield* Deferred.make<void>();
+      const failComment = yield* Deferred.make<void>();
+      const executed = yield* Ref.make<ReadonlyArray<string>>([]);
+      const workerLayer = EffectWorker.layerWithOptions({ maxAttempts: 2 }).pipe(
+        Layer.provideMerge(EffectOutbox.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+        Layer.provide(
+          Layer.succeed(
+            EffectWorker.OrchestrationEffectExecutorV2,
+            EffectWorker.OrchestrationEffectExecutorV2.of({
+              execute: (effect) =>
+                effect.request.type === "issue.github.comment"
+                  ? Deferred.succeed(started, undefined).pipe(
+                      Effect.andThen(Deferred.await(failComment)),
+                      Effect.andThen(
+                        Effect.fail(
+                          new EffectWorker.OrchestrationEffectExecutionError({
+                            effectId: effect.id,
+                            effectType: effect.request.type,
+                            cause: "GitHub token cannot comment",
+                          }),
+                        ),
+                      ),
+                    )
+                  : Ref.update(executed, (current) => [...current, effect.id]),
+            }),
+          ),
         ),
-      ),
-      Layer.provide(NodeServices.layer),
-    );
+        Layer.provide(NodeServices.layer),
+      );
 
-    yield* Effect.gen(function* () {
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      yield* outbox.enqueue([
-        {
-          id: "effect:issue-closeout-retry",
-          commandId: CommandId.make("command:issue-closeout-retry"),
-          threadId,
-          request: {
-            type: "issue.github.comment",
-            operation: "closeout_create",
-            issue: {
-              host: "github.com",
-              repository: "owner/repo",
-              repositoryId: "1",
-              id: "2",
-              nodeId: "I_kwDOIssue2",
-              number: 8,
-              url: "https://github.com/owner/repo/issues/8",
-              title: "Retry comment",
+      yield* Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* outbox.enqueue([
+          {
+            id: "effect:issue-closeout-retry",
+            commandId: CommandId.make("command:issue-closeout-retry"),
+            threadId,
+            request: {
+              type: "issue.github.comment",
+              operation: "closeout_create",
+              issue: {
+                host: "github.com",
+                repository: "owner/repo",
+                repositoryId: "1",
+                id: "2",
+                nodeId: "I_kwDOIssue2",
+                number: 8,
+                url: "https://github.com/owner/repo/issues/8",
+                title: "Retry comment",
+              },
+              writeKey: "issue-closeout:github.com:1:2:thread:issue:run:1",
+              resultEventId: "run:1",
+              marker,
+              body: `Final result\n\n${marker}`,
             },
-            writeKey: "issue-closeout:github.com:1:2:thread:issue:run:1",
-            resultEventId: "run:1",
-            marker,
-            body: `Final result\n\n${marker}`,
           },
-        },
-      ]);
+        ]);
 
-      assert.isTrue(yield* worker.runOnce);
-      const first = Option.getOrThrow(yield* outbox.get("effect:issue-closeout-retry"));
-      assert.equal(first.status, "pending");
-      assert.equal(first.attemptCount, 1);
-      yield* TestClock.adjust("100 millis");
-
-      assert.isTrue(yield* worker.runOnce);
-      const retried = Option.getOrThrow(yield* outbox.get("effect:issue-closeout-retry"));
-      assert.equal(retried.status, "pending");
-      assert.equal(retried.attemptCount, 2);
-    }).pipe(Effect.provide(workerLayer));
-  }),
+        yield* outbox.enqueue([
+          {
+            id: "effect:provider-start",
+            commandId: CommandId.make("command:provider-start"),
+            threadId,
+            request: { type: "provider-turn.start", runId },
+          },
+        ]);
+        const notification = yield* worker.awaitWorkInLane("issue-comment").pipe(Effect.forkScoped);
+        yield* outbox.notifyAvailable();
+        yield* Fiber.join(notification);
+        const comment = yield* worker.runOnceInLane("issue-comment").pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+        assert.isTrue(yield* worker.runOnceInLane("lifecycle"));
+        assert.deepEqual(yield* Ref.get(executed), ["effect:provider-start"]);
+        yield* Deferred.succeed(failComment, undefined);
+        assert.isTrue(yield* Fiber.join(comment));
+        const first = Option.getOrThrow(yield* outbox.get("effect:issue-closeout-retry"));
+        assert.equal(first.status, "pending");
+        assert.equal(first.attemptCount, 1);
+        assert.isFalse(yield* worker.runOnceInLane("issue-comment"));
+        yield* outbox.enqueue([
+          {
+            id: "effect:provider-interrupt",
+            commandId: CommandId.make("command:provider-interrupt"),
+            threadId,
+            request: {
+              type: "provider-turn.interrupt",
+              providerSessionId: oldSessionId,
+              providerThreadId,
+              providerTurnId,
+            },
+          },
+        ]);
+        assert.isTrue(yield* worker.runOnceInLane("lifecycle"));
+        yield* TestClock.adjust("100 millis");
+        assert.isTrue(yield* worker.runOnceInLane("issue-comment"));
+        const retried = Option.getOrThrow(yield* outbox.get("effect:issue-closeout-retry"));
+        assert.equal(retried.status, "failed");
+        assert.equal(retried.attemptCount, 2);
+        yield* TestClock.adjust("1 minute");
+        assert.isFalse(yield* worker.runOnceInLane("issue-comment"));
+        assert.deepEqual(yield* Ref.get(executed), [
+          "effect:provider-start",
+          "effect:provider-interrupt",
+        ]);
+      }).pipe(Effect.provide(workerLayer));
+    }),
 );
 
 it.effect("a stalled title cannot occupy the lifecycle worker lane", () =>
@@ -774,10 +822,10 @@ it.effect("uses durable deadlines, notifications, and a slow liveness poll", () 
     );
     const worker: EffectWorker.OrchestrationEffectWorkerV2["Service"] =
       EffectWorker.OrchestrationEffectWorkerV2.of({
-        runOnceInLane: (lane) => (lane === "title" ? Effect.succeed(false) : worker.runOnce),
-        awaitWorkInLane: (lane) => (lane === "title" ? Effect.never : worker.awaitWork),
+        runOnceInLane: (lane) => (lane === "lifecycle" ? worker.runOnce : Effect.succeed(false)),
+        awaitWorkInLane: (lane) => (lane === "lifecycle" ? worker.awaitWork : Effect.never),
         nextClaimableAtInLane: (lane) =>
-          lane === "title" ? Effect.succeed(Option.none()) : worker.nextClaimableAt,
+          lane === "lifecycle" ? worker.nextClaimableAt : Effect.succeed(Option.none()),
         awaitWork: Queue.take(available),
         runRecoveryOnce: Effect.succeed(false),
         runOnce: Effect.gen(function* () {
@@ -833,10 +881,10 @@ it.effect("does not hot-loop when a claim fails", () =>
     const now = yield* DateTime.now;
     const worker: EffectWorker.OrchestrationEffectWorkerV2["Service"] =
       EffectWorker.OrchestrationEffectWorkerV2.of({
-        runOnceInLane: (lane) => (lane === "title" ? Effect.succeed(false) : worker.runOnce),
-        awaitWorkInLane: (lane) => (lane === "title" ? Effect.never : worker.awaitWork),
+        runOnceInLane: (lane) => (lane === "lifecycle" ? worker.runOnce : Effect.succeed(false)),
+        awaitWorkInLane: (lane) => (lane === "lifecycle" ? worker.awaitWork : Effect.never),
         nextClaimableAtInLane: (lane) =>
-          lane === "title" ? Effect.succeed(Option.none()) : worker.nextClaimableAt,
+          lane === "lifecycle" ? worker.nextClaimableAt : Effect.succeed(Option.none()),
         awaitWork: Effect.never,
         runRecoveryOnce: Effect.succeed(false),
         runOnce: Ref.update(attempts, (count) => count + 1).pipe(
@@ -873,10 +921,10 @@ it.effect("backs off briefly when a due deadline loses a claim race", () =>
     const now = yield* DateTime.now;
     const worker: EffectWorker.OrchestrationEffectWorkerV2["Service"] =
       EffectWorker.OrchestrationEffectWorkerV2.of({
-        runOnceInLane: (lane) => (lane === "title" ? Effect.succeed(false) : worker.runOnce),
-        awaitWorkInLane: (lane) => (lane === "title" ? Effect.never : worker.awaitWork),
+        runOnceInLane: (lane) => (lane === "lifecycle" ? worker.runOnce : Effect.succeed(false)),
+        awaitWorkInLane: (lane) => (lane === "lifecycle" ? worker.awaitWork : Effect.never),
         nextClaimableAtInLane: (lane) =>
-          lane === "title" ? Effect.succeed(Option.none()) : worker.nextClaimableAt,
+          lane === "lifecycle" ? worker.nextClaimableAt : Effect.succeed(Option.none()),
         awaitWork: Effect.never,
         runRecoveryOnce: Effect.succeed(false),
         runOnce: Ref.update(attempts, (count) => count + 1).pipe(Effect.as(false)),

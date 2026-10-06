@@ -2587,9 +2587,8 @@ describe("delegate_task workspace", () => {
   );
 });
 
-it.effect(
-  "issue starts share one durable root and queued request, and retries cannot start another attempt",
-  () => {
+describe("managed issue work", () => {
+  const exercise = (scenario: "baseline" | "direct-resume" | "deletion") => {
     const provider: ServerProvider = {
       instanceId: modelSelection.instanceId,
       driver: ProviderDriverKind.make("codex"),
@@ -2710,7 +2709,8 @@ it.effect(
         const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
         return EffectWorker.OrchestrationEffectExecutorV2.of({
           execute: (effect, options) =>
-            effect.request.type === "issue.github.comment"
+            effect.request.type === "issue.github.comment" ||
+            effect.request.type === "issue.status.refresh"
               ? executor.execute(effect, options)
               : Effect.void,
         });
@@ -2931,6 +2931,7 @@ it.effect(
         (yield* threads.getThreadShell(child.thread.id))?.pendingRuntimeRequest?.kind,
         "dynamic_tool_call",
       );
+      yield* worker.drain();
       const waitingRows = yield* sql<{
         effect_id: string;
       }>`SELECT effect_id FROM orchestration_v2_effect_outbox WHERE effect_type = 'issue.github.comment' AND json_extract(payload_json, '$.status') = 'waiting_on_you' ORDER BY rowid DESC LIMIT 1`;
@@ -2939,6 +2940,26 @@ it.effect(
       assert.isTrue(
         [...published.values()].some((comment) => comment.body.includes("Waiting on you")),
       );
+      if (scenario === "deletion") {
+        yield* threads.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("issue-worker:delete"),
+          threadId: child.thread.id,
+        });
+        assert.equal((yield* issues.workStatus(input)).status, "unavailable");
+        // The latest published key still names Waiting on you until refresh runs.
+        // Replaying it here proves deletion itself rejects stale writes.
+        const before = writeCalls.length;
+        yield* executor.execute(staleWaiting);
+        assert.equal(writeCalls.length, before);
+        yield* worker.drain();
+        const statuses = writeCalls.filter((call) => call.operation === "status_sync");
+        assert.include(statuses.at(-1)!.body, "Unavailable");
+        const afterDeletion = writeCalls.length;
+        yield* executor.execute(staleWaiting);
+        assert.equal(writeCalls.length, afterDeletion);
+        return;
+      }
       yield* sink.write({
         events: [
           {
@@ -3027,6 +3048,81 @@ it.effect(
         1,
       );
       assert.equal((yield* issues.workStatus(input)).status, "done");
+      if (scenario === "direct-resume") {
+        const beforeTransfers = (yield* threads.getThreadProjection(
+          root.thread.id,
+        )).contextTransfers.filter((transfer) => transfer.type === "subagent_result").length;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("issue-worker:direct-followup"),
+          threadId: child.thread.id,
+          messageId: MessageId.make("issue-worker:direct-followup"),
+          text: "Finish the local follow-up",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const resumed = (yield* threads.getThreadProjection(child.thread.id)).runs.at(-1)!;
+        const finishedAt = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("issue-worker:followup-result"),
+              type: "message.updated",
+              threadId: child.thread.id,
+              runId: resumed.id,
+              occurredAt: finishedAt,
+              payload: {
+                id: MessageId.make("issue-worker:followup-result"),
+                threadId: child.thread.id,
+                runId: resumed.id,
+                nodeId: resumed.rootNodeId,
+                role: "assistant",
+                text: "Follow-up complete.",
+                attachments: [],
+                streaming: false,
+                createdAt: finishedAt,
+                updatedAt: finishedAt,
+                createdBy: "agent",
+                creationSource: "provider",
+              },
+            },
+            {
+              id: EventId.make("issue-worker:followup-finished"),
+              type: "run.updated",
+              threadId: child.thread.id,
+              runId: resumed.id,
+              occurredAt: finishedAt,
+              payload: {
+                ...resumed,
+                status: "completed",
+                startedAt: finishedAt,
+                completedAt: finishedAt,
+              },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTask(child.thread.id, resumed.id);
+        yield* worker.drain();
+        yield* orchestrator.recoverDelegatedTask(child.thread.id, resumed.id);
+        yield* worker.drain();
+        const closeoutCalls = writeCalls.filter((call) => call.operation === "closeout_create");
+        assert.equal(closeoutCalls.length, 2);
+        assert.include(closeoutCalls[1]!.body, "Follow-up complete.");
+        assert.equal(
+          (yield* sql`SELECT * FROM orchestration_v2_projection_issue_comment_receipts`).length,
+          2,
+        );
+        assert.equal(
+          (yield* threads.getThreadProjection(root.thread.id)).contextTransfers.filter(
+            (transfer) => transfer.type === "subagent_result",
+          ).length,
+          beforeTransfers,
+        );
+        return;
+      }
       const retry = yield* issues.start({
         ...input,
         clientRequestId: CommandId.make("issue-click:first"),
@@ -3087,5 +3183,18 @@ it.effect(
       );
       assert.equal((yield* threads.getThreadProjection(root.thread.id)).subagents.length, 2);
     }).pipe(Effect.provide(testLayer));
-  },
-);
+  };
+
+  it.effect(
+    "issue starts share one durable root and queued request, and retries cannot start another attempt",
+    () => exercise("baseline"),
+  );
+  it.effect(
+    "a directly resumed worker publishes one closeout per completed run without owing another parent result",
+    () => exercise("direct-resume"),
+  );
+  it.effect(
+    "deleting a waiting worker publishes Unavailable and drops an older queued status",
+    () => exercise("deletion"),
+  );
+});

@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { enqueueIssueStatusEffects } from "../issues/IssueCommentEffects.ts";
+import { enqueueIssueStatusEffects, refreshIssueStatus } from "../issues/IssueCommentEffects.ts";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/Services/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
@@ -72,6 +72,12 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
  * SERVICE DEFINITION
  */
 export interface EventSinkV2Shape {
+  /** Refresh a coalesced issue marker outside the event commit transaction. */
+  readonly refreshIssueStatus: (
+    input: Extract<EffectOutbox.OrchestrationEffectRequestV2, { type: "issue.status.refresh" }> & {
+      readonly threadId: ThreadId;
+    },
+  ) => Effect.Effect<void, EventSinkWriteError>;
   readonly write: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
@@ -802,6 +808,13 @@ const baseLayer: Layer.Layer<
               }),
           ),
         ),
+      refreshIssueStatus: (input) =>
+        refreshIssueStatus({
+          ...input,
+          sql,
+          projections: projectionStore,
+          outbox: effectOutbox,
+        }).pipe(Effect.mapError((cause) => new EventSinkWriteError({ eventCount: 0, cause }))),
       writeWithEffects: (input) =>
         writeEffect(input).pipe(
           Effect.mapError(

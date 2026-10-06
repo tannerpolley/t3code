@@ -174,7 +174,8 @@ export const layer = Layer.effect(
       publishing: (threadId, issue) =>
         sql<{ status: string; last_error: string | null }>`
       SELECT status, last_error FROM orchestration_v2_effect_outbox
-      WHERE thread_id = ${threadId} AND effect_type = 'issue.github.comment'
+      WHERE thread_id = ${threadId} AND (effect_type = 'issue.github.comment'
+        OR (effect_type = 'issue.status.refresh' AND status IN ('pending', 'running', 'failed')))
         AND ${issue === undefined ? sql`1 = 1` : sql`json_extract(payload_json, '$.issue.host') = ${issue.host} AND json_extract(payload_json, '$.issue.repositoryId') = ${issue.repositoryId} AND json_extract(payload_json, '$.issue.id') = ${issue.id}`}
       ORDER BY created_at DESC
     `.pipe(

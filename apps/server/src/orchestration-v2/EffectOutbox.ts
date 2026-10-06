@@ -105,6 +105,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     ]),
   }),
   Schema.Struct({
+    type: Schema.Literal("issue.status.refresh"),
+    issue: ThreadLinkedIssue,
+    revision: Schema.Number,
+  }),
+  Schema.Struct({
     type: Schema.Literal("issue.github.comment"),
     operation: Schema.Literals(["status_sync", "closeout_create"]),
     status: Schema.optional(IssueWorkStatus),
@@ -129,6 +134,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "attachment.cleanup",
   "thread-title.generate",
   "issue.github.comment",
+  "issue.status.refresh",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
@@ -187,7 +193,11 @@ export class EffectOutboxError extends Schema.TaggedError<EffectOutboxError>()(
 
 const isEffectOutboxError = Schema.is(EffectOutboxError);
 
-export type EffectWorkerLane = "lifecycle" | "title";
+const independentLaneTypes = {
+  title: ["thread-title.generate"],
+  "issue-comment": ["issue.github.comment", "issue.status.refresh"],
+} as const;
+export type EffectWorkerLane = "lifecycle" | keyof typeof independentLaneTypes;
 
 export interface EffectOutboxV2Shape {
   readonly awaitAvailableInLane: (lane: EffectWorkerLane) => Effect.Effect<void>;
@@ -295,7 +305,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
     // authoritative. Retaining a small burst lets multiple worker slots wake
     // for distinct threads without allowing notifications to grow unbounded.
     const available = yield* Queue.dropping<void>(64);
-    const titleAvailable = yield* Queue.dropping<void>(1);
+    const independentAvailable = {
+      title: yield* Queue.dropping<void>(1),
+      "issue-comment": yield* Queue.dropping<void>(1),
+    };
+    const independentTypes = Object.values(independentLaneTypes).flat();
     const cancellationSignals = new Map<string, Deferred.Deferred<void>>();
     const notifyAvailable = (count = 1) =>
       count <= 0
@@ -303,13 +317,32 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         : Queue.offerAll(
             available,
             Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
-          ).pipe(Effect.andThen(Queue.offer(titleAvailable, undefined)), Effect.asVoid);
+          ).pipe(
+            Effect.andThen(
+              Effect.forEach(Object.values(independentAvailable), (queue) =>
+                Queue.offer(queue, undefined),
+              ),
+            ),
+            Effect.asVoid,
+          );
     // Each thread runs its effects one at a time, in enqueue (rowid) order. An earlier
     // effect waiting out a retry backoff still blocks later ones, so a turn
     // cannot start while a failed rollback is about to restore files. A claim
     // that skips restart continuations is not blocked by them either.
-    // Title generation is correlated metadata work, so it has its own
-    // per-thread lane and cannot delay provider lifecycle effects.
+    // Metadata and external comment writes use independent lanes and cannot
+    // delay provider lifecycle effects.
+    const inLane = (column: string, lane: EffectWorkerLane) =>
+      lane === "lifecycle"
+        ? sql`${sql.literal(column)} NOT IN ${sql.in(independentTypes)}`
+        : sql`${sql.literal(column)} IN ${sql.in(independentLaneTypes[lane])}`;
+    const sameLane = (
+      ["lifecycle", ...Object.keys(independentLaneTypes)] as ReadonlyArray<EffectWorkerLane>
+    )
+      .map(
+        (lane) =>
+          sql`(${inLane("candidate.effect_type", lane)} AND ${inLane("active.effect_type", lane)})`,
+      )
+      .reduce((left, right) => sql`${left} OR ${right}`);
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
@@ -322,7 +355,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             : sql`candidate.available_at <= ${availableBefore}`
         }
         AND candidate.status = 'pending'
-        AND ${lane === "title" ? sql`candidate.effect_type = 'thread-title.generate'` : lane === "lifecycle" ? sql`candidate.effect_type != 'thread-title.generate'` : sql`1 = 1`}
+        AND ${lane === undefined ? sql`1 = 1` : inLane("candidate.effect_type", lane)}
         AND NOT EXISTS (
           SELECT 1
           FROM orchestration_v2_effect_outbox AS active
@@ -339,17 +372,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 }
               )
             )
-            AND (
-              (
-                candidate.effect_type = 'thread-title.generate'
-                AND active.effect_type = 'thread-title.generate'
-              )
-              OR
-              (
-                candidate.effect_type != 'thread-title.generate'
-                AND active.effect_type != 'thread-title.generate'
-              )
-            )
+            AND (${sameLane})
         )
       `;
 
@@ -392,7 +415,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       );
 
     const service: EffectOutboxV2Shape = {
-      awaitAvailableInLane: (lane) => Queue.take(lane === "title" ? titleAvailable : available),
+      awaitAvailableInLane: (lane) =>
+        Queue.take(lane === "lifecycle" ? available : independentAvailable[lane]),
       nextClaimableAt: nextClaimableAt(),
       nextClaimableAtInLane: nextClaimableAt,
       enqueue: (effects) =>
