@@ -56,6 +56,7 @@ export function withCreationProvenance(
   switch (command.type) {
     case "thread.create":
     case "message.dispatch":
+    case "issue.work.start":
     case "thread.fork":
     case "thread.merge_back":
     case "delegated_task.request":

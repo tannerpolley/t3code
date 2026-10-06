@@ -1,9 +1,10 @@
 import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
 import type { Atom } from "effect/unstable/reactivity";
+import * as Effect from "effect/Effect";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createPullRequestRefreshAtomFamily } from "./pullRequests.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 /** How often an issue someone is looking at re-reads GitHub, besides after agent turns. */
 const LIVE_ISSUE_REFRESH_MS = 60_000;
@@ -15,7 +16,29 @@ export function createIssueEnvironmentAtoms<R, E>(
 ) {
   const refreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
     refreshes({ environmentId, input: {} });
+  const workStatus = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:issues:work-status",
+    tag: WS_METHODS.issuesWorkStatus,
+    staleTimeMs: 5_000,
+    refreshIntervalMs: 5_000,
+    refreshTrigger,
+  });
   return {
+    workStatus,
+    start: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:start",
+      tag: WS_METHODS.issuesStart,
+      onSuccess: (target, registry) =>
+        Effect.sync(() => {
+          const { host, repository, number } = target.input;
+          registry.refresh(
+            workStatus({
+              environmentId: target.environmentId,
+              input: { host, repository, number },
+            }),
+          );
+        }),
+    }),
     repositories: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:repositories",
       tag: WS_METHODS.issuesRepositories,

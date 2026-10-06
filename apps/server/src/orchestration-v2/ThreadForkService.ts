@@ -91,6 +91,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           creationSource: input.creationSource,
           id: input.targetThreadId,
           title: input.title ?? `${input.sourceProjection.thread.title} fork`,
+          linkedIssue: undefined,
+          repositoryOrchestration: undefined,
           activeProviderThreadId: null,
           lineage: {
             parentThreadId: input.sourceProjection.thread.id,

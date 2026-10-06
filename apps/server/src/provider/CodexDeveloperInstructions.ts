@@ -4,7 +4,7 @@ import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
-  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  t3OrchestrationBaseInstructions,
   t3ModelRolesInstructions,
 } from "./T3OrchestrationInstructions.ts";
 
@@ -213,12 +213,16 @@ export function buildCodexAdditionalContext(
    */
   toolsAvailable: boolean | T3CodeToolAvailability = true,
   modelRoles: ReadonlyArray<OrchestratorMcpModelRole> = [],
+  managedIssue = false,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
   const roles = t3ModelRolesInstructions(modelRoles).trim();
   // Separate keys keep each value under Codex's per-entry token cap.
   return {
-    t3_code_orchestration: { kind: "application", value: T3_CODE_ORCHESTRATION_INSTRUCTIONS },
+    t3_code_orchestration: {
+      kind: "application",
+      value: t3OrchestrationBaseInstructions(managedIssue),
+    },
     t3_code_runtime: {
       kind: "application",
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),

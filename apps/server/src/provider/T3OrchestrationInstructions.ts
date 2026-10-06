@@ -101,8 +101,18 @@ export function t3ModelRolesInstructions(roles: ReadonlyArray<OrchestratorMcpMod
 /** Orchestration instructions followed by the user's model roles. */
 export function t3OrchestrationInstructions(
   roles: ReadonlyArray<OrchestratorMcpModelRole> = [],
+  managedIssue = false,
 ): string {
-  return `${T3_CODE_ORCHESTRATION_INSTRUCTIONS}${t3ModelRolesInstructions(roles)}`;
+  return `${t3OrchestrationBaseInstructions(managedIssue)}${t3ModelRolesInstructions(roles)}`;
+}
+
+/** Managed issue work has one durable delegation path, including same-provider children. */
+export function t3OrchestrationBaseInstructions(managedIssue = false): string {
+  if (!managedIssue) return T3_CODE_ORCHESTRATION_INSTRUCTIONS;
+  return T3_CODE_ORCHESTRATION_INSTRUCTIONS.replace(
+    "Prefer native subagent tools for same-provider work only when they support the chosen model.",
+    'Native subagent tools are disabled in this repository-managed session. Delegate every child through `delegate_task` with its `issue` argument and `mode="async"`. Finish your turn while children work; deliver upward only in your final result. T3 publishes the managed status and closeout comments automatically; put evidence and remaining gates in your final result instead of publishing duplicate lifecycle comments. Run heavy checks through `agent-heavy`.',
+  );
 }
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `

@@ -37,6 +37,16 @@ function makeSourceThread(): OrchestrationV2AppThread {
     id: sourceThreadId,
     projectId: ProjectId.make("project:fork-snooze"),
     title: "Snoozed source",
+    linkedIssue: {
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      repositoryId: "repo:8",
+      id: "issue:8",
+      nodeId: "node:8",
+      number: 8,
+      url: "https://github.com/tannerpolley/t3code/issues/8",
+      title: "Single issue",
+    },
     providerInstanceId,
     modelSelection,
     runtimeMode: "full-access",
@@ -145,6 +155,8 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
     const sourceRun = makeSourceRun("completed");
     const result = yield* planFork(sourceRun);
 
+    assert.isUndefined(result.targetThread.linkedIssue);
+    assert.isUndefined(result.targetThread.repositoryOrchestration);
     assert.isNull(result.targetThread.snoozedUntil);
     assert.isNull(result.targetThread.snoozedAt);
     assert.equal(result.targetThread.projectId, sourceThread.projectId);

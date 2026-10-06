@@ -8,6 +8,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 
 import {
@@ -17,6 +18,8 @@ import {
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as EventSink from "./EventSink.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -26,6 +29,8 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as IssueService from "../issues/IssueService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
@@ -89,6 +94,9 @@ export const executorLayer: Layer.Layer<
   | RuntimeRequestService.RuntimeRequestServiceV2
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
+  | ProjectionStore.ProjectionStoreV2
+  | EventSink.EventSinkV2
+  | IdAllocator.IdAllocatorV2
   | ServerSettings.ServerSettingsService
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
@@ -103,7 +111,29 @@ export const executorLayer: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const issues = yield* Effect.serviceOption(IssueService.IssueService);
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const issueWriteLocks = new Map<string, Semaphore.Semaphore>();
+    const issueWriteLockMap = yield* Semaphore.make(1);
+    const withIssueWriteLock = <A, E, R>(
+      issue: { readonly host: string; readonly repositoryId: string; readonly id: string },
+      use: Effect.Effect<A, E, R>,
+    ) =>
+      issueWriteLockMap
+        .withPermit(
+          Effect.gen(function* () {
+            const key = `${issue.host.toLowerCase()}:${issue.repositoryId}:${issue.id}`;
+            const existing = issueWriteLocks.get(key);
+            if (existing !== undefined) return existing;
+            const created = yield* Semaphore.make(1);
+            issueWriteLocks.set(key, created);
+            return created;
+          }),
+        )
+        .pipe(Effect.flatMap((lock) => lock.withPermit(use)));
     return OrchestrationEffectExecutorV2.of({
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
@@ -459,6 +489,96 @@ export const executorLayer: Layer.Layer<
                     }),
                 ),
               );
+          case "issue.github.comment": {
+            const request = effect.request;
+            if (Option.isNone(issues)) {
+              return Effect.fail(
+                new OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  cause: "IssueService is unavailable in this runtime.",
+                }),
+              );
+            }
+            return withIssueWriteLock(
+              request.issue,
+              Effect.gen(function* () {
+                let commentId: string | undefined;
+                if (request.operation === "status_sync") {
+                  const current = yield* projections.getIssueWorkCommentState({
+                    threadId: effect.threadId,
+                    host: request.issue.host,
+                    repositoryId: request.issue.repositoryId,
+                    issueId: request.issue.id,
+                  });
+                  // An old issue attempt may still finish writing after a successor takes over.
+                  // Its result is useful, but its status must not replace the current owner.
+                  if (
+                    current === null ||
+                    current.effectiveStatusThreadId !== effect.threadId ||
+                    current.latestStatusWriteKey !== request.writeKey
+                  )
+                    return;
+                  commentId = current.statusCommentId ?? undefined;
+                } else {
+                  const receipt = yield* projections.getIssueCommentReceipt({
+                    threadId: effect.threadId,
+                    writeKey: request.writeKey,
+                  });
+                  if (receipt?.commentId !== null && receipt?.commentId !== undefined) return;
+                }
+
+                const write = yield* issues.value.writeManagedComment({
+                  issue: request.issue,
+                  operation: request.operation,
+                  ...(commentId === undefined ? {} : { commentId }),
+                  marker: request.marker,
+                  body: request.body,
+                });
+                const commandId = CommandId.make(`command:issue-comment-receipt:${effect.id}`);
+                const now = yield* DateTime.now;
+                const eventId = yield* idAllocator.allocate.event({
+                  threadId: effect.threadId,
+                  commandId,
+                });
+                yield* eventSink.commitCommand({
+                  commandId,
+                  threadId: effect.threadId,
+                  commandType: "issue.github-comment.recorded",
+                  acceptedAt: now,
+                  effects: [],
+                  events: [
+                    {
+                      id: eventId,
+                      threadId: effect.threadId,
+                      type: "issue.github-comment.recorded",
+                      occurredAt: now,
+                      payload: {
+                        operation: request.operation,
+                        issue: request.issue,
+                        threadId: effect.threadId,
+                        writeKey: request.writeKey,
+                        ...(request.resultEventId === undefined
+                          ? {}
+                          : { resultEventId: request.resultEventId }),
+                        commentId: write.commentId,
+                        marker: request.marker,
+                      },
+                    },
+                  ],
+                });
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              ),
+            );
+          }
         }
       },
     });
@@ -665,8 +785,11 @@ export const layerWithOptions = (
           }).pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (cancelledBeforeExecution) return true;
 
+          const recoverableIssueWrite = effect.request.type === "issue.github.comment";
           const execution = executor
-            .execute(effect, { willRetry: effect.attemptCount < maxAttempts })
+            .execute(effect, {
+              willRetry: recoverableIssueWrite || effect.attemptCount < maxAttempts,
+            })
             .pipe(Effect.as("executed" as const));
           const exit = yield* Effect.exit(Effect.raceFirst(execution, cancellation)).pipe(
             Effect.ensuring(outbox.clearCancellation(effect.id)),
@@ -704,7 +827,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.attemptCount >= maxAttempts && !recoverableIssueWrite
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))

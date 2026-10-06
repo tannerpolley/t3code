@@ -210,6 +210,8 @@ it.effect(
       const projectionLayer = Layer.succeed(
         ProjectionStore.ProjectionStoreV2,
         ProjectionStore.ProjectionStoreV2.of({
+          getIssueWorkCommentState: () => Effect.succeed(null),
+          getIssueCommentReceipt: () => Effect.succeed(null),
           apply: () => Effect.void,
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),

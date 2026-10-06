@@ -441,19 +441,27 @@ export const layerWithOptions = (
       // Roles carry the same availability check `delegate_task` applies. An
       // unreadable settings file keeps the roles the session already has.
       const syncModelRoles = (threadId: ThreadId) =>
-        Option.isNone(serverSettings)
-          ? Effect.void
-          : Effect.gen(function* () {
-              const settings = yield* serverSettings.value.getSettings;
-              const providers = Option.isSome(providerRegistry)
-                ? yield* providerRegistry.value.getProviders
-                : [];
-              const capableInstanceIds = new Set(yield* registry.list());
-              McpProviderSession.setMcpProviderModelRoles(
-                threadId,
-                modelRoleStatuses(settings.modelRoles, providers, capableInstanceIds),
-              );
-            }).pipe(Effect.ignore);
+        Effect.gen(function* () {
+          const session = McpProviderSession.readMcpProviderSession(threadId);
+          if (session !== undefined) {
+            const thread = yield* projectionStore.getThread(threadId);
+            McpProviderSession.setMcpProviderSession({
+              ...session,
+              managedIssue:
+                thread.linkedIssue !== undefined || thread.repositoryOrchestration !== undefined,
+            });
+          }
+          if (Option.isNone(serverSettings)) return;
+          const settings = yield* serverSettings.value.getSettings;
+          const providers = Option.isSome(providerRegistry)
+            ? yield* providerRegistry.value.getProviders
+            : [];
+          const capableInstanceIds = new Set(yield* registry.list());
+          McpProviderSession.setMcpProviderModelRoles(
+            threadId,
+            modelRoleStatuses(settings.modelRoles, providers, capableInstanceIds),
+          );
+        }).pipe(Effect.ignore);
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
       /**
        * Resolves (or mints) the thread's MCP credential and returns it with a

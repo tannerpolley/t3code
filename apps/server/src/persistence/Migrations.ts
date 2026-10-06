@@ -72,6 +72,8 @@ import Migration0055 from "./Migrations/055_OrchestrationV2.ts";
 import Migration0056 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
 import Migration0057 from "./Migrations/057_ProjectionMessagesLatestAssistant.ts";
 import Migration0058 from "./Migrations/058_ProjectionTurnItemCounts.ts";
+import Migration0059 from "./Migrations/059_ThreadIssueWork.ts";
+import Migration0060 from "./Migrations/060_RepositoryOrchestration.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -144,6 +146,8 @@ export const migrationEntries = [
   [56, "RemoveRedundantProjectionIndexes", Migration0056],
   [57, "ProjectionMessagesLatestAssistant", Migration0057],
   [58, "ProjectionTurnItemCounts", Migration0058],
+  [59, "ThreadIssueWork", Migration0059],
+  [60, "RepositoryOrchestration", Migration0060],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

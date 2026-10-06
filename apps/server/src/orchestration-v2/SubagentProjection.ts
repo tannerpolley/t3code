@@ -58,6 +58,8 @@ export function makeSubagentChildThread(input: {
     creationSource: input.creationSource,
     id: input.childThreadId,
     title: input.title,
+    linkedIssue: undefined,
+    repositoryOrchestration: undefined,
     linkedPullRequest: null,
     pullRequests: [],
     historyOrigin: undefined,
@@ -291,15 +293,17 @@ export function subagentResultOwed(input: {
  * tool calls resolve without the user, matching the client's pending-request rule. `summary` is
  * a short preview for parent notices and task_status.
  */
+export function runtimeRequestNeedsUser(
+  kind: OrchestrationV2ThreadProjection["runtimeRequests"][number]["kind"],
+) {
+  return kind !== "auth_refresh" && kind !== "dynamic_tool_call";
+}
+
 export function pendingUserRequests(
   projection: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems">,
 ) {
   return projection.runtimeRequests.flatMap((request) => {
-    if (
-      request.status !== "pending" ||
-      request.kind === "auth_refresh" ||
-      request.kind === "dynamic_tool_call"
-    ) {
+    if (request.status !== "pending" || !runtimeRequestNeedsUser(request.kind)) {
       return [];
     }
     const kind = request.kind === "user_input" ? ("input" as const) : ("approval" as const);

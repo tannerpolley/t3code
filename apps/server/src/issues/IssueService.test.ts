@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { IssueReadError } from "@t3tools/contracts";
@@ -140,6 +141,75 @@ const listInput = {
   host: HOST,
   repository: REPOSITORY,
 };
+
+it.effect("resolves the stable GitHub repository and issue identities", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse({ id: 123, full_name: REPOSITORY }),
+        httpResponse({
+          id: 456,
+          node_id: "I_kwDOIssue456",
+          number: 7,
+          title: "Stable identity",
+          html_url: `https://${HOST}/${REPOSITORY}/issues/7`,
+        }),
+      ],
+    });
+    const issues = yield* service(harness);
+    const issue = yield* issues.resolveLinkedIssue({ ...listInput, number: 7 });
+
+    assert.deepEqual(issue, {
+      host: HOST,
+      repository: REPOSITORY,
+      repositoryId: "123",
+      id: "456",
+      nodeId: "I_kwDOIssue456",
+      number: 7,
+      url: `https://${HOST}/${REPOSITORY}/issues/7`,
+      title: "Stable identity",
+    });
+    assert.include(harness.calls[0]!.join(" "), "repos/acme/web");
+    assert.include(harness.calls[1]!.join(" "), "repos/acme/web/issues/7");
+  }),
+);
+
+it.effect("reconciles an uncertain closeout create by marker before retrying it", () =>
+  Effect.gen(function* () {
+    const marker = "<!-- t3-issue-closeout:github.com:123:456:thread:child:run:1 -->";
+    const harness = makeHarness({
+      responses: [
+        httpResponse([]),
+        httpResponse({ message: "ambiguous write" }, {}, 500),
+        httpResponse([{ id: 789, body: `Final result\n\n${marker}` }]),
+      ],
+    });
+    const issues = yield* service(harness);
+    const input = {
+      issue: {
+        host: HOST,
+        repository: REPOSITORY,
+        repositoryId: "123",
+        id: "456",
+        nodeId: "I_kwDOIssue456",
+        number: 7,
+        url: `https://${HOST}/${REPOSITORY}/issues/7`,
+        title: "Stable identity",
+      },
+      operation: "closeout_create" as const,
+      marker,
+      body: "Final result",
+    };
+    const first = yield* Effect.result(issues.writeManagedComment(input));
+    assert.isTrue(Result.isFailure(first));
+    const retry = yield* issues.writeManagedComment(input);
+
+    assert.deepEqual(retry, { commentId: "789" });
+    assert.equal(harness.calls.length, 3);
+    assert.include(harness.calls[1]!.join(" "), "--method POST");
+    assert.notInclude(harness.calls[2]!.join(" "), "--method POST");
+  }),
+);
 
 it.effect("filters mixed and PR-only pages without re-requesting a completed stream", () =>
   Effect.gen(function* () {

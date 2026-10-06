@@ -39,6 +39,9 @@ import {
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { IssueWorkRequested, RepositoryOrchestration } from "./issueWork.ts";
+import { IssueGithubCommentRecorded } from "./issueComment.ts";
+import { ThreadLinkedIssue } from "./threadIssue.ts";
 import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -380,6 +383,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  linkedIssue: Schema.optional(ThreadLinkedIssue),
+  repositoryOrchestration: Schema.optional(RepositoryOrchestration),
   /** Pull request the user linked to this thread (#8160); optional so
       pre-linking servers still decode. */
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -1570,6 +1575,16 @@ const OrchestrationV2EventBase = Schema.Struct({
 export const OrchestrationV2DomainEvent = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("issue.work.requested"),
+    payload: IssueWorkRequested,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("issue.github-comment.recorded"),
+    payload: IssueGithubCommentRecorded,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.created"),
     payload: OrchestrationV2AppThread,
   }),
@@ -1764,6 +1779,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  linkedIssue: Schema.optional(ThreadLinkedIssue),
   /** Pull request the user linked to this thread (#8160). */
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
@@ -2375,6 +2391,16 @@ export type OrchestrationV2RawProviderEventJson = typeof OrchestrationV2RawProvi
 export const OrchestrationV2DomainEventJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("issue.work.requested"),
+    payload: IssueWorkRequested,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("issue.github-comment.recorded"),
+    payload: IssueGithubCommentRecorded,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.created"),
     payload: OrchestrationV2AppThreadJson,
   }),
@@ -2532,6 +2558,8 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    linkedIssue: Schema.optional(ThreadLinkedIssue),
+    repositoryOrchestration: Schema.optional(RepositoryOrchestration),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -2926,7 +2954,17 @@ export const OrchestrationV2Command = Schema.Union([
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
+    type: Schema.Literal("issue.work.start"),
+    ...OrchestrationV2CreationFields,
+    commandId: CommandId,
+    threadId: ThreadId,
+    issue: ThreadLinkedIssue,
+    workerModelSelection: ModelSelection,
+    workspace: Schema.Literals(["project", "worktree"]),
+  }),
+  Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
+    issue: Schema.optional(ThreadLinkedIssue),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     parentThreadId: ThreadId,

@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
@@ -23,6 +24,8 @@ import {
   type IssueRepositoriesResult as IssueRepositoriesResultType,
   type IssueRepositorySummary,
   type IssueSummary as IssueSummaryType,
+  ThreadLinkedIssue,
+  type ThreadLinkedIssue as ThreadLinkedIssueType,
 } from "@t3tools/contracts";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 
@@ -36,9 +39,14 @@ const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 // A detail read carries up to DETAIL_COMMENT_LIMIT comment bodies of up to 64 KiB each.
 const DETAIL_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DETAIL_COMMENT_LIMIT = 100;
+const COMMENT_MAX_PAGES = 1_000;
+const COMMENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+const COMMENT_MAX_BODY_LENGTH = 60_000;
 const MAX_PAGE = 1_000_000;
 const CURSOR_MAX_LENGTH = 4_096;
 const GITHUB_HOST = "github.com";
+const decodeLinkedIssue = Schema.decodeEffect(ThreadLinkedIssue);
+const isIssueReadError = Schema.is(IssueReadError);
 // ponytail: 10 pages (1,000 repos) caps the repository scan; raise it if an account outgrows it.
 const REPOSITORY_MAX_PAGES = 10;
 
@@ -133,11 +141,31 @@ const encodeGraphQlRequest = Schema.encodeSync(
     }),
   ),
 );
+const encodeCommentRequestBody = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ body: Schema.String })),
+);
 
 /** A connection whose nodes GitHub may null out, e.g. when an organization's SSO hides one. */
 const graphQlNodes = <S extends Schema.Top>(node: S) =>
   Schema.Struct({ nodes: Schema.NullOr(Schema.Array(Schema.NullOr(node))) });
 const GraphQlUrl = Schema.String.check(Schema.isPattern(/^https?:\/\/[^\s]+$/iu));
+const RawRepositoryIdentitySchema = Schema.Struct({
+  id: Schema.Int.check(Schema.isGreaterThan(0)),
+  full_name: TrimmedNonEmptyString,
+});
+const RawIssueIdentitySchema = Schema.Struct({
+  id: Schema.Int.check(Schema.isGreaterThan(0)),
+  node_id: TrimmedNonEmptyString,
+  number: IssueNumber,
+  title: Schema.String,
+  html_url: GraphQlUrl,
+  pull_request: Schema.optional(Schema.Unknown),
+});
+const RawGitHubCommentSchema = Schema.Struct({
+  id: Schema.Int.check(Schema.isGreaterThan(0)),
+  body: Schema.NullOr(Schema.String),
+});
+const RawGitHubCommentListSchema = Schema.Array(RawGitHubCommentSchema);
 const GraphQlActorSchema = Schema.Struct({
   login: TrimmedNonEmptyString,
   avatarUrl: Schema.optional(Schema.NullOr(Schema.String)),
@@ -319,6 +347,13 @@ function issueUrl(host: string, repository: string, number: number): string {
 
 function milestoneUrl(host: string, repository: string, number: number): string {
   return `https://${host}/${encodeRepositoryPath(repository)}/milestone/${number}`;
+}
+
+function ensureCommentMarker(body: string, marker: string): string {
+  const markedBody = body.includes(marker) ? body : `${body.trimEnd()}\n\n${marker}`;
+  if (markedBody.length <= COMMENT_MAX_BODY_LENGTH) return markedBody;
+  const suffix = `\n\n[Comment truncated by T3 Code.]\n\n${marker}`;
+  return `${markedBody.slice(0, COMMENT_MAX_BODY_LENGTH - suffix.length)}${suffix}`;
 }
 
 function normalizeAvatarUrl(value: string | null | undefined): string | null {
@@ -618,6 +653,18 @@ export class IssueService extends Context.Service<
     readonly detail: (
       input: IssueDetailInputType,
     ) => Effect.Effect<IssueDetailResultType, IssueReadError>;
+    readonly resolveLinkedIssue: (input: {
+      readonly host: string;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<ThreadLinkedIssueType, IssueReadError>;
+    readonly writeManagedComment: (input: {
+      readonly issue: ThreadLinkedIssueType;
+      readonly operation: "status_sync" | "closeout_create";
+      readonly commentId?: string;
+      readonly marker: string;
+      readonly body: string;
+    }) => Effect.Effect<{ readonly commentId: string }, IssueReadError>;
   }
 >()("t3/issues/IssueService") {}
 
@@ -661,6 +708,8 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       readonly query: string;
       readonly variables: Readonly<Record<string, string | number>>;
     };
+    readonly requestMethod?: "POST" | "PATCH";
+    readonly requestBody?: { readonly body: string };
   }): Effect.fn.Return<ApiResponse, IssueReadError> {
     const key = { provider: "github" as const, host: input.scope.host };
     const lease = yield* rateLimits
@@ -699,9 +748,22 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         cwd: input.scope.cwd,
         args:
           graphql === undefined
-            ? ["api", "--include", "--hostname", input.scope.host, input.endpoint]
+            ? [
+                "api",
+                "--include",
+                "--hostname",
+                input.scope.host,
+                ...(input.requestMethod === undefined
+                  ? []
+                  : ["--method", input.requestMethod, "--input", "-"]),
+                input.endpoint,
+              ]
             : ["api", "--include", "--hostname", input.scope.host, "graphql", "--input", "-"],
-        ...(graphql === undefined ? {} : { stdin: encodeGraphQlRequest(graphql) }),
+        ...(graphql === undefined
+          ? input.requestBody === undefined
+            ? {}
+            : { stdin: encodeCommentRequestBody(input.requestBody) }
+          : { stdin: encodeGraphQlRequest(graphql) }),
         timeoutMs: API_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes,
         allowNonZeroExit: true,
@@ -783,6 +845,205 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
             : Effect.void,
         ),
         Effect.tap(() => rateLimits.recordSuccess({ ...key, lease })),
+      );
+  });
+
+  const decodeApiResponse = <A, I>(
+    operation: IssueOperation,
+    schema: Schema.Codec<A, I>,
+    response: ApiResponse,
+    message: string,
+  ) =>
+    Schema.decodeEffect(Schema.fromJsonString(schema))(response.body).pipe(
+      Effect.mapError(() => readError(operation, "invalid-response", message)),
+    );
+
+  const findManagedComment = Effect.fn("IssueService.findManagedComment")(function* (
+    scope: IssueRepositoryScope,
+    issueNumber: number,
+    marker: string,
+  ): Effect.fn.Return<Schema.Schema.Type<typeof RawGitHubCommentSchema> | null, IssueReadError> {
+    let page: number | null = 1;
+    let pagesRead = 0;
+    while (page !== null) {
+      if (pagesRead >= COMMENT_MAX_PAGES) {
+        return yield* readError(
+          "detail",
+          "invalid-response",
+          "GitHub returned more issue comments than can be reconciled safely.",
+        );
+      }
+      const response = yield* executeApi({
+        operation: "detail",
+        scope,
+        endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${issueNumber}/comments?per_page=100&page=${page}`,
+        maxOutputBytes: COMMENT_MAX_OUTPUT_BYTES,
+      });
+      const comments = yield* decodeApiResponse(
+        "detail",
+        RawGitHubCommentListSchema,
+        response,
+        "GitHub returned an invalid issue comment list.",
+      );
+      const matching = comments.find((comment) => comment.body?.includes(marker) === true);
+      if (matching !== undefined) return matching;
+      const nextPage = nextPageFromHeaders(response.headers, page);
+      if (nextPage === undefined) {
+        return yield* readError(
+          "detail",
+          "invalid-response",
+          "GitHub returned invalid issue comment pagination metadata.",
+        );
+      }
+      page = nextPage;
+      pagesRead += 1;
+    }
+    return null;
+  });
+
+  const resolveLinkedIssue: IssueService["Service"]["resolveLinkedIssue"] = Effect.fn(
+    "IssueService.resolveLinkedIssue",
+  )(function* (input) {
+    const scope = yield* resolveScope("detail", input);
+    return yield* githubPullRequests
+      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
+        Effect.gen(function* () {
+          const repositoryResponse = yield* executeApi({
+            operation: "detail",
+            scope,
+            endpoint: `repos/${encodeRepositoryPath(scope.repository)}`,
+            maxOutputBytes: 256 * 1024,
+          });
+          const repository = yield* decodeApiResponse(
+            "detail",
+            RawRepositoryIdentitySchema,
+            repositoryResponse,
+            "GitHub returned an invalid repository identity.",
+          );
+          const issueResponse = yield* executeApi({
+            operation: "detail",
+            scope,
+            endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.number}`,
+            maxOutputBytes: 256 * 1024,
+          });
+          const issue = yield* decodeApiResponse(
+            "detail",
+            RawIssueIdentitySchema,
+            issueResponse,
+            "GitHub returned an invalid issue identity.",
+          );
+          if (Object.hasOwn(issue, "pull_request")) {
+            return yield* readError(
+              "detail",
+              "unsupported",
+              "Pull requests are not GitHub issues.",
+            );
+          }
+          if (issue.number !== input.number) {
+            return yield* readError("detail", "invalid-response", "GitHub returned another issue.");
+          }
+          if (safeRepository(scope.host, repository.full_name) !== scope.repository) {
+            return yield* readError(
+              "detail",
+              "invalid-response",
+              "GitHub returned another repository.",
+            );
+          }
+          return yield* decodeLinkedIssue({
+            host: scope.host,
+            repository: repository.full_name,
+            repositoryId: String(repository.id),
+            id: String(issue.id),
+            nodeId: issue.node_id,
+            number: issue.number,
+            url: issue.html_url,
+            title: issue.title,
+          }).pipe(
+            Effect.mapError(() =>
+              readError("detail", "invalid-response", "GitHub returned an invalid issue identity."),
+            ),
+          );
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isIssueReadError(error) ? error : mapGitHubError("detail", error),
+        ),
+      );
+  });
+
+  const writeManagedComment: IssueService["Service"]["writeManagedComment"] = Effect.fn(
+    "IssueService.writeManagedComment",
+  )(function* (input) {
+    const scope = yield* resolveScope("detail", input.issue);
+    const body = ensureCommentMarker(input.body, input.marker);
+    return yield* githubPullRequests
+      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
+        Effect.gen(function* () {
+          const issueCommentsEndpoint = `repos/${encodeRepositoryPath(scope.repository)}/issues/${input.issue.number}/comments`;
+          const writeComment = (commentId?: string) =>
+            executeApi({
+              operation: "detail",
+              scope,
+              endpoint:
+                commentId === undefined
+                  ? issueCommentsEndpoint
+                  : `repos/${encodeRepositoryPath(scope.repository)}/issues/comments/${commentId}`,
+              maxOutputBytes: 256 * 1024,
+              requestMethod: commentId === undefined ? "POST" : "PATCH",
+              requestBody: { body },
+            }).pipe(
+              Effect.flatMap((response) =>
+                decodeApiResponse(
+                  "detail",
+                  RawGitHubCommentSchema,
+                  response,
+                  "GitHub returned an invalid issue comment.",
+                ),
+              ),
+              Effect.map((comment) => String(comment.id)),
+            );
+          const findByMarker = () => findManagedComment(scope, input.issue.number, input.marker);
+
+          if (input.operation === "status_sync" && input.commentId !== undefined) {
+            if (!/^\d+$/u.test(input.commentId)) {
+              return yield* readError(
+                "detail",
+                "invalid-response",
+                "The stored comment ID is invalid.",
+              );
+            }
+            const currentComment = yield* Effect.result(writeComment(input.commentId));
+            let updated: string;
+            if (Result.isSuccess(currentComment)) {
+              updated = currentComment.success;
+            } else {
+              if (currentComment.failure.code !== "inaccessible") {
+                return yield* Effect.fail(currentComment.failure);
+              }
+              const existing = yield* findByMarker();
+              updated =
+                existing === null
+                  ? yield* writeComment()
+                  : yield* writeComment(String(existing.id));
+            }
+            return { commentId: updated };
+          }
+
+          const existing = yield* findByMarker();
+          const commentId =
+            input.operation === "status_sync" && existing !== null
+              ? yield* writeComment(String(existing.id))
+              : existing === null
+                ? yield* writeComment()
+                : String(existing.id);
+          return { commentId };
+        }),
+      )
+      .pipe(
+        Effect.mapError((error) =>
+          isIssueReadError(error) ? error : mapGitHubError("detail", error),
+        ),
       );
   });
 
@@ -1080,7 +1341,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       );
   });
 
-  return IssueService.of({ repositories, list, detail });
+  return IssueService.of({ repositories, list, detail, resolveLinkedIssue, writeManagedComment });
 });
 
 export const layer: Layer.Layer<
