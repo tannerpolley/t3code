@@ -1944,10 +1944,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   updated_at = excluded.updated_at
               `;
             }
-            if (
-              event.type === "thread.metadata-updated" &&
-              event.payload.repositoryOrchestration !== undefined
-            ) {
+            if (event.payload.repositoryOrchestration !== undefined) {
               const owner = event.payload.repositoryOrchestration;
               yield* sql`UPDATE orchestration_v2_projection_repository_orchestration
                 SET paused = ${owner.paused ? 1 : 0}, revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}

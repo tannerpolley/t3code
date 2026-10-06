@@ -33,12 +33,18 @@ import { delegatedTaskProgress } from "../orchestration-v2/SubagentProjection.ts
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { checkDelegateTarget } from "../mcp/delegateTaskTarget.ts";
-import { issueEligibility } from "./IssueEligibility.ts";
+import {
+  issueEligibility,
+  sameIssueRepository,
+  supportsManagedIssueWork,
+  issueScopeExpansionError,
+} from "./IssueEligibility.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Stream from "effect/Stream";
 import * as Clock from "effect/Clock";
-import * as Semaphore from "effect/Semaphore";
+import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
 const encodeToolArgument = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -131,7 +137,11 @@ export const layer = Layer.effect(
             message: "The selected model role no longer exists.",
           });
         const availableProviders = yield* providers.getProviders;
-        const capableIds = new Set(yield* adapters.list());
+        const capableIds = new Set<import("@t3tools/contracts").ProviderInstanceId>();
+        for (const instanceId of yield* adapters.list()) {
+          const adapter = yield* adapters.get(instanceId).pipe(Effect.mapError(mapError));
+          if (supportsManagedIssueWork(adapter.driver)) capableIds.add(instanceId);
+        }
         let selection: ModelSelection | undefined;
         for (const target of role.targets) {
           const model = checkDelegateTarget({
@@ -154,7 +164,8 @@ export const layer = Layer.effect(
         if (selection === undefined)
           return yield* new IssueWorkError({
             code: "invalid-request",
-            message: "No available target in the selected model role.",
+            message:
+              "Managed issue work requires an available Codex or Claude target in the selected model role; other adapters allow untracked native children.",
           });
         let createdRoot = false;
         if (root === null) {
@@ -267,7 +278,13 @@ export const layer = Layer.effect(
           const seen = new Set([read.issue.id]);
           let ancestor = read;
           const ancestors: IssueWorkRead[] = [];
-          while (ancestor.parent !== null && (yield* store.issueOwner(ancestor.parent)) === null) {
+          while (ancestor.parent !== null) {
+            if (!sameIssueRepository(ancestor.parent, read.issue))
+              return yield* new IssueWorkError({
+                code: "invalid-request",
+                message: issueScopeExpansionError,
+              });
+            if ((yield* store.issueOwner(ancestor.parent)) !== null) break;
             ancestor = yield* issues.workRead(ancestor.parent).pipe(Effect.mapError(mapError));
             if (
               seen.has(ancestor.issue.id) ||
@@ -278,8 +295,7 @@ export const layer = Layer.effect(
             )
               return yield* new IssueWorkError({
                 code: "invalid-request",
-                message:
-                  "The ancestor owner needs approval to expand the milestone or repository scope.",
+                message: issueScopeExpansionError,
               });
             seen.add(ancestor.issue.id);
             ancestors.push(ancestor);
@@ -395,259 +411,289 @@ export const layer = Layer.effect(
           orchestration: config,
         })
         .pipe(Effect.mapError(mapError), Effect.asVoid);
-    const reconciliationLock = yield* Semaphore.make(1);
-    const reconcile: IssueWorkService["Service"]["reconcile"] = (rootThreadId) =>
-      reconciliationLock.withPermit(
-        Effect.gen(function* () {
-          let config = yield* store.configuration(rootThreadId);
-          if (config === null || config.paused) return;
-          const suspended = new Map(
-            config.suspendedIssues.map((entry) => [entry.id, entry.reason]),
+    const continueLocal = (
+      rootThreadId: ThreadId,
+      refreshRequests = false,
+      eventSequence?: number,
+    ) =>
+      Effect.gen(function* () {
+        const config = yield* store.configuration(rootThreadId);
+        if (config === null || config.paused) return;
+        const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry.reason]));
+        for (const threadId of yield* store.workerThreads(rootThreadId)) {
+          const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
+          if (
+            shell?.linkedIssue === undefined ||
+            shell.activeRunId === null ||
+            !(yield* store.canAdmit(shell.linkedIssue, threadId))
+          )
+            continue;
+          const run = (yield* threads
+            .getThreadRecords(threadId, ["runs"], { runIds: [shell.activeRunId] })
+            .pipe(Effect.mapError(mapError))).runs[0];
+          if (run?.status === "preparing" && run.workspacePreparation !== undefined)
+            yield* launch
+              .prepareDeferredRun({
+                commandId:
+                  run.workspacePreparationCommandId ?? CommandId.make(`issue-prepare:${run.id}`),
+                projectId: shell.projectId,
+                threadId,
+                runId: run.id,
+                workspaceStrategy: run.workspacePreparation,
+              })
+              .pipe(Effect.mapError(mapError));
+        }
+        // Once an ancestor has a durable thread, deliver its selected sub-issues there.
+        for (const request of yield* store.pendingRequests(rootThreadId)) {
+          const read = refreshRequests
+            ? yield* issues.workRead(request.issue).pipe(Effect.option)
+            : Option.none();
+          if (
+            refreshRequests &&
+            (Option.isNone(read) || issueEligibility(read.value) !== "eligible")
+          )
+            continue;
+          const parent = Option.isSome(read) ? read.value.parent : request.parent;
+          if (parent == null || !sameIssueRepository(parent, request.issue)) continue;
+          const parentOwner = yield* store.issueOwner(parent);
+          if (parentOwner === null || suspended.has(request.issue.id) || suspended.has(parent.id))
+            continue;
+          const parentShell = yield* threads
+            .getThreadShell(parentOwner)
+            .pipe(Effect.mapError(mapError));
+          if (parentShell?.lineage.rootThreadId !== rootThreadId) continue;
+          const issueArgument = yield* encodeToolArgument(request.issue).pipe(
+            Effect.mapError(mapError),
           );
-          for (const threadId of yield* store.workerThreads(rootThreadId)) {
-            const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
-            if (
-              shell?.linkedIssue === undefined ||
-              (shell.activeRunId === null &&
-                shell.status !== "queued" &&
-                (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
-                (yield* store.resultAvailable(threadId)))
-            )
-              continue;
-            const read = yield* issues.workRead(shell.linkedIssue).pipe(Effect.result);
-            let reason: string | null = null;
-            if (read._tag === "Failure" || issueEligibility(read.success) === "unknown")
-              reason = "Issue relationships are unreadable. Restore access before resuming.";
-            else if (read.success.state === "closed")
-              reason =
-                "Issue closed during work. Decide whether to resume or close out the retained result.";
-            else if (issueEligibility(read.success) === "blocked")
-              reason = "A GitHub blocker is open. Resolve it before resuming.";
-            else {
-              const parent =
-                read.success.parent === null
-                  ? rootThreadId
-                  : yield* store.issueOwner(read.success.parent);
-              if (parent !== shell.lineage.parentThreadId)
-                reason =
-                  "Issue was re-parented. Cancel or finish this attempt before starting a successor under its new parent.";
-            }
-            if (reason === null) {
-              if (!suspended.has(shell.linkedIssue.id)) {
-                if (shell.activeRunId !== null) {
-                  const active = (yield* threads
-                    .getThreadRecords(threadId, ["runs"], { runIds: [shell.activeRunId] })
-                    .pipe(Effect.mapError(mapError))).runs[0];
-                  if (active?.status === "preparing" && active.workspacePreparation !== undefined)
-                    yield* launch
-                      .prepareDeferredRun({
-                        commandId:
-                          active.workspacePreparationCommandId ??
-                          CommandId.make(`issue-prepare:${active.id}`),
-                        projectId: shell.projectId,
-                        threadId,
-                        runId: active.id,
-                        workspaceStrategy: active.workspacePreparation,
-                      })
-                      .pipe(Effect.mapError(mapError));
-                }
-              }
-              continue;
-            }
-            if (suspended.get(shell.linkedIssue.id) === reason) continue;
-            suspended.set(shell.linkedIssue.id, reason);
-            config = {
-              ...config,
-              suspendedIssues: [...suspended].map(([id, reason]) => ({ id, reason })),
-            };
-            yield* update(
-              rootThreadId,
-              config,
-              CommandId.make(
-                `issue-suspend:${rootThreadId}:${config.revision}:${shell.linkedIssue.id}`,
-              ),
-            );
-            config = (yield* store.configuration(rootThreadId))!;
-            if (shell.activeRunId !== null)
-              yield* threads
-                .dispatch({
-                  type: "run.interrupt",
-                  threadId,
-                  runId: shell.activeRunId,
-                  commandId: CommandId.make(
-                    `issue-interrupt:${threadId}:${shell.activeRunId}:${config.revision}`,
-                  ),
-                })
-                .pipe(Effect.mapError(mapError));
-            yield* threads
-              .sendToThread({
-                projectId: config.projectId,
-                threadId: rootThreadId,
-                commandId: CommandId.make(`issue-decision:${rootThreadId}:${config.revision}`),
-                messageId: MessageId.make(`issue-decision:${rootThreadId}:${config.revision}`),
-                text: `Issue #${shell.linkedIssue.number} paused: ${reason} Its workspace, link and results are retained. Ask through t3_request_user_input; do not reopen it or change the existing lineage.`,
-                attachments: [],
-                mode: "queue",
-                createdBy: "agent",
-                creationSource: "server",
-              })
-              .pipe(Effect.mapError(mapError));
-          }
-          // Once an ancestor has a durable thread, deliver its selected sub-issues there.
-          for (const request of yield* store.pendingRequests(rootThreadId)) {
-            const read = yield* issues.workRead(request.issue).pipe(Effect.result);
-            if (
-              read._tag === "Failure" ||
-              issueEligibility(read.success) !== "eligible" ||
-              read.success.parent === null
-            )
-              continue;
-            const parentOwner = yield* store.issueOwner(read.success.parent);
-            if (
-              parentOwner === null ||
-              suspended.has(request.issue.id) ||
-              suspended.has(read.success.parent.id)
-            )
-              continue;
-            const issueArgument = yield* encodeToolArgument(request.issue).pipe(
-              Effect.mapError(mapError),
-            );
-            const targetArgument = yield* encodeToolArgument({
-              providerInstanceId: request.modelSelection.instanceId,
-              model: request.modelSelection.model,
-              ...(request.modelSelection.options === undefined
-                ? {}
-                : { options: request.modelSelection.options }),
-            }).pipe(Effect.mapError(mapError));
-            yield* threads
-              .sendToThread({
-                projectId: config.projectId,
-                threadId: parentOwner,
-                commandId: CommandId.make(`issue-parent-start:${request.requestId}:${parentOwner}`),
-                messageId: MessageId.make(`issue-parent-start:${request.requestId}:${parentOwner}`),
-                text: `Start your authorized sub-issue #${request.issue.number}: ${request.issue.title}\n${request.issue.url}\nDelegate through delegate_task with issue=${issueArgument}, mode=async, workspace=${request.workspace === "worktree" ? "worktree" : "inherit"}, target=${targetArgument}. Finish your turn while children work.`,
-                attachments: [],
-                mode: "queue",
-                createdBy: "agent",
-                creationSource: "server",
-              })
-              .pipe(Effect.mapError(mapError));
-          }
+          const targetArgument = yield* encodeToolArgument({
+            providerInstanceId: request.modelSelection.instanceId,
+            model: request.modelSelection.model,
+            ...(request.modelSelection.options === undefined
+              ? {}
+              : { options: request.modelSelection.options }),
+          }).pipe(Effect.mapError(mapError));
           yield* threads
-            .dispatch({
-              type: "repository.work.continue",
-              threadId: rootThreadId,
-              commandId: CommandId.make(`issue-admission:${rootThreadId}:${config.revision}`),
+            .sendToThread({
+              projectId: config.projectId,
+              threadId: parentOwner,
+              commandId: CommandId.make(`issue-parent-start:${request.requestId}:${parentOwner}`),
+              messageId: MessageId.make(`issue-parent-start:${request.requestId}:${parentOwner}`),
+              text: `Start your authorized sub-issue #${request.issue.number}: ${request.issue.title}\n${request.issue.url}\nDelegate through delegate_task with issue=${issueArgument}, mode=async, workspace=${request.workspace === "worktree" ? "worktree" : "inherit"}, target=${targetArgument}. Finish your turn while children work.`,
+              attachments: [],
+              mode: "queue",
+              createdBy: "agent",
+              creationSource: "server",
             })
             .pipe(Effect.mapError(mapError));
-          if (config.milestones.length === 0) return;
-          const plans: RepositoryOrchestration["milestones"][number][] = [];
-          for (const plan of config.milestones) {
-            const listing = yield* issues
-              .milestoneIssues({
-                host: config.host,
-                repository: config.repository,
-                milestoneNumber: plan.number,
-              })
-              .pipe(Effect.result);
-            if (listing._tag === "Failure" || !listing.success.complete) {
-              plans.push({ ...plan, status: "unreadable", fingerprint: "unreadable" });
-              continue;
-            }
-            const selected = listing.success.issues.filter(
-              (issue) => issue.milestone?.number === plan.number && issue.state === "open",
-            );
-            let unreadable = false,
-              blocked = false,
-              awaiting = false,
-              running = false;
-            const fingerprint: string[] = [];
-            for (const issue of selected) {
-              const readResult = yield* issues
-                .workRead({
-                  host: config.host,
-                  repository: config.repository,
-                  number: issue.number,
-                })
-                .pipe(Effect.result);
-              if (readResult._tag === "Failure") {
-                unreadable = true;
-                fingerprint.push(`${issue.number}:unknown`);
-                continue;
-              }
-              const read = readResult.success;
-              const eligibility = issueEligibility(read);
-              const owner = yield* store.issueOwner(read.issue);
-              fingerprint.push(
-                `${read.issue.id}:${eligibility}:${read.parent?.id ?? "root"}:${owner ?? "unclaimed"}`,
-              );
-              if (eligibility === "unknown") {
-                unreadable = true;
-                continue;
-              }
-              if (eligibility === "blocked") {
-                blocked = true;
-                continue;
-              }
-              if (eligibility === "closed") continue;
-              if (suspended.has(read.issue.id)) {
-                awaiting = true;
-                continue;
-              }
-              if (owner !== null) {
-                const shell = yield* threads.getThreadShell(owner).pipe(Effect.mapError(mapError));
-                if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) {
-                  unreadable = true;
-                  continue;
-                }
-                if (shell.status === "queued") running = true;
-                else if (shell.pendingRuntimeRequest !== null) awaiting = true;
-                else if (shell.activeRunId === null && (yield* store.resultAvailable(owner)))
-                  awaiting = true;
-                else running = true;
-                continue;
-              }
-              const started = yield* start({
+        }
+        yield* threads
+          .dispatch({
+            type: "repository.work.continue",
+            threadId: rootThreadId,
+            commandId: CommandId.make(
+              `issue-admission:${rootThreadId}:${config.revision}${eventSequence === undefined ? "" : `:event:${eventSequence}`}`,
+            ),
+          })
+          .pipe(Effect.mapError(mapError));
+      });
+
+    const reconcilePass = (rootThreadId: ThreadId) =>
+      Effect.gen(function* () {
+        let config = yield* store.configuration(rootThreadId);
+        if (config === null || config.paused) return;
+        const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry.reason]));
+        for (const threadId of yield* store.workerThreads(rootThreadId)) {
+          const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
+          if (
+            shell?.linkedIssue === undefined ||
+            (shell.activeRunId === null &&
+              shell.status !== "queued" &&
+              (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
+              (yield* store.resultAvailable(threadId)))
+          )
+            continue;
+          const read = yield* issues.workRead(shell.linkedIssue).pipe(Effect.result);
+          let reason: string | null = null;
+          if (read._tag === "Failure" || issueEligibility(read.success) === "unknown")
+            reason = "Issue relationships are unreadable. Restore access before resuming.";
+          else if (read.success.state === "closed")
+            reason =
+              "Issue closed during work. Decide whether to resume or close out the retained result.";
+          else if (issueEligibility(read.success) === "blocked")
+            reason = "A GitHub blocker is open. Resolve it before resuming.";
+          else {
+            const parent =
+              read.success.parent === null
+                ? rootThreadId
+                : yield* store.issueOwner(read.success.parent);
+            if (parent !== shell.lineage.parentThreadId)
+              reason =
+                "Issue was re-parented. Cancel or finish this attempt before starting a successor under its new parent.";
+          }
+          if (reason === null) continue;
+          if (suspended.get(shell.linkedIssue.id) === reason) continue;
+          suspended.set(shell.linkedIssue.id, reason);
+          config = {
+            ...config,
+            suspendedIssues: [...suspended].map(([id, reason]) => ({ id, reason })),
+          };
+          yield* update(
+            rootThreadId,
+            config,
+            CommandId.make(
+              `issue-suspend:${rootThreadId}:${config.revision}:${shell.linkedIssue.id}`,
+            ),
+          );
+          config = (yield* store.configuration(rootThreadId))!;
+        }
+        yield* continueLocal(rootThreadId, true);
+        if (config.milestones.length === 0) return;
+        const plans: RepositoryOrchestration["milestones"][number][] = [];
+        for (const plan of config.milestones) {
+          const listing = yield* issues
+            .milestoneIssues({
+              host: config.host,
+              repository: config.repository,
+              milestoneNumber: plan.number,
+            })
+            .pipe(Effect.result);
+          if (listing._tag === "Failure" || !listing.success.complete) {
+            plans.push({ ...plan, status: "unreadable", fingerprint: "unreadable" });
+            continue;
+          }
+          const selected = listing.success.issues.filter(
+            (issue) => issue.milestone?.number === plan.number && issue.state === "open",
+          );
+          let unreadable = false,
+            blocked = false,
+            awaiting = false,
+            running = false;
+          const fingerprint: string[] = [];
+          for (const issue of selected) {
+            const readResult = yield* issues
+              .workRead({
                 host: config.host,
                 repository: config.repository,
                 number: issue.number,
-                projectId: config.projectId,
-                modelRoleId: plan.modelRoleId,
-                workspace: plan.workspace,
-                clientRequestId: CommandId.make(
-                  `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`,
-                ),
-              }).pipe(Effect.result);
-              if (started._tag === "Failure") {
-                if (started.failure.code === "invalid-request") awaiting = true;
-                else unreadable = true;
-              } else running = true;
+              })
+              .pipe(Effect.result);
+            if (readResult._tag === "Failure") {
+              unreadable = true;
+              fingerprint.push(`${issue.number}:unknown`);
+              continue;
             }
-            const status = unreadable
-              ? "unreadable"
-              : running
-                ? "running"
-                : awaiting
-                  ? "awaiting_approval"
-                  : blocked
-                    ? "blocked"
-                    : "complete";
-            plans.push({ ...plan, status, fingerprint: fingerprint.sort().join("|") });
-          }
-          if (
-            plans.some(
-              (plan, index) =>
-                plan.fingerprint !== config!.milestones[index]?.fingerprint ||
-                plan.status !== config!.milestones[index]?.status,
-            )
-          )
-            yield* update(
-              rootThreadId,
-              { ...config, milestones: plans },
-              CommandId.make(`milestone-reconcile:${rootThreadId}:${config.revision}`),
+            const read = readResult.success;
+            const eligibility = issueEligibility(read);
+            const owner = yield* store.issueOwner(read.issue);
+            fingerprint.push(
+              `${read.issue.id}:${eligibility}:${read.parent?.id ?? "root"}:${owner ?? "unclaimed"}`,
             );
+            if (eligibility === "unknown") {
+              unreadable = true;
+              continue;
+            }
+            if (eligibility === "blocked") {
+              blocked = true;
+              continue;
+            }
+            if (eligibility === "closed") continue;
+            if (suspended.has(read.issue.id)) {
+              awaiting = true;
+              continue;
+            }
+            if (owner !== null) {
+              const shell = yield* threads.getThreadShell(owner).pipe(Effect.mapError(mapError));
+              if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null) {
+                unreadable = true;
+                continue;
+              }
+              if (shell.status === "queued") running = true;
+              else if (shell.pendingRuntimeRequest !== null) awaiting = true;
+              else if (shell.activeRunId === null && (yield* store.resultAvailable(owner)))
+                awaiting = true;
+              else running = true;
+              continue;
+            }
+            const started = yield* start({
+              host: config.host,
+              repository: config.repository,
+              number: issue.number,
+              projectId: config.projectId,
+              modelRoleId: plan.modelRoleId,
+              workspace: plan.workspace,
+              clientRequestId: CommandId.make(
+                `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`,
+              ),
+            }).pipe(Effect.result);
+            if (started._tag === "Failure") {
+              if (started.failure.code === "invalid-request") awaiting = true;
+              else unreadable = true;
+            } else running = true;
+          }
+          const status = unreadable
+            ? "unreadable"
+            : running
+              ? "running"
+              : awaiting
+                ? "awaiting_approval"
+                : blocked
+                  ? "blocked"
+                  : "complete";
+          plans.push({ ...plan, status, fingerprint: fingerprint.sort().join("|") });
+        }
+        if (
+          plans.some(
+            (plan, index) =>
+              plan.fingerprint !== config!.milestones[index]?.fingerprint ||
+              plan.status !== config!.milestones[index]?.status,
+          )
+        )
+          yield* update(
+            rootThreadId,
+            { ...config, milestones: plans },
+            CommandId.make(`milestone-reconcile:${rootThreadId}:${config.revision}`),
+          );
+      });
+
+    const reconciliations = new Map<
+      ThreadId,
+      {
+        pending: boolean;
+        done: Deferred.Deferred<void, IssueWorkError>;
+      }
+    >();
+    const reconcile: IssueWorkService["Service"]["reconcile"] = (rootThreadId) =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const { state, leader } = yield* Effect.sync(() => {
+            const existing = reconciliations.get(rootThreadId);
+            if (existing !== undefined) {
+              existing.pending = true;
+              return { state: existing, leader: false };
+            }
+            const state = { pending: false, done: Deferred.makeUnsafe<void, IssueWorkError>() };
+            reconciliations.set(rootThreadId, state);
+            return { state, leader: true };
+          });
+          if (!leader) return yield* restore(Deferred.await(state.done));
+          yield* restore(
+            Effect.gen(function* () {
+              do {
+                state.pending = false;
+                yield* reconcilePass(rootThreadId);
+              } while (state.pending);
+            }),
+          ).pipe(
+            Effect.onExit((exit) =>
+              Effect.gen(function* () {
+                reconciliations.delete(rootThreadId);
+                yield* Deferred.done(state.done, exit);
+              }),
+            ),
+          );
         }),
       );
+
     const workMilestone: IssueWorkService["Service"]["workMilestone"] = (input) =>
       Effect.gen(function* () {
         let owner = yield* store.repositoryOwnerByRef(input);
@@ -802,6 +848,21 @@ export const layer = Layer.effect(
     }
     const sink = yield* Effect.serviceOption(EventSink.EventSinkV2);
     if (Option.isSome(sink)) {
+      const pendingRoots = new Map<ThreadId, number>();
+      const wake = yield* Queue.sliding<void>(1);
+      yield* Effect.gen(function* () {
+        while (true) {
+          yield* Queue.take(wake);
+          for (const [root, eventSequence] of pendingRoots) {
+            pendingRoots.delete(root);
+            yield* continueLocal(root, false, eventSequence).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Issue queue continuation failed", { root, cause }),
+              ),
+            );
+          }
+        }
+      }).pipe(Effect.forkScoped);
       const sequence = yield* sink.value.latestSequence().pipe(Effect.orDie);
       yield* sink.value.stream({ afterSequence: sequence }).pipe(
         Stream.filter(
@@ -809,7 +870,7 @@ export const layer = Layer.effect(
             !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
             (stored.event.type === "thread.created" ||
               ((stored.event.type === "run.updated" || stored.event.type === "run.created") &&
-                ["preparing", "completed", "failed", "interrupted", "cancelled"].includes(
+                ["queued", "preparing", "completed", "failed", "interrupted", "cancelled"].includes(
                   stored.event.payload.status,
                 ))),
         ),
@@ -820,7 +881,10 @@ export const layer = Layer.effect(
               .pipe(Effect.mapError(mapError));
             if (shell?.linkedIssue === undefined) return;
             const owner = yield* store.repositoryOwner(shell.linkedIssue);
-            if (owner !== null) yield* reconcile(owner.rootThreadId);
+            if (owner !== null) {
+              pendingRoots.set(owner.rootThreadId, stored.sequence);
+              yield* Queue.offer(wake, undefined);
+            }
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Issue plan continuation failed", { cause }),

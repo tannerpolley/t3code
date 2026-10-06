@@ -133,6 +133,7 @@ export class IssueWorkError extends Schema.TaggedError<IssueWorkError>()("IssueW
 export const IssueWorkRequested = Schema.Struct({
   requestId: CommandId,
   issue: ThreadLinkedIssue,
+  parent: Schema.optional(Schema.NullOr(ThreadLinkedIssue)),
   rootThreadId: ThreadId,
   issueThreadId: Schema.NullOr(ThreadId),
   attemptKey: Schema.String,

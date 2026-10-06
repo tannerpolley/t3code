@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { managedIssueProviderError, supportsManagedIssueWork } from "../issues/IssueEligibility.ts";
 import {
   decideProviderSessionTransition,
   type ProviderSessionTransition,
@@ -32,9 +33,12 @@ export class ProviderSwitchPlanError extends Schema.TaggedError<ProviderSwitchPl
   {
     threadId: ThreadId,
     targetProviderInstanceId: Schema.String,
+    detail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+export const isProviderSwitchPlanError = Schema.is(ProviderSwitchPlanError);
 
 export interface ProviderSwitchServiceV2Shape {
   readonly plan: (input: {
@@ -89,6 +93,16 @@ export const layer: Layer.Layer<
           const currentInstance = yield* Effect.option(getMetadata(current.instanceId));
           const targetInstance = yield* Effect.option(getMetadata(targetModelSelection.instanceId));
           const targetAdapter = yield* Effect.option(adapters.get(targetModelSelection.instanceId));
+          if (
+            (projection.thread.linkedIssue !== undefined ||
+              projection.thread.repositoryOrchestration !== undefined) &&
+            (Option.isNone(targetAdapter) || !supportsManagedIssueWork(targetAdapter.value.driver))
+          )
+            return yield* new ProviderSwitchPlanError({
+              threadId: projection.thread.id,
+              targetProviderInstanceId: targetModelSelection.instanceId,
+              detail: managedIssueProviderError,
+            });
           const currentSessions = projection.providerSessions
             .filter((session) => session.providerInstanceId === current.instanceId)
             .toSorted(
@@ -205,13 +219,14 @@ export const layer: Layer.Layer<
             transition,
           };
         }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderSwitchPlanError({
-                threadId: projection.thread.id,
-                targetProviderInstanceId: targetModelSelection.instanceId,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            isProviderSwitchPlanError(cause)
+              ? cause
+              : new ProviderSwitchPlanError({
+                  threadId: projection.thread.id,
+                  targetProviderInstanceId: targetModelSelection.instanceId,
+                  cause,
+                }),
           ),
         ),
     });

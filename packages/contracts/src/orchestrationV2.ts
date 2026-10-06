@@ -42,6 +42,7 @@ import { ModelSelection } from "./modelSelection.ts";
 import { IssueWorkRequested, RepositoryOrchestration } from "./issueWork.ts";
 import { IssueGithubCommentRecorded } from "./issueComment.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
+import type { IssueWorkRead } from "./issue.ts";
 import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -3088,7 +3089,15 @@ const OrchestrationV2InternalCommand = Schema.Union([
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 
 /** Everything the server's orchestrator accepts: client commands plus internal ones. */
-export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
+export type OrchestrationV2ServerCommand = (
+  | OrchestrationV2Command
+  | OrchestrationV2InternalCommand
+) & {
+  /** Server-read relationship snapshots, acquired before entering command planning. */
+  readonly issueReads?: ReadonlyArray<IssueWorkRead>;
+  /** Suspension interrupts retain their provider action until it succeeds. */
+  readonly retryInterruptUntilDone?: boolean;
+};
 
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",

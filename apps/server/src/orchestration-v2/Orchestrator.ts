@@ -1,7 +1,18 @@
-import { IssueRef, OrchestratorMcpTarget } from "@t3tools/contracts";
+import {
+  IssueRef,
+  OrchestratorMcpTarget,
+  type IssueWorkRead,
+  type ThreadLinkedIssue,
+} from "@t3tools/contracts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as IssueService from "../issues/IssueService.ts";
-import { issueEligibility } from "../issues/IssueEligibility.ts";
+import {
+  issueEligibility,
+  sameIssueRepository,
+  supportsManagedIssueWork,
+  issueScopeExpansionError,
+  managedIssueProviderError,
+} from "../issues/IssueEligibility.ts";
 import { deriveIssueWorkStatus } from "../issues/IssueWorkStatus.ts";
 import { issueThreadTitle } from "@t3tools/contracts";
 import {
@@ -111,7 +122,7 @@ import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import { ProviderContinuationRequests } from "./ProviderContinuationRequests.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
+import { isProviderSwitchPlanError, ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
@@ -134,11 +145,15 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
   {
     commandId: CommandId,
     commandType: Schema.String,
+    detail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
+    return (
+      this.detail ??
+      `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`
+    );
   }
 }
 
@@ -767,6 +782,13 @@ function lastDeliveredRunForProviderThread(
   );
 }
 
+class IssueReadSnapshots extends Context.Reference<ReadonlyArray<IssueWorkRead>>(
+  "t3/issues/PlanningReads",
+  {
+    defaultValue: (): ReadonlyArray<IssueWorkRead> => [],
+  },
+) {}
+
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
@@ -778,22 +800,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const projectionStore = yield* ProjectionStoreV2;
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const issueReads = yield* Effect.serviceOption(IssueService.IssueService);
+  const issueSnapshot = (issue: ThreadLinkedIssue) =>
+    Effect.map(IssueReadSnapshots, (reads) =>
+      reads.find((read) => sameIssueRepository(read.issue, issue) && read.issue.id === issue.id),
+    );
   const canStartIssueRun = (thread: OrchestrationV2AppThread) =>
     Effect.gen(function* () {
       const issue = thread.linkedIssue;
       if (issue === undefined) return true;
-      if (Option.isNone(issueWorkStore) || Option.isNone(issueReads)) return false;
+      if (Option.isNone(issueWorkStore)) return false;
       const store = issueWorkStore.value;
       if (
         !(yield* store.canAdmit(issue, thread.id)) ||
         (yield* store.issueOwner(issue)) !== thread.id
       )
         return false;
-      const read = yield* issueReads.value.workRead(issue);
+      const read = yield* issueSnapshot(issue);
       if (
+        read === undefined ||
         issueEligibility(read) !== "eligible" ||
-        read.issue.id !== issue.id ||
-        read.issue.repositoryId !== issue.repositoryId
+        (read.parent !== null && !sameIssueRepository(read.parent, issue))
       )
         return false;
       const parent =
@@ -842,6 +868,80 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }),
   };
 
+  // Relationship I/O precedes the planning lock. A missing/failed snapshot
+  // cannot admit work; ownership, lineage, suspension and capacity are checked
+  // again from committed local state while planning.
+  const readIssueSnapshots = (
+    threadId: ThreadId,
+    explicit: ReadonlyArray<ThreadLinkedIssue> = [],
+    includeQueues = false,
+    includeRecipient = false,
+  ) =>
+    Effect.gen(function* () {
+      if (Option.isNone(issueReads)) return [];
+      const selected = new Map(
+        explicit.map((issue) => [`${issue.host}:${issue.repositoryId}:${issue.id}`, issue]),
+      );
+      const shell = yield* projectionStore.getThreadShell(threadId);
+      if (
+        shell?.linkedIssue !== undefined &&
+        shell.activeRunId === null &&
+        Option.isSome(issueWorkStore) &&
+        (yield* issueWorkStore.value.canAdmit(shell.linkedIssue, threadId))
+      )
+        selected.set(
+          `${shell.linkedIssue.host}:${shell.linkedIssue.repositoryId}:${shell.linkedIssue.id}`,
+          shell.linkedIssue,
+        );
+      if (includeQueues && Option.isSome(issueWorkStore)) {
+        const rootId = shell?.lineage.rootThreadId ?? threadId;
+        for (const workerId of yield* issueWorkStore.value.workerThreads(rootId)) {
+          if (!(yield* projectionStore.canStartQueuedRun(workerId))) continue;
+          const worker = yield* projectionStore.getThreadShell(workerId);
+          if (
+            worker?.linkedIssue !== undefined &&
+            !(yield* issueWorkStore.value.canAdmit(worker.linkedIssue, workerId))
+          )
+            continue;
+          if (worker?.linkedIssue !== undefined)
+            selected.set(
+              `${worker.linkedIssue.host}:${worker.linkedIssue.repositoryId}:${worker.linkedIssue.id}`,
+              worker.linkedIssue,
+            );
+        }
+      }
+      const reads: IssueWorkRead[] = [];
+      for (const issue of selected.values()) {
+        const read = yield* issueReads.value.workRead(issue).pipe(Effect.option);
+        if (
+          Option.isSome(read) &&
+          sameIssueRepository(read.value.issue, issue) &&
+          read.value.issue.id === issue.id
+        ) {
+          reads.push(read.value);
+          if (
+            includeRecipient &&
+            read.value.parent !== null &&
+            sameIssueRepository(read.value.parent, issue) &&
+            Option.isSome(issueWorkStore)
+          ) {
+            const ownerId = yield* issueWorkStore.value.issueOwner(read.value.parent);
+            const owner = ownerId === null ? null : yield* projectionStore.getThreadShell(ownerId);
+            if (
+              owner?.linkedIssue !== undefined &&
+              owner.activeRunId === null &&
+              (yield* issueWorkStore.value.canAdmit(owner.linkedIssue, owner.id))
+            )
+              selected.set(
+                `${owner.linkedIssue.host}:${owner.linkedIssue.repositoryId}:${owner.linkedIssue.id}`,
+                owner.linkedIssue,
+              );
+          }
+        }
+      }
+      return reads;
+    });
+
   const mapDispatchError =
     (command: OrchestrationV2ServerCommand) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, OrchestratorDispatchError, R> =>
@@ -851,6 +951,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             new OrchestratorDispatchError({
               commandId: command.commandId,
               commandType: command.type,
+              ...(isProviderSwitchPlanError(cause) && cause.detail !== undefined
+                ? { detail: cause.detail }
+                : {}),
               cause,
             }),
         ),
@@ -1430,6 +1533,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   new OrchestratorDispatchError({
                     commandId,
                     commandType: "message.dispatch",
+                    ...(cause.detail === undefined ? {} : { detail: cause.detail }),
                     cause,
                   }),
               ),
@@ -1923,7 +2027,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     for (const threadId of threadIds) {
       const resumedThread = yield* Effect.gen(function* () {
         if (!(yield* projectionStore.canStartQueuedRun(threadId))) return false;
-        yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
+        const reads = yield* readIssueSnapshots(threadId);
+        yield* threadDispatch.withLock(
+          threadId,
+          startNextQueuedRun(threadId).pipe(Effect.provideService(IssueReadSnapshots, reads)),
+        );
         return true;
       }).pipe(
         Effect.catch((cause) =>
@@ -2238,6 +2346,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.thread_id": command.threadId,
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
+
+    if (command.linkedIssue !== undefined || command.repositoryOrchestration !== undefined) {
+      const adapter = yield* providerAdapters
+        .get(command.modelSelection.instanceId)
+        .pipe(mapDispatchError(command));
+      if (!supportsManagedIssueWork(adapter.driver))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          detail: managedIssueProviderError,
+        });
+    }
 
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
@@ -6624,6 +6744,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: "The registered repository root must be restored before starting work.",
       });
+    const workerAdapter = yield* providerAdapters
+      .get(command.workerModelSelection.instanceId)
+      .pipe(mapDispatchError(command));
+    if (!supportsManagedIssueWork(workerAdapter.driver))
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        detail: managedIssueProviderError,
+      });
+    const read = yield* issueSnapshot(command.issue);
+    if (read === undefined || issueEligibility(read) !== "eligible")
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Issue work is closed, blocked, or its eligibility is unknown.",
+      });
+    if (read.parent !== null && !sameIssueRepository(read.parent, command.issue))
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        detail: issueScopeExpansionError,
+      });
     const owner = yield* store.issueOwner(command.issue).pipe(mapDispatchError(command));
     let issueThreadId: ThreadId | null = null;
     if (owner !== null) {
@@ -6654,6 +6796,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: {
         requestId: command.commandId,
         issue: command.issue,
+        parent: read.parent,
         rootThreadId: command.threadId,
         issueThreadId,
         attemptKey,
@@ -6662,11 +6805,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     });
     if (issueThreadId !== null || alreadyQueued) return;
-    const read = Option.isNone(issueReads)
-      ? null
-      : yield* issueReads.value.workRead(command.issue).pipe(mapDispatchError(command));
     const recipientId =
-      read?.parent == null
+      read.parent === null
         ? command.threadId
         : yield* store.issueOwner(read.parent).pipe(mapDispatchError(command));
     // Keep the leaf request durable until its ancestor owns a thread. The plan reactor
@@ -6771,15 +6911,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const repositoryOwner = yield* issueStore
           .repositoryOwner(command.issue)
           .pipe(mapDispatchError(command));
-        if (repositoryOwner === null || repositoryOwner.paused || Option.isNone(issueReads))
+        if (repositoryOwner === null || repositoryOwner.paused)
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause: "The repository is paused or issue relationships are unavailable.",
           });
-        const read = yield* issueReads.value
-          .workRead(command.issue)
-          .pipe(mapDispatchError(command));
+        const read = yield* issueSnapshot(command.issue);
+        if (read === undefined)
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Issue relationships are unavailable; eligibility is unknown.",
+          });
+        if (read.parent !== null && !sameIssueRepository(read.parent, command.issue))
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            detail: issueScopeExpansionError,
+          });
         const expectedParent =
           read.parent === null
             ? repositoryOwner.rootThreadId
@@ -6788,7 +6938,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           issueEligibility(read) !== "eligible" ||
           read.issue.id !== command.issue.id ||
           read.issue.repositoryId !== command.issue.repositoryId ||
-          expectedParent !== command.parentThreadId
+          expectedParent !== command.parentThreadId ||
+          parentProjection.thread.lineage.rootThreadId !== repositoryOwner.rootThreadId
         )
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -6845,6 +6996,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+
+      if (command.issue !== undefined && !supportsManagedIssueWork(targetAdapter.driver))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          detail: managedIssueProviderError,
+        });
 
       const now = command.createdAt ?? (yield* DateTime.now);
       const taskNodeId = idAllocator.derive.delegatedTaskNode({
@@ -8672,7 +8830,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   const dispatchRunInterrupt = (
-    command: Extract<OrchestrationV2Command, { readonly type: "run.interrupt" }>,
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "run.interrupt" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) =>
@@ -8990,6 +9148,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
             request: {
               type: "provider-turn.interrupt",
+              ...(command.retryInterruptUntilDone === true ? { retryUntilDone: true } : {}),
               providerSessionId: owner.providerSessionId,
               providerThreadId: owner.id,
               providerTurnId: turn.id,
@@ -9085,6 +9244,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           request: {
             type: "provider-turn.interrupt",
+            ...(command.retryInterruptUntilDone === true ? { retryUntilDone: true } : {}),
             providerSessionId,
             providerThreadId: providerThread.id,
             providerTurnId: providerTurn.id,
@@ -9094,7 +9254,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       return undefined;
     });
-
   const dispatchCheckpointRollback = (
     command: Extract<OrchestrationV2Command, { readonly type: "checkpoint.rollback" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -10491,6 +10650,60 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           },
         });
+        const changedSuspensions = command.orchestration.suspendedIssues.filter(
+          (entry) =>
+            !prior.suspendedIssues.some(
+              (old) => old.id === entry.id && old.reason === entry.reason,
+            ),
+        );
+        if (changedSuspensions.length > 0 && Option.isSome(issueWorkStore)) {
+          const workers = yield* Effect.forEach(
+            yield* issueWorkStore.value
+              .workerThreads(command.threadId)
+              .pipe(mapDispatchError(command)),
+            (threadId) => projectionStore.getThreadShell(threadId).pipe(mapDispatchError(command)),
+          );
+          for (const suspension of changedSuspensions) {
+            const owner = workers.find((worker) => worker?.linkedIssue?.id === suspension.id);
+            if (owner?.linkedIssue === undefined) continue;
+            const branch = new Set([owner.id]);
+            for (let size = -1; size !== branch.size;) {
+              size = branch.size;
+              for (const worker of workers)
+                if (
+                  worker?.lineage.parentThreadId != null &&
+                  branch.has(worker.lineage.parentThreadId)
+                )
+                  branch.add(worker.id);
+            }
+            for (const worker of workers) {
+              if (worker?.activeRunId == null || !branch.has(worker.id)) continue;
+              yield* Ref.update(effects, (pending) => [
+                ...pending,
+                {
+                  id: `effect:${command.commandId}:issue-suspend:${suspension.id}:${worker.activeRunId}`,
+                  commandId: command.commandId,
+                  threadId: worker.id,
+                  request: { type: "issue.suspension.interrupt", runId: worker.activeRunId! },
+                } satisfies PendingOrchestrationEffectV2,
+              ]);
+            }
+            yield* Ref.update(effects, (pending) => [
+              ...pending,
+              {
+                id: `effect:${command.commandId}:issue-decision:${suspension.id}`,
+                commandId: command.commandId,
+                threadId: command.threadId,
+                request: {
+                  type: "issue.suspension.notify",
+                  projectId: prior.projectId,
+                  issue: owner.linkedIssue!,
+                  reason: suspension.reason,
+                },
+              } satisfies PendingOrchestrationEffectV2,
+            ]);
+          }
+        }
         break;
       }
       case "repository.work.continue": {
@@ -10789,7 +11002,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+    Effect.gen(function* () {
+      const needsReads =
+        command.type === "issue.work.start" ||
+        command.type === "delegated_task.request" ||
+        command.type === "message.dispatch" ||
+        command.type === "prepared-run.retry" ||
+        command.type === "queue.resume" ||
+        command.type === "repository.work.continue";
+      const receipt = needsReads
+        ? yield* commandReceipts.getByCommandId(command.commandId).pipe(mapDispatchError(command))
+        : Option.none();
+      const issueReads =
+        needsReads &&
+        (Option.isNone(receipt) ||
+          command.type === "queue.resume" ||
+          command.type === "repository.work.continue")
+          ? yield* readIssueSnapshots(
+              commandThreadId(command),
+              "issue" in command && command.issue !== undefined ? [command.issue] : [],
+              command.type === "repository.work.continue",
+              command.type === "issue.work.start",
+            ).pipe(mapDispatchError(command))
+          : [];
+      return yield* threadDispatch.withLock(
+        commandThreadId(command),
+        dispatchWithReceiptEffect({ ...command, issueReads }).pipe(
+          Effect.provideService(IssueReadSnapshots, issueReads),
+        ),
+      );
+    });
 
   // Caller holds the thread lock. A steer whose target ended remains an ordinary queued turn.
   const deliverHeldSteers = Effect.fnUntraced(
@@ -10901,8 +11143,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           for (const queuedThreadId of yield* issueWorkStore.value.workerThreads(
             owner.rootThreadId,
           )) {
-            if (queuedThreadId !== threadId)
-              yield* threadDispatch.withLock(queuedThreadId, startNextQueuedRun(queuedThreadId));
+            if (
+              queuedThreadId === threadId ||
+              !(yield* projectionStore.canStartQueuedRun(queuedThreadId))
+            )
+              continue;
+            const reads = yield* readIssueSnapshots(queuedThreadId);
+            yield* threadDispatch.withLock(
+              queuedThreadId,
+              startNextQueuedRun(queuedThreadId).pipe(
+                Effect.provideService(IssueReadSnapshots, reads),
+              ),
+            );
           }
       }
     });
@@ -10917,8 +11169,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // child lock here would invert that order, and the keyed executor's
       // semaphores are neither reentrant nor deadlock-aware.
       const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
+      const reads = (yield* projectionStore.canStartQueuedRun(threadId))
+        ? yield* readIssueSnapshots(threadId)
+        : [];
+      const parentReads =
+        parentThreadId === undefined ? [] : yield* readIssueSnapshots(parentThreadId);
       if (parentThreadId !== undefined) {
-        yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
+        yield* threadDispatch.withLock(
+          parentThreadId,
+          finalizeAppOwnedSubagent(threadId).pipe(
+            Effect.provideService(IssueReadSnapshots, parentReads),
+          ),
+        );
       }
       if (stored.event.type === "run.updated") {
         const runId = stored.event.payload.id;
@@ -10937,7 +11199,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           stored.event.type === "run.updated" && stored.event.payload.status === "failed"
             ? { failedRunId: stored.event.payload.id }
             : undefined,
-        ),
+        ).pipe(Effect.provideService(IssueReadSnapshots, reads)),
       );
       yield* promoteOtherIssueQueues(threadId);
     }).pipe(

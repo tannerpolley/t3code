@@ -1,3 +1,4 @@
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { assert, it } from "@effect/vitest";
 import {
@@ -3446,4 +3447,104 @@ it.effect("publishes live events in commit order across concurrent writers", () 
       );
     }).pipe(Effect.provide(eventSinkLayer));
   }).pipe(Effect.provide(databaseLayer)),
+);
+
+it.effect("preserves repository pause and admission after visit, compaction and rebuild", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const rootId = ThreadId.make("pause-replay-root");
+    const workerId = ThreadId.make("pause-replay-worker");
+    const issue = {
+      host: "github.com",
+      repository: "owner/repo",
+      repositoryId: "pause-replay-repo",
+      id: "pause-replay-issue",
+      nodeId: "pause-replay-node",
+      number: 1,
+      title: "Retain pause",
+      url: "https://github.com/owner/repo/issues/1",
+    };
+    const root = {
+      ...makeThread(rootId, now),
+      repositoryOrchestration: {
+        host: issue.host,
+        repository: issue.repository,
+        repositoryId: issue.repositoryId,
+        projectId: ProjectId.make(`project:${rootId}`),
+        workspace: "project" as const,
+        launchCommandId: CommandId.make("pause-replay-create"),
+        revision: 1,
+        paused: false,
+        workerLimit: 4,
+        publishStatusComments: false,
+        publishCloseoutComments: false,
+        milestones: [],
+        suspendedIssues: [],
+      },
+    };
+    yield* sink.write({
+      events: [
+        threadCreatedEvent({ id: "pause-replay-create", thread: root, now }),
+        threadCreatedEvent({
+          id: "pause-replay-worker-create",
+          thread: {
+            ...makeThread(workerId, now),
+            linkedIssue: issue,
+            lineage: {
+              rootThreadId: rootId,
+              parentThreadId: rootId,
+              relationshipToParent: "subagent",
+            },
+          },
+          now,
+        }),
+      ],
+    });
+    assert.isTrue(yield* store.canAdmit(issue, workerId));
+    const paused = {
+      ...root,
+      repositoryOrchestration: { ...root.repositoryOrchestration, paused: true, revision: 2 },
+    };
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("pause-replay-pause"),
+          type: "thread.metadata-updated",
+          threadId: rootId,
+          occurredAt: now,
+          payload: paused,
+        },
+        {
+          id: EventId.make("pause-replay-visit"),
+          type: "thread.visited",
+          threadId: rootId,
+          occurredAt: now,
+          payload: { ...paused, lastVisitedAt: now },
+        },
+      ],
+    });
+    assert.isFalse(yield* store.canAdmit(issue, workerId));
+    yield* maintenance.compactEventStore;
+    const events = yield* sql<{
+      event_type: string;
+    }>`SELECT event_type FROM orchestration_events WHERE stream_id = ${rootId}`;
+    assert.isFalse(events.some((event) => event.event_type === "thread.metadata-updated"));
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    const owner = yield* sql<{
+      paused: number;
+      revision: number;
+    }>`SELECT paused, revision FROM orchestration_v2_projection_repository_orchestration WHERE root_thread_id = ${rootId}`;
+    assert.deepEqual(owner, [{ paused: 1, revision: 2 }]);
+    assert.isTrue((yield* store.repositoryOwner(issue))!.paused);
+    assert.equal((yield* store.configuration(rootId))!.revision, 2);
+    assert.isFalse(yield* store.canAdmit(issue, workerId));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(TestLayer, IssueWorkStore.layer.pipe(Layer.provide(databaseLayer))),
+    ),
+  ),
 );
