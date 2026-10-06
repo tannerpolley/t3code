@@ -1,5 +1,6 @@
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { ChildWorktreeIcon, SidebarBackgroundWorkRows } from "../sidebar/SidebarBackgroundWorkRows";
+import { ChildWorktreeIcon } from "../sidebar/SidebarBackgroundWorkRows";
+import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
 import {
   childWorktreeLabel,
   describeSidebarBackgroundWork,
@@ -192,7 +193,8 @@ function ThreadLineageBackgroundTasks(props: {
   readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
 }) {
   return (
-    <SidebarBackgroundWorkRows
+    <BackgroundWorkTaskList
+      key={`${props.environmentId}:${props.threadId}`}
       environmentId={props.environmentId}
       threadId={props.threadId}
       rows={describeSidebarBackgroundWork(

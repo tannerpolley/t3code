@@ -116,7 +116,7 @@ export function BackgroundProcessOutputButton(
 }
 
 /** Mounted only while open: the subscription, and the server's file tail, end on unmount. */
-function BackgroundProcessOutputView(props: BackgroundProcessTarget) {
+export function BackgroundProcessOutputView(props: BackgroundProcessTarget) {
   const output = useEnvironmentQuery(
     orchestrationEnvironment.backgroundTaskOutput({
       environmentId: props.environmentId,
