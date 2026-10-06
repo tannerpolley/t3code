@@ -12,6 +12,8 @@
  * T3-owned processes, common dev ports, and on Linux a user systemd service
  * (`/proc/<pid>/cgroup`) or a working directory inside a registered project's
  * workspace root (`/proc/<pid>/cwd`). Each published server carries that reason.
+ * Listeners and configured URLs the environment's hide rules cover are dropped
+ * before any of this, so they are never sent a request.
  * Listening ports are published only after a bounded HTTP(S) probe finds a
  * successful HTML document or a redirect to one.
  * Positive and negative results are cached briefly by candidate URL and listener identity,
@@ -26,6 +28,7 @@ import {
   ThreadId,
   type DiscoveredLocalServer,
   type LocalServerDiscoveryReason,
+  type LocalServerHideRule,
   type OrchestrationProjectShell,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -48,6 +51,7 @@ import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -195,7 +199,22 @@ const projectWebProbeSnapshot = (
 export const systemdUnitFromCgroup = (cgroup: string): string | null =>
   /\/app\.slice\/([^/\s]+\.service)(?:\/|\s|$)/.exec(cgroup)?.[1] ?? null;
 
-/** The project with the deepest workspace root containing `cwd`, a `/proc/<pid>/cwd` target. */
+export const isLocalServerHidden = (
+  server: Pick<DiscoveredLocalServer, "port" | "processName">,
+  rules: ReadonlyArray<LocalServerHideRule>,
+): boolean => {
+  const processName = server.processName?.toLowerCase();
+  return rules.some((rule) =>
+    rule.kind === "process"
+      ? rule.processName.toLowerCase() === processName
+      : server.port >= Math.min(rule.from, rule.to) && server.port <= Math.max(rule.from, rule.to),
+  );
+};
+
+/**
+ * The project with the deepest workspace root containing `cwd`, a `/proc/<pid>/cwd` target.
+ * Roots must be physical paths, as the kernel reports cwd; on equal roots the first project wins.
+ */
 export const projectIdForCwd = (
   cwd: string,
   projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>,
@@ -339,6 +358,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcessPlatform;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const serverSettings = yield* ServerSettingsService;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -419,33 +439,49 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const attributeListeners = Effect.fn("PortDiscovery.attributeListeners")(function* (
     servers: ReadonlyArray<DiscoveredLocalServer>,
   ) {
-    if (hostPlatform !== "linux" || servers.every((server) => server.pid === null)) return servers;
-    const projects = yield* projectStore.listShells().pipe(Effect.orElseSucceed(() => []));
-    return yield* Effect.forEach(
-      servers,
-      (server) =>
-        server.pid === null
-          ? Effect.succeed(server)
-          : Effect.all({
-              // Processes may exit or belong to another user during the snapshot.
-              cgroup: fileSystem
-                .readFileString(`/proc/${server.pid}/cgroup`)
-                .pipe(Effect.orElseSucceed(() => "")),
-              cwd: fileSystem
-                .readLink(`/proc/${server.pid}/cwd`)
-                .pipe(Effect.orElseSucceed(() => null)),
-            }).pipe(
-              Effect.map(({ cgroup, cwd }) => {
-                const systemdUnit = systemdUnitFromCgroup(cgroup);
-                const projectId = cwd === null ? null : projectIdForCwd(cwd, projects);
-                return {
-                  ...server,
+    const processIds = [
+      ...new Set(servers.flatMap((server) => (server.pid === null ? [] : [server.pid]))),
+    ];
+    if (hostPlatform !== "linux" || processIds.length === 0) return servers;
+    const shells = yield* projectStore.listShells().pipe(Effect.orElseSucceed(() => []));
+    // /proc reports physical paths, so symlinked roots are compared by their target.
+    const projects = yield* Effect.forEach(
+      shells,
+      (project) =>
+        fileSystem.realPath(project.workspaceRoot).pipe(
+          Effect.orElseSucceed(() => project.workspaceRoot),
+          Effect.map((workspaceRoot) => ({ id: project.id, workspaceRoot })),
+        ),
+      { concurrency: 4 },
+    );
+    const attributions = new Map(
+      yield* Effect.forEach(
+        processIds,
+        (pid) =>
+          Effect.all({
+            // Processes may exit or belong to another user during the snapshot.
+            cgroup: fileSystem
+              .readFileString(`/proc/${pid}/cgroup`)
+              .pipe(Effect.orElseSucceed(() => "")),
+            cwd: fileSystem.readLink(`/proc/${pid}/cwd`).pipe(Effect.orElseSucceed(() => null)),
+          }).pipe(
+            Effect.map(({ cgroup, cwd }) => {
+              const systemdUnit = systemdUnitFromCgroup(cgroup);
+              const projectId = cwd === null ? null : projectIdForCwd(cwd, projects);
+              return [
+                pid,
+                {
                   ...(systemdUnit === null ? {} : { systemdUnit }),
                   ...(projectId === null ? {} : { projectId }),
-                };
-              }),
-            ),
-      { concurrency: 4 },
+                },
+              ] as const;
+            }),
+          ),
+        { concurrency: 4 },
+      ),
+    );
+    return servers.map((server) =>
+      server.pid === null ? server : { ...server, ...attributions.get(server.pid) },
     );
   });
 
@@ -498,6 +534,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     servers: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
     ownedProcessIds: ReadonlySet<number>,
+    hidden: (port: number, key: string) => boolean,
   ): ReadonlyArray<WebProbeGroup> => {
     const serversByKey = new Map(
       servers.map((server) => {
@@ -516,7 +553,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const port = urlPort(url);
       const key = localServerKey(url.hostname, port);
       const resourceKey = webProbeCacheKey(raw);
-      if (configuredResources.has(resourceKey)) continue;
+      if (configuredResources.has(resourceKey) || hidden(port, key)) continue;
       configuredResources.add(resourceKey);
       groups.push({
         server: serversByKey.get(key) ?? {
@@ -549,7 +586,18 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     listeners: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
   ) {
-    const servers = yield* attributeListeners(listeners);
+    const hideRules = yield* serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.localServerHideRules),
+      Effect.orElseSucceed(() => []),
+    );
+    const hiddenKeys = new Set(
+      listeners
+        .filter((listener) => isLocalServerHidden(listener, hideRules))
+        .map((listener) => localServerKey(listener.host, listener.port)),
+    );
+    const servers = yield* attributeListeners(
+      listeners.filter((listener) => !hiddenKeys.has(localServerKey(listener.host, listener.port))),
+    );
     const parents = yield* readProcessParents();
     const ownedProcessIds = new Set<number>();
     if (parents !== null) {
@@ -575,7 +623,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
     const nowMillis = yield* Clock.currentTimeMillis;
     const cached = yield* Ref.get(webProbeCacheRef);
-    const groups = makeWebProbeGroups(servers, configuredUrls, ownedProcessIds);
+    const groups = makeWebProbeGroups(
+      servers,
+      configuredUrls,
+      ownedProcessIds,
+      (port, key) =>
+        hiddenKeys.has(key) || isLocalServerHidden({ port, processName: null }, hideRules),
+    );
     const batchProbes = new Map<
       string,
       Effect.Effect<{ readonly probe: WebProbeCacheEntry; readonly fresh: boolean }>

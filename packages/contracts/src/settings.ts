@@ -353,10 +353,6 @@ export const ClientSettingsSchema = Schema.Struct({
   browserAutoShowFloatingPreview: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW)),
   ),
-  /** Browser panel Local servers entries the user hid; restorable in Settings → Customizations. */
-  browserLocalServerHideRules: Schema.Array(LocalServerHideRule).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
   /**
    * User-created browser profiles. The built-in Default and Incognito profiles
    * are synthesized by `resolveBrowserProfiles`, not stored here, so they
@@ -1574,6 +1570,13 @@ export const ServerSettings = Schema.Struct({
    */
   agentBrowserTabLimits: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
+   * Local servers the browser panel leaves out. The port scanner skips matching listeners before
+   * probing, so they are never sent a request. Restorable in Settings → Customizations.
+   */
+  localServerHideRules: Schema.Array(LocalServerHideRule).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /**
    * Every ~10 minutes, retitle top-level threads with new messages to what they are working on
    * now, using GPT-6 Luna. Titles a user typed are never changed.
    */
@@ -1903,6 +1906,7 @@ export const ServerSettingsPatch = Schema.Struct({
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   projectFolderRoot: Schema.optionalKey(TrimmedString),
   agentBrowserTabLimits: Schema.optionalKey(Schema.Boolean),
+  localServerHideRules: Schema.optionalKey(Schema.Array(LocalServerHideRule)),
   keepThreadTitlesCurrent: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
@@ -1983,7 +1987,6 @@ export const ClientSettingsPatch = Schema.Struct({
   browserRecordingShowMousePresses: Schema.optionalKey(Schema.Boolean),
   browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
-  browserLocalServerHideRules: Schema.optionalKey(Schema.Array(LocalServerHideRule)),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),

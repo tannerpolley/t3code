@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./useDiscoveredLocalServers", () => ({
-  useDiscoveredLocalServers: () => ({ servers: mocks.servers, hiddenCount: 0 }),
+  useDiscoveredLocalServers: () => mocks.servers,
 }));
 vi.mock("./PreviewFaviconIcon", () => ({
   PreviewFaviconIcon: () => <span data-favicon-icon />,

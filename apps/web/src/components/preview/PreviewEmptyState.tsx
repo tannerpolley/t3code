@@ -3,8 +3,10 @@ import { Globe, History, RadioTower } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useThreadShell } from "~/state/entities";
+import { serverEnvironment } from "~/state/server";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { DiscoveryList } from "../ui/discovery-list";
 
 import { addLocalServerHideRule } from "./localServerHideRules";
@@ -30,13 +32,17 @@ export function PreviewEmptyState({
   onOpenUrl,
 }: Props) {
   const projectId = useThreadShell(threadRef)?.projectId ?? null;
-  const { servers, hiddenCount } = useDiscoveredLocalServers({
+  const servers = useDiscoveredLocalServers({
     environmentId,
     configuredUrls,
     active: { projectId, threadId: threadRef.threadId },
   });
-  const hideRules = useClientSettings((settings) => settings.browserLocalServerHideRules);
-  const updateSettings = useUpdateClientSettings();
+  // Hide rules belong to the environment whose scanner applies them.
+  const hideRules = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.localServerHideRules,
+  );
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "Hide local server");
   const recents = recentEntries.filter((entry) => URL.canParse(entry.url)).slice(0, 8);
 
   if (servers.length === 0 && recents.length === 0) {
@@ -91,7 +97,10 @@ export function PreviewEmptyState({
                   onOpen={() => onOpenUrl(server.requestedUrl)}
                   onHide={(rule) =>
                     void updateSettings({
-                      browserLocalServerHideRules: addLocalServerHideRule(hideRules, rule),
+                      environmentId,
+                      input: {
+                        patch: { localServerHideRules: addLocalServerHideRule(hideRules, rule) },
+                      },
                     })
                   }
                 />
@@ -99,8 +108,8 @@ export function PreviewEmptyState({
             </DiscoveryList>
             <p className="px-1 text-xs text-muted-foreground">
               Select a live local server to open it in this browser tab.
-              {hiddenCount > 0
-                ? ` ${hiddenCount} hidden; restore them in Settings → Customizations → Browser & preview.`
+              {hideRules.length > 0
+                ? " Servers you hid can be restored in Settings → Customizations → Browser & preview."
                 : ""}
             </p>
           </div>

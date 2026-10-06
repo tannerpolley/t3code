@@ -474,6 +474,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "local-server-hide-rules",
     title: "Hidden local servers",
     to: "/settings/customizations",
+    scope: "environment-defaults",
     searchTerms: [
       "customization fork browser preview local servers hide hidden restore process port range serena",
     ],
