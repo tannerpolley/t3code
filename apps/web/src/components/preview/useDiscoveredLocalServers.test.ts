@@ -1,4 +1,4 @@
-import type { DiscoveredLocalServer } from "@t3tools/contracts";
+import { ProjectId, ThreadId, type DiscoveredLocalServer } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { mergeServers } from "./useDiscoveredLocalServers";
@@ -142,5 +142,22 @@ describe("mergeServers", () => {
     });
     expect(result[0]?.url).toBe("https://env-42.example.dev:5173/");
     expect(result[0]?.requestedUrl).toBe("http://localhost:5173/");
+  });
+
+  it("ranks configured, then the active project's and thread's servers, then the rest", () => {
+    const projectId = ProjectId.make("project-amine");
+    const threadId = ThreadId.make("thread-1");
+    const result = mergeServers({
+      scanner: [
+        scannerServer({ port: 3000 }),
+        scannerServer({ port: 24_287, projectId: ProjectId.make("project-other") }),
+        scannerServer({ port: 8770, projectId, reason: "systemd" }),
+        scannerServer({ port: 5174, terminal: { threadId, terminalId: "default" } }),
+        scannerServer({ port: 9000 }),
+      ],
+      configuredUrls: ["http://localhost:9000"],
+      active: { projectId, threadId },
+    });
+    expect(result.map((server) => server.port)).toEqual([9000, 5174, 8770, 3000, 24_287]);
   });
 });

@@ -9,7 +9,13 @@
  * @module Preview
  */
 import { Schema } from "effect";
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  NonNegativeInt,
+  PositiveInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
@@ -299,13 +305,28 @@ export const PreviewEvent = Schema.Union([
 ]);
 export type PreviewEvent = typeof PreviewEvent.Type;
 
+const LocalServerPort = Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536));
+
+/**
+ * Why the scanner probed a listener: its process descends from T3 or a T3
+ * terminal, runs in a user systemd service, works inside a project's
+ * workspace root, or holds a common dev port. The first that applies wins.
+ */
+export const LocalServerDiscoveryReason = Schema.Literals([
+  "t3",
+  "systemd",
+  "project",
+  "common-port",
+]);
+export type LocalServerDiscoveryReason = typeof LocalServerDiscoveryReason.Type;
+
 /**
  * A localhost server detected by the port scanner. Used to populate the
  * "Local" recommendations in the empty-state of the preview panel.
  */
 export const DiscoveredLocalServer = Schema.Struct({
   host: TrimmedNonEmptyString,
-  port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536)),
+  port: LocalServerPort,
   url: Url,
   processName: Schema.NullOr(TrimmedNonEmptyString),
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
@@ -315,8 +336,25 @@ export const DiscoveredLocalServer = Schema.Struct({
       terminalId: TrimmedNonEmptyString,
     }),
   ),
+  // Optional so clients keep working against servers that predate discovery labels.
+  reason: Schema.optional(LocalServerDiscoveryReason),
+  /** The user systemd service the process runs in, such as `my-preview.service`. */
+  systemdUnit: Schema.optional(TrimmedNonEmptyString),
+  /** The registered project whose workspace root holds the process's working directory. */
+  projectId: Schema.optional(ProjectId),
 });
 export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
+
+/**
+ * Hides Local servers entries in the browser panel: every listener whose
+ * process name matches (case-insensitive), or every port in an inclusive range.
+ * Hiding one entry is a single-port range.
+ */
+export const LocalServerHideRule = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("process"), processName: TrimmedNonEmptyString }),
+  Schema.Struct({ kind: Schema.Literal("ports"), from: LocalServerPort, to: LocalServerPort }),
+]);
+export type LocalServerHideRule = typeof LocalServerHideRule.Type;
 
 export const DiscoveredLocalServerList = Schema.Struct({
   servers: Schema.Array(DiscoveredLocalServer),

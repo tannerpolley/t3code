@@ -401,7 +401,9 @@ const CheckpointStoreLayerLive = CheckpointStore.layer.pipe(
   Layer.provide(VcsDriverRegistryLayerLive),
 );
 
-const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+const PortScannerLayerLive = PortScanner.layer.pipe(
+  Layer.provide(Layer.merge(ProcessRunner.layer, ProjectStore.layer)),
+);
 
 const TerminalLayerLive = TerminalManager.layer.pipe(
   Layer.provide(PtyAdapterLive),

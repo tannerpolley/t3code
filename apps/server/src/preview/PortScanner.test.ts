@@ -4,7 +4,9 @@ import { it as effectIt } from "@effect/vitest";
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
+  ProjectId,
   type DiscoveredLocalServer,
+  type OrchestrationProjectShell,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
@@ -20,12 +22,23 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
-import { expect } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { FetchHttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
+
+const makeProjectStore = (
+  projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">> = [],
+) =>
+  Layer.succeed(
+    ProjectStore.ProjectStoreV2,
+    ProjectStore.ProjectStoreV2.of({
+      listShells: () => Effect.succeed(projects),
+    } as never),
+  );
 const processProbeFailure: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
   Effect.fail(
     new ProcessRunner.ProcessSpawnError({
@@ -63,6 +76,7 @@ const makeProbeFailureLayer = (
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
+        makeProjectStore(),
         Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
         Layer.succeed(Net.NetService, {
           canListenOnHost: () => Effect.succeed(true),
@@ -81,6 +95,7 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       TestProcessRunner,
+      makeProjectStore(),
       Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
       TestIntegrationNet,
       Layer.succeed(HostProcessPlatform, "win32"),
@@ -99,6 +114,9 @@ const makeLsofScannerLayer = (input: {
   readonly parents?: () => ReadonlyMap<number, number>;
   readonly parentFailure?: boolean;
   readonly netProbes?: number[];
+  readonly cgroups?: ReadonlyMap<number, string>;
+  readonly cwds?: ReadonlyMap<number, string>;
+  readonly projects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>;
 }) => {
   const parents = input.parents ?? (() => new Map([[input.pid(), process.pid]]));
   const platform = input.platform ?? "linux";
@@ -131,20 +149,28 @@ const makeLsofScannerLayer = (input: {
             });
           },
         }),
+        makeProjectStore(input.projects),
         Layer.succeed(
           FileSystem.FileSystem,
-          FileSystem.makeNoop(
-            input.parentFailure
+          FileSystem.makeNoop({
+            readLink: (path) => {
+              const cwd = input.cwds?.get(Number(path.split("/")[2]));
+              return cwd === undefined
+                ? FileSystem.makeNoop({}).readLink(path)
+                : Effect.succeed(cwd);
+            },
+            ...(input.parentFailure
               ? {}
               : {
                   readDirectory: () => Effect.sync(() => [...parents().keys()].map(String)),
-                  readFileString: (path) =>
+                  readFileString: (path: string) =>
                     Effect.sync(() => {
                       const pid = Number(path.split("/")[2]);
+                      if (path.endsWith("/cgroup")) return input.cgroups?.get(pid) ?? "0::/";
                       return `${pid} (node worker) name) S ${parents().get(pid)} 0 0`;
                     }),
-                },
-          ),
+                }),
+          }),
         ),
         Layer.succeed(Net.NetService, {
           canListenOnHost: () => Effect.succeed(true),
@@ -262,6 +288,98 @@ for (const platform of ["linux", "darwin", "win32"] as const) {
     },
   );
 }
+
+describe("listener attribution", () => {
+  const amine = ProjectId.make("project-amine");
+  const engineering = ProjectId.make("project-engineering");
+  const cse = ProjectId.make("project-cse");
+  const projects = [
+    { id: engineering, workspaceRoot: "/home/u/Engineering/" },
+    { id: amine, workspaceRoot: "/home/u/Engineering/Amine" },
+    { id: cse, workspaceRoot: "/home/u/plugins/cse" },
+  ];
+
+  it("reads the user systemd service from a cgroup", () => {
+    expect(
+      PortScanner.systemdUnitFromCgroup(
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/cse-preview-Amine-daf39727.service\n",
+      ),
+    ).toBe("cse-preview-Amine-daf39727.service");
+    expect(
+      PortScanner.systemdUnitFromCgroup(
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-gnome-steam-229798.scope",
+      ),
+    ).toBeNull();
+    expect(PortScanner.systemdUnitFromCgroup("0::/system.slice/cups.service")).toBeNull();
+  });
+
+  it("attributes a working directory to the deepest containing project root", () => {
+    expect(PortScanner.projectIdForCwd("/home/u/Engineering/Amine/analyses", projects)).toBe(amine);
+    expect(PortScanner.projectIdForCwd("/home/u/Engineering/Amine", projects)).toBe(amine);
+    expect(PortScanner.projectIdForCwd("/home/u/Engineering/Amine-Old", projects)).toBe(
+      engineering,
+    );
+    expect(PortScanner.projectIdForCwd("/home/u/Engineering", projects)).toBe(engineering);
+    expect(PortScanner.projectIdForCwd("/home/u/.steam", projects)).toBeNull();
+    expect(
+      PortScanner.projectIdForCwd("/home/u/plugins/cse/.worktrees/gone (deleted)", projects),
+    ).toBeNull();
+  });
+
+  effectIt.effect("probes and labels systemd and project listeners, not other programs", () => {
+    const requests: string[] = [];
+    const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+      requests.push(String(input));
+      return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+    }) as typeof globalThis.fetch;
+    const userSlice = "0::/user.slice/user-1000.slice/user@1000.service";
+    const layer = makeLsofScannerLayer({
+      pid: () => 501,
+      fetch: fetchFn,
+      listeners: [
+        { pid: 501, port: 8770 },
+        { pid: 502, port: 24_282 },
+        { pid: 503, port: 23_119 },
+        { pid: 504, port: 57_343 },
+      ],
+      parents: () => new Map([501, 502, 503, 504].map((pid) => [pid, 1] as const)),
+      cgroups: new Map([
+        [501, `${userSlice}/app.slice/cse-preview-Amine-daf39727.service`],
+        [502, `${userSlice}/agents.slice/serena-502.scope`],
+        [504, `${userSlice}/app.slice/app-gnome-steam-504.scope`],
+      ]),
+      cwds: new Map([
+        [501, "/home/u/Engineering/Amine/analyses"],
+        [502, "/home/u/Engineering/Amine"],
+        [503, "/home/u/plugins/cse/.worktrees/gone (deleted)"],
+        [504, "/home/u/.steam"],
+      ]),
+      projects,
+    });
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const servers = yield* scanner.scan();
+      expect(requests.toSorted()).toEqual(["http://localhost:24282/", "http://localhost:8770/"]);
+      expect(
+        servers.map(({ port, reason, systemdUnit, projectId }) => ({
+          port,
+          reason,
+          systemdUnit,
+          projectId,
+        })),
+      ).toEqual([
+        {
+          port: 8770,
+          reason: "systemd",
+          systemdUnit: "cse-preview-Amine-daf39727.service",
+          projectId: amine,
+        },
+        { port: 24_282, reason: "project", systemdUnit: undefined, projectId: amine },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+});
 
 const openServer = (
   port: number,

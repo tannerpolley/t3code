@@ -3,8 +3,11 @@ import { Globe, History, RadioTower } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useThreadShell } from "~/state/entities";
 import { DiscoveryList } from "../ui/discovery-list";
 
+import { addLocalServerHideRule } from "./localServerHideRules";
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
@@ -26,10 +29,14 @@ export function PreviewEmptyState({
   onRemoveRecent,
   onOpenUrl,
 }: Props) {
-  const servers = useDiscoveredLocalServers({
+  const projectId = useThreadShell(threadRef)?.projectId ?? null;
+  const { servers, hiddenCount } = useDiscoveredLocalServers({
     environmentId,
     configuredUrls,
+    active: { projectId, threadId: threadRef.threadId },
   });
+  const hideRules = useClientSettings((settings) => settings.browserLocalServerHideRules);
+  const updateSettings = useUpdateClientSettings();
   const recents = recentEntries.filter((entry) => URL.canParse(entry.url)).slice(0, 8);
 
   if (servers.length === 0 && recents.length === 0) {
@@ -82,11 +89,19 @@ export function PreviewEmptyState({
                   threadRef={threadRef}
                   server={server}
                   onOpen={() => onOpenUrl(server.requestedUrl)}
+                  onHide={(rule) =>
+                    void updateSettings({
+                      browserLocalServerHideRules: addLocalServerHideRule(hideRules, rule),
+                    })
+                  }
                 />
               ))}
             </DiscoveryList>
             <p className="px-1 text-xs text-muted-foreground">
               Select a live local server to open it in this browser tab.
+              {hiddenCount > 0
+                ? ` ${hiddenCount} hidden; restore them in Settings → Customizations → Browser & preview.`
+                : ""}
             </p>
           </div>
         ) : null}

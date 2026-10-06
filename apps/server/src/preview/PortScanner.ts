@@ -8,7 +8,10 @@
  * Windows: enumerates listeners with PowerShell. If listener enumeration fails,
  * checks only common dev ports through the shared Net service.
  *
- * Only T3-owned listeners, common dev ports, and configured URLs are probed.
+ * Only configured URLs and listeners with a reason to be a dev server are probed:
+ * T3-owned processes, common dev ports, and on Linux a user systemd service
+ * (`/proc/<pid>/cgroup`) or a working directory inside a registered project's
+ * workspace root (`/proc/<pid>/cwd`). Each published server carries that reason.
  * Listening ports are published only after a bounded HTTP(S) probe finds a
  * successful HTML document or a redirect to one.
  * Positive and negative results are cached briefly by candidate URL and listener identity,
@@ -22,6 +25,9 @@ import {
   PREVIEW_URL_MAX_LENGTH,
   ThreadId,
   type DiscoveredLocalServer,
+  type LocalServerDiscoveryReason,
+  type OrchestrationProjectShell,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
@@ -40,6 +46,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -184,6 +191,37 @@ const projectWebProbeSnapshot = (
   return [...visibleByServer.values()].toSorted((left, right) => left.port - right.port);
 };
 
+/** The user systemd service a process runs in, from its `/proc/<pid>/cgroup`. */
+export const systemdUnitFromCgroup = (cgroup: string): string | null =>
+  /\/app\.slice\/([^/\s]+\.service)(?:\/|\s|$)/.exec(cgroup)?.[1] ?? null;
+
+/** The project with the deepest workspace root containing `cwd`, a `/proc/<pid>/cwd` target. */
+export const projectIdForCwd = (
+  cwd: string,
+  projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>,
+): ProjectId | null => {
+  // The kernel marks a removed working directory this way; it is no longer inside any project.
+  if (cwd.endsWith(" (deleted)")) return null;
+  let match: { readonly id: ProjectId; readonly depth: number } | null = null;
+  for (const project of projects) {
+    const root = project.workspaceRoot.replace(/\/+$/, "");
+    if (root.length === 0 || (cwd !== root && !cwd.startsWith(`${root}/`))) continue;
+    if (match === null || root.length > match.depth) match = { id: project.id, depth: root.length };
+  }
+  return match?.id ?? null;
+};
+
+const discoveryReason = (
+  server: DiscoveredLocalServer,
+  ownedProcessIds: ReadonlySet<number>,
+): LocalServerDiscoveryReason | null => {
+  if (server.pid !== null && ownedProcessIds.has(server.pid)) return "t3";
+  if (server.systemdUnit !== undefined) return "systemd";
+  if (server.projectId !== undefined) return "project";
+  if (COMMON_DEV_PORTS.includes(server.port)) return "common-port";
+  return null;
+};
+
 const parseLsofOutput = (
   raw: string,
   terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
@@ -283,7 +321,10 @@ const serversEqual = (
       a.processName !== b.processName ||
       a.pid !== b.pid ||
       a.terminal?.threadId !== b.terminal?.threadId ||
-      a.terminal?.terminalId !== b.terminal?.terminalId
+      a.terminal?.terminalId !== b.terminal?.terminalId ||
+      a.reason !== b.reason ||
+      a.systemdUnit !== b.systemdUnit ||
+      a.projectId !== b.projectId
     ) {
       return false;
     }
@@ -297,6 +338,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcessPlatform;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -373,6 +415,40 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     Effect.orElseSucceed(() => null),
   );
 
+  // Linux only: other platforms have no /proc, so their listeners carry no unit or project.
+  const attributeListeners = Effect.fn("PortDiscovery.attributeListeners")(function* (
+    servers: ReadonlyArray<DiscoveredLocalServer>,
+  ) {
+    if (hostPlatform !== "linux" || servers.every((server) => server.pid === null)) return servers;
+    const projects = yield* projectStore.listShells().pipe(Effect.orElseSucceed(() => []));
+    return yield* Effect.forEach(
+      servers,
+      (server) =>
+        server.pid === null
+          ? Effect.succeed(server)
+          : Effect.all({
+              // Processes may exit or belong to another user during the snapshot.
+              cgroup: fileSystem
+                .readFileString(`/proc/${server.pid}/cgroup`)
+                .pipe(Effect.orElseSucceed(() => "")),
+              cwd: fileSystem
+                .readLink(`/proc/${server.pid}/cwd`)
+                .pipe(Effect.orElseSucceed(() => null)),
+            }).pipe(
+              Effect.map(({ cgroup, cwd }) => {
+                const systemdUnit = systemdUnitFromCgroup(cgroup);
+                const projectId = cwd === null ? null : projectIdForCwd(cwd, projects);
+                return {
+                  ...server,
+                  ...(systemdUnit === null ? {} : { systemdUnit }),
+                  ...(projectId === null ? {} : { projectId }),
+                };
+              }),
+            ),
+      { concurrency: 4 },
+    );
+  });
+
   const probeCommonPorts = Effect.fn("PortDiscovery.probeCommonPorts")(function* () {
     const results = yield* Effect.forEach(
       COMMON_DEV_PORTS,
@@ -424,7 +500,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ownedProcessIds: ReadonlySet<number>,
   ): ReadonlyArray<WebProbeGroup> => {
     const serversByKey = new Map(
-      servers.map((server) => [localServerKey(server.host, server.port), server] as const),
+      servers.map((server) => {
+        const reason = discoveryReason(server, ownedProcessIds);
+        return [
+          localServerKey(server.host, server.port),
+          reason === null ? server : { ...server, reason },
+        ] as const;
+      }),
     );
     const groups: WebProbeGroup[] = [];
     const configuredResources = new Set<string>();
@@ -450,14 +532,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       });
     }
 
-    for (const server of servers) {
+    for (const server of serversByKey.values()) {
       // Unsolicited HTTP(S) requests can break non-web services such as Steam's game pipe.
-      if (
-        !COMMON_DEV_PORTS.includes(server.port) &&
-        (server.pid === null || !ownedProcessIds.has(server.pid))
-      ) {
-        continue;
-      }
+      if (server.reason === undefined) continue;
       groups.push({
         server,
         urls: [`http://${server.host}:${server.port}`, `https://${server.host}:${server.port}`],
@@ -469,9 +546,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   };
 
   const probeWebServers = Effect.fn("PortDiscovery.probeWebServers")(function* (
-    servers: ReadonlyArray<DiscoveredLocalServer>,
+    listeners: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
   ) {
+    const servers = yield* attributeListeners(listeners);
     const parents = yield* readProcessParents();
     const ownedProcessIds = new Set<number>();
     if (parents !== null) {

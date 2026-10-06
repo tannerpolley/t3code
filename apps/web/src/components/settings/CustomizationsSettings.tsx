@@ -1,9 +1,16 @@
 import type { ClientSettings, ServerProviderPlugin } from "@t3tools/contracts";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import {
+  addLocalServerHideRule,
+  describeLocalServerHideRule,
+  parseLocalServerHideRule,
+} from "../preview/localServerHideRules";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -372,6 +379,66 @@ const LINEAGE_AUTO_CLEAR_MINUTES = [0, 30, 60] as const;
 const lineageAutoClearLabel = (minutes: number) =>
   minutes === 0 ? "Off" : minutes === 60 ? "1 hour" : `${minutes} minutes`;
 
+function LocalServerHideRulesRow() {
+  const rules = useClientSettings((settings) => settings.browserLocalServerHideRules);
+  const updateSettings = useUpdateClientSettings();
+  const [draft, setDraft] = useState("");
+  const parsed = parseLocalServerHideRule(draft);
+  const add = () => {
+    if (!parsed) return;
+    void updateSettings({ browserLocalServerHideRules: addLocalServerHideRule(rules, parsed) });
+    setDraft("");
+  };
+  return (
+    <SettingsRow
+      {...searchableSetting("local-server-hide-rules")}
+      description="Servers the browser's Local servers list leaves out. Hide one from its menu in the list, or add a process name (serena) or a port range (24282-24304) here. Remove a rule to bring its servers back."
+    >
+      <div className="flex max-w-2xl flex-col gap-2 pb-3.5">
+        {rules.map((rule) => {
+          const label = describeLocalServerHideRule(rule);
+          return (
+            <div key={label} className="flex items-center justify-between gap-2 text-sm">
+              <span>{label}</span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Show ${label} again`}
+                onClick={() =>
+                  void updateSettings({
+                    browserLocalServerHideRules: rules.filter((existing) => existing !== rule),
+                  })
+                }
+              >
+                <XIcon />
+              </Button>
+            </div>
+          );
+        })}
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            add();
+          }}
+        >
+          <Input
+            aria-label="Process name or port range to hide"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="serena or 24282-24304"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <Button type="submit" variant="outline" size="sm" disabled={!parsed}>
+            Hide
+          </Button>
+        </form>
+      </div>
+    </SettingsRow>
+  );
+}
+
 export function CustomizationsSettings() {
   const settings = useClientSettings();
   const updateSettings = useUpdateClientSettings();
@@ -481,6 +548,7 @@ export function CustomizationsSettings() {
           searchId="agent-browser-tab-limits"
           description="A thread keeps at most 3 browser tabs an agent opened; opening another closes the oldest. A tab stuck loading gets one hard reload and a retry. Off leaves agent tabs unlimited and returns the timeout."
         />
+        <LocalServerHideRulesRow />
       </CustomizationsGroup>
       <ModelRolesSection />
       <CustomizationsGroup title="Usage" section="usage" />
