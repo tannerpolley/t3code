@@ -574,7 +574,7 @@ export const layer = Layer.effect(
               if (sent._tag === "Success") return sent.success;
               const current = yield* resolveOwner;
               if (current.rootThreadId === owner.rootThreadId || attempt === 2)
-                return yield* Effect.fail(sent.failure);
+                return yield* sent.failure;
               owner = current;
             }
           }

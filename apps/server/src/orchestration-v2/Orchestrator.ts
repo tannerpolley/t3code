@@ -138,7 +138,7 @@ import {
   isForkableSourceRunStatus,
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
-import { isRegisteredRepositoryRoot, planThreadDeletion } from "./ThreadDeletion.ts";
+import { planThreadDeletion } from "./ThreadDeletion.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -2542,13 +2542,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const guardRepositoryRootLifecycle = Effect.fn("orchestrationV2.guardRepositoryRootLifecycle")(
     function* (
-      command: Extract<
-        OrchestrationV2ServerCommand,
-        { readonly type: "thread.archive" }
-      >,
+      command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.archive" }>,
       thread: OrchestrationV2AppThread,
     ) {
-      if (!isRegisteredRepositoryRoot(thread)) return;
+      if (
+        thread.repositoryOrchestration === undefined ||
+        thread.repositoryOrchestration.retiredToThreadId !== undefined
+      )
+        return;
       const projection = yield* projectionStore
         .getThreadRecords(thread.id, ["runs", "subagents"])
         .pipe(mapDispatchError(command));

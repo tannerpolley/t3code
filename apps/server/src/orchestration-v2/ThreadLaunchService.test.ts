@@ -4976,12 +4976,16 @@ describe("fresh-thread repository handoff", () => {
         const scheduledTaskId = ScheduledTaskId.make("retired:schedule");
         for (const caller of [rootId, parent]) {
           for (const attempt of [
-            mcp.scheduleTask(scope(caller), {
-              prompt: "Check repository progress",
-              schedule: { type: "interval", everyMs: 3_600_000 },
-            }),
-            mcp.updateScheduledTask(scope(caller), { scheduledTaskId, enabled: false }),
-            mcp.deleteScheduledTask(scope(caller), { scheduledTaskId }),
+            mcp
+              .scheduleTask(scope(caller), {
+                prompt: "Check repository progress",
+                schedule: { type: "interval", everyMs: 3_600_000 },
+              })
+              .pipe(Effect.asVoid),
+            mcp
+              .updateScheduledTask(scope(caller), { scheduledTaskId, enabled: false })
+              .pipe(Effect.asVoid),
+            mcp.deleteScheduledTask(scope(caller), { scheduledTaskId }).pipe(Effect.asVoid),
           ]) {
             const scheduled = yield* attempt.pipe(Effect.result);
             assert.equal(scheduled._tag, "Failure");
@@ -5193,7 +5197,7 @@ describe("fresh-thread repository handoff", () => {
         thread_id: null,
         repository_target_json: '{"host":"github.com","repositoryId":"repo:handoff"}',
         workspace_strategy_json: '{"type":"root"}',
-        model_selection_json: JSON.stringify(modelSelection),
+        model_selection_json: '{"instanceId":"codex","model":"gpt-5.1-codex"}',
         runtime_mode: "full-access",
         interaction_mode: "default",
         created_by: "user",
@@ -5213,13 +5217,14 @@ describe("fresh-thread repository handoff", () => {
       const gatedThreads = Layer.succeed(ThreadManagement.ThreadManagementService, {
         ...threads,
         sendToThread: (input) =>
-          gated
-            ? ((gated = false),
-              Deferred.succeed(reached, input.threadId).pipe(
-                Effect.andThen(Deferred.await(release)),
-                Effect.andThen(threads.sendToThread(input)),
-              ))
-            : threads.sendToThread(input),
+          Effect.gen(function* () {
+            if (gated) {
+              gated = false;
+              yield* Deferred.succeed(reached, input.threadId);
+              yield* Deferred.await(release);
+            }
+            return yield* threads.sendToThread(input);
+          }),
       });
       const result = yield* Effect.gen(function* () {
         const tasks = yield* ScheduledTasks.ScheduledTaskService;
@@ -5250,9 +5255,7 @@ describe("fresh-thread repository handoff", () => {
         ),
       );
       assert.equal(result.run.task.lastRunStatus, "succeeded");
-      const scheduled = (
-        threadId: ThreadId,
-      ) =>
+      const scheduled = (threadId: ThreadId) =>
         threads
           .getThreadRecords(threadId, ["messages"])
           .pipe(
