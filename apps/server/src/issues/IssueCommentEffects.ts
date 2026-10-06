@@ -181,8 +181,24 @@ export const refreshIssueStatus = (input: {
     const threadId = work.effectiveStatusThreadId;
     const shell = yield* projections.getThreadShell(threadId);
     const thread = yield* projections.getThread(threadId);
+    const queued = work.ownerThreadId !== threadId;
+    const paused = policy[0].paused === 1;
+    // A busy thread's status needs only its runtime requests: the shell keeps just the newest,
+    // and an older approval may still wait on the user. Messages, runs and children matter only
+    // once it settles, so a working agent's tool steps don't reread its history.
+    const fromShell = deriveIssueWorkStatus({ shell, paused, waitingOnSubIssues: false, queued });
+    const busy =
+      shell !== null &&
+      // Idle and completed fall through to the child and result checks.
+      shell.status !== "completed" &&
+      shell.status !== "idle" &&
+      (fromShell === "working" || fromShell === "queued_preparing");
+    const requestsOnly =
+      busy && shell !== null
+        ? yield* projections.getThreadRecords(threadId, ["runtimeRequests"])
+        : null;
     const projection =
-      shell === null
+      shell === null || requestsOnly !== null
         ? null
         : yield* projections.getThreadRecords(threadId, [
             "runs",
@@ -190,15 +206,22 @@ export const refreshIssueStatus = (input: {
             "subagents",
             "runtimeRequests",
           ]);
-    const queued = work.ownerThreadId !== threadId;
     let status: IssueWorkStatus;
-    if (projection === null) {
+    if (requestsOnly !== null) {
+      status = deriveIssueWorkStatus({
+        shell,
+        runtimeRequests: requestsOnly.runtimeRequests,
+        paused,
+        waitingOnSubIssues: false,
+        queued,
+      });
+    } else if (projection === null) {
       status = "unavailable";
     } else if (queued) {
       status = deriveIssueWorkStatus({
         shell,
         runtimeRequests: projection.runtimeRequests,
-        paused: policy[0].paused === 1,
+        paused,
         waitingOnSubIssues: false,
         queued: true,
       });
@@ -210,7 +233,7 @@ export const refreshIssueStatus = (input: {
       status = deriveIssueWorkStatus({
         shell,
         runtimeRequests: projection.runtimeRequests,
-        paused: policy[0].paused === 1,
+        paused,
         waitingOnSubIssues: progress.state === "waiting_for_children",
         resultAvailable: progress.state === "result_available",
       });
