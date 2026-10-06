@@ -6,7 +6,7 @@ import {
   type ProjectCreatePayload,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
@@ -29,7 +29,10 @@ import {
 } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
-import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
+import {
+  isRegisteredRepositoryRoot,
+  planThreadDeletion,
+} from "../orchestration-v2/ThreadDeletion.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -75,10 +78,13 @@ export class ProjectConflictError extends Schema.TaggedError<ProjectConflictErro
 
 export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyError>()(
   "ProjectNotEmptyError",
-  { projectId: ProjectId },
+  // Set when even a forced delete must stop: the project holds a current repository root.
+  { projectId: ProjectId, repositoryRootThreadId: Schema.optional(ThreadId) },
 ) {
   override get message(): string {
-    return `Project ${this.projectId} is not empty.`;
+    return this.repositoryRootThreadId === undefined
+      ? `Project ${this.projectId} is not empty.`
+      : `Project ${this.projectId} contains repository orchestrator ${this.repositoryRootThreadId}. Hand off repository ownership before deleting the project.`;
   }
 }
 
@@ -469,6 +475,18 @@ export const make = Effect.gen(function* () {
     );
     if (projectThreads.length > 0 && input.force !== true) {
       return yield* new ProjectNotEmptyError({ projectId });
+    }
+    // Check every thread before deleting any, so a refused cascade leaves the project intact.
+    for (const shell of projectThreads) {
+      const { thread } = yield* threadProjections
+        .getThreadRecords(shell.id, [])
+        .pipe(
+          Effect.mapError(
+            (cause) => new ProjectOperationError({ operation: "list-threads", projectId, cause }),
+          ),
+        );
+      if (isRegisteredRepositoryRoot(thread))
+        return yield* new ProjectNotEmptyError({ projectId, repositoryRootThreadId: thread.id });
     }
     // Delete children durably before the project so a failed cascade can be retried.
     yield* Effect.forEach(

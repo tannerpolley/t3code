@@ -1396,6 +1396,14 @@ const make = Effect.gen(function* () {
       return task;
     });
 
+  /** A retired repository root and its descendants keep history but cannot change orchestration. */
+  const assertCurrentRepositoryCaller = (scope: McpInvocationScope) =>
+    scope.thread === undefined || Option.isNone(issueWork)
+      ? Effect.void
+      : issueWork.value
+          .assertCurrentCaller(scope.thread.threadId)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+
   return OrchestratorMcpService.of({
     proposeIssueChange: (scope, input) =>
       Effect.gen(function* () {
@@ -1461,6 +1469,7 @@ const make = Effect.gen(function* () {
       }),
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
+        yield* assertCurrentRepositoryCaller(scope);
         const { parent, limits } = yield* loadCaller(scope);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
@@ -1544,6 +1553,7 @@ const make = Effect.gen(function* () {
       }),
     updateScheduledTask: (scope, input) =>
       Effect.gen(function* () {
+        yield* assertCurrentRepositoryCaller(scope);
         const { parent, limits } = yield* loadCaller(scope);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
@@ -1601,6 +1611,7 @@ const make = Effect.gen(function* () {
       }),
     deleteScheduledTask: (scope, input) =>
       Effect.gen(function* () {
+        yield* assertCurrentRepositoryCaller(scope);
         const { parent, limits } = yield* loadCaller(scope);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);

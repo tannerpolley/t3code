@@ -1,10 +1,13 @@
-import type {
-  OrchestrationV2Command,
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ThreadProjection,
+import {
+  ThreadId,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2Command,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type { IdAllocatorV2, IdAllocatorV2Error } from "./IdAllocator.ts";
@@ -12,6 +15,22 @@ import type { IdAllocatorV2, IdAllocatorV2Error } from "./IdAllocator.ts";
 export interface ThreadDeletionPlan {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
+}
+
+/** The thread a repository's ownership record points at; retired roots keep only history. */
+export const isRegisteredRepositoryRoot = (
+  thread: Pick<OrchestrationV2AppThread, "repositoryOrchestration">,
+) =>
+  thread.repositoryOrchestration !== undefined &&
+  thread.repositoryOrchestration.retiredToThreadId === undefined;
+
+export class RegisteredRepositoryRootDeletionError extends Schema.TaggedError<RegisteredRepositoryRootDeletionError>()(
+  "RegisteredRepositoryRootDeletionError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return "Hand off repository ownership before deleting its current root. Its history and final deliveries must be retained.";
+  }
 }
 
 /** Plan the same durable cleanup for direct thread deletion and project removal. */
@@ -24,8 +43,13 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
   readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocatorV2["Service"];
-}): Effect.fn.Return<ThreadDeletionPlan, IdAllocatorV2Error> {
+}): Effect.fn.Return<
+  ThreadDeletionPlan,
+  IdAllocatorV2Error | RegisteredRepositoryRootDeletionError
+> {
   const { command, projection, now, idAllocator } = input;
+  if (isRegisteredRepositoryRoot(projection.thread))
+    return yield* new RegisteredRepositoryRootDeletionError({ threadId: command.threadId });
   const events: Array<OrchestrationV2DomainEvent> = [];
   const effects: Array<PendingOrchestrationEffectV2> = [];
   let current = projection;

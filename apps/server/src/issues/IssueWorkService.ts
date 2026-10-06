@@ -295,7 +295,8 @@ export const layer = Layer.effect(
                 code: "invalid-request",
                 message: issueScopeExpansionError,
               });
-            if ((yield* store.issueOwner(ancestor.parent)) !== null) break;
+            // An ancestor owned only by a retired root's subtree gets a successor under the current root.
+            if ((yield* store.currentIssueOwner(ancestor.parent)) !== null) break;
             ancestor = yield* issues.workRead(ancestor.parent).pipe(Effect.mapError(mapError));
             if (
               seen.has(ancestor.issue.id) ||
@@ -556,13 +557,32 @@ export const layer = Layer.effect(
             continue;
           const parent = Option.isSome(read) ? read.value.parent : request.parent;
           if (parent == null || !sameIssueRepository(parent, request.issue)) continue;
-          const parentOwner = yield* store.issueOwner(parent);
-          if (parentOwner === null || suspended.has(request.issue.id) || suspended.has(parent.id))
+          if (suspended.has(request.issue.id) || suspended.has(parent.id)) continue;
+          const parentOwner = yield* store.currentIssueOwner(parent);
+          if (parentOwner === null) {
+            // The parent's last attempt drained under a retired root. Start its successor here;
+            // this request is delivered once that successor owns the parent.
+            if ((yield* store.issueOwner(parent)) !== null)
+              yield* threads
+                .dispatch({
+                  type: "issue.work.start",
+                  commandId: CommandId.make(
+                    `issue-ancestor-successor:${request.requestId}:${rootThreadId}:${config.revision}`,
+                  ),
+                  threadId: rootThreadId,
+                  issue: parent,
+                  workerModelSelection: request.modelSelection,
+                  workspace: request.workspace,
+                  createdBy: "agent",
+                  creationSource: "server",
+                })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Could not start the successor parent attempt", { cause }),
+                  ),
+                );
             continue;
-          const parentShell = yield* threads
-            .getThreadShell(parentOwner)
-            .pipe(Effect.mapError(mapError));
-          if (parentShell?.lineage.rootThreadId !== rootThreadId) continue;
+          }
           const issueArgument = yield* encodeToolArgument(request.issue).pipe(
             Effect.mapError(mapError),
           );

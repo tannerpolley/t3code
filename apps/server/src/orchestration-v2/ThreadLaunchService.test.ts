@@ -4972,6 +4972,26 @@ describe("fresh-thread repository handoff", () => {
         const authority = yield* service.assertCurrentCaller(parent).pipe(Effect.result);
         assert.equal(authority._tag, "Failure");
         if (authority._tag === "Failure") assert.equal(authority.failure.code, "retired-root");
+        // Retired roots and their descendants cannot create, change or delete repository schedules.
+        const scheduledTaskId = ScheduledTaskId.make("retired:schedule");
+        for (const caller of [rootId, parent]) {
+          for (const attempt of [
+            mcp
+              .scheduleTask(scope(caller), {
+                prompt: "Check repository progress",
+                schedule: { type: "interval", everyMs: 3_600_000 },
+              })
+              .pipe(Effect.asVoid),
+            mcp
+              .updateScheduledTask(scope(caller), { scheduledTaskId, enabled: false })
+              .pipe(Effect.asVoid),
+            mcp.deleteScheduledTask(scope(caller), { scheduledTaskId }).pipe(Effect.asVoid),
+          ]) {
+            const scheduled = yield* attempt.pipe(Effect.result);
+            assert.equal(scheduled._tag, "Failure");
+            if (scheduled._tag === "Failure") assert.include(scheduled.failure.message, "retired");
+          }
+        }
       }).pipe(Effect.provide(fixture({ continuation: true, inventoryIssues: () => githubIssues })));
     },
   );
@@ -5077,5 +5097,267 @@ describe("fresh-thread repository handoff", () => {
         ),
       );
     },
+  );
+
+  it.effect(
+    "keeps a handoff draining while a restart continuation is pending and drops it after retirement",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        yield* createRoot;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart:root-start"),
+          threadId: rootId,
+          messageId: MessageId.make("restart:root-start"),
+          text: "Work through milestone 1",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const cut = (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!;
+        const now = yield* DateTime.now;
+        // What startup recovery commits: the cut run is cancelled and its continuation queued.
+        yield* sink.writeWithEffects({
+          events: [
+            {
+              id: EventId.make("restart:cancel-cut-run"),
+              type: "run.updated",
+              threadId: rootId,
+              runId: cut.id,
+              occurredAt: now,
+              payload: { ...cut, status: "cancelled", completedAt: now },
+            },
+          ],
+          effects: [
+            {
+              id: `effect:restart-continuation:${cut.id}`,
+              commandId: CommandId.make("restart:recovery"),
+              threadId: rootId,
+              request: { type: "provider-runtime.continue", sourceRunId: cut.id },
+            },
+          ],
+        });
+        const draining = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Continue after the restart.",
+          clientRequestId: CommandId.make("handoff:restart"),
+        });
+        const nextId = draining.orchestration!.handoff!.nextThreadId;
+        assert.equal(draining.rootThreadId, rootId);
+        assert.isNull(yield* threads.getThreadShell(nextId));
+
+        yield* outbox.cancelUnsettled({
+          threadId: rootId,
+          effectTypes: ["provider-runtime.continue"],
+          reason: "The continuation settled.",
+        });
+        yield* service.reconcile(rootId);
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
+        // A continuation that reaches dispatch after retirement is accepted as a no-op.
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`command:restart-continuation:${cut.id}`),
+          threadId: rootId,
+          messageId: MessageId.make(`message:restart-continuation:${cut.id}`),
+          text: "Continue where you left off.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "server",
+          restartContinuationOfRunId: cut.id,
+        });
+        const root = yield* threads.getThreadRecords(rootId, ["runs"]);
+        assert.deepEqual(
+          root.runs.map((run) => run.id),
+          [cut.id],
+        );
+      }).pipe(Effect.provide(fixture())),
+  );
+
+  it.effect("resends a scheduled prompt to the new owner when a handoff commits mid-dispatch", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* createRoot;
+      yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
+        task_id: "handoff-schedule",
+        title: "Repository check-in",
+        prompt: "Review repository progress",
+        enabled: 0,
+        schedule_json: '{"type":"interval","everyMs":60000}',
+        project_id: projectId,
+        thread_id: null,
+        repository_target_json: '{"host":"github.com","repositoryId":"repo:handoff"}',
+        workspace_strategy_json: '{"type":"root"}',
+        model_selection_json: '{"instanceId":"codex","model":"gpt-5.1-codex"}',
+        runtime_mode: "full-access",
+        interaction_mode: "default",
+        created_by: "user",
+        creation_source: "web",
+        created_at: "2026-10-05T00:00:00.000Z",
+        updated_at: "2026-10-05T00:00:00.000Z",
+        next_run_at: null,
+        last_run_at: null,
+        last_run_status: "never",
+        last_run_error: null,
+        run_count: 0,
+      })}`;
+      const reached = yield* Deferred.make<ThreadId>();
+      const release = yield* Deferred.make<void>();
+      let gated = true;
+      // Holds the first send after the owner was resolved, so the handoff commits in between.
+      const gatedThreads = Layer.succeed(ThreadManagement.ThreadManagementService, {
+        ...threads,
+        sendToThread: (input) =>
+          Effect.gen(function* () {
+            if (gated) {
+              gated = false;
+              yield* Deferred.succeed(reached, input.threadId);
+              yield* Deferred.await(release);
+            }
+            return yield* threads.sendToThread(input);
+          }),
+      });
+      const result = yield* Effect.gen(function* () {
+        const tasks = yield* ScheduledTasks.ScheduledTaskService;
+        const fiber = yield* tasks
+          .runNow({ id: ScheduledTaskId.make("handoff-schedule") })
+          .pipe(Effect.forkChild);
+        assert.equal(yield* Deferred.await(reached), rootId);
+        const moved = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Take over scheduled check-ins.",
+          clientRequestId: CommandId.make("handoff:schedule"),
+        });
+        assert.notEqual(moved.rootThreadId, rootId);
+        yield* Deferred.succeed(release, undefined);
+        return { run: yield* Fiber.join(fiber), nextId: moved.rootThreadId! };
+      }).pipe(
+        Effect.provide(
+          ScheduledTasks.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                gatedThreads,
+                Layer.mock(Scheduler.Scheduler)({ register: () => Effect.void }),
+              ),
+            ),
+          ),
+        ),
+      );
+      assert.equal(result.run.task.lastRunStatus, "succeeded");
+      const scheduled = (threadId: ThreadId) =>
+        threads
+          .getThreadRecords(threadId, ["messages"])
+          .pipe(
+            Effect.map((records) =>
+              records.messages.filter((message) => message.scheduledTaskId !== undefined),
+            ),
+          );
+      assert.lengthOf(yield* scheduled(rootId), 0);
+      assert.lengthOf(yield* scheduled(result.nextId), 1);
+    }).pipe(Effect.provide(fixture())),
+  );
+
+  it.effect(
+    "routes a remaining sub-issue through a successor parent attempt under the new root",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        const delegate = (threadId: ThreadId, number: number, key: string) =>
+          Effect.gen(function* () {
+            const run = (yield* threads.getThreadRecords(threadId, ["runs"])).runs.findLast(
+              (entry) => ["starting", "running", "waiting"].includes(entry.status),
+            )!;
+            const result = yield* threads.dispatch({
+              type: "delegated_task.request",
+              commandId: CommandId.make(`successor:${key}`),
+              parentThreadId: threadId,
+              parentRunId: run.id,
+              parentNodeId: run.rootNodeId!,
+              issue: linked(number),
+              task: `Finish issue ${number}`,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              completionWake: "always",
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            return result.storedEvents.find((stored) => stored.event.type === "thread.created")!
+              .event.threadId;
+          });
+        const texts = (threadId: ThreadId) =>
+          threads
+            .getThreadRecords(threadId, ["messages"])
+            .pipe(Effect.map((records) => records.messages.map((message) => message.text)));
+        yield* createRoot;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("successor:root-start"),
+          threadId: rootId,
+          messageId: MessageId.make("successor:root-start"),
+          text: "Work through milestone 1",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        // Parent issue #1 finishes under the old root; its sub-issue #2 is still open.
+        const oldParent = yield* delegate(rootId, 1, "old-parent");
+        yield* finish(rootId, "successor-root-waits");
+        const beforeParent = yield* sink.latestSequence();
+        yield* finish(oldParent, "successor-old-parent");
+        yield* awaitFollowup(rootId, beforeParent);
+        yield* finish(rootId, "successor-root-delivery");
+        const moved = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Continue the remaining sub-issue.",
+          clientRequestId: CommandId.make("handoff:successor"),
+        });
+        const nextId = moved.rootThreadId!;
+        assert.notEqual(nextId, rootId);
+        const oldParentMessages = (yield* texts(oldParent)).length;
+
+        yield* threads.dispatch({
+          type: "issue.work.start",
+          commandId: CommandId.make("successor:start-sub-issue"),
+          threadId: nextId,
+          issue: linked(2),
+          workerModelSelection: modelSelection,
+          workspace: "project",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* service.reconcile(nextId);
+        assert.lengthOf(yield* texts(oldParent), oldParentMessages);
+        assert.isTrue((yield* texts(nextId)).some((text) => text.startsWith("Start issue #1")));
+
+        const newParent = yield* delegate(nextId, 1, "new-parent");
+        yield* service.reconcile(nextId);
+        assert.isTrue(
+          (yield* texts(newParent)).some((text) =>
+            text.startsWith("Start your authorized sub-issue #2"),
+          ),
+        );
+        assert.lengthOf(yield* texts(oldParent), oldParentMessages);
+        assert.equal(
+          (yield* threads.getThreadRecords(oldParent, [])).thread.lineage.rootThreadId,
+          rootId,
+        );
+      }).pipe(Effect.provide(fixture({ continuation: true, inventoryIssues: () => [] }))),
   );
 });

@@ -2542,10 +2542,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const guardRepositoryRootLifecycle = Effect.fn("orchestrationV2.guardRepositoryRootLifecycle")(
     function* (
-      command: Extract<
-        OrchestrationV2ServerCommand,
-        { readonly type: "thread.archive" | "thread.delete" }
-      >,
+      command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.archive" }>,
       thread: OrchestrationV2AppThread,
     ) {
       if (
@@ -2553,13 +2550,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.repositoryOrchestration.retiredToThreadId !== undefined
       )
         return;
-      if (command.type === "thread.delete")
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause:
-            "Hand off repository ownership before deleting its current root. Its history and final deliveries must be retained.",
-        });
       const projection = yield* projectionStore
         .getThreadRecords(thread.id, ["runs", "subagents"])
         .pipe(mapDispatchError(command));
@@ -4676,6 +4666,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      // Schedules resolve the repository owner before sending; a handoff can commit in between.
+      if (
+        command.scheduledTaskId !== undefined &&
+        projection.thread.repositoryOrchestration?.retiredToThreadId !== undefined
+      )
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `This repository root has retired. Route scheduled work to ${projection.thread.repositoryOrchestration.retiredToThreadId}.`,
+        });
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -4712,6 +4712,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
+          projection.thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
           projection.thread.settledOverride === "settled" ||
           projection.thread.providerInstanceId !== run.providerInstanceId ||
           projection.runtimeRequests.some((request) => request.status === "pending") ||
@@ -4748,6 +4749,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           isRestartNoteSource(source, projection.providerTurns) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
+          projection.thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
           // Held queued runs never started; they wait behind the continuation.
           projection.runs.some(
@@ -6830,7 +6832,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const recipientId =
       read.parent === null
         ? command.threadId
-        : yield* store.issueOwner(read.parent).pipe(mapDispatchError(command));
+        : yield* store.currentIssueOwner(read.parent).pipe(mapDispatchError(command));
     // Keep the leaf request durable until its ancestor owns a thread. The plan reactor
     // wakes that owner; attaching the leaf to the repository root would break lineage.
     if (recipientId === null) return;
@@ -10476,7 +10478,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
-        yield* guardRepositoryRootLifecycle(command, projection.thread);
         return yield* mapDispatchError(command)(
           planThreadDeletion({
             command,
@@ -10486,7 +10487,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .pipe(mapDispatchError(command)),
             now: yield* DateTime.now,
             idAllocator,
-          }),
+          }).pipe(
+            Effect.catchTag("RegisteredRepositoryRootDeletionError", (error) =>
+              Effect.fail(error.message),
+            ),
+          ),
         );
       }
       case "thread.archive":

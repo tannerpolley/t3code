@@ -484,3 +484,59 @@ it.effect("deletes a project without force once its imported threads were delete
     }).pipe(Effect.provide(servicesLayer));
   }).pipe(Effect.provide(databaseLayer)),
 );
+
+it.effect(
+  "refuses a forced project deletion before deleting any thread when it holds a repository root",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:repository-root");
+      const workerId = ThreadId.make("thread:ordinary");
+      const rootId = ThreadId.make("thread:repository-root");
+      yield* seedProject(projectId);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const root = nativeThreadCreated(projectId, rootId);
+        yield* eventSink.write({
+          events: [
+            nativeThreadCreated(projectId, workerId),
+            {
+              ...root,
+              payload: {
+                ...root.payload,
+                repositoryOrchestration: {
+                  host: "github.com",
+                  repository: "tannerpolley/t3code",
+                  repositoryId: "repo:root",
+                  projectId,
+                  workspace: "project",
+                  launchCommandId: CommandId.make("command:root-create"),
+                  revision: 1,
+                  paused: false,
+                  workerLimit: 4,
+                  publishStatusComments: true,
+                  publishCloseoutComments: true,
+                  milestones: [],
+                  suspendedIssues: [],
+                },
+              },
+            },
+          ],
+        });
+        const service = yield* ProjectService.make;
+        const failure = yield* service
+          .delete({
+            commandId: CommandId.make("command:root-project-delete"),
+            projectId,
+            force: true,
+          })
+          .pipe(Effect.flip);
+        assert.equal(failure._tag, "ProjectNotEmptyError");
+        if (failure._tag === "ProjectNotEmptyError")
+          assert.equal(failure.repositoryRootThreadId, rootId);
+        assert.isTrue(Option.isSome(yield* service.getById(projectId)));
+        for (const threadId of [workerId, rootId])
+          assert.isNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
+      }).pipe(Effect.provide(servicesLayer));
+    }).pipe(Effect.provide(databaseLayer)),
+);

@@ -199,8 +199,8 @@ preview, the agent must propose a new change. If GitHub may have created an issu
 recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
 its remaining writes. Propose another create only when you intend to create another issue.
 
-To replace the orchestrator's conversation, use **Hand off to fresh thread** in a milestone's
-repository controls and provide a summary. Your approval pauses new issue admissions until existing
+To replace the orchestrator's conversation, open the repository on the Issues page, use
+**Hand off to fresh thread** beside its orchestrator, and provide a summary. Your approval pauses new issue admissions until existing
 workers and their final results finish; the fresh thread receives your summary and a recovery
 inventory. These controls also let you cancel a pending handoff and open the current or previous
 roots. For a routine provider or model change, keep the same thread.

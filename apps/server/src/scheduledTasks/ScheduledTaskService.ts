@@ -530,8 +530,6 @@ export const layer = Layer.effect(
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
         const dispatch = Effect.gen(function* () {
-          let targetThreadId = active.threadId;
-          let targetProjectId = active.projectId;
           const boundRoot =
             active.repositoryTarget == null && active.threadId !== null && Option.isSome(issueWork)
               ? yield* issueWork.value.configuration(ThreadId.make(active.threadId))
@@ -540,22 +538,50 @@ export const layer = Layer.effect(
           if (repositoryTarget != null) {
             if (Option.isNone(issueWork))
               return yield* taskError("Repository scheduling is unavailable.");
-            const owner = yield* issueWork.value
-              .repositoryOwner(repositoryTarget)
-              .pipe(
-                Effect.mapError((cause) =>
-                  taskError("Could not resolve the repository owner.", { cause }),
-                ),
-              );
-            if (owner === null || owner.paused)
-              return yield* taskError("Repository work is unavailable or paused.");
-            targetThreadId = owner.rootThreadId;
-            targetProjectId = owner.projectId;
+            const store = issueWork.value;
+            const resolveOwner = Effect.gen(function* () {
+              const owner = yield* store
+                .repositoryOwner(repositoryTarget)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    taskError("Could not resolve the repository owner.", { cause }),
+                  ),
+                );
+              if (owner === null || owner.paused)
+                return yield* taskError("Repository work is unavailable or paused.");
+              return owner;
+            });
+            // The orchestrator rejects a scheduled prompt to a retired root. When a handoff
+            // commits between resolving and sending, resend to the new owner.
+            let owner = yield* resolveOwner;
+            for (let attempt = 0; ; attempt += 1) {
+              const retryKey = attempt === 0 ? "" : `:${owner.rootThreadId}`;
+              const sent = yield* threadManagement
+                .sendToThread({
+                  projectId: owner.projectId,
+                  commandId: CommandId.make(`${commandId}${retryKey}`),
+                  threadId: owner.rootThreadId,
+                  messageId: MessageId.make(`${messageId}${retryKey}`),
+                  scheduledTaskId: active.id,
+                  text: prompt,
+                  attachments: [],
+                  modelSelection: active.modelSelection,
+                  mode: "queue",
+                  createdBy: active.createdBy,
+                  creationSource: active.creationSource,
+                })
+                .pipe(Effect.result);
+              if (sent._tag === "Success") return sent.success;
+              const current = yield* resolveOwner;
+              if (current.rootThreadId === owner.rootThreadId || attempt === 2)
+                return yield* sent.failure;
+              owner = current;
+            }
           }
-          return targetThreadId === null
+          return active.threadId === null
             ? yield* threadLaunch.launch({
                 commandId,
-                projectId: targetProjectId,
+                projectId: active.projectId,
                 title: active.title,
                 modelSelection: active.modelSelection,
                 runtimeMode: active.runtimeMode,
@@ -571,9 +597,9 @@ export const layer = Layer.effect(
                 creationSource: active.creationSource,
               })
             : yield* threadManagement.sendToThread({
-                projectId: targetProjectId,
+                projectId: active.projectId,
                 commandId,
-                threadId: ThreadId.make(targetThreadId),
+                threadId: ThreadId.make(active.threadId),
                 messageId,
                 scheduledTaskId: active.id,
                 text: prompt,
