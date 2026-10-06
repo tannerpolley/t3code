@@ -87,6 +87,10 @@ export class IssueWorkStore extends Context.Service<
     readonly issueOwner: (
       issue: ThreadLinkedIssue,
     ) => Effect.Effect<ThreadId | null, IssueWorkError>;
+    /** The issue's owner only when it works under the registered root; a retired subtree's owner is historical. */
+    readonly currentIssueOwner: (
+      issue: ThreadLinkedIssue,
+    ) => Effect.Effect<ThreadId | null, IssueWorkError>;
     readonly hasUnclaimedRequests: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<boolean, IssueWorkError>;
@@ -126,6 +130,11 @@ export const layer = Layer.effect(
                 AND json_array_length(provider.payload_json, '$.pendingBackgroundTasks') > 0)
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_turn_items item
               WHERE item.thread_id = subtree.thread_id AND item.status IN ('pending', 'running', 'waiting'))
+            -- A restart cancels the cut run before its continuation dispatches; other
+            -- provider lifecycle effects belong to runs that are still active above.
+            OR EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox effect
+              WHERE effect.thread_id = subtree.thread_id AND effect.status IN ('pending', 'running')
+                AND effect.effect_type = 'provider-runtime.continue')
           LIMIT 1
         `.pipe(
           Effect.map((rows) => rows.length === 0),
@@ -360,6 +369,20 @@ export const layer = Layer.effect(
     `.pipe(
           Effect.map((rows) =>
             rows[0]?.owner_thread_id == null ? null : ThreadId.make(rows[0].owner_thread_id),
+          ),
+          Effect.mapError(mapError),
+        ),
+      currentIssueOwner: (issue) =>
+        sql<{ owner_thread_id: string }>`
+      SELECT work.owner_thread_id FROM orchestration_v2_projection_issue_work work
+      JOIN orchestration_v2_projection_repository_orchestration repository
+        ON repository.host = work.host AND repository.repository_id = work.repository_id
+      JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
+      WHERE work.host = ${issue.host} AND work.repository_id = ${issue.repositoryId} AND work.issue_id = ${issue.id}
+        AND json_extract(thread.payload_json, '$.lineage.rootThreadId') = repository.root_thread_id
+    `.pipe(
+          Effect.map((rows) =>
+            rows[0] === undefined ? null : ThreadId.make(rows[0].owner_thread_id),
           ),
           Effect.mapError(mapError),
         ),
