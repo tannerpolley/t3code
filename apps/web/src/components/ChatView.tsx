@@ -1,4 +1,4 @@
-import { SidebarBackgroundWorkRows } from "./sidebar/SidebarBackgroundWorkRows";
+import { BackgroundWorkTaskList } from "./chat/BackgroundWorkTaskList";
 import { describeSidebarBackgroundWork } from "./sidebar/SidebarBackgroundWork.logic";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -7194,7 +7194,8 @@ export default function ChatView(props: ChatViewProps) {
         </button>
       ),
       children: backgroundWorkExpanded ? (
-        <SidebarBackgroundWorkRows
+        <BackgroundWorkTaskList
+          key={`${environmentId}:${activeThread.id}`}
           environmentId={environmentId}
           threadId={activeThread.id}
           rows={describeSidebarBackgroundWork(activeBackgroundTasks, [])}
