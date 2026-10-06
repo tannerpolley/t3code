@@ -2774,6 +2774,10 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "issues" },
           ),
+        [WS_METHODS.issuesHandoff]: (input) =>
+          observeRpcEffect(WS_METHODS.issuesHandoff, issueWork.handoff(input), {
+            "rpc.aggregate": "issues",
+          }),
         [WS_METHODS.issuesRepositories]: () =>
           observeRpcEffect(WS_METHODS.issuesRepositories, issues.repositories(), {
             "rpc.aggregate": "issues",

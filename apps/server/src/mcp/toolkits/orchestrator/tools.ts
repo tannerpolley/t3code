@@ -29,6 +29,7 @@ import {
   ThreadMetadataMcpUpdateResult,
   RepositoryWorkInput,
   RepositoryWorkControlInput,
+  RepositoryHandoffRequestInput,
   RepositoryWorkResult,
   IssueRepositoryRef,
   IssueChangeProposeInput,
@@ -259,6 +260,15 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 export const OrchestratorToolkit = Toolkit.make(
   ProposeIssueChangeTool,
+  Tool.make("request_repository_handoff", {
+    description:
+      "Request a fresh-thread handoff of this repository's registered root. Read get_repository_orchestration for its ownership revision, and supply a recovery summary. Only the current root may request it. The user must approve in the repository controls; this tool does not approve or transfer ownership. After approval T3 pauses new admissions, drains existing workers and final deliveries, gives the fresh thread a server recovery inventory, then atomically replaces the owner. Routine model changes should keep the current thread.",
+    parameters: RepositoryHandoffRequestInput,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, false),
   Tool.make("work_through_milestone", {
     description:
       "Authorize the registered repository orchestrator to work through this milestone. Parent ownership, blockers and shared worker capacity are enforced by the server.",

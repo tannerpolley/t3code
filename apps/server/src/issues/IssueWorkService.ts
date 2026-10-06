@@ -9,6 +9,8 @@ import {
   type ModelSelection,
   type RepositoryWorkInput,
   type RepositoryWorkControlInput,
+  type RepositoryHandoffInput,
+  type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
   type RepositoryOrchestration,
   type ThreadId,
@@ -58,6 +60,15 @@ export class IssueWorkService extends Context.Service<
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly setPaused: (
       input: RepositoryWorkControlInput,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
+    readonly assertCurrentCaller: (threadId: ThreadId) => Effect.Effect<void, IssueWorkError>;
+    readonly requestHandoff: (
+      threadId: ThreadId,
+      input: RepositoryHandoffRequestInput,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
+    /** User-only entry point. MCP can request a transfer, but cannot approve it. */
+    readonly handoff: (
+      input: RepositoryHandoffInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly reconcile: (rootThreadId: ThreadId) => Effect.Effect<void, IssueWorkError>;
   }
@@ -396,11 +407,76 @@ export const layer = Layer.effect(
         })
         .pipe(Effect.mapError(mapError), Effect.asVoid);
     const reconciliationLock = yield* Semaphore.make(1);
+    const assertCurrentCaller = Effect.fn("IssueWorkService.assertCurrentCaller")(function* (
+      threadId: ThreadId,
+    ) {
+      const shell = (yield* threads.getThreadRecords(threadId, []).pipe(Effect.mapError(mapError)))
+        .thread;
+      const repository = shell.repositoryOrchestration ?? shell.linkedIssue;
+      if (repository === undefined) return;
+      const owner = yield* store.repositoryOwner(repository);
+      if (owner?.rootThreadId !== shell.lineage.rootThreadId)
+        return yield* new IssueWorkError({
+          code: "retired-root",
+          message: `This repository orchestrator has retired. Route orchestration work to the current root ${owner?.rootThreadId ?? "(unavailable)"}.`,
+        });
+    });
+    const inventory = Effect.fn("IssueWorkService.handoffInventory")(function* (
+      config: RepositoryOrchestration,
+    ) {
+      const sections = new Map<string, string[]>([
+        [
+          "Milestones",
+          config.milestones.map(
+            (plan) =>
+              `#${plan.number}: ${plan.status}; worker role ${plan.modelRoleId}; workspace ${plan.workspace}`,
+          ),
+        ],
+        ["Completed attempts", []],
+        ["Remaining issues", []],
+        ["Remaining issue requests", []],
+        [
+          "Pending changes",
+          config.suspendedIssues.map((issue) => `Issue ${issue.id}: ${issue.reason}`),
+        ],
+      ]);
+      for (const entry of yield* store.recoveryInventory(config))
+        sections.get(entry.section)!.push(entry.detail);
+      for (const plan of config.milestones) {
+        const listing = yield* issues
+          .milestoneIssues({
+            host: config.host,
+            repository: config.repository,
+            milestoneNumber: plan.number,
+          })
+          .pipe(Effect.mapError(mapError));
+        if (!listing.complete)
+          return yield* new IssueWorkError({
+            code: "issue-unavailable",
+            message:
+              "Handoff inventory is incomplete. Restore GitHub access before transferring ownership.",
+          });
+        for (const issue of listing.issues)
+          if (issue.state === "open" && issue.milestone?.number === plan.number)
+            sections.get("Remaining issues")!.push(`#${issue.number} ${issue.title}\n${issue.url}`);
+      }
+      return [...sections]
+        .map(
+          ([name, entries]) =>
+            `${name}:\n${entries.length === 0 ? "None recorded." : entries.join("\n\n")}`,
+        )
+        .join("\n\n");
+    });
     const reconcile: IssueWorkService["Service"]["reconcile"] = (rootThreadId) =>
       reconciliationLock.withPermit(
         Effect.gen(function* () {
           let config = yield* store.configuration(rootThreadId);
-          if (config === null || config.paused) return;
+          if (
+            config === null ||
+            config.retiredToThreadId !== undefined ||
+            (config.paused && config.handoff?.status !== "draining")
+          )
+            return;
           const suspended = new Map(
             config.suspendedIssues.map((entry) => [entry.id, entry.reason]),
           );
@@ -492,6 +568,34 @@ export const layer = Layer.effect(
                 creationSource: "server",
               })
               .pipe(Effect.mapError(mapError));
+          }
+          if (config.handoff?.status === "draining") {
+            // Existing queued turns and final deliveries drain through their original lineage.
+            // New requests and milestone admissions remain paused until the pointer moves.
+            yield* threads
+              .dispatch({
+                type: "repository.work.continue",
+                threadId: rootThreadId,
+                commandId: CommandId.make(
+                  `handoff-drain:${config.handoff.requestId}:${config.revision}`,
+                ),
+              })
+              .pipe(Effect.mapError(mapError));
+            if (!(yield* store.subtreeDrained(rootThreadId))) return;
+            yield* threads
+              .dispatch({
+                type: "repository.work.handoff",
+                threadId: rootThreadId,
+                // Rejected decide attempts have durable receipts. A retry needs a new
+                // command id; the prepared thread id and atomic commit prevent duplicates.
+                commandId: yield* ids.allocate
+                  .command({ fixtureName: "repository-handoff", commandName: "complete" })
+                  .pipe(Effect.mapError(mapError)),
+                expectedRevision: config.revision,
+                inventory: yield* inventory(config),
+              })
+              .pipe(Effect.mapError(mapError));
+            return;
           }
           // Once an ancestor has a durable thread, deliver its selected sub-issues there.
           for (const request of yield* store.pendingRequests(rootThreadId)) {
@@ -693,6 +797,11 @@ export const layer = Layer.effect(
             message: "This repository has no registered orchestrator.",
           });
         const config = (yield* store.configuration(owner.rootThreadId))!;
+        if (config.handoff?.status === "draining")
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: "A handoff is draining. Cancel the handoff before changing the pause state.",
+          });
         // Resume is an explicit decision to re-check suspended work. Admission still validates GitHub.
         if (config.paused !== input.paused || (!input.paused && config.suspendedIssues.length > 0))
           yield* update(
@@ -717,6 +826,126 @@ export const layer = Layer.effect(
         }
         return yield* repositoryStatus(input);
       });
+
+    const prepareHandoff = Effect.fn("IssueWorkService.prepareHandoff")(function* (
+      input: RepositoryHandoffRequestInput,
+      status: "awaiting_approval" | "draining",
+      callerThreadId?: ThreadId,
+    ) {
+      const owner = yield* store.repositoryOwnerByRef(input);
+      if (callerThreadId !== undefined) yield* assertCurrentCaller(callerThreadId);
+      if (owner === null || (callerThreadId !== undefined && callerThreadId !== owner.rootThreadId))
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Only the registered repository root can request a handoff.",
+        });
+      const config = (yield* store.configuration(owner.rootThreadId))!;
+      if (config.handoff?.requestId === input.clientRequestId && config.handoff.status === status)
+        return yield* repositoryStatus(input);
+      if (config.revision !== input.expectedRevision)
+        return yield* new IssueWorkError({
+          code: "repository-owner-conflict",
+          message:
+            "Repository ownership changed. Refresh before requesting or approving a handoff.",
+        });
+      if (
+        config.handoff !== undefined &&
+        (status !== "draining" || config.handoff.status !== "awaiting_approval")
+      )
+        return yield* new IssueWorkError({
+          code: "repository-owner-conflict",
+          message: "This repository already has a pending handoff. Approve or cancel it first.",
+        });
+      const root = yield* threads
+        .getThreadShell(owner.rootThreadId)
+        .pipe(Effect.mapError(mapError));
+      if (root === null || root.archivedAt !== null || root.deletedAt !== null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Restore the repository root before handing it off.",
+        });
+      const selection =
+        input.modelSelection ?? config.handoff?.modelSelection ?? root.modelSelection;
+      if (
+        config.handoff !== undefined &&
+        (input.summary !== config.handoff.summary ||
+          (yield* encodeToolArgument(selection).pipe(Effect.mapError(mapError))) !==
+            (yield* encodeToolArgument(config.handoff.modelSelection).pipe(
+              Effect.mapError(mapError),
+            )))
+      )
+        return yield* new IssueWorkError({
+          code: "repository-owner-conflict",
+          message:
+            "The handoff proposal changed. Review its current summary and model before approving.",
+        });
+      const target = checkDelegateTarget({
+        providers: yield* providers.getProviders,
+        orchestrationCapableInstanceIds: new Set(yield* adapters.list()),
+        instanceId: selection.instanceId,
+        requestedModel: selection.model,
+        inheritedModel: undefined,
+        options: selection.options,
+      });
+      if (typeof target !== "string")
+        return yield* new IssueWorkError({ code: "invalid-request", message: target.message });
+      const adapter = yield* adapters.get(selection.instanceId).pipe(Effect.mapError(mapError));
+      if (adapter.driver !== "codex" && adapter.driver !== "claudeAgent")
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Repository orchestration supports Codex and Claude only.",
+        });
+      const requestId = config.handoff?.requestId ?? input.clientRequestId;
+      yield* update(
+        owner.rootThreadId,
+        {
+          ...config,
+          paused: status === "draining" ? true : config.paused,
+          handoff: {
+            requestId,
+            nextThreadId: ids.derive.delegatedTaskThread({
+              commandId: CommandId.make(`repository-handoff:${requestId}`),
+            }),
+            summary: input.summary,
+            modelSelection: selection,
+            status,
+            wasPaused: config.paused,
+          },
+        },
+        input.clientRequestId,
+      );
+      if (status === "draining") yield* reconcile(owner.rootThreadId);
+      return yield* repositoryStatus(input);
+    });
+    const handoff: IssueWorkService["Service"]["handoff"] = (input) =>
+      input.action === "approve"
+        ? prepareHandoff(input, "draining")
+        : Effect.gen(function* () {
+            const owner = yield* store.repositoryOwnerByRef(input);
+            const config = owner === null ? null : yield* store.configuration(owner.rootThreadId);
+            if (
+              owner === null ||
+              config?.handoff === undefined ||
+              config.revision !== input.expectedRevision
+            )
+              return yield* new IssueWorkError({
+                code: "repository-owner-conflict",
+                message: "Repository ownership or the handoff changed. Refresh before cancelling.",
+              });
+            yield* update(
+              owner.rootThreadId,
+              {
+                ...config,
+                paused:
+                  config.handoff.status === "draining" ? config.handoff.wasPaused : config.paused,
+                handoff: undefined,
+              },
+              input.clientRequestId,
+            );
+            if (config.handoff.status === "draining" && !config.handoff.wasPaused)
+              yield* reconcile(owner.rootThreadId);
+            return yield* repositoryStatus(input);
+          });
 
     const service = IssueWorkService.of({
       workStatus: (input) =>
@@ -785,6 +1014,9 @@ export const layer = Layer.effect(
       workMilestone,
       repositoryStatus,
       setPaused,
+      assertCurrentCaller,
+      requestHandoff: (threadId, input) => prepareHandoff(input, "awaiting_approval", threadId),
+      handoff,
       reconcile,
     });
     const scheduler = yield* Effect.serviceOption(Scheduler.Scheduler);
@@ -808,6 +1040,9 @@ export const layer = Layer.effect(
           (stored) =>
             !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
             (stored.event.type === "thread.created" ||
+              stored.event.type === "subagent.updated" ||
+              stored.event.type === "runtime-request.updated" ||
+              stored.event.type === "provider-thread.updated" ||
               ((stored.event.type === "run.updated" || stored.event.type === "run.created") &&
                 ["preparing", "completed", "failed", "interrupted", "cancelled"].includes(
                   stored.event.payload.status,
@@ -818,8 +1053,19 @@ export const layer = Layer.effect(
             const shell = yield* threads
               .getThreadShell(stored.event.threadId)
               .pipe(Effect.mapError(mapError));
-            if (shell?.linkedIssue === undefined) return;
-            const owner = yield* store.repositoryOwner(shell.linkedIssue);
+            const repository =
+              shell?.linkedIssue ?? (yield* store.configuration(stored.event.threadId));
+            if (repository == null) return;
+            const owner = yield* store.repositoryOwner(repository);
+            if (
+              owner !== null &&
+              (shell?.linkedIssue === undefined ||
+                stored.event.type === "subagent.updated" ||
+                stored.event.type === "runtime-request.updated" ||
+                stored.event.type === "provider-thread.updated") &&
+              (yield* store.configuration(owner.rootThreadId))?.handoff?.status !== "draining"
+            )
+              return;
             if (owner !== null) yield* reconcile(owner.rootThreadId);
           }).pipe(
             Effect.catchCause((cause) =>

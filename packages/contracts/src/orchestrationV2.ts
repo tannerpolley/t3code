@@ -3042,6 +3042,13 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("repository.work.handoff"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    expectedRevision: Schema.Int,
+    inventory: Schema.String,
+  }),
   /**
    * Records what a pull request watch saw, and wakes the agent in the same transaction when
    * `wake` is set. Rejected once the watch started at `startedAt` has ended, and a wake is

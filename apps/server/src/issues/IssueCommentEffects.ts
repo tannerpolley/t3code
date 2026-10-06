@@ -113,7 +113,11 @@ export const enqueueIssueStatusEffects = (input: {
       const threadId = ThreadId.make(row.thread_id);
       const thread = yield* projections.getThread(threadId);
       if (thread.linkedIssue !== undefined) add(thread.linkedIssue);
-      if (thread.repositoryOrchestration === undefined) continue;
+      if (
+        thread.repositoryOrchestration === undefined ||
+        thread.repositoryOrchestration.retiredToThreadId !== undefined
+      )
+        continue;
       const queued = yield* sql<{ payload_json: string }>`
       SELECT request.payload_json FROM orchestration_v2_projection_issue_work_requests request
       LEFT JOIN orchestration_v2_projection_issue_work work

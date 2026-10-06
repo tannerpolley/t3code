@@ -164,6 +164,7 @@ import {
   IssueWorkStatusInput,
   IssueWorkStatusResult,
   RepositoryWorkInput,
+  RepositoryHandoffInput,
   RepositoryWorkControlInput,
   RepositoryWorkResult,
 } from "./issueWork.ts";
@@ -522,6 +523,7 @@ export const WS_METHODS = {
   issueChangesList: "issues.changes.list",
   issueChangesDecide: "issues.changes.decide",
   issueChangesSubscribe: "issues.changes.subscribe",
+  issuesHandoff: "issues.handoff",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -996,6 +998,11 @@ const WsIssueChangesSubscribeRpc = Rpc.make(WS_METHODS.issueChangesSubscribe, {
   payload: IssueChangesListInput,
   success: Schema.Number,
   stream: true,
+  error: IssueRpcError,
+});
+const WsIssuesHandoffRpc = Rpc.make(WS_METHODS.issuesHandoff, {
+  payload: RepositoryHandoffInput,
+  success: RepositoryWorkResult,
   error: IssueRpcError,
 });
 
@@ -1922,6 +1929,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsIssueChangesListRpc,
   WsIssueChangesDecideRpc,
   WsIssueChangesSubscribeRpc,
+  WsIssuesHandoffRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

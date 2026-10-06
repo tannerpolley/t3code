@@ -532,11 +532,16 @@ export const layer = Layer.effect(
         const dispatch = Effect.gen(function* () {
           let targetThreadId = active.threadId;
           let targetProjectId = active.projectId;
-          if (active.repositoryTarget != null) {
+          const boundRoot =
+            active.repositoryTarget == null && active.threadId !== null && Option.isSome(issueWork)
+              ? yield* issueWork.value.configuration(ThreadId.make(active.threadId))
+              : undefined;
+          const repositoryTarget = active.repositoryTarget ?? boundRoot;
+          if (repositoryTarget != null) {
             if (Option.isNone(issueWork))
               return yield* taskError("Repository scheduling is unavailable.");
             const owner = yield* issueWork.value
-              .repositoryOwner(active.repositoryTarget)
+              .repositoryOwner(repositoryTarget)
               .pipe(
                 Effect.mapError((cause) =>
                   taskError("Could not resolve the repository owner.", { cause }),

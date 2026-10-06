@@ -193,6 +193,12 @@ the exact change in the requesting thread or issue detail, then approve or rejec
 visible there, and failed changes can retry their remaining steps. If the issue changed since the
 preview, the agent must propose a new change.
 
+To replace the orchestrator's conversation, use **Hand off to fresh thread** in a milestone's
+repository controls and provide a summary. Your approval pauses new issue admissions until existing
+workers and their final results finish; the fresh thread receives your summary and a recovery
+inventory. These controls also let you cancel a pending handoff and open the current or previous
+roots. For a routine provider or model change, keep the same thread.
+
 A thread's details also list its repository's open issues in an **Issues** section, grouped by
 collapsible milestones, and open them beside the thread. For a fork checkout, these are the fork's
 issues. Turn either view off in **Settings → Customizations**.

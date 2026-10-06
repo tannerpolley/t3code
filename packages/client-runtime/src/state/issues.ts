@@ -57,6 +57,10 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:pause",
       tag: WS_METHODS.issuesSetPaused,
     }),
+    handoff: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:handoff",
+      tag: WS_METHODS.issuesHandoff,
+    }),
     workStatus,
     start: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:start",

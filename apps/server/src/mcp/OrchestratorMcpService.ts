@@ -114,6 +114,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").IssueChangeProposeInput,
   ) => Effect.Effect<import("@t3tools/contracts").IssueChange, OrchestratorMcpFailure>;
+  readonly requestRepositoryHandoff: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").RepositoryHandoffRequestInput,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly workMilestone: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryWorkInput,
@@ -1398,13 +1402,31 @@ const make = Effect.gen(function* () {
         yield* requireCapability(scope);
         if (scope.thread === undefined || Option.isNone(issueChanges))
           return yield* failure("invalid_request", "Issue proposals require a managed thread.");
+        // A retired root's subtree may finish its work but not plan new issue changes.
+        if (Option.isSome(issueWork))
+          yield* issueWork.value
+            .assertCurrentCaller(scope.thread.threadId)
+            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
         return yield* issueChanges.value
           .propose(scope.thread.threadId, input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      }),
+    requestRepositoryHandoff: (scope, input) =>
+      Effect.gen(function* () {
+        const caller = yield* loadThreadCaller(scope, "request_repository_handoff");
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .requestHandoff(caller.parent.thread.id, input)
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       }),
     workMilestone: (scope, input) =>
       Effect.gen(function* () {
         const { limits } = yield* loadCaller(scope);
+        if (scope.thread !== undefined && Option.isSome(issueWork))
+          yield* issueWork.value
+            .assertCurrentCaller(scope.thread.threadId)
+            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
         yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
         yield* resolveInteractionMode(limits.interactionMode, "default");
         if (Option.isNone(issueWork))
@@ -1425,6 +1447,10 @@ const make = Effect.gen(function* () {
     setRepositoryPaused: (scope, input) =>
       Effect.gen(function* () {
         const { limits } = yield* loadCaller(scope);
+        if (scope.thread !== undefined && Option.isSome(issueWork))
+          yield* issueWork.value
+            .assertCurrentCaller(scope.thread.threadId)
+            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
         yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
         yield* resolveInteractionMode(limits.interactionMode, "default");
         if (Option.isNone(issueWork))
@@ -1648,6 +1674,10 @@ const make = Effect.gen(function* () {
     delegateTask: (callerScope, input) =>
       Effect.gen(function* () {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
+        if (Option.isSome(issueWork))
+          yield* issueWork.value
+            .assertCurrentCaller(parent.thread.id)
+            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
         const parentRun = parent.runs
           .filter(ThreadManagementService.isActiveRun)
           .toSorted((left, right) => right.ordinal - left.ordinal)[0];
