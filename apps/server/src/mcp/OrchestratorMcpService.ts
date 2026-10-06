@@ -65,6 +65,7 @@ import * as Schema from "effect/Schema";
 
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import { deriveDelegatedTaskNode } from "../orchestration-v2/IdAllocator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -108,6 +109,18 @@ type TerminalTaskStatus = Extract<
 >;
 
 export interface OrchestratorMcpServiceShape {
+  readonly workMilestone: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").RepositoryWorkInput,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
+  readonly repositoryStatus: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").IssueRepositoryRef,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
+  readonly setRepositoryPaused: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").RepositoryWorkControlInput,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly capabilities: (
     scope: McpInvocationScope,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
@@ -220,6 +233,7 @@ function scheduledTaskSummary(task: ScheduledTask): OrchestratorMcpScheduledTask
     enabled: task.enabled,
     projectId: task.projectId,
     boundThreadId: task.threadId,
+    repositoryTarget: task.repositoryTarget ?? null,
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
@@ -762,6 +776,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const issueService = yield* Effect.serviceOption(IssueService.IssueService);
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
+  const issueWork = yield* Effect.serviceOption(IssueWorkService.IssueWorkService);
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   // Optional like settings: only worktree delegation needs it, and production always provides it.
   const threadLaunch = yield* Effect.serviceOption(ThreadLaunchService.ThreadLaunchService);
@@ -1372,6 +1387,37 @@ const make = Effect.gen(function* () {
     });
 
   return OrchestratorMcpService.of({
+    workMilestone: (scope, input) =>
+      Effect.gen(function* () {
+        const { limits } = yield* loadCaller(scope);
+        yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
+        yield* resolveInteractionMode(limits.interactionMode, "default");
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .workMilestone(input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      }),
+    repositoryStatus: (scope, input) =>
+      Effect.gen(function* () {
+        yield* loadCaller(scope);
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .repositoryStatus(input)
+          .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+      }),
+    setRepositoryPaused: (scope, input) =>
+      Effect.gen(function* () {
+        const { limits } = yield* loadCaller(scope);
+        yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
+        yield* resolveInteractionMode(limits.interactionMode, "default");
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .setPaused(input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      }),
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
@@ -1404,7 +1450,13 @@ const make = Effect.gen(function* () {
           enabled: input.enabled ?? true,
           schedule: input.schedule,
           projectId,
-          threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
+          threadId:
+            input.repositoryTarget != null
+              ? null
+              : bindToCurrentThread && parent !== undefined
+                ? parent.thread.id
+                : null,
+          repositoryTarget: input.repositoryTarget ?? null,
           workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
           modelSelection,
           runtimeMode: limits.runtimeMode,
@@ -1487,6 +1539,10 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
+          repositoryTarget:
+            input.repositoryTarget === undefined
+              ? (existing.repositoryTarget ?? null)
+              : input.repositoryTarget,
           modelSelection: existing.modelSelection,
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
@@ -1621,10 +1677,10 @@ const make = Effect.gen(function* () {
           const repositoryOwner = yield* issueWorkStore.value
             .repositoryOwner(linkedIssue)
             .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
-          if (repositoryOwner?.rootThreadId !== parent.thread.id || repositoryOwner.paused)
+          if (repositoryOwner === null || repositoryOwner.paused)
             return yield* failure(
               "invalid_request",
-              "Slice 1 issue workers must be delegated by the active registered repository orchestrator.",
+              "The repository orchestrator is unavailable or paused.",
             );
         }
         const providers = yield* loadProviders;

@@ -27,6 +27,10 @@ import {
   OrchestratorMcpThreadWaitResult,
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
+  RepositoryWorkInput,
+  RepositoryWorkControlInput,
+  RepositoryWorkResult,
+  IssueRepositoryRef,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
@@ -240,6 +244,31 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Destructive, true);
 
 export const OrchestratorToolkit = Toolkit.make(
+  Tool.make("work_through_milestone", {
+    description:
+      "Authorize the registered repository orchestrator to work through this milestone. Parent ownership, blockers and shared worker capacity are enforced by the server.",
+    parameters: RepositoryWorkInput,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, true),
+  Tool.make("get_repository_orchestration", {
+    description: "Read repository ownership, pause state and milestone progress.",
+    parameters: IssueRepositoryRef,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Readonly, true),
+  Tool.make("set_repository_work_paused", {
+    description: "Pause new worker admissions or resume after rechecking GitHub eligibility.",
+    parameters: RepositoryWorkControlInput,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, true),
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
   TaskStatusTool,

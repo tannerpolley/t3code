@@ -1,3 +1,4 @@
+import { IssueMilestoneControls } from "./IssueMilestoneControls";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import {
@@ -555,6 +556,13 @@ export function IssueBrowser({
         {filteredIssues.length > 0 ? (
           <IssueTree
             key={scopeKey}
+            renderMilestoneActions={(milestone) => (
+              <IssueMilestoneControls
+                environmentId={entry.environmentId}
+                reference={{ host: entry.host, repository: entry.repository }}
+                milestone={milestone}
+              />
+            )}
             groups={groups}
             issuesComplete={snapshot.issuesComplete}
             onSelect={(issue) => selectIssue(issue, entry, snapshot)}

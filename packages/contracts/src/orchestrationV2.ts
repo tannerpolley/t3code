@@ -597,6 +597,7 @@ export const OrchestrationV2Run = Schema.Struct({
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   /** How a launch prepares this run's workspace; prepared-run.retry repeats it. */
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  workspacePreparationCommandId: Schema.optional(CommandId),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -2546,6 +2547,18 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
 export const OrchestrationV2Command = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("repository.work.continue"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("repository.work.update"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    expectedRevision: Schema.Int,
+    orchestration: RepositoryOrchestration,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),
     ...OrchestrationV2CreationFields,

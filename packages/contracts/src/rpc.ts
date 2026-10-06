@@ -157,7 +157,11 @@ import {
   IssueWorkStartResult,
   IssueWorkStatusInput,
   IssueWorkStatusResult,
+  RepositoryWorkInput,
+  RepositoryWorkControlInput,
+  RepositoryWorkResult,
 } from "./issueWork.ts";
+import { IssueRepositoryRef } from "./issue.ts";
 import {
   PullRequestActionInput,
   PullRequestActivity,
@@ -506,6 +510,9 @@ export const WS_METHODS = {
   issuesDetail: "issues.detail",
   issuesStart: "issues.start",
   issuesWorkStatus: "issues.workStatus",
+  issuesWorkMilestone: "issues.workMilestone",
+  issuesRepositoryStatus: "issues.repositoryStatus",
+  issuesSetPaused: "issues.setPaused",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -944,6 +951,21 @@ const WsIssuesStartRpc = Rpc.make(WS_METHODS.issuesStart, {
 const WsIssuesWorkStatusRpc = Rpc.make(WS_METHODS.issuesWorkStatus, {
   payload: IssueWorkStatusInput,
   success: IssueWorkStatusResult,
+  error: IssueRpcError,
+});
+const WsIssuesWorkMilestoneRpc = Rpc.make(WS_METHODS.issuesWorkMilestone, {
+  payload: RepositoryWorkInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+const WsIssuesRepositoryStatusRpc = Rpc.make(WS_METHODS.issuesRepositoryStatus, {
+  payload: IssueRepositoryRef,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+const WsIssuesSetPausedRpc = Rpc.make(WS_METHODS.issuesSetPaused, {
+  payload: RepositoryWorkControlInput,
+  success: RepositoryWorkResult,
   error: IssueRpcError,
 });
 
@@ -1864,6 +1886,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsIssuesDetailRpc,
   WsIssuesStartRpc,
   WsIssuesWorkStatusRpc,
+  WsIssuesWorkMilestoneRpc,
+  WsIssuesRepositoryStatusRpc,
+  WsIssuesSetPausedRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

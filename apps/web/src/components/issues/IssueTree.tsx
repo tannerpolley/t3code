@@ -1,4 +1,4 @@
-import type { IssueSummary } from "@t3tools/contracts";
+import type { IssueMilestone, IssueSummary } from "@t3tools/contracts";
 import { CheckCircle2Icon, ChevronRightIcon, CircleDotIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -66,6 +66,7 @@ export interface IssueTreeProps {
   readonly issuesComplete: boolean;
   readonly selectedIssueNumber?: number;
   readonly onSelect: (issue: IssueSummary) => void;
+  readonly renderMilestoneActions?: (milestone: IssueMilestone) => ReactNode;
 }
 
 function issueStateIcon(issue: IssueSummary) {
@@ -85,6 +86,7 @@ export function IssueTree({
   issuesComplete,
   selectedIssueNumber,
   onSelect,
+  renderMilestoneActions,
 }: IssueTreeProps) {
   const [chosen, setChosen] = useState<ReadonlyMap<string, boolean>>(() => new Map());
 
@@ -95,20 +97,23 @@ export function IssueTree({
         const panelId = `issue-group-${group.id.replace(/[^a-z0-9_-]/gi, "-")}`;
         return (
           <section key={group.id}>
-            <IssueTreeRow
-              level={1}
-              controls={panelId}
-              expanded={isExpanded}
-              onToggle={() => setChosen((current) => new Map(current).set(group.id, !isExpanded))}
-              count={
-                issuesComplete
-                  ? `${group.issues.length} ${group.issues.length === 1 ? "issue" : "issues"}`
-                  : `${group.issues.length} loaded`
-              }
-            >
-              <span className="min-w-0 truncate text-sm text-foreground/90">{group.title}</span>
-              {group.milestone?.state === "closed" ? <IssueTreeTag>Closed</IssueTreeTag> : null}
-            </IssueTreeRow>
+            <div className="flex items-start gap-2">
+              <IssueTreeRow
+                level={1}
+                controls={panelId}
+                expanded={isExpanded}
+                onToggle={() => setChosen((current) => new Map(current).set(group.id, !isExpanded))}
+                count={
+                  issuesComplete
+                    ? `${group.issues.length} ${group.issues.length === 1 ? "issue" : "issues"}`
+                    : `${group.issues.length} loaded`
+                }
+              >
+                <span className="min-w-0 truncate text-sm text-foreground/90">{group.title}</span>
+                {group.milestone?.state === "closed" ? <IssueTreeTag>Closed</IssueTreeTag> : null}
+              </IssueTreeRow>
+              {group.milestone == null ? null : renderMilestoneActions?.(group.milestone)}
+            </div>
             {isExpanded && group.issues.length === 0 ? (
               <p
                 id={panelId}

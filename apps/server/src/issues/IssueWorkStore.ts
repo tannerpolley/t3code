@@ -6,11 +6,14 @@ import {
   type CommandId,
   type IssueRef,
   type ThreadLinkedIssue,
+  RepositoryOrchestration,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+
+const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(RepositoryOrchestration));
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 type RepositoryOwner = {
@@ -37,6 +40,24 @@ const ownerFromRows = (rows: ReadonlyArray<RepositoryOwnerRow>): RepositoryOwner
 export class IssueWorkStore extends Context.Service<
   IssueWorkStore,
   {
+    readonly configuration: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<RepositoryOrchestration | null, IssueWorkError>;
+    readonly activeRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
+    readonly workerThreads: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
+    readonly pendingRequests: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<
+      ReadonlyArray<import("@t3tools/contracts").IssueWorkRequested>,
+      IssueWorkError
+    >;
+    readonly resultAvailable: (threadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
+    readonly canAdmit: (
+      issue: ThreadLinkedIssue,
+      threadId: ThreadId,
+    ) => Effect.Effect<boolean, IssueWorkError>;
     readonly request: (
       requestId: CommandId,
     ) => Effect.Effect<import("@t3tools/contracts").IssueWorkRequested | null, IssueWorkError>;
@@ -54,7 +75,7 @@ export class IssueWorkStore extends Context.Service<
       issue: Pick<ThreadLinkedIssue, "host" | "repositoryId">,
     ) => Effect.Effect<RepositoryOwner | null, IssueWorkError>;
     readonly repositoryOwnerByRef: (
-      issue: IssueRef,
+      issue: Pick<IssueRef, "host" | "repository">,
     ) => Effect.Effect<RepositoryOwner | null, IssueWorkError>;
     readonly issueOwner: (
       issue: ThreadLinkedIssue,
@@ -76,6 +97,114 @@ export const layer = Layer.effect(
     const mapError = (cause: unknown) =>
       new IssueWorkError({ code: "orchestration-error", message: String(cause) });
     return IssueWorkStore.of({
+      resultAvailable: (threadId) =>
+        sql<{
+          status: string;
+        }>`SELECT status FROM orchestration_v2_projection_subagents WHERE child_thread_id = ${threadId} AND origin = 'app_owned' LIMIT 1`.pipe(
+          Effect.map((rows) =>
+            rows.some((row) =>
+              ["completed", "failed", "interrupted", "cancelled"].includes(row.status),
+            ),
+          ),
+          Effect.mapError(mapError),
+        ),
+      pendingRequests: (rootThreadId) =>
+        sql<{ payload_json: string }>`
+        SELECT request.payload_json FROM orchestration_v2_projection_issue_work_requests request
+        LEFT JOIN orchestration_v2_projection_issue_work work
+          ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
+        WHERE request.root_thread_id = ${rootThreadId}
+          AND (work.owner_thread_id IS NULL OR request.attempt_key = work.owner_thread_id)
+          AND request.rowid = (SELECT max(latest.rowid) FROM orchestration_v2_projection_issue_work_requests latest
+            WHERE latest.host = request.host AND latest.repository_id = request.repository_id AND latest.issue_id = request.issue_id)
+      `.pipe(
+          Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeRequest(row.payload_json))),
+          Effect.mapError(mapError),
+        ),
+      configuration: (rootThreadId) =>
+        sql<{ configuration: string }>`
+        SELECT json_extract(payload_json, '$.repositoryOrchestration') AS configuration
+        FROM orchestration_v2_projection_threads WHERE thread_id = ${rootThreadId}
+          AND json_type(payload_json, '$.repositoryOrchestration') = 'object'
+      `.pipe(
+          Effect.flatMap((rows) =>
+            rows[0] === undefined
+              ? Effect.succeed(null)
+              : decodeConfiguration(rows[0].configuration),
+          ),
+          Effect.mapError(mapError),
+        ),
+      activeRoots: () =>
+        sql<{ root_thread_id: string }>`
+        SELECT root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
+        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
+        WHERE thread.deleted_at IS NULL AND thread.archived_at IS NULL
+          AND (EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.milestones') plan
+            WHERE json_extract(plan.value, '$.status') <> 'complete')
+            OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request
+              LEFT JOIN orchestration_v2_projection_issue_work work ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
+              WHERE request.root_thread_id = owner.root_thread_id AND work.owner_thread_id IS NULL)
+            OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads worker JOIN orchestration_v2_projection_runs run ON run.thread_id = worker.thread_id
+              WHERE json_extract(worker.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id
+                AND json_type(worker.payload_json, '$.linkedIssue') = 'object' AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')))
+
+      `.pipe(
+          Effect.map((rows) => rows.map((row) => ThreadId.make(row.root_thread_id))),
+          Effect.mapError(mapError),
+        ),
+      workerThreads: (rootThreadId) =>
+        sql<{ thread_id: string }>`
+        SELECT thread.thread_id FROM orchestration_v2_projection_threads thread
+        JOIN orchestration_v2_projection_issue_work work ON work.owner_thread_id = thread.thread_id
+        JOIN orchestration_v2_projection_repository_orchestration repository
+          ON repository.host = work.host AND repository.repository_id = work.repository_id
+        WHERE repository.root_thread_id = ${rootThreadId}
+          AND json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+          AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
+        ORDER BY thread.created_at, thread.thread_id
+      `.pipe(
+          Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
+          Effect.mapError(mapError),
+        ),
+      canAdmit: (issue, threadId) =>
+        Effect.gen(function* () {
+          const rows = yield* sql<{
+            paused: number;
+            worker_limit: number;
+            active: number;
+            suspended: number;
+          }>`
+          SELECT owner.paused, owner.worker_limit,
+            (SELECT count(*) FROM orchestration_v2_projection_issue_work work
+              JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
+              WHERE work.host = ${issue.host} AND work.repository_id = ${issue.repositoryId}
+                AND thread.thread_id <> ${threadId}
+                AND (EXISTS (SELECT 1 FROM orchestration_v2_projection_runs run
+                  WHERE run.thread_id = thread.thread_id
+                    AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                    AND run.status <> 'queued') OR EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+                  WHERE request.thread_id = thread.thread_id AND request.status = 'pending'
+                    AND request.kind NOT IN ('auth_refresh', 'dynamic_tool_call')))) AS active,
+            (WITH RECURSIVE ancestors(id, parent, payload) AS (
+              SELECT thread_id, json_extract(payload_json, '$.lineage.parentThreadId'), payload_json
+                FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}
+              UNION ALL SELECT thread.thread_id, json_extract(thread.payload_json, '$.lineage.parentThreadId'), thread.payload_json
+                FROM orchestration_v2_projection_threads thread JOIN ancestors ON thread.thread_id = ancestors.parent
+            ) SELECT count(*) FROM ancestors JOIN json_each(root.payload_json, '$.repositoryOrchestration.suspendedIssues') suspended
+              ON json_extract(suspended.value, '$.id') = json_extract(ancestors.payload, '$.linkedIssue.id')) AS suspended
+          FROM orchestration_v2_projection_repository_orchestration owner
+          JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
+          WHERE owner.host = ${issue.host} AND owner.repository_id = ${issue.repositoryId}
+        `;
+          const row = rows[0];
+          return (
+            row !== undefined &&
+            row.paused === 0 &&
+            row.suspended === 0 &&
+            row.active < row.worker_limit
+          );
+        }).pipe(Effect.mapError(mapError)),
       request: (requestId) =>
         sql<{ payload_json: string }>`
       SELECT payload_json FROM orchestration_v2_projection_issue_work_requests WHERE request_id = ${requestId}

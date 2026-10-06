@@ -42,6 +42,7 @@ describe("V2 preview upgrade", () => {
         [58, "ProjectionTurnItemCounts"],
         [59, "ThreadIssueWork"],
         [60, "RepositoryOrchestration"],
+        [61, "RepositoryScheduledWork"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -132,6 +133,7 @@ describe("V2 preview upgrade", () => {
         [58, "ProjectionTurnItemCounts"],
         [59, "ThreadIssueWork"],
         [60, "RepositoryOrchestration"],
+        [61, "RepositoryScheduledWork"],
       ]);
       assert.deepStrictEqual(
         yield* sql`SELECT name, created_at FROM effect_sql_migrations WHERE migration_id BETWEEN 55 AND 57 ORDER BY migration_id`,
@@ -212,6 +214,7 @@ describe("V2 preview upgrade", () => {
         [58, "ProjectionTurnItemCounts"],
         [59, "ThreadIssueWork"],
         [60, "RepositoryOrchestration"],
+        [61, "RepositoryScheduledWork"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

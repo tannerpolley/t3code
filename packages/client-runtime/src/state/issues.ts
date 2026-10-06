@@ -24,6 +24,21 @@ export function createIssueEnvironmentAtoms<R, E>(
     refreshTrigger,
   });
   return {
+    repositoryStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:issues:repository-status",
+      tag: WS_METHODS.issuesRepositoryStatus,
+      staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      refreshTrigger,
+    }),
+    workMilestone: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:milestone",
+      tag: WS_METHODS.issuesWorkMilestone,
+    }),
+    setPaused: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:pause",
+      tag: WS_METHODS.issuesSetPaused,
+    }),
     workStatus,
     start: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:start",

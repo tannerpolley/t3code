@@ -1,9 +1,18 @@
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 
 import { CommandId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
-import { IssueRef } from "./issue.ts";
+import { IssueRef, IssueRepositoryRef } from "./issue.ts";
+
+export const RepositoryMilestonePlan = Schema.Struct({
+  number: Schema.Int.check(Schema.isGreaterThan(0)),
+  modelRoleId: TrimmedNonEmptyString,
+  workspace: Schema.Literals(["project", "worktree"]),
+  status: Schema.Literals(["running", "complete", "blocked", "awaiting_approval", "unreadable"]),
+  fingerprint: Schema.String,
+});
 
 export const RepositoryOrchestration = Schema.Struct({
   host: TrimmedNonEmptyString,
@@ -17,8 +26,39 @@ export const RepositoryOrchestration = Schema.Struct({
   workerLimit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })),
   publishStatusComments: Schema.Boolean,
   publishCloseoutComments: Schema.Boolean,
+  milestones: Schema.Array(RepositoryMilestonePlan).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
+  suspendedIssues: Schema.Array(Schema.Struct({ id: Schema.String, reason: Schema.String })).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type RepositoryOrchestration = typeof RepositoryOrchestration.Type;
+export const RepositoryWorkTarget = Schema.Struct({
+  host: TrimmedNonEmptyString,
+  repositoryId: TrimmedNonEmptyString,
+});
+
+export const RepositoryWorkInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  projectId: ProjectId,
+  modelRoleId: TrimmedNonEmptyString,
+  workspace: Schema.Literals(["project", "worktree"]),
+  milestoneNumber: Schema.Int.check(Schema.isGreaterThan(0)),
+  clientRequestId: CommandId,
+});
+export type RepositoryWorkInput = typeof RepositoryWorkInput.Type;
+export const RepositoryWorkControlInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  paused: Schema.Boolean,
+  clientRequestId: CommandId,
+});
+export type RepositoryWorkControlInput = typeof RepositoryWorkControlInput.Type;
+export const RepositoryWorkResult = Schema.Struct({
+  rootThreadId: Schema.NullOr(ThreadId),
+  orchestration: Schema.NullOr(RepositoryOrchestration),
+});
+export type RepositoryWorkResult = typeof RepositoryWorkResult.Type;
 
 export const IssueWorkStartInput = Schema.Struct({
   ...IssueRef.fields,

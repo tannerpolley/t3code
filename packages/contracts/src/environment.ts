@@ -116,6 +116,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   githubIssues: Schema.optionalKey(Schema.Boolean),
   /** Server supports repository-owned issue work starts and status reads. */
   issueWork: Schema.optionalKey(Schema.Boolean),
+  issueMilestones: Schema.optionalKey(Schema.Boolean),
   /** Server understands canonical inline context links plus their message context records.
       Absent on servers from before inline context shipped, which drop the records and forward
       the links as literal text -- so a client must serialize context the legacy way for them. */
