@@ -187,6 +187,8 @@ export class IssueReadError extends Schema.TaggedError<IssueReadError>()("IssueR
     "invalid-response",
     "upstream",
   ]),
+  /** Create failures distinguish a rejected request from an uncertain remote write. */
+  createOutcome: Schema.optional(Schema.Literals(["rejected", "uncertain", "unresolved"])),
   operation: Schema.Literals(["repositories", "list", "detail"]),
   message: Schema.String,
   retryAt: Schema.optional(Schema.Finite),

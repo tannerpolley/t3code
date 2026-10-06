@@ -197,7 +197,8 @@ const isEffectOutboxError = Schema.is(EffectOutboxError);
 
 const independentLaneTypes = {
   title: ["thread-title.generate"],
-  "issue-comment": ["issue.github.comment", "issue.status.refresh", "issue.change.execute"],
+  "issue-comment": ["issue.github.comment", "issue.status.refresh"],
+  "issue-change": ["issue.change.execute"],
 } as const;
 export type EffectWorkerLane = "lifecycle" | keyof typeof independentLaneTypes;
 
@@ -310,6 +311,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
     const independentAvailable = {
       title: yield* Queue.dropping<void>(1),
       "issue-comment": yield* Queue.dropping<void>(1),
+      "issue-change": yield* Queue.dropping<void>(1),
     };
     const independentTypes = Object.values(independentLaneTypes).flat();
     const cancellationSignals = new Map<string, Deferred.Deferred<void>>();

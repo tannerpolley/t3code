@@ -1,12 +1,17 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   IssueReadError,
+  DEFAULT_SERVER_SETTINGS,
   ThreadId,
   type IssueChangeOperation,
   type IssueChangeBaseline,
   type ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import type * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -18,6 +23,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as IssueChangeService from "./IssueChangeService.ts";
 import * as IssueService from "./IssueService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
@@ -55,13 +61,32 @@ const setup = Effect.gen(function* () {
   ]);
   const parents = new Map<number, ThreadLinkedIssue>();
   const calls = { create: 0, body: 0, milestone: 0, state: 0, link: 0 };
+  let requireApproval = false;
+  let holdFailure = false;
+  const failurePublished = yield* Deferred.make<void>();
+  const allowFailureSettlement = yield* Deferred.make<void>();
+  const comments: string[] = [];
+  const commentCompleted = yield* Deferred.make<void>();
+  let failCreate: "rejected" | "uncertain" | "unresolved" | undefined;
+  let reportIdentity = false;
   let failLink = false;
   let loseBodyResponse = false;
   let loseLinkResponse = false;
   const github = Layer.mock(IssueService.IssueService)({
     readChangeState: (input) => Effect.sync(() => snapshots.get(input.number)!),
     createIssue: (input) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        if (failCreate !== undefined && !reportIdentity) {
+          const outcome = failCreate;
+          if (outcome === "rejected") failCreate = undefined;
+          if (input.recover !== true) calls.create++;
+          return yield* new IssueReadError({
+            code: "upstream",
+            operation: "detail",
+            message: "Create outcome",
+            createOutcome: input.recover === true ? "unresolved" : outcome,
+          });
+        }
         calls.create++;
         const created: IssueChangeBaseline = {
           issue: issue(20 + calls.create),
@@ -70,6 +95,16 @@ const setup = Effect.gen(function* () {
           milestoneNumber: input.milestoneNumber,
         };
         snapshots.set(created.issue.number, created);
+        yield* input.onCreated?.(created.issue) ?? Effect.void;
+        if (reportIdentity) {
+          reportIdentity = false;
+          return yield* new IssueReadError({
+            code: "invalid-response",
+            operation: "detail",
+            message: "Malformed body",
+            createOutcome: "uncertain",
+          });
+        }
         return created;
       }),
     updateBody: (input) =>
@@ -133,8 +168,14 @@ const setup = Effect.gen(function* () {
         }
       }),
   });
-  const dependencies = Layer.mergeAll(github, EffectOutbox.layer);
-  const changes = IssueChangeService.layer.pipe(Layer.provide(dependencies));
+  const settings = Layer.mock(ServerSettings.ServerSettingsService)({
+    getSettings: Effect.sync(() => ({
+      ...DEFAULT_SERVER_SETTINGS,
+      issueUpkeepRequiresApproval: requireApproval,
+    })),
+  });
+  const dependencies = Layer.mergeAll(github, settings, EffectOutbox.layer);
+  const changes = IssueChangeService.layer.pipe(Layer.provideMerge(dependencies));
   const executor = Layer.effect(
     EffectWorker.OrchestrationEffectExecutorV2,
     Effect.gen(function* () {
@@ -143,6 +184,13 @@ const setup = Effect.gen(function* () {
         execute: (effect) =>
           effect.request.type === "issue.change.execute"
             ? service.execute(effect.request.changeId).pipe(
+                Effect.tapError(() =>
+                  holdFailure
+                    ? Deferred.succeed(failurePublished, undefined).pipe(
+                        Effect.andThen(Deferred.await(allowFailureSettlement)),
+                      )
+                    : Effect.void,
+                ),
                 Effect.mapError(
                   (cause) =>
                     new EffectWorker.OrchestrationEffectExecutionError({
@@ -152,7 +200,9 @@ const setup = Effect.gen(function* () {
                     }),
                 ),
               )
-            : Effect.void,
+            : Effect.sync(() => {
+                comments.push(effect.id);
+              }).pipe(Effect.andThen(Deferred.succeed(commentCompleted, undefined))),
       });
     }),
   ).pipe(Layer.provide(changes));
@@ -166,6 +216,22 @@ const setup = Effect.gen(function* () {
     calls,
     snapshots,
     parents,
+    comments,
+    commentCompleted,
+    failurePublished,
+    allowFailureSettlement,
+    holdFailureSettlement: () => {
+      holdFailure = true;
+    },
+    requireApproval: (value: boolean) => {
+      requireApproval = value;
+    },
+    failNextCreate: (outcome: "rejected" | "uncertain") => {
+      failCreate = outcome;
+    },
+    loseCreateFields: () => {
+      reportIdentity = true;
+    },
     failNextLink: () => {
       failLink = true;
     },
@@ -185,12 +251,12 @@ const setup = Effect.gen(function* () {
 });
 
 const inDatabase = <A, E>(
-  test: (h: Effect.Success<typeof setup>) => Effect.Effect<A, E, SqlClient.SqlClient>,
+  test: (h: Effect.Success<typeof setup>) => Effect.Effect<A, E, SqlClient.SqlClient | Scope.Scope>,
 ) =>
   Effect.gen(function* () {
     const harness = yield* setup;
     return yield* test(harness);
-  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
+  }).pipe(Effect.scoped, Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
 const propose = (operation: IssueChangeOperation, clientRequestId = "request") =>
   IssueChangeService.IssueChangeService.pipe(
     Effect.flatMap((service) =>
@@ -445,4 +511,229 @@ it.effect(
         assert.isTrue(next.t3AuthoredBody);
       }).pipe(Effect.provide(h.runtime)),
     ),
+);
+
+it.effect(
+  "retry during failure settlement preserves the failed change until its effect can requeue",
+  () =>
+    inDatabase((h) =>
+      Effect.gen(function* () {
+        const service = yield* IssueChangeService.IssueChangeService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const change = yield* propose({
+          type: "split",
+          number: 10,
+          issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+        });
+        h.failNextLink();
+        h.holdFailureSettlement();
+        const running = yield* worker.runOnceInLane("issue-change").pipe(Effect.forkScoped);
+        yield* Deferred.await(h.failurePublished);
+        const premature = yield* service.decide({ id: change.id, decision: "retry" }, user);
+        assert.equal(premature.status, "failed");
+        const sql = yield* SqlClient.SqlClient;
+        const effects = yield* sql<{
+          status: string;
+        }>`SELECT status FROM orchestration_v2_effect_outbox WHERE effect_id = ${`effect:issue-change:${change.id}`}`;
+        assert.equal(effects[0]?.status, "running");
+        yield* Deferred.succeed(h.allowFailureSettlement, undefined);
+        assert.isTrue(yield* Fiber.join(running));
+        assert.equal(
+          (yield* service.decide({ id: change.id, decision: "retry" }, user)).status,
+          "queued",
+        );
+        assert.isTrue(yield* worker.runOnceInLane("issue-change"));
+        assert.equal((yield* service.list({ threadId }))[0]?.status, "succeeded");
+        assert.equal(h.calls.create, 1);
+      }).pipe(Effect.provide(h.singleAttemptRuntime)),
+    ),
+);
+
+it.effect("stalled changes and change backoff leave the comment lane available", () =>
+  inDatabase((h) =>
+    Effect.gen(function* () {
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* propose({
+        type: "split",
+        number: 10,
+        issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+      });
+      h.failNextLink();
+      h.holdFailureSettlement();
+      const running = yield* worker.runOnceInLane("issue-change").pipe(Effect.forkScoped);
+      yield* Deferred.await(h.failurePublished);
+      const enqueueComment = (id: string) =>
+        outbox.enqueue([
+          {
+            id,
+            commandId: CommandId.make(id),
+            threadId,
+            request: { type: "issue.status.refresh", issue: issue(10), revision: 2 },
+          },
+        ]);
+      yield* enqueueComment("comment-while-running");
+      assert.isTrue(yield* worker.runOnceInLane("issue-comment"));
+      yield* Deferred.succeed(h.allowFailureSettlement, undefined);
+      yield* Fiber.join(running);
+      yield* enqueueComment("comment-during-backoff");
+      assert.equal(yield* drain, 1);
+      assert.deepEqual(h.comments, ["comment-while-running", "comment-during-backoff"]);
+    }).pipe(Effect.provide(h.runtime)),
+  ),
+);
+
+it.effect("uncertain split creation needs user attention and cannot create another child", () =>
+  inDatabase((h) =>
+    Effect.gen(function* () {
+      const service = yield* IssueChangeService.IssueChangeService;
+      const change = yield* propose({
+        type: "split",
+        number: 10,
+        issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+      });
+      h.failNextCreate("uncertain");
+      assert.equal(yield* drain, 1);
+      yield* TestClock.adjust(100);
+      assert.equal(yield* drain, 1);
+      assert.equal((yield* service.list({ threadId }))[0]?.status, "needs_attention");
+      assert.equal(h.calls.create, 1);
+      assert.isTrue(
+        Result.isFailure(
+          yield* Effect.result(service.decide({ id: change.id, decision: "retry" }, user)),
+        ),
+      );
+      assert.isTrue(
+        Result.isFailure(
+          yield* Effect.result(
+            service.decide({ id: change.id, decision: "resolved" }, { ...user, kind: "agent" }),
+          ),
+        ),
+      );
+      assert.equal(
+        (yield* service.decide({ id: change.id, decision: "resolved" }, user)).status,
+        "resolved",
+      );
+      yield* TestClock.adjust(200);
+      yield* drain;
+      yield* service.execute(change.id);
+      assert.equal(h.calls.create, 1);
+      assert.equal(h.calls.link, 0);
+    }).pipe(Effect.provide(h.runtime)),
+  ),
+);
+
+it.effect(
+  "definite create rejection retries safely, and available identities survive malformed responses",
+  () =>
+    inDatabase((h) =>
+      Effect.gen(function* () {
+        const service = yield* IssueChangeService.IssueChangeService;
+        h.failNextCreate("rejected");
+        yield* propose({ type: "create", title: "Task", body: "Task", milestoneNumber: null });
+        yield* drain;
+        yield* TestClock.adjust(100);
+        yield* drain;
+        assert.equal((yield* service.list({ threadId }))[0]?.status, "succeeded");
+        assert.equal(h.calls.create, 2);
+        h.loseCreateFields();
+        yield* propose(
+          {
+            type: "split",
+            number: 10,
+            issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+          },
+          "receipt",
+        );
+        yield* drain;
+        const saved = (yield* service.list({ threadId }))[0]!;
+        assert.equal(saved.completedSteps["create:0"]?.issue?.number, 23);
+        yield* TestClock.adjust(100);
+        yield* drain;
+        assert.equal((yield* service.list({ threadId }))[0]?.status, "succeeded");
+        assert.equal(h.calls.create, 3);
+      }).pipe(Effect.provide(h.runtime)),
+    ),
+);
+
+it.effect(
+  "environment approval policy is fixed per proposal and never relaxes body or state approval",
+  () =>
+    inDatabase((h) =>
+      Effect.gen(function* () {
+        const service = yield* IssueChangeService.IssueChangeService;
+        const create = {
+          type: "create" as const,
+          title: "Task",
+          body: "Task",
+          milestoneNumber: null,
+        };
+        const automatic = yield* propose(create, "automatic");
+        h.requireApproval(true);
+        const spoofedPolicy = {
+          ...repository,
+          clientRequestId: "spoof-policy",
+          operation: create,
+          issueUpkeepRequiresApproval: false,
+          decision: "auto_approved",
+        };
+        assert.equal((yield* service.propose(threadId, spoofedPolicy)).decision, "pending");
+        assert.equal((yield* propose(create, "automatic")).decision, "auto_approved");
+        const operations: IssueChangeOperation[] = [
+          create,
+          { type: "split", number: 10, issues: [create] },
+          { type: "milestone", number: 10, milestoneNumber: 2 },
+          { type: "body", number: 10, body: "Edit" },
+          { type: "state", number: 10, state: "closed" },
+          { type: "state", number: 10, state: "open" },
+        ];
+        const pending = [];
+        for (let index = 0; index < operations.length; index++) {
+          const change = yield* propose(operations[index]!, `policy-${index}`);
+          assert.equal(change.decision, "pending");
+          pending.push(change);
+        }
+        h.requireApproval(false);
+        for (let index = 0; index < operations.length; index++)
+          assert.equal((yield* propose(operations[index]!, `policy-${index}`)).decision, "pending");
+        assert.equal(yield* drain, 1);
+        assert.equal(h.calls.create, 1);
+        assert.equal(
+          (yield* service.list({ threadId })).find((c) => c.id === automatic.id)?.status,
+          "succeeded",
+        );
+        yield* service.decide({ id: pending[0]!.id, decision: "approved" }, user);
+        assert.equal(yield* drain, 1);
+        assert.equal(h.calls.create, 2);
+      }).pipe(Effect.provide(h.runtime)),
+    ),
+);
+
+it.effect("the daemon gives upkeep and comments separate worker slots", () =>
+  inDatabase((h) =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* propose({
+        type: "split",
+        number: 10,
+        issues: [{ title: "Child", body: "Task", milestoneNumber: 1 }],
+      });
+      h.failNextLink();
+      h.holdFailureSettlement();
+      yield* EffectWorker.runDaemonWithOptions({ concurrency: 1 }).pipe(Effect.forkScoped);
+      yield* Deferred.await(h.failurePublished);
+      yield* outbox.enqueue([
+        {
+          id: "daemon-comment",
+          commandId: CommandId.make("daemon-comment"),
+          threadId,
+          request: { type: "issue.status.refresh", issue: issue(10), revision: 2 },
+        },
+      ]);
+      yield* outbox.notifyAvailable();
+      yield* Deferred.await(h.commentCompleted);
+      assert.deepEqual(h.comments, ["daemon-comment"]);
+      yield* Deferred.succeed(h.allowFailureSettlement, undefined);
+    }).pipe(Effect.provide(h.runtime)),
+  ),
 );

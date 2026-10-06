@@ -3,6 +3,7 @@ import {
   CommandId,
   IssueChange,
   IssueChangeError,
+  IssueReadError,
   IssueChangeProposeInput,
   IssueChangeOperation,
   type IssueChangeBaseline,
@@ -22,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as IssueService from "./IssueService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
 
@@ -75,16 +77,22 @@ const storageError = (cause: unknown) =>
     code: "storage",
     message: `Issue change storage failed: ${String(cause)}`,
   });
-const githubError = (cause: { readonly message: string; readonly retryAt?: number | undefined }) =>
+const githubError = (cause: {
+  readonly message: string;
+  readonly retryAt?: number | undefined;
+  readonly createOutcome?: IssueChangeError["createOutcome"];
+}) =>
   new IssueChangeError({
     code: "github",
     message: cause.message,
+    ...(cause.createOutcome === undefined ? {} : { createOutcome: cause.createOutcome }),
     ...(cause.retryAt === undefined ? {} : { retryAt: cause.retryAt }),
   });
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const issues = yield* IssueService.IssueService;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const executionLock = yield* Semaphore.make(1);
   let revision = 0;
@@ -235,7 +243,9 @@ const make = Effect.gen(function* () {
             }>`SELECT body FROM issue_body_baselines WHERE host = ${baseline.issue.host} AND issue_id = ${baseline.issue.id}`.pipe(
               Effect.mapError(storageError),
             );
-      const auto = ["create", "split", "milestone"].includes(op.type);
+      const policy = yield* settings.getSettings.pipe(Effect.mapError(storageError));
+      const auto =
+        !policy.issueUpkeepRequiresApproval && ["create", "split", "milestone"].includes(op.type);
       const change: IssueChange = {
         ...input,
         id: yield* randomUuidV4,
@@ -293,14 +303,24 @@ const make = Effect.gen(function* () {
         .withTransaction(
           Effect.gen(function* () {
             const change = yield* get(input.id);
+            if (input.decision === "resolved") {
+              if (change.status === "resolved") return;
+              if (change.status !== "needs_attention")
+                return yield* invalid("Only an unresolved create can be marked resolved.");
+              yield* sql`UPDATE issue_changes SET status = 'resolved', decided_by = ${actor.subject}, result = 'Marked resolved by the user. No remaining writes will run.', in_flight_step = NULL WHERE change_id = ${change.id}`;
+              return;
+            }
             if (input.decision === "retry") {
               if (
                 !["approved", "auto_approved"].includes(change.decision) ||
                 change.status !== "failed"
               )
                 return yield* invalid("Only an approved failed change can be retried.");
-              yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'pending', attempt_count = 0, available_at = ${DateTime.formatIso(yield* DateTime.now)}, lease_owner = NULL, lease_expires_at = NULL, last_error = NULL
-          WHERE effect_id = ${`effect:issue-change:${change.id}`} AND status = 'failed'`;
+              const requeued = yield* sql<{
+                effect_id: string;
+              }>`UPDATE orchestration_v2_effect_outbox SET status = 'pending', attempt_count = 0, available_at = ${DateTime.formatIso(yield* DateTime.now)}, lease_owner = NULL, lease_expires_at = NULL, last_error = NULL
+          WHERE effect_id = ${`effect:issue-change:${change.id}`} AND status = 'failed' RETURNING effect_id`;
+              if (requeued.length === 0) return;
               yield* sql`UPDATE issue_changes SET status = 'queued', result = NULL WHERE change_id = ${change.id}`;
               return;
             }
@@ -328,7 +348,9 @@ const make = Effect.gen(function* () {
         const change = yield* fromRow(row);
         if (
           !["approved", "auto_approved"].includes(change.decision) ||
-          ["succeeded", "conflict", "rejected"].includes(change.status)
+          ["succeeded", "conflict", "rejected", "needs_attention", "resolved"].includes(
+            change.status,
+          )
         )
           return;
         const op = change.operation;
@@ -401,13 +423,31 @@ const make = Effect.gen(function* () {
                   ...drafts[index]!,
                   writeKey: `${id}:${index}`,
                   recover: row.in_flight_step === key,
+                  onCreated: (issue) =>
+                    saveStep(key, issue, {
+                      issue,
+                      body: `${drafts[index]!.body}\n\n<!-- t3-issue-change:${id}:${index} -->`,
+                      state: "open",
+                      milestoneNumber: drafts[index]!.milestoneNumber,
+                    }).pipe(
+                      Effect.mapError(
+                        (error) =>
+                          new IssueReadError({
+                            code: "upstream",
+                            operation: "detail",
+                            message: error.message,
+                            createOutcome: "uncertain",
+                          }),
+                      ),
+                    ),
                 })
                 .pipe(Effect.mapError(githubError));
               child = created.issue;
-              yield* saveStep(key, child, {
-                ...created,
-                body: `${drafts[index]!.body}\n\n<!-- t3-issue-change:${id}:${index} -->`,
-              });
+              if (steps[key] === undefined)
+                yield* saveStep(key, child, {
+                  ...created,
+                  body: `${drafts[index]!.body}\n\n<!-- t3-issue-change:${id}:${index} -->`,
+                });
             }
             const parent = change.baseline?.issue;
             if (parent !== undefined && steps[`link:${index}`] === undefined) {
@@ -482,7 +522,7 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.tap(() => get(id).pipe(Effect.flatMap(notify))),
         Effect.tapError((error) =>
-          sql`UPDATE issue_changes SET status = 'failed', result = ${error.message} WHERE change_id = ${id}`.pipe(
+          sql`UPDATE issue_changes SET status = ${error.createOutcome === "unresolved" ? "needs_attention" : "failed"}, result = ${error.message}, in_flight_step = CASE WHEN ${error.createOutcome === "rejected" ? 1 : 0} THEN NULL ELSE in_flight_step END WHERE change_id = ${id}`.pipe(
             Effect.andThen(get(id)),
             Effect.flatMap(notify),
             Effect.catch(() => Effect.void),
