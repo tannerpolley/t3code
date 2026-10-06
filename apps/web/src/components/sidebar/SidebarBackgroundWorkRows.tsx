@@ -1,7 +1,7 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { CornerDownRightIcon, FolderGit2Icon } from "lucide-react";
+import { CornerDownRightIcon, GitBranchIcon } from "lucide-react";
 import { useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -68,9 +68,19 @@ export type SidebarBackgroundWorkRowsProps = {
   ) => void;
 };
 
-/** Marks a child thread that works in its own worktree; its row's tooltip names the branch. */
-export function ChildWorktreeIcon() {
-  return <FolderGit2Icon aria-hidden className="size-3 shrink-0 text-muted-foreground" />;
+/**
+ * Marks a child thread that works in its own worktree, with the lineage hover card's branch icon.
+ * With `name`, hovering the icon names the worktree; without it, the row's own tooltip does.
+ */
+export function ChildWorktreeIcon(props: { readonly name?: string }) {
+  const icon = <GitBranchIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />;
+  if (!props.name) return icon;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>{icon}</TooltipTrigger>
+      <TooltipPopup side="right">Worktree: {props.name}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /** Subagent and background task rows in the sidebar's shared thread columns. */
@@ -147,7 +157,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           props.columns && row.kind === "subagent" ? (props.nestedToggle?.(row) ?? null) : null;
         const worktree =
           row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
-        const worktreeIcon = worktree ? <ChildWorktreeIcon /> : null;
+        // Only the compact layout has a row tooltip to name the worktree; elsewhere the icon does.
+        const worktreeIcon = worktree ? (
+          <ChildWorktreeIcon {...(props.compact ? {} : { name: worktree })} />
+        ) : null;
         const modelLabel =
           row.kind === "subagent" && row.child
             ? resolveSidebarThreadModelLabel(row.child, provider, shortModelNames)

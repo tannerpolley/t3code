@@ -66,8 +66,8 @@ sidebar toggle position, and revealing the thread you open.
 Drag a thread from Projects onto the composer to add it as context for your next
 message; subagent rows in Projects and rows in **Lineage** drag the same way.
 Running subagents and background tasks appear beneath their parent
-thread. A folder icon marks a child working in its own worktree; hover the row
-for its branch. A child's question or approval also appears on the parent. Blue marks
+thread. A branch icon marks a child working in its own worktree; hover it
+for the worktree's name. A child's question or approval also appears on the parent. Blue marks
 show work in progress; amber spinners show a thread waiting on background work.
 Times show known work duration, rather than time since the last message.
 

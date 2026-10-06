@@ -1,5 +1,6 @@
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { fileBasename } from "@t3tools/client-runtime/markdown-links";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import type {
   OrchestrationV2PendingBackgroundTask,
@@ -44,18 +45,18 @@ export type BackgroundWorkTaskRow =
     });
 
 /**
- * The branch a child thread works on in its own worktree, for its worktree icon and tooltip; null
- * when it shares its parent's checkout. A null `worktreePath` is the project root, and an unknown
+ * The name of the worktree a child thread works in (its folder), for its worktree icon's tooltip;
+ * null when it shares its parent's checkout. A null `worktreePath` is the project root, and an unknown
  * parent counts as the root.
  */
 export function childWorktreeLabel(
-  child: Pick<SidebarThreadSummary, "branch" | "worktreePath">,
+  child: Pick<SidebarThreadSummary, "worktreePath">,
   parent: Pick<SidebarThreadSummary, "worktreePath"> | null | undefined,
 ): string | null {
   if (child.worktreePath === null || child.worktreePath === (parent?.worktreePath ?? null)) {
     return null;
   }
-  return child.branch ?? child.worktreePath;
+  return fileBasename(child.worktreePath);
 }
 
 /**

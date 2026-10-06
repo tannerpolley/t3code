@@ -295,22 +295,21 @@ describe("background task metadata", () => {
 
 describe("childWorktreeLabel", () => {
   const root = { worktreePath: null };
-  const worktree = { branch: "feature/child", worktreePath: "/repo/.t3/worktrees/child" };
+  const worktree = { worktreePath: "/repo/.t3/worktrees/t3code-child-1a2b" };
 
-  it("names the branch of a child in its own worktree", () => {
-    expect(childWorktreeLabel(worktree, root)).toBe("feature/child");
+  it("names the folder of a child in its own worktree", () => {
+    expect(childWorktreeLabel(worktree, root)).toBe("t3code-child-1a2b");
     expect(childWorktreeLabel(worktree, { worktreePath: "/repo/.t3/worktrees/parent" })).toBe(
-      "feature/child",
+      "t3code-child-1a2b",
     );
-    expect(childWorktreeLabel(worktree, undefined)).toBe("feature/child");
-    expect(childWorktreeLabel({ ...worktree, branch: null }, root)).toBe(
-      "/repo/.t3/worktrees/child",
+    expect(childWorktreeLabel({ worktreePath: "/repo/.t3/worktrees/child/" }, undefined)).toBe(
+      "child",
     );
   });
 
   it("marks nothing for a child sharing its parent's checkout", () => {
     expect(childWorktreeLabel(worktree, { worktreePath: worktree.worktreePath })).toBeNull();
-    expect(childWorktreeLabel({ branch: "main", worktreePath: null }, root)).toBeNull();
-    expect(childWorktreeLabel({ branch: "main", worktreePath: null }, undefined)).toBeNull();
+    expect(childWorktreeLabel({ worktreePath: null }, root)).toBeNull();
+    expect(childWorktreeLabel({ worktreePath: null }, undefined)).toBeNull();
   });
 });
