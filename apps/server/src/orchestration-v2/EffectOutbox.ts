@@ -109,6 +109,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     issue: ThreadLinkedIssue,
     revision: Schema.Number,
   }),
+  Schema.Struct({ type: Schema.Literal("issue.change.execute"), changeId: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("issue.github.comment"),
     operation: Schema.Literals(["status_sync", "closeout_create"]),
@@ -135,6 +136,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "thread-title.generate",
   "issue.github.comment",
   "issue.status.refresh",
+  "issue.change.execute",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
@@ -195,7 +197,7 @@ const isEffectOutboxError = Schema.is(EffectOutboxError);
 
 const independentLaneTypes = {
   title: ["thread-title.generate"],
-  "issue-comment": ["issue.github.comment", "issue.status.refresh"],
+  "issue-comment": ["issue.github.comment", "issue.status.refresh", "issue.change.execute"],
 } as const;
 export type EffectWorkerLane = "lifecycle" | keyof typeof independentLaneTypes;
 

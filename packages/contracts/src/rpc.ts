@@ -7,6 +7,12 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
+import {
+  IssueChange,
+  IssueChangeError,
+  IssueChangesListInput,
+  IssueChangeDecisionInput,
+} from "./issueChange.ts";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware";
@@ -513,6 +519,9 @@ export const WS_METHODS = {
   issuesWorkMilestone: "issues.workMilestone",
   issuesRepositoryStatus: "issues.repositoryStatus",
   issuesSetPaused: "issues.setPaused",
+  issueChangesList: "issues.changes.list",
+  issueChangesDecide: "issues.changes.decide",
+  issueChangesSubscribe: "issues.changes.subscribe",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -922,7 +931,12 @@ const PullRequestRpcError = Schema.Union([
   EnvironmentAuthorizationError,
 ]);
 
-const IssueRpcError = Schema.Union([IssueReadError, IssueWorkError, EnvironmentAuthorizationError]);
+const IssueRpcError = Schema.Union([
+  IssueReadError,
+  IssueWorkError,
+  IssueChangeError,
+  EnvironmentAuthorizationError,
+]);
 
 const WsIssuesRepositoriesRpc = Rpc.make(WS_METHODS.issuesRepositories, {
   payload: Schema.Struct({}),
@@ -966,6 +980,22 @@ const WsIssuesRepositoryStatusRpc = Rpc.make(WS_METHODS.issuesRepositoryStatus, 
 const WsIssuesSetPausedRpc = Rpc.make(WS_METHODS.issuesSetPaused, {
   payload: RepositoryWorkControlInput,
   success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+const WsIssueChangesListRpc = Rpc.make(WS_METHODS.issueChangesList, {
+  payload: IssueChangesListInput,
+  success: Schema.Array(IssueChange),
+  error: IssueRpcError,
+});
+const WsIssueChangesDecideRpc = Rpc.make(WS_METHODS.issueChangesDecide, {
+  payload: IssueChangeDecisionInput,
+  success: IssueChange,
+  error: IssueRpcError,
+});
+const WsIssueChangesSubscribeRpc = Rpc.make(WS_METHODS.issueChangesSubscribe, {
+  payload: IssueChangesListInput,
+  success: Schema.Number,
+  stream: true,
   error: IssueRpcError,
 });
 
@@ -1889,6 +1919,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsIssuesWorkMilestoneRpc,
   WsIssuesRepositoryStatusRpc,
   WsIssuesSetPausedRpc,
+  WsIssueChangesListRpc,
+  WsIssueChangesDecideRpc,
+  WsIssueChangesSubscribeRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

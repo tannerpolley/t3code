@@ -1,4 +1,5 @@
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
+import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EventStoreCompaction from "./EventStoreCompaction.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
@@ -274,6 +275,7 @@ const providerContinuationWorkerProvided = providerContinuationWorkerLive.pipe(
 const threadTitleRegenerationProvided = threadTitleRegenerationServiceLayer.pipe(
   Layer.provide(Layer.mergeAll(threadManagementProvided, ProjectStore.layer, TextGeneration.layer)),
 );
+const issueChangesProvided = IssueChangeService.layer.pipe(Layer.provide(effectOutboxLayer));
 const effectExecutorProvided = effectExecutorLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -318,7 +320,10 @@ export const OrchestrationV2LayerLive = Layer.mergeAll(
 );
 
 export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
-  OrchestrationV2LayerLive.pipe(Layer.provide(ProjectServiceLayerLive)),
+  issueChangesProvided,
+  OrchestrationV2LayerLive.pipe(
+    Layer.provide(Layer.merge(ProjectServiceLayerLive, issueChangesProvided)),
+  ),
   ProjectServiceLayerLive,
   managedProjectFoldersProvided,
   threadLaunchProvided,

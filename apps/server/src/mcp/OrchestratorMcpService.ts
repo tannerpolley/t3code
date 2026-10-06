@@ -66,6 +66,7 @@ import * as Schema from "effect/Schema";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
+import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import { deriveDelegatedTaskNode } from "../orchestration-v2/IdAllocator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -109,6 +110,10 @@ type TerminalTaskStatus = Extract<
 >;
 
 export interface OrchestratorMcpServiceShape {
+  readonly proposeIssueChange: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").IssueChangeProposeInput,
+  ) => Effect.Effect<import("@t3tools/contracts").IssueChange, OrchestratorMcpFailure>;
   readonly workMilestone: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryWorkInput,
@@ -777,6 +782,7 @@ const make = Effect.gen(function* () {
   const issueService = yield* Effect.serviceOption(IssueService.IssueService);
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const issueWork = yield* Effect.serviceOption(IssueWorkService.IssueWorkService);
+  const issueChanges = yield* Effect.serviceOption(IssueChangeService.IssueChangeService);
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   // Optional like settings: only worktree delegation needs it, and production always provides it.
   const threadLaunch = yield* Effect.serviceOption(ThreadLaunchService.ThreadLaunchService);
@@ -1387,6 +1393,15 @@ const make = Effect.gen(function* () {
     });
 
   return OrchestratorMcpService.of({
+    proposeIssueChange: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireCapability(scope);
+        if (scope.thread === undefined || Option.isNone(issueChanges))
+          return yield* failure("invalid_request", "Issue proposals require a managed thread.");
+        return yield* issueChanges.value
+          .propose(scope.thread.threadId, input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      }),
     workMilestone: (scope, input) =>
       Effect.gen(function* () {
         const { limits } = yield* loadCaller(scope);

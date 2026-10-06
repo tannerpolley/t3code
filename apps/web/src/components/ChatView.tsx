@@ -2,6 +2,7 @@ import { BackgroundWorkTaskList } from "./chat/BackgroundWorkTaskList";
 import { describeSidebarBackgroundWork } from "./sidebar/SidebarBackgroundWork.logic";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
+import { IssueChangeCards } from "./issues/IssueChangeCards";
 import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
@@ -11171,6 +11172,13 @@ export default function ChatView(props: ChatViewProps) {
                         />
                       </div>
                     </div>
+                  ) : null}
+                  {activeThreadId !== null && activeThreadId !== undefined ? (
+                    <IssueChangeCards
+                      environmentId={environmentId}
+                      input={{ threadId: activeThreadId }}
+                      compact
+                    />
                   ) : null}
                   <div
                     ref={draftHeroTransition.composerAnchorRef}

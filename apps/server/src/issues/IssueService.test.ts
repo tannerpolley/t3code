@@ -15,6 +15,7 @@ import * as IssueService from "./IssueService.ts";
 const HOST = "github.enterprise.test";
 const REPOSITORY = "acme/web";
 const ACCOUNT_ID = "account-1";
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 type MockResponse = string | { readonly stdout: string; readonly exitCode: number };
 
 function rawIssue(number: number, overrides: Readonly<Record<string, unknown>> = {}) {
@@ -89,10 +90,12 @@ function makeHarness(input: {
 }) {
   const responses = [...input.responses];
   const calls: Array<ReadonlyArray<string>> = [];
+  const stdins: Array<string | undefined> = [];
   const rateLimitRecords: Array<unknown> = [];
   const github = Layer.mock(GitHubCli.GitHubCli)({
     execute: (request) => {
       calls.push([...request.args]);
+      stdins.push(request.stdin);
       const response = responses.shift();
       return response === undefined
         ? Effect.die("unexpected GitHub API call")
@@ -130,7 +133,7 @@ function makeHarness(input: {
     observe: () => Effect.void,
   });
   const layer = Layer.mergeAll(github, verifier, rateLimits, budget);
-  return { layer, calls, rateLimitRecords };
+  return { layer, calls, stdins, rateLimitRecords };
 }
 
 function service(harness: ReturnType<typeof makeHarness>) {
@@ -309,6 +312,121 @@ it.effect("reconciles an uncertain closeout create by marker before retrying it"
     assert.equal(harness.calls.length, 3);
     assert.include(harness.calls[1]!.join(" "), "--method POST");
     assert.notInclude(harness.calls[2]!.join(" "), "--method POST");
+  }),
+);
+
+it.effect(
+  "creates issues with exact payloads and recovers a lost create response without duplicating",
+  () =>
+    Effect.gen(function* () {
+      const repositoryIdentity = { id: 123, node_id: "R_123", full_name: REPOSITORY };
+      const marker = "<!-- t3-issue-change:proposal:0 -->";
+      const created = {
+        ...rawIssue(7),
+        id: 456,
+        node_id: "I_456",
+        html_url: `https://${HOST}/${REPOSITORY}/issues/7`,
+        body: `Exact body\n\n${marker}`,
+      };
+      const harness = makeHarness({
+        responses: [
+          httpResponse(repositoryIdentity),
+          httpResponse([]),
+          httpResponse({ message: "response lost" }, {}, 500),
+          httpResponse(repositoryIdentity),
+          httpResponse([created]),
+        ],
+      });
+      const issues = yield* service(harness);
+      const input = {
+        ...listInput,
+        title: "Exact title",
+        body: "Exact body",
+        milestoneNumber: 2,
+        writeKey: "proposal:0",
+      };
+      assert.isTrue(Result.isFailure(yield* Effect.result(issues.createIssue(input))));
+      const recovered = yield* issues.createIssue(input);
+      assert.equal(recovered.issue.id, "456");
+      assert.equal(harness.calls.filter((call) => call.includes("POST")).length, 1);
+      const payload = yield* decodeJson(harness.stdins[2]!);
+      assert.deepEqual(payload, {
+        title: "Exact title",
+        body: `Exact body\n\n${marker}`,
+        milestone: 2,
+      });
+    }),
+);
+
+it.effect(
+  "writes body, milestone, state and native sub-issue relations through verified GitHub APIs",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ responses: Array.from({ length: 6 }, () => httpResponse({})) });
+      const issues = yield* service(harness);
+      const ref = { ...listInput, number: 7 };
+      const parent = {
+        ...ref,
+        repositoryId: "123",
+        id: "456",
+        nodeId: "I_456",
+        url: `https://${HOST}/${REPOSITORY}/issues/7`,
+        title: "Parent",
+      };
+      const child = { ...parent, number: 8, id: "789" };
+      yield* issues.updateBody({ ...ref, body: "Exact replacement\n" });
+      yield* issues.setMilestone({ ...ref, milestoneNumber: null });
+      yield* issues.setState({ ...ref, state: "closed" });
+      yield* issues.setState({ ...ref, state: "open" });
+      yield* issues.setSubIssue({ parent, child, action: "add" });
+      yield* issues.setSubIssue({ parent, child, action: "remove" });
+      const payloads = yield* Effect.forEach(harness.stdins, (stdin) => decodeJson(stdin!));
+      assert.deepEqual(payloads, [
+        { body: "Exact replacement\n" },
+        { milestone: null },
+        { state: "closed" },
+        { state: "open" },
+        { sub_issue_id: 789 },
+        { sub_issue_id: 789 },
+      ]);
+      assert.include(
+        harness.calls[4]!.join(" "),
+        "--method POST --input - repos/acme/web/issues/7/sub_issues",
+      );
+      assert.include(
+        harness.calls[5]!.join(" "),
+        "--method DELETE --input - repos/acme/web/issues/7/sub_issue",
+      );
+    }),
+);
+
+it.effect("issue writes surface permission failures and respect the shared rate limit", () =>
+  Effect.gen(function* () {
+    const denied = makeHarness({ responses: [httpResponse({ message: "Forbidden" }, {}, 403)] });
+    const deniedResult = yield* Effect.result(
+      (yield* service(denied)).updateBody({ ...listInput, number: 7, body: "New" }),
+    );
+    assert.isTrue(Result.isFailure(deniedResult));
+    if (Result.isFailure(deniedResult))
+      assert.include(deniedResult.failure.message, "Issues write permission");
+    const limited = makeHarness({
+      responses: [
+        httpResponse(
+          { message: "rate limit" },
+          { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "2000000000" },
+          403,
+        ),
+      ],
+    });
+    const limitedResult = yield* Effect.result(
+      (yield* service(limited)).setState({ ...listInput, number: 7, state: "closed" }),
+    );
+    assert.isTrue(Result.isFailure(limitedResult));
+    if (Result.isFailure(limitedResult)) {
+      assert.equal(limitedResult.failure.code, "rate-limited");
+      assert.isDefined(limitedResult.failure.retryAt);
+    }
+    assert.equal(limited.rateLimitRecords.length, 1);
   }),
 );
 
