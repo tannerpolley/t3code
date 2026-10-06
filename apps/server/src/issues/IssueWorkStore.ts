@@ -242,9 +242,13 @@ export const layer = Layer.effect(
             active: number;
             suspended: number;
             draining: number;
+            lineage_valid: number;
           }>`
           SELECT owner.paused, owner.worker_limit,
             COALESCE(json_extract(root.payload_json, '$.repositoryOrchestration.handoff.status') = 'draining', 0) AS draining,
+            EXISTS (SELECT 1 FROM orchestration_v2_projection_threads candidate
+              WHERE candidate.thread_id = ${threadId}
+                AND json_extract(candidate.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id) AS lineage_valid,
             (SELECT count(*) FROM orchestration_v2_projection_issue_work work
               JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
               WHERE work.host = ${issue.host} AND work.repository_id = ${issue.repositoryId}
@@ -273,6 +277,7 @@ export const layer = Layer.effect(
           const row = rows[0];
           return (
             row !== undefined &&
+            row.lineage_valid === 1 &&
             (row.paused === 0 || row.draining === 1) &&
             row.suspended === 0 &&
             row.active < row.worker_limit

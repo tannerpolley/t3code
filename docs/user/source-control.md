@@ -177,7 +177,8 @@ for the issue's project in a worktree on a branch named after the issue, with an
 Use **Open on GitHub** to comment or make other changes.
 
 To run issue work, open an issue, choose **Start agent**, then a model role and a
-repository workspace. **Start agent on issue…** in the command palette opens the current
+repository workspace. Use a model role with an available Codex or Claude target.
+**Start agent on issue…** in the command palette opens the current
 repository’s issues beside the thread, or the Issues page when there is no current repository.
 Work goes to the repository's existing orchestrator, which keeps its issue workers linked to GitHub.
 Later starts use that orchestrator's project. You can choose a new worktree or that project's checkout
