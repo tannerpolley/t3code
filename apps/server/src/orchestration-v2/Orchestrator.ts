@@ -7789,6 +7789,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   },
                 }
               : {}),
+            ...(command.respondedBy === undefined ? {} : { respondedBy: command.respondedBy }),
             status: resolvedNodeStatus,
             completedAt: now,
             updatedAt: now,

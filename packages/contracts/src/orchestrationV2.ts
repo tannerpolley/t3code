@@ -1295,6 +1295,10 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
+/** Who answered a runtime request when it was not the user: only Don't ask mode today. */
+export const RuntimeRequestResponder = Schema.Literal("dont_ask_mode");
+export type RuntimeRequestResponder = typeof RuntimeRequestResponder.Type;
+
 const OrchestrationV2TurnItemBaseFields = {
   toolNonExecutionKind: Schema.optional(Schema.String),
   toolSurface: Schema.optional(ToolActivitySurface),
@@ -1388,6 +1392,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     questions: Schema.Array(OrchestrationV2UserInputQuestion),
     questionAnswer: Schema.optional(UserInputAttachmentAnswerPayload),
     responseMode: Schema.optional(Schema.Literal("message")),
+    respondedBy: Schema.optional(RuntimeRequestResponder),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1432,6 +1437,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    respondedBy: Schema.optional(RuntimeRequestResponder),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2138,6 +2144,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     questions: Schema.Array(OrchestrationV2UserInputQuestion),
     questionAnswer: Schema.optional(UserInputAttachmentAnswerPayload),
     responseMode: Schema.optional(Schema.Literal("message")),
+    respondedBy: Schema.optional(RuntimeRequestResponder),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2182,6 +2189,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     appName: Schema.optional(Schema.String),
     /** Approval choices advertised by the provider (#8058). */
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    respondedBy: Schema.optional(RuntimeRequestResponder),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2933,6 +2941,7 @@ export const OrchestrationV2Command = Schema.Union([
     decision: Schema.optional(ProviderApprovalDecision),
     answers: Schema.optional(ProviderUserInputAnswers),
     attachmentsByQuestionId: Schema.optional(UserInputAttachments),
+    respondedBy: Schema.optional(RuntimeRequestResponder),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.user-input.dismiss"),

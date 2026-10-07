@@ -1421,6 +1421,8 @@ export const ServerSettings = Schema.Struct({
   issueUpkeepRequiresApproval: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /** User-only: the server answers every pending agent question and approval while on. */
+  dontAskMode: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
    * Ordered defaults for delegated work, shown to orchestrating agents in
    * new sessions and turns. Server-side because the prompt is built here.
@@ -1827,6 +1829,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 
 export const ServerSettingsPatch = Schema.Struct({
   issueUpkeepRequiresApproval: Schema.optionalKey(Schema.Boolean),
+  dontAskMode: Schema.optionalKey(Schema.Boolean),
   // Whole-list replacement: roles are ordered and edited as one list.
   modelRoles: Schema.optionalKey(ModelRoles),
   worktreeCleanup: Schema.optionalKey(
