@@ -57,6 +57,8 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: () => Effect.succeed(caller),
+        // The launch guard reads only whether the caller is a managed issue session.
+        getThreadRecords: () => Effect.succeed({ thread: caller } as never),
       }),
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (input) => {
@@ -123,6 +125,8 @@ it.effect("launches a scratch thread into the Scratch project", () =>
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: () => Effect.succeed(caller),
+        // The launch guard reads only whether the caller is a managed issue session.
+        getThreadRecords: () => Effect.succeed({ thread: caller } as never),
       }),
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (input) => {

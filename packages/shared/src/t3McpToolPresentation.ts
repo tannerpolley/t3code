@@ -59,7 +59,8 @@ export type T3McpToolSummaryAction =
   | "watch-pr"
   | "unwatch-pr"
   | "browser"
-  | "device";
+  | "device"
+  | "issue-work";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -111,6 +112,23 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "capabilities",
   ),
   delegate_task: tool(["Delegate", "Delegating", "Delegated", "a child task"], "delegate"),
+  work_through_milestone: tool(["Start", "Starting", "Started", "milestone work"], "issue-work"),
+  get_repository_orchestration: tool(
+    ["Check", "Checking", "Checked", "repository orchestration"],
+    "issue-work",
+  ),
+  set_repository_work_paused: tool(
+    ["Update", "Updating", "Updated", "repository pause state"],
+    "issue-work",
+  ),
+  request_repository_handoff: tool(
+    ["Request", "Requesting", "Requested", "an orchestrator handoff"],
+    "issue-work",
+  ),
+  propose_issue_change: tool(
+    ["Propose", "Proposing", "Proposed", "an issue change"],
+    "issue-work",
+  ),
   task_status: tool(["Get", "Getting", "Got", "delegated task status"], "task-status"),
   task_cancel: tool(
     ["Cancel", "Canceling", "Requested cancellation of", "delegated task"],
