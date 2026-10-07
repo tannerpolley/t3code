@@ -1,9 +1,22 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, CircleDotIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ChartNoAxesColumnIcon,
+  CircleDotIcon,
+  MessageCircleOffIcon,
+  MessageCircleQuestionMarkIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
-import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  useEnvironmentIdentificationMode,
+  usePrimarySettings,
+  usePrimarySettingsAvailable,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -171,6 +184,44 @@ function SidebarUtilityItem({
   );
 }
 
+/** The primary server's Don't ask mode: while on, it answers every agent question and approval. */
+function SidebarDontAskModeItem() {
+  const available = usePrimarySettingsAvailable();
+  const on = usePrimarySettings((settings) => settings.dontAskMode);
+  const updateSettings = useUpdatePrimarySettings();
+  if (!available) return null;
+  const label = on ? "Don't ask mode is on" : "Don't ask mode is off";
+  return (
+    <SidebarMenuItem className="ms-auto shrink-0">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarMenuButton
+              aria-label={label}
+              aria-pressed={on}
+              isActive={on}
+              onClick={() => updateSettings({ dontAskMode: !on })}
+              size="icon"
+            >
+              {on ? <MessageCircleOffIcon /> : <MessageCircleQuestionMarkIcon />}
+            </SidebarMenuButton>
+          }
+        />
+        <TooltipPopup side="top" className="max-w-64">
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium text-foreground">{label}</span>
+            <span className="text-muted-foreground">
+              {on
+                ? "Agents' questions get their recommended option and approvals are granted. Click when you're back."
+                : "Turn on when you step away: agents' questions get their recommended option and approvals are granted."}
+            </span>
+          </div>
+        </TooltipPopup>
+      </Tooltip>
+    </SidebarMenuItem>
+  );
+}
+
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
@@ -243,10 +294,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             onClick={handleUsageClick}
           />
           <SidebarUsageItem />
-          {/* Issues sits at the far right, so it never shifts the buttons before it. */}
+          {/* Don't ask and Issues sit at the far right, so they never shift the buttons before them. */}
+          <SidebarDontAskModeItem />
           {issuesSupported ? (
             <SidebarUtilityItem
-              className="ms-auto"
               icon={<CircleDotIcon />}
               label="Issues"
               onClick={handleIssuesClick}

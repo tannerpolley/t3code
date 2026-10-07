@@ -100,10 +100,11 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
     `;
   });
 
-it.effect("agents cannot change issue approval policy through environment preferences", () =>
+it.effect("agents cannot change user-only policies through environment preferences", () =>
   Effect.gen(function* () {
     const decoded = yield* decodeAgentPreferences({
       issueUpkeepRequiresApproval: false,
+      dontAskMode: true,
       enableProviderUpdateChecks: false,
     });
     assert.deepEqual(decoded, { enableProviderUpdateChecks: false });

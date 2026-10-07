@@ -2,6 +2,7 @@ import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EventStoreCompaction from "./EventStoreCompaction.ts";
+import * as DontAskModeWorker from "./DontAskModeWorker.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ThreadTitleRefreshWorker from "./ThreadTitleRefreshWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -345,6 +346,9 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   scheduledTaskProvided,
   UsageLimitRecoveryWorker.workerLive.pipe(
     Layer.provide(Layer.mergeAll(projectionStoreLayer, threadManagementProvided)),
+  ),
+  DontAskModeWorker.workerLive.pipe(
+    Layer.provide(Layer.mergeAll(orchestratorProvided, projectionStoreLayer, eventSinkProvided)),
   ),
   ThreadTitleRefreshWorker.workerLive.pipe(
     Layer.provide(Layer.merge(projectionStoreLayer, threadManagementProvided)),

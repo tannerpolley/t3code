@@ -136,7 +136,8 @@ export type ProjectionRecoveryKind =
   | "queued-runs"
   | "runtime"
   | "subagent-results"
-  | "delegated-completions";
+  | "delegated-completions"
+  | "pending-requests";
 
 /** Persisted state needed for limit recovery, without transcript or fork history. */
 export type ProjectionLimitRecoveryCandidate = Pick<
@@ -547,6 +548,8 @@ function needsRecovery(
       );
     case "delegated-completions":
       return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
+    case "pending-requests":
+      return projection.runtimeRequests.some((request) => request.status === "pending");
     case "subagent-results": {
       const parentThreadId = projection.thread.lineage.parentThreadId;
       const latestRun = projection.runs.at(-1);
@@ -3747,6 +3750,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     )
                   )
                   ELSE 0 END
+              `;
+            case "pending-requests":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_runtime_requests
+                WHERE status = 'pending'
               `;
             case "runtime":
               return sql`
