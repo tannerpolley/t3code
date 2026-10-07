@@ -208,6 +208,7 @@ import {
   shouldPreserveAssistantLineBreaks,
   toolGroupAction,
   workEntryDisplayLabel,
+  workEntryDontAskModeLabel,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   worktreeSetupAgentStarted,
@@ -3610,6 +3611,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     : "";
   const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
+  const dontAskModeLabel = workEntryDontAskModeLabel(row.entry);
 
   return (
     <button
@@ -3621,12 +3623,18 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     >
       <LiveActivityRow
         label={
-          row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
+          dontAskModeLabel ||
+          (row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer)) ? (
             <span className="flex min-w-0 gap-1.5">
               <span className="min-w-0 truncate">{label}</span>
-              <span className="min-w-0 truncate text-foreground">
-                {getQuestionAnswerPreview(row.entry.questionAnswer)}
-              </span>
+              {row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
+                <span className="min-w-0 truncate text-foreground">
+                  {getQuestionAnswerPreview(row.entry.questionAnswer)}
+                </span>
+              ) : null}
+              {dontAskModeLabel ? (
+                <span className="shrink-0 text-muted-foreground">{dontAskModeLabel}</span>
+              ) : null}
             </span>
           ) : row.entry.itemType === "reasoning" ? (
             <ReactMarkdown
@@ -5108,6 +5116,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
       : null;
+  const dontAskModeLabel = workEntryDontAskModeLabel(workEntry);
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const payload = workEntry.structuredPayload;
   const skill =
@@ -5263,6 +5272,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               >
                 {answerPreview}
               </span>
+            ) : null}
+            {dontAskModeLabel ? (
+              <span className="shrink-0 text-muted-foreground">{dontAskModeLabel}</span>
             ) : null}
           </p>
         </div>

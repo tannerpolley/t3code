@@ -45,7 +45,6 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/unstable/ai";
-import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
@@ -69,6 +68,7 @@ import {
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
+import * as DontAskModeWorker from "../DontAskModeWorker.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
@@ -1467,7 +1467,10 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         }
         const requestEvent = yield* runtime.events
           .pipe(
-            Stream.filter((event) => event.type === "runtime_request.updated"),
+            Stream.filter(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+            ),
             Stream.runHead,
           )
           .pipe(Effect.forkScoped);
@@ -1483,14 +1486,17 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         ).pipe(Effect.forkScoped);
         const event = yield* Fiber.join(requestEvent);
         assert.isTrue(Option.isSome(event));
-        if (Option.isNone(event) || event.value.type !== "runtime_request.updated") return;
-        const question = formatClaudeResumeCompactionQuestion({
-          ageMinutes: 90,
-          estimatedTokens: 120000,
-        });
+        if (
+          Option.isNone(event) ||
+          event.value.type !== "turn_item.updated" ||
+          event.value.turnItem.type !== "user_input_request"
+        ) {
+          return;
+        }
+        // Don't ask mode's answer: the first option's label plus its note.
         yield* runtime.respondToRuntimeRequest({
-          requestId: event.value.runtimeRequest.id,
-          answers: { [question]: "Compact and continue" },
+          requestId: event.value.turnItem.requestId,
+          answers: DontAskModeWorker.dontAskAnswers(event.value.turnItem.questions),
         });
         assert.deepEqual(yield* Fiber.join(dialog), { behavior: "completed", result: "compact" });
 

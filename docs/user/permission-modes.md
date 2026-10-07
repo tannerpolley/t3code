@@ -24,11 +24,13 @@ Turn on **Don't ask mode** with the speech-bubble switch at the bottom left of t
 step away. While it is on, the server answers for you the moment an agent waits: it approves each
 request once, and answers each question with its first option (the agent's recommendation) plus a
 note asking the agent to list the decisions it made. Switching it on also answers everything
-already waiting in every thread, including delegated ones. Answers it gave are marked **Don't ask
-mode** in the conversation. Switch it off to have agents wait for you again.
+already waiting in every thread, including delegated ones. Answers it gave are marked **Answered by
+Don't ask mode** or **Approved by Don't ask mode** in the conversation. Switch it off to have agents
+wait for you again.
 
-The switch belongs to the server you connect to, so it keeps working with no client open and stays
-on after a restart. Agents cannot change it.
+The switch belongs to your primary environment's server, so it keeps working with no client open
+and stays on after a restart. Requests left waiting across a server restart are handled the way a
+restart normally handles them, not by Don't ask mode. Agents cannot change it.
 
 ## Provider differences
 
