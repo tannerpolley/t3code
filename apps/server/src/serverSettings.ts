@@ -252,6 +252,9 @@ export class ServerSettingsService extends Context.Service<
     /** Read the current settings. */
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /** Read `dontAskMode` alone, without materializing provider secrets. */
+    readonly getDontAskMode: Effect.Effect<boolean, ServerSettingsError>;
+
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
       patch: ServerSettingsPatch,
@@ -317,6 +320,7 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       start: Effect.void,
       ready: Effect.void,
       getSettings,
+      getDontAskMode: Ref.get(currentSettingsRef).pipe(Effect.map((s) => s.dontAskMode)),
       updateSettings: (patch) =>
         updateTestSettings((currentSettings) =>
           Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
@@ -1287,6 +1291,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
+    getDontAskMode: getSettingsFromCache.pipe(Effect.map((settings) => settings.dontAskMode)),
     updateSettings: (patch) =>
       updateAndPersistSettings((current) =>
         Effect.succeed(applyServerSettingsPatch(current, patch)),

@@ -2,6 +2,7 @@ import {
   CommandId,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2UserInputQuestion,
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -19,10 +20,29 @@ export const DONT_ASK_NOTE =
   "The user is away (Don't ask mode). Choose the option you'd recommend, continue, and list the decisions you made in your final message.";
 
 /**
- * The answer Don't ask mode gives one request: approve once, or pick each
- * question's first option (the agent's recommendation by convention) plus the
- * note. Null when the request is not pending, cannot be answered, or its turn
- * item has not been committed yet (adapters commit request and item separately).
+ * Each question's first option (the agent's recommendation by convention),
+ * then a blank line and the note. Dialogs that decode a label read the text
+ * before the first blank line.
+ */
+export function dontAskAnswers(
+  questions: ReadonlyArray<OrchestrationV2UserInputQuestion>,
+): Record<string, string> {
+  return Object.fromEntries(
+    questions.map((question) => {
+      const first = question.options[0];
+      return [
+        question.id,
+        first === undefined ? DONT_ASK_NOTE : `${first.value ?? first.label}\n\n${DONT_ASK_NOTE}`,
+      ];
+    }),
+  );
+}
+
+/**
+ * The answer Don't ask mode gives one request: approve once, or answer each
+ * question with `dontAskAnswers`. Null when the request is not pending, cannot
+ * be answered, or its turn item has not been committed yet (adapters commit
+ * request and item separately).
  */
 export function dontAskResponse(
   threadId: ThreadId,
@@ -41,20 +61,7 @@ export function dontAskResponse(
   } as const;
   if (request.kind === "user_input") {
     if (item?.type !== "user_input_request") return null;
-    return {
-      ...command,
-      answers: Object.fromEntries(
-        item.questions.map((question) => {
-          const first = question.options[0];
-          return [
-            question.id,
-            first === undefined
-              ? DONT_ASK_NOTE
-              : `${first.value ?? first.label}\n\n${DONT_ASK_NOTE}`,
-          ];
-        }),
-      ),
-    };
+    return { ...command, answers: dontAskAnswers(item.questions) };
   }
   if (request.kind === "dynamic_tool_call" || request.kind === "auth_refresh") return null;
   if (item?.type !== "approval_request") return null;
@@ -67,15 +74,14 @@ export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const settings = yield* ServerSettings.ServerSettingsService;
 
-  const isOn = settings.getSettings.pipe(
-    Effect.map((current) => current.dontAskMode),
-    Effect.orElseSucceed(() => false),
-  );
+  const isOn = settings.getDontAskMode.pipe(Effect.orElseSucceed(() => false));
   const respond = (threadId: ThreadId, requestId: RuntimeRequestId) =>
     projections.getRuntimeResponseContext(threadId, requestId).pipe(
       Effect.flatMap((context) => {
         const command = dontAskResponse(threadId, context);
-        return command === null ? Effect.void : orchestrator.dispatch(command);
+        // Re-read the setting right before each answer, so switching off stops
+        // a running sweep and a sweep left over from an earlier switch-on.
+        return command === null ? Effect.void : Effect.when(orchestrator.dispatch(command), isOn);
       }),
       Effect.catchCause((cause) =>
         Effect.logWarning("Don't ask mode could not answer a request", {
@@ -119,7 +125,9 @@ export const make = Effect.gen(function* () {
 });
 
 // Reacts to each committed request or request item, and sweeps whenever the
-// setting turns on (including at startup), so waiting agents resume at once.
+// setting turns on, so waiting agents resume at once. The startup sweep only
+// finds requests that survive a restart (message-answered questions); native
+// provider requests left waiting are expired by runtime recovery instead.
 export const workerLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const { isOn, handle, sweep } = yield* make;

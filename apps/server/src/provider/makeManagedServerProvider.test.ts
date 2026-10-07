@@ -299,6 +299,7 @@ describe("makeManagedServerProvider", () => {
             start: Effect.void,
             ready: Effect.void,
             getSettings: Ref.get(serverSettingsRef),
+            getDontAskMode: Effect.succeed(false),
             updateSettings: () => Effect.die(new Error("unused in this test")),
             updateProviderInstance: () => Effect.die(new Error("unused in this test")),
             withSettingsSnapshot: (use) => Ref.get(serverSettingsRef).pipe(Effect.flatMap(use)),

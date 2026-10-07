@@ -13,7 +13,9 @@ import {
   NodeId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
@@ -255,5 +257,47 @@ it.effect("switching off leaves new requests waiting for the user", () =>
       (yield* projections.getRuntimeRequest(threadId, approval.requestId))?.status,
       "pending",
     );
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("switching off stops a sweep that is already answering", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* createThread;
+    const requests = [
+      yield* commitRequest("question", 1, "user_input"),
+      yield* commitRequest("approval", 2, "command"),
+      yield* commitRequest("approval-2", 3, "command"),
+    ];
+    // Holds the sweep right after its first answer.
+    const answered = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    const { sweep } = yield* DontAskModeWorker.make.pipe(
+      Effect.provideService(Orchestrator.OrchestratorV2, {
+        ...orchestrator,
+        dispatch: (command) =>
+          orchestrator
+            .dispatch(command)
+            .pipe(
+              Effect.tap(() =>
+                Deferred.succeed(answered, undefined).pipe(
+                  Effect.flatMap((first) => (first ? Deferred.await(resume) : Effect.void)),
+                ),
+              ),
+            ),
+      }),
+    );
+    yield* setDontAskMode(true);
+    const sweeping = yield* Effect.forkChild(sweep);
+    yield* Deferred.await(answered);
+    yield* setDontAskMode(false);
+    yield* Deferred.succeed(resume, undefined);
+    yield* Fiber.join(sweeping);
+
+    const statuses = yield* Effect.forEach(requests, ({ requestId }) =>
+      projections.getRuntimeRequest(threadId, requestId).pipe(Effect.map((r) => r?.status)),
+    );
+    assert.deepEqual([...statuses].sort(), ["pending", "pending", "resolved"]);
   }).pipe(Effect.provide(testLayer)),
 );

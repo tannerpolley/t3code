@@ -7073,10 +7073,12 @@ export function makeClaudeAdapterV2(
                 result.updatedInput === undefined
                   ? undefined
                   : Reflect.get(result.updatedInput, "answers");
-              const selection =
+              const answer =
                 typeof answers === "object" && answers !== null
                   ? Reflect.get(answers, question)
                   : undefined;
+              // Don't ask mode sends the label, a blank line, then its note.
+              const selection = typeof answer === "string" ? answer.split("\n\n", 1)[0] : answer;
               return {
                 behavior: "completed" as const,
                 result:

@@ -518,20 +518,14 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "approval_request":
       return {
         ...common,
-        label:
-          item.respondedBy === "dont_ask_mode"
-            ? "Approved by Don't ask mode"
-            : (title ?? "Approval requested"),
+        label: title ?? "Approval requested",
         detail: item.prompt ?? item.requestKind,
         toolData: item,
       };
     case "user_input_request":
       return {
         ...common,
-        label:
-          item.respondedBy === "dont_ask_mode"
-            ? "Answered by Don't ask mode"
-            : (title ?? (item.questionAnswer ? "Answered questions" : "Input requested")),
+        label: title ?? (item.questionAnswer ? "Answered questions" : "Input requested"),
         ...(item.questionAnswer ? { questionAnswer: item.questionAnswer } : {}),
         toolData: item,
       };

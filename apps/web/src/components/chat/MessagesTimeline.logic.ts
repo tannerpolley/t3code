@@ -164,6 +164,18 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
 }
 
+/** Marks a question or approval that Don't ask mode answered for the user. */
+export function workEntryDontAskModeLabel(entry: Pick<WorkLogEntry, "projectedItem">) {
+  const item = entry.projectedItem?.item;
+  if (item?.type === "approval_request" && item.respondedBy === "dont_ask_mode") {
+    return "Approved by Don't ask mode";
+  }
+  if (item?.type === "user_input_request" && item.respondedBy === "dont_ask_mode") {
+    return "Answered by Don't ask mode";
+  }
+  return null;
+}
+
 /** Inspectable read-file output is the path when we have one, otherwise nothing. */
 export function workEntryReadOutput(
   entry: Pick<
