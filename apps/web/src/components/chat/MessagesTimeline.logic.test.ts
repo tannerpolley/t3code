@@ -43,6 +43,7 @@ import {
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
   workEntryDisplayLabel,
+  workEntryResponderLabel,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
 } from "./MessagesTimeline.logic";
@@ -5486,4 +5487,76 @@ describe("shouldCollapseUserMessage", () => {
     expect(text.length).toBeGreaterThan(600);
     expect(shouldCollapseUserMessage(text)).toBe(false);
   });
+});
+
+it("attributes answered timeline requests to the orchestrator and preserves Don't ask mode labels", () => {
+  const fixture = makeStreamingTimelineFixture();
+  const source = fixture.visibleTurnItems[0]!;
+  const common = {
+    ...source.item,
+    threadId: fixture.threadId,
+    runId: fixture.runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+  };
+  const items: OrchestrationV2TurnItem[] = [
+    {
+      ...common,
+      id: TurnItemId.make("parent-question"),
+      type: "user_input_request",
+      requestId: RuntimeRequestId.make("parent-question"),
+      questions: [],
+      status: "completed",
+      respondedBy: "orchestrator",
+    },
+    {
+      ...common,
+      id: TurnItemId.make("parent-approval"),
+      type: "approval_request",
+      requestId: RuntimeRequestId.make("parent-approval"),
+      requestKind: "command",
+      status: "completed",
+      respondedBy: "orchestrator",
+    },
+    {
+      ...common,
+      id: TurnItemId.make("parent-decline"),
+      type: "approval_request",
+      requestId: RuntimeRequestId.make("parent-decline"),
+      requestKind: "command",
+      status: "cancelled",
+      respondedBy: "orchestrator",
+    },
+    {
+      ...common,
+      id: TurnItemId.make("automatic"),
+      type: "user_input_request",
+      requestId: RuntimeRequestId.make("automatic"),
+      questions: [],
+      status: "completed",
+      respondedBy: "dont_ask_mode",
+    },
+  ];
+  const entries = deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: items.map((item, position) => ({
+      ...source,
+      item,
+      position,
+      sourceItemId: item.id,
+    })),
+    optimisticMessages: [],
+  });
+  expect(
+    entries.flatMap((entry) =>
+      entry.kind === "work" ? [workEntryResponderLabel(entry.entry)] : [],
+    ),
+  ).toEqual([
+    "Answered by orchestrator",
+    "Approved by orchestrator",
+    "Declined by orchestrator",
+    "Answered by Don't ask mode",
+  ]);
 });

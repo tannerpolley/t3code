@@ -12,6 +12,8 @@ import {
   RuntimeRequestId,
   OrchestrationV2UserInputQuestions,
   ProviderUserInputAnswers,
+  ProviderRequestKind,
+  ProviderApprovalOption,
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
@@ -152,7 +154,7 @@ const pendingRequest = Schema.Struct({
 });
 const RequestUserInputTool = Tool.make("t3_request_user_input", {
   description:
-    "Ask the user 1–3 questions in the calling thread's pending question card and return their exact answers. " +
+    "Ask 1–3 questions and return their exact answers. Delegated child questions go to the orchestrator first. " +
     "Use an empty options array for free text; set multiSelect=true for multiple selections. " +
     "Custom text is allowed by default. This never approves a permission request.",
   parameters: Schema.Struct({ questions: OrchestrationV2UserInputQuestions }),
@@ -165,8 +167,7 @@ const RequestUserInputTool = Tool.make("t3_request_user_input", {
   .annotate(Tool.Destructive, false);
 const PendingRequestListTool = Tool.make("t3_pending_request_list", {
   ...commandTool,
-  description:
-    "List pending user questions in a thread. Omit threadId for this thread. Approval requests are not included.",
+  description: "List pending questions and approvals in a thread. Omit threadId for this thread.",
   parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
   success: Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
 })
@@ -175,17 +176,29 @@ const PendingRequestListTool = Tool.make("t3_pending_request_list", {
 const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
   ...commandTool,
   description:
-    "Read a pending user question. Answer with t3_pending_request_respond; existing live or message response handling is used.",
+    "Read a pending question or approval, including its options or command/file detail. Respond with t3_pending_request_respond.",
   parameters: Schema.Struct(requestTarget),
-  success: pendingRequest,
+  success: Schema.Union([
+    pendingRequest,
+    Schema.Struct({
+      requestId: RuntimeRequestId,
+      requestKind: ProviderRequestKind,
+      prompt: Schema.optional(Schema.String),
+      options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    }),
+  ]),
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
   ...commandTool,
   description:
-    "Answer a pending user-input request using the existing runtime response command. This cannot approve a permission request.",
-  parameters: Schema.Struct({ ...requestTarget, answers: ProviderUserInputAnswers }),
+    "Answer a pending question with answers, or accept/decline an approval with decision. An agent may respond to its own questions or its delegated descendants; approvals require a delegated descendant.",
+  parameters: Schema.Struct({
+    ...requestTarget,
+    answers: Schema.optional(ProviderUserInputAnswers),
+    decision: Schema.optional(Schema.Literals(["accept", "decline"])),
+  }),
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);

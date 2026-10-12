@@ -221,7 +221,7 @@ import {
   threadReadTargetTitle,
   toolGroupAction,
   workEntryDisplayLabel,
-  workEntryDontAskModeLabel,
+  workEntryResponderLabel,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
   worktreeSetupAgentStarted,
@@ -4049,7 +4049,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
   const threadLabel = threadReadLabel(label, threadTarget);
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
-  const dontAskModeLabel = workEntryDontAskModeLabel(row.entry);
+  const responderLabel = workEntryResponderLabel(row.entry);
   // The expanded group already lists the thought, so the preview steps aside.
   const thoughtLine = row.thought && !row.expanded ? liveThoughtLine(row.thought.detail ?? "") : "";
   // While the thought itself streams, the status line just says Thinking.
@@ -4096,7 +4096,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             ) : (
               "Thought"
             )
-          ) : dontAskModeLabel ||
+          ) : responderLabel ||
             (row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer)) ? (
             <span className="flex min-w-0 gap-1.5">
               <span className="min-w-0 truncate">{label}</span>
@@ -4105,8 +4105,8 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
                   {getQuestionAnswerPreview(row.entry.questionAnswer)}
                 </span>
               ) : null}
-              {dontAskModeLabel ? (
-                <span className="shrink-0 text-muted-foreground">{dontAskModeLabel}</span>
+              {responderLabel ? (
+                <span className="shrink-0 text-muted-foreground">{responderLabel}</span>
               ) : null}
             </span>
           ) : row.entry.itemType === "reasoning" ? (
@@ -5599,7 +5599,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
       : null;
-  const dontAskModeLabel = workEntryDontAskModeLabel(workEntry);
+  const responderLabel = workEntryResponderLabel(workEntry);
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const payload = workEntry.structuredPayload;
   const skill =
@@ -5765,8 +5765,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 {answerPreview}
               </span>
             ) : null}
-            {dontAskModeLabel ? (
-              <span className="shrink-0 text-muted-foreground">{dontAskModeLabel}</span>
+            {responderLabel ? (
+              <span className="shrink-0 text-muted-foreground">{responderLabel}</span>
             ) : null}
           </p>
         </div>

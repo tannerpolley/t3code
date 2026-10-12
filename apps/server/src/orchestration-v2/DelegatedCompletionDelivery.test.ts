@@ -13,6 +13,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderSessionId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -38,6 +39,8 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
@@ -1783,7 +1786,10 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
 
 const seedChildWaitingOnUser = (input: {
   readonly name: string;
-  readonly requestKind: "user_input" | "auth_refresh";
+  readonly requestKind: "user_input" | "auth_refresh" | "command";
+  readonly parentState?: "archived" | "deleted" | "missing";
+  readonly origin?: "app_owned" | "provider_native";
+  readonly legacyUnrouted?: boolean;
   /** settled_only with the parent run active is a blocking delegate_task wait. */
   readonly completionWake?: "always" | "settled_only";
 }) =>
@@ -1808,96 +1814,142 @@ const seedChildWaitingOnUser = (input: {
     });
     const parent = yield* orchestrator.getThreadProjection(parentThreadId);
     const { completionDelivery: _completionDelivery, ...task } = parent.subagents[0]!;
+    const seedEvents: OrchestrationV2DomainEvent[] = [
+      {
+        id: EventId.make(`event:child-question-${input.name}-task`),
+        type: "subagent.updated",
+        threadId: parentThreadId,
+        runId,
+        nodeId: taskId,
+        occurredAt: now,
+        payload: {
+          ...task,
+          origin: input.origin ?? "app_owned",
+          childThreadId,
+          completionWake: input.completionWake ?? "always",
+          status: "running",
+          result: null,
+          completedAt: null,
+        },
+      },
+      {
+        id: EventId.make(`event:child-question-${input.name}-thread`),
+        type: "thread.created",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: {
+          ...parent.thread,
+          id: childThreadId,
+          title: "Review the parser",
+          lineage: {
+            parentThreadId:
+              input.parentState === "missing"
+                ? ThreadId.make("missing-orchestrator")
+                : parentThreadId,
+            relationshipToParent: "subagent",
+            rootThreadId: parentThreadId,
+          },
+          forkedFrom: { type: "node", nodeId: taskId },
+        },
+      },
+      {
+        id: EventId.make(`event:child-question-${input.name}-request`),
+        type: "runtime-request.updated",
+        threadId: childThreadId,
+        nodeId: requestNodeId,
+        occurredAt: now,
+        payload: {
+          id: requestId,
+          nodeId: requestNodeId,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: input.requestKind,
+          status: "pending",
+          responseCapability: {
+            type: "app_owned",
+            providerSessionId: ProviderSessionId.make("provider-session:question-test"),
+          },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      },
+      {
+        id: EventId.make(`event:child-question-${input.name}-item`),
+        type: "turn-item.updated",
+        threadId: childThreadId,
+        nodeId: requestNodeId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`item:child-question-${input.name}`),
+          threadId: childThreadId,
+          runId: null,
+          nodeId: requestNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          ...(input.requestKind === "command"
+            ? {
+                type: "approval_request" as const,
+                requestId,
+                requestKind: "command" as const,
+                prompt: "cat /tmp/requested-file",
+              }
+            : {
+                type: "user_input_request" as const,
+                requestId,
+                questions: [
+                  {
+                    id: "q1",
+                    header: "Scope",
+                    question: "Should I also fix the lexer?",
+                    options: [
+                      { label: "Yes", description: "Fix both parser and lexer" },
+                      { label: "No", description: "Keep the lexer unchanged" },
+                    ],
+                  },
+                ],
+              }),
+        },
+      },
+    ];
+    if (input.legacyUnrouted) {
+      yield* sink.write({
+        commandId: CommandId.make(`command:runtime-reconcile:legacy-child:${input.name}`),
+        events: seedEvents,
+      });
+      return { parentThreadId, childThreadId, requestId, projectId: parent.thread.projectId };
+    }
+    yield* sink.write({
+      commandId: CommandId.make(`command:runtime-reconcile:seed-child:${input.name}`),
+      events: seedEvents.slice(0, 2),
+    });
+    if (input.parentState !== undefined && input.parentState !== "missing")
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`event:parent-state:${input.name}`),
+            type: "thread.metadata-updated",
+            threadId: parentThreadId,
+            occurredAt: now,
+            payload: {
+              ...parent.thread,
+              ...(input.parentState === "archived" ? { archivedAt: now } : { deletedAt: now }),
+            },
+          },
+        ],
+      });
     yield* sink.write({
       commandId: CommandId.make(`command:runtime-reconcile:seed-child-question:${input.name}`),
-      events: [
-        {
-          id: EventId.make(`event:child-question-${input.name}-task`),
-          type: "subagent.updated",
-          threadId: parentThreadId,
-          runId,
-          nodeId: taskId,
-          occurredAt: now,
-          payload: {
-            ...task,
-            childThreadId,
-            completionWake: input.completionWake ?? "always",
-            status: "running",
-            result: null,
-            completedAt: null,
-          },
-        },
-        {
-          id: EventId.make(`event:child-question-${input.name}-thread`),
-          type: "thread.created",
-          threadId: childThreadId,
-          occurredAt: now,
-          payload: {
-            ...parent.thread,
-            id: childThreadId,
-            title: "Review the parser",
-            lineage: {
-              parentThreadId,
-              relationshipToParent: "subagent",
-              rootThreadId: parentThreadId,
-            },
-            forkedFrom: { type: "node", nodeId: taskId },
-          },
-        },
-        {
-          id: EventId.make(`event:child-question-${input.name}-request`),
-          type: "runtime-request.updated",
-          threadId: childThreadId,
-          nodeId: requestNodeId,
-          occurredAt: now,
-          payload: {
-            id: requestId,
-            nodeId: requestNodeId,
-            providerTurnId: null,
-            nativeRequestRef: null,
-            kind: input.requestKind,
-            status: "pending",
-            responseCapability: { type: "message" },
-            createdAt: now,
-            resolvedAt: null,
-          },
-        },
-        {
-          id: EventId.make(`event:child-question-${input.name}-item`),
-          type: "turn-item.updated",
-          threadId: childThreadId,
-          nodeId: requestNodeId,
-          occurredAt: now,
-          payload: {
-            id: TurnItemId.make(`item:child-question-${input.name}`),
-            threadId: childThreadId,
-            runId: null,
-            nodeId: requestNodeId,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: 1,
-            status: "waiting",
-            title: null,
-            startedAt: now,
-            completedAt: null,
-            updatedAt: now,
-            type: "user_input_request",
-            requestId,
-            questions: [
-              {
-                id: "q1",
-                header: "Scope",
-                question: "Should I also fix the lexer?",
-                options: [],
-              },
-            ],
-          },
-        },
-      ],
+      events: seedEvents.slice(2),
     });
-    return { parentThreadId, childThreadId, requestId };
+    return { parentThreadId, childThreadId, requestId, projectId: parent.thread.projectId };
   });
 
 const childQuestionNotices = (parentThreadId: ThreadId) =>
@@ -1918,6 +1970,7 @@ it.layer(layerTest)("child question wake", (it) => {
         const question = yield* seedChildWaitingOnUser({
           name: "recovery",
           requestKind: "user_input",
+          legacyUnrouted: true,
         });
         const blocking = yield* seedChildWaitingOnUser({
           name: "blocking",
@@ -1930,9 +1983,251 @@ it.layer(layerTest)("child question wake", (it) => {
         const notices = yield* childQuestionNotices(question.parentThreadId);
         assert.equal(notices.length, 1);
         assert.include(notices[0]!.text, "Should I also fix the lexer?");
+        assert.include(notices[0]!.text, "Fix both parser and lexer");
+        assert.include(notices[0]!.text, "t3_pending_request_respond");
+        assert.include(notices[0]!.text, "waiting on you, its orchestrator");
+        assert.equal(
+          (yield* orchestrator.getThreadShell(question.childThreadId))?.pendingRuntimeRequest
+            ?.routedTo,
+          question.parentThreadId,
+        );
         assert.equal(notices[0]!.notification?.summary, "Review the parser has a question for you");
         assert.equal((yield* childQuestionNotices(blocking.parentThreadId)).length, 0);
         assert.equal((yield* childQuestionNotices(auth.parentThreadId)).length, 0);
+      }),
+  );
+});
+
+it.layer(layerTest)("delegated request routing", (it) => {
+  it.effect("routes approvals with their full command and records parent responses", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const child = yield* seedChildWaitingOnUser({ name: "approval", requestKind: "command" });
+      yield* orchestrator.recoverDelegatedTasks;
+      const notices = yield* childQuestionNotices(child.parentThreadId);
+      assert.equal(notices.length, 1);
+      assert.include(notices[0]!.text, "cat /tmp/requested-file");
+      assert.include(notices[0]!.text, 'decision: "accept" or "decline"');
+      const unrelated = yield* seedChildWaitingOnUser({
+        name: "unrelated",
+        requestKind: "user_input",
+      });
+      const denied = yield* threads
+        .respondToPendingRequest({
+          ...child,
+          threadId: child.childThreadId,
+          callerThreadId: unrelated.parentThreadId,
+          commandId: CommandId.make("command:unrelated-approval"),
+          decision: "accept",
+        })
+        .pipe(Effect.flip);
+      assert.equal(denied._tag, "ThreadManagementPendingRequestError");
+      const questionDenied = yield* threads
+        .respondToPendingRequest({
+          ...unrelated,
+          threadId: unrelated.childThreadId,
+          callerThreadId: child.parentThreadId,
+          commandId: CommandId.make("command:unrelated-question"),
+          answers: { q1: "Yes" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(questionDenied._tag, "ThreadManagementPendingRequestError");
+      yield* threads.respondToPendingRequest({
+        ...child,
+        threadId: child.childThreadId,
+        callerThreadId: child.parentThreadId,
+        commandId: CommandId.make("command:parent-approval"),
+        decision: "accept",
+      });
+      const answered = yield* orchestrator.getThreadProjection(child.childThreadId);
+      assert.equal(answered.runtimeRequests[0]?.decision, "accept");
+      assert.equal(
+        answered.turnItems[0]?.type === "approval_request"
+          ? answered.turnItems[0].respondedBy
+          : undefined,
+        "orchestrator",
+      );
+      const declined = yield* seedChildWaitingOnUser({ name: "decline", requestKind: "command" });
+      yield* threads.respondToPendingRequest({
+        ...declined,
+        threadId: declined.childThreadId,
+        callerThreadId: declined.parentThreadId,
+        commandId: CommandId.make("command:parent-decline"),
+        decision: "decline",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(declined.childThreadId)).runtimeRequests[0]
+          ?.decision,
+        "decline",
+      );
+      yield* threads.respondToPendingRequest({
+        ...unrelated,
+        threadId: unrelated.childThreadId,
+        callerThreadId: unrelated.parentThreadId,
+        commandId: CommandId.make("command:parent-question"),
+        answers: { q1: "No" },
+      });
+      const question = yield* orchestrator.getThreadProjection(unrelated.childThreadId);
+      assert.deepEqual(question.runtimeRequests[0]?.answers, { q1: "No" });
+      assert.equal(
+        question.turnItems[0]?.type === "user_input_request"
+          ? question.turnItems[0].respondedBy
+          : undefined,
+        "orchestrator",
+      );
+    }),
+  );
+
+  it.effect("returns a pending request to the owner when its parent becomes archived", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const child = yield* seedChildWaitingOnUser({
+        name: "later-archive",
+        requestKind: "user_input",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadShell(child.childThreadId))?.pendingRuntimeRequest?.routedTo,
+        child.parentThreadId,
+      );
+      const parent = yield* orchestrator.getThreadProjection(child.parentThreadId);
+      const now = yield* DateTime.now;
+      const task = parent.subagents[0]!;
+      // A historical task can outlive its child; it must not prevent the fallback.
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:missing-child-task"),
+            type: "subagent.updated",
+            threadId: child.parentThreadId,
+            nodeId: NodeId.make("node:missing-child-task"),
+            occurredAt: now,
+            payload: {
+              ...task,
+              id: NodeId.make("node:missing-child-task"),
+              childThreadId: ThreadId.make("thread:missing-child"),
+            },
+          },
+        ],
+      });
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:later-archive"),
+            type: "thread.archived",
+            threadId: child.parentThreadId,
+            occurredAt: now,
+            payload: { ...parent.thread, archivedAt: now },
+          },
+        ],
+      });
+      assert.isUndefined(
+        (yield* orchestrator.getThreadShell(child.childThreadId))?.pendingRuntimeRequest?.routedTo,
+      );
+    }),
+  );
+
+  it.effect(
+    "routes a nested child to its direct parent and lets the root approve after that parent is archived",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const outer = yield* seedChildWaitingOnUser({
+          name: "nested-outer",
+          requestKind: "user_input",
+        });
+        const inner = yield* seedChildWaitingOnUser({
+          name: "nested-inner",
+          requestKind: "command",
+        });
+        const intermediate = yield* orchestrator.getThreadProjection(inner.parentThreadId);
+        const taskId = NodeId.make("node:nested-intermediate");
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:nested-intermediate"),
+              type: "thread.metadata-updated",
+              threadId: inner.parentThreadId,
+              occurredAt: now,
+              payload: {
+                ...intermediate.thread,
+                lineage: {
+                  parentThreadId: outer.childThreadId,
+                  relationshipToParent: "subagent",
+                  rootThreadId: outer.parentThreadId,
+                },
+                forkedFrom: { type: "node", nodeId: taskId },
+              },
+            },
+            {
+              id: EventId.make("event:nested-task"),
+              type: "subagent.updated",
+              threadId: outer.childThreadId,
+              occurredAt: now,
+              payload: {
+                ...intermediate.subagents[0]!,
+                id: taskId,
+                threadId: outer.childThreadId,
+                childThreadId: inner.parentThreadId,
+              },
+            },
+          ],
+        });
+        assert.equal(
+          (yield* orchestrator.getThreadShell(inner.childThreadId))?.pendingRuntimeRequest
+            ?.routedTo,
+          inner.parentThreadId,
+        );
+        const linkedParent = yield* orchestrator.getThreadProjection(inner.parentThreadId);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:nested-parent-archived"),
+              type: "thread.archived",
+              threadId: inner.parentThreadId,
+              occurredAt: now,
+              payload: { ...linkedParent.thread, archivedAt: now },
+            },
+          ],
+        });
+        yield* threads.respondToPendingRequest({
+          ...inner,
+          threadId: inner.childThreadId,
+          callerThreadId: outer.parentThreadId,
+          commandId: CommandId.make("command:root-answer-grandchild"),
+          decision: "accept",
+        });
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(inner.childThreadId)).runtimeRequests[0]
+            ?.decision,
+          "accept",
+        );
+      }),
+  );
+
+  it.effect(
+    "keeps requests owner-facing when the parent is archived, deleted, or provider-native",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        for (const config of [
+          { name: "missing-parent", parentState: "missing" as const },
+          { name: "archived-parent", parentState: "archived" as const },
+          { name: "deleted-parent", parentState: "deleted" as const },
+          { name: "native-child", origin: "provider_native" as const },
+        ]) {
+          const child = yield* seedChildWaitingOnUser({ ...config, requestKind: "user_input" });
+          yield* orchestrator.recoverDelegatedTasks;
+          assert.isUndefined(
+            (yield* orchestrator.getThreadShell(child.childThreadId))?.pendingRuntimeRequest
+              ?.routedTo,
+          );
+          assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
+        }
       }),
   );
 });

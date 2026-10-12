@@ -11,6 +11,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -216,6 +217,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     settleThread: unused,
     interruptThread: unused,
     requestUserInput: unused,
+    respondToPendingRequest: unused,
     stopWorkflow: () => Effect.die("unused stopWorkflow"),
     stopDelegatedTasks: unused,
     getThreadEventSequence: unused,
@@ -490,6 +492,28 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications[1]?.authorization, "Bearer credential-2");
       assert.equal(publications[1]?.state?.phase, "completed");
       assert.equal(publications[1]?.state?.threadTitle, "Final title");
+    }),
+  );
+
+  it.effect("publishes routed requests as ongoing work without owner input notifications", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* Ref.set(
+        currentShell,
+        shell({
+          status: "running",
+          activeRunId: RunId.make("routed-run"),
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("routed-question"),
+            kind: "user_input",
+            createdAt: DateTime.makeUnsafe(NOW),
+            routedTo: ThreadId.make("orchestrator"),
+          },
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* relay.drain;
+      assert.equal(publications[0]?.state?.phase, "running");
     }),
   );
 

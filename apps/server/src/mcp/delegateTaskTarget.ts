@@ -8,8 +8,11 @@ import {
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ServerProvider,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import { elapsedShare, paceOf, remainingPercent } from "@t3tools/shared/usageLimits";
 import * as Arr from "effect/Array";
+import * as Order from "effect/Order";
 
 export function providerConstraints(
   provider: ServerProvider | undefined,
@@ -149,10 +152,11 @@ export function modelRoleStatuses(
   roles: ReadonlyArray<ModelRole>,
   providers: ReadonlyArray<ServerProvider>,
   orchestrationCapableInstanceIds: ReadonlySet<ProviderInstanceId>,
+  now: number,
 ): ReadonlyArray<OrchestratorMcpModelRole> {
-  return roles.map((role) => ({
-    ...role,
-    targets: Arr.map(role.targets, (target) => {
+  const providerById = new Map(providers.map((provider) => [provider.instanceId, provider]));
+  return roles.map((role) => {
+    const choices = Arr.map(role.targets, (target, configuredOrder) => {
       const checked = checkDelegateTarget({
         providers,
         orchestrationCapableInstanceIds,
@@ -161,7 +165,86 @@ export function modelRoleStatuses(
         inheritedModel: undefined,
         options: target.options,
       });
-      return { ...target, unavailableReason: typeof checked === "string" ? null : checked.message };
-    }),
-  }));
+      const provider = providerById.get(target.providerInstanceId);
+      const window =
+        provider === undefined ? undefined : weeklyWindowForModel(provider, target.model);
+      const weeklyUsage =
+        window === undefined
+          ? undefined
+          : {
+              remainingPercent: remainingPercent(window),
+              resetsAt: window.resetsAt ?? null,
+              pace: paceOf(window, now),
+            };
+      return {
+        target: {
+          ...target,
+          unavailableReason: typeof checked === "string" ? null : checked.message,
+          ...(weeklyUsage === undefined ? {} : { weeklyUsage }),
+        },
+        configuredOrder,
+        unavailable: typeof checked !== "string",
+        headroom: window === undefined ? undefined : weeklyHeadroom(window, now),
+      };
+    });
+    const sortedChoices = Arr.sort(
+      choices,
+      Order.make<(typeof choices)[number]>((left, right) => {
+        const rank = (choice: (typeof choices)[number]) =>
+          choice.unavailable ? 2 : choice.headroom === undefined ? 1 : 0;
+        const byAvailability = rank(left) - rank(right);
+        if (byAvailability !== 0) return byAvailability < 0 ? -1 : 1;
+        if (
+          left.headroom !== undefined &&
+          right.headroom !== undefined &&
+          left.headroom !== right.headroom
+        ) {
+          return left.headroom > right.headroom ? -1 : 1;
+        }
+        return left.configuredOrder < right.configuredOrder
+          ? -1
+          : left.configuredOrder > right.configuredOrder
+            ? 1
+            : 0;
+      }),
+    );
+    return {
+      ...role,
+      targets: Arr.map(sortedChoices, ({ target }) => target),
+    };
+  });
+}
+
+function weeklyHeadroom(window: ServerProviderUsageWindow, now: number): number | undefined {
+  const elapsed = elapsedShare(window, now);
+  if (elapsed === null) return undefined;
+  const remaining = remainingPercent(window) / 100;
+  const timeLeft = 1 - elapsed;
+  if (timeLeft === 0) return remaining === 0 ? 0 : Number.POSITIVE_INFINITY;
+  return remaining / timeLeft;
+}
+
+function weeklyWindowForModel(
+  provider: ServerProvider,
+  model: string,
+): ServerProviderUsageWindow | undefined {
+  const windows = provider.usageLimits?.windows.filter((window) => window.kind === "weekly") ?? [];
+  if (windows.length === 0) return undefined;
+  if (provider.driver !== "claudeAgent") return windows[0];
+
+  const modelTerms = model
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((part) => part !== "claude" && !/^\d+$/.test(part));
+  const scoped = windows.find((window) => {
+    const windowTerms = `${window.id} ${window.label}`.toLowerCase().split(/[^a-z0-9]+/);
+    return modelTerms.some((term) => windowTerms.includes(term));
+  });
+  return (
+    scoped ??
+    windows.find(
+      (window) =>
+        window.id.toLowerCase() === "seven_day" || window.label.toLowerCase() === "weekly",
+    )
+  );
 }

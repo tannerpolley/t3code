@@ -8,6 +8,8 @@ The \`t3-code\` MCP server provides app-owned orchestration. Treat these concept
 
 For questions that need multiple selections, prefer \`t3_request_user_input\` when available; otherwise use your native ask-user tool, such as Codex's native \`request_user_input\` tool.
 
+App-owned delegated children send all questions and permission approvals to their parent orchestrator first, including native question tools. As a child, ask your orchestrator through your question tool; do not message ancestors. As the parent, use \`t3_pending_request_read\` for the full request and \`t3_pending_request_respond\` with the child threadId and requestId: pass \`answers\` for questions or \`decision: "accept"\` / \`"decline"\` for approvals. You may approve only your delegated descendants. A blocking delegation's legacy \`waitingOnUser\` result means waiting on you. Answer from the task's authority, or ask the owner with your own question tool and relay their answer. This routing applies recursively when you are also a delegated child.
+
 - A delegated task/subagent is child work owned by the current thread. Use \`orchestrator_capabilities\` to discover the current provider/model IDs from the same live catalog as the composer, including configured custom models. Do not treat a native tool's model list as the full list of available subagent models. Prefer native subagent tools for same-provider work only when they support the chosen model. Use \`delegate_task\` with that provider instance and model when native tools cannot, including for same-provider work. Also use \`delegate_task\` for cross-provider or explicitly T3-owned child tasks. Retain each returned \`taskId\`, and use \`task_status\` or \`task_cancel\` to manage it. The returned \`childThreadId\` is backing storage for the subagent, not the target for starting another delegated review round.
 - \`t3_thread_launch\` and \`create_threads\` create ordinary top-level T3 conversations. Use them only when the user explicitly asks for separate/new/top-level threads or conversations. Never use them merely because the user said "subagent" or requested parallel delegated work.
 - For every T3 delegated review round, call \`delegate_task\` again. Include the original brief, prior findings, responses, and unresolved objections in each new task prompt. Track each round by its own \`taskId\`. Use a distinct \`clientRequestId\` per round, stable across retries of that round. Do not use \`t3_thread_send\` on \`childThreadId\` to continue a delegated review.
@@ -45,7 +47,7 @@ const MODEL_ROLES_HEADER = `
 
 ### Model roles
 
-The user's defaults for delegated work. Use them at your discretion; explicit user instructions win. The first choice is the default; you may pick another by your judgment. Pass a choice's Target JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists all choices and their availability again.
+The user's choices for delegated work are equal alternatives, ordered by current weekly headroom, with more quota left relative to time remaining first. You may override this order for task fit; explicit user instructions win. Unknown usage keeps the configured order after known choices, and unavailable targets go last. Weekly usage shows quota left, reset time, and pace against elapsed window time when reported. Pass a choice's Target JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists all choices and their availability again.
 
 `;
 // Room for the closing "more roles" line, so the block never passes the cap.
@@ -59,21 +61,26 @@ const oneLine = (text: string, maxLength: number) => {
 function modelRoleLine(role: OrchestratorMcpModelRole): string {
   const description = oneLine(role.description, 200);
   const head = `- ${oneLine(role.name, 60)}${description.length > 0 ? `: ${description}` : ""}.`;
-  const choices = role.targets.map(({ providerInstanceId, model, options, unavailableReason }) => {
-    const traits = options?.map((option) => oneLine(String(option.value), 60)).join(" ");
-    const label = `${oneLine(model, 100)}${traits ? ` ${traits}` : ""} (${providerInstanceId})`;
-    if (unavailableReason !== null) {
-      return `${label} Unavailable: ${oneLine(unavailableReason, 200)}`;
-    }
-    const target = {
-      providerInstanceId,
-      model,
-      ...(options === undefined || options.length === 0
-        ? {}
-        : { options: Object.fromEntries(options.map((option) => [option.id, option.value])) }),
-    };
-    return `${label}. Target JSON: \`${JSON.stringify(target)}\``;
-  });
+  const choices = role.targets.map(
+    ({ providerInstanceId, model, options, unavailableReason, weeklyUsage }) => {
+      const traits = options?.map((option) => oneLine(String(option.value), 60)).join(" ");
+      const label = `${oneLine(model, 100)}${traits ? ` ${traits}` : ""} (${providerInstanceId})`;
+      const usage = weeklyUsage
+        ? ` Weekly usage: ${weeklyUsage.remainingPercent}% left; resets ${weeklyUsage.resetsAt ?? "unknown"}; pace ${weeklyUsage.pace ?? "unknown"}.`
+        : "";
+      if (unavailableReason !== null) {
+        return `${label}.${usage} Unavailable: ${oneLine(unavailableReason, 200)}`;
+      }
+      const target = {
+        providerInstanceId,
+        model,
+        ...(options === undefined || options.length === 0
+          ? {}
+          : { options: Object.fromEntries(options.map((option) => [option.id, option.value])) }),
+      };
+      return `${label}.${usage} Target JSON: \`${JSON.stringify(target)}\``;
+    },
+  );
   return `${head} ${choices.join(" or ")}`;
 }
 

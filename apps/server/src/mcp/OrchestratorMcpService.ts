@@ -81,6 +81,10 @@ import {
   delegatedTaskProgress,
   pendingUserRequests,
 } from "@t3tools/provider-core/server/subagentProjection";
+import {
+  delegatedRequestDetails,
+  delegatedRequestResponseInstructions,
+} from "../orchestration-v2/DelegatedRequestRouting.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import {
   checkDelegateTarget,
@@ -586,7 +590,7 @@ export const assertNotSendingToAncestor = Effect.fn("mcp.assertNotSendingToAnces
     if (ancestorId === targetThreadId) {
       return yield* failure(
         "ancestor_send_denied",
-        "A delegated task cannot message its parent or ancestor threads. Report in your final message; it is delivered to your parent automatically. To ask for a decision, use the question tool (`t3_request_user_input` or your native ask tool).",
+        "A delegated task cannot message its parent or ancestor threads. Report in your final message; it is delivered to your parent automatically. Use t3_request_user_input or your native question tool to ask your orchestrator for a decision; questions and approvals are routed to it first.",
       );
     }
     visited.add(ancestorId);
@@ -1531,7 +1535,20 @@ const make = Effect.gen(function* () {
               waitingOnUser: {
                 kind: waitingRequests[0].kind,
                 requestIds: waitingRequests.map((request) => request.id),
-                preview: waitingRequests[0].summary,
+                ...(childControls.runtimeRequests.some(
+                  (request) =>
+                    request.id === waitingRequests[0]?.id && request.routedTo !== undefined,
+                )
+                  ? { waitingOn: "orchestrator" as const }
+                  : {}),
+                preview: childControls.runtimeRequests
+                  .filter((request) => waitingRequests.some((waiting) => waiting.id === request.id))
+                  .map((request) =>
+                    request.routedTo === undefined
+                      ? waitingRequests.find((waiting) => waiting.id === request.id)!.summary
+                      : `${delegatedRequestDetails(request, requestItems)}\n${delegatedRequestResponseInstructions(task.childThreadId!, request)}`,
+                  )
+                  .join("\n\n"),
               },
             }),
       } satisfies OrchestratorMcpDelegateTaskResult;
@@ -2066,10 +2083,12 @@ const make = Effect.gen(function* () {
           Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
         );
         const modelPreferences = settings.providerModelPreferences ?? {};
+        const now = yield* Clock.currentTimeMillis;
         const modelRoles = modelRoleStatuses(
           settings.modelRoles,
           providers,
           orchestrationCapableInstanceIds,
+          now,
         );
         return {
           parentThreadId: parent?.thread.id ?? null,

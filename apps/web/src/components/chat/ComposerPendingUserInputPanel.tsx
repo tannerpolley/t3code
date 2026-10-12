@@ -208,6 +208,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           <span className="shrink-0 font-medium text-muted-foreground">
             {activeQuestion.header}
           </span>
+          {prompt.routedTo ? (
+            <span className="text-muted-foreground">Waiting on the orchestrator</span>
+          ) : null}
           {isCollapsed ? (
             <span className="min-w-0 flex-1 truncate text-secondary-label">
               {activeQuestion.question}

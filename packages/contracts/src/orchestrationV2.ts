@@ -1152,6 +1152,8 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
     Schema.Literals(["dynamic_tool_call", "user_input", "auth_refresh"]),
   ]),
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
+  /** App-owned delegated requests are answered by this parent orchestrator first. */
+  routedTo: Schema.optional(ThreadId),
   responseCapability: Schema.Union([
     Schema.Struct({ type: Schema.Literal("live"), providerSessionId: ProviderSessionId }),
     // Asked through T3's own tool (t3_request_user_input) during a live turn of this session.
@@ -1450,8 +1452,8 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
-/** Who answered a runtime request when it was not the user: only Don't ask mode today. */
-export const RuntimeRequestResponder = Schema.Literal("dont_ask_mode");
+/** Who answered a runtime request on the user's behalf. */
+export const RuntimeRequestResponder = Schema.Literals(["dont_ask_mode", "orchestrator"]);
 export type RuntimeRequestResponder = typeof RuntimeRequestResponder.Type;
 
 const OrchestrationV2TurnItemBaseFields = {
@@ -1986,6 +1988,7 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   id: RuntimeRequestId,
   kind: OrchestrationV2RuntimeRequest.fields.kind,
   createdAt: Schema.DateTimeUtc,
+  routedTo: Schema.optional(ThreadId),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;

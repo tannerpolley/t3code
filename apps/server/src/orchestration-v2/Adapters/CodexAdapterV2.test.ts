@@ -102,7 +102,7 @@ describe("Codex context usage compatibility", () => {
 });
 
 describe("CodexAdapterV2 file change approvals", () => {
-  it("uses nonblank reasons before sorted file operations and renamed paths", () => {
+  it("keeps the reason, grant root, all file operations, and renamed paths", () => {
     const fileChanges = {
       "/tmp/removed.md": { type: "delete" as const, content: "gone" },
       "/tmp/added.ts": { type: "add" as const, content: "export {};" },
@@ -115,9 +115,10 @@ describe("CodexAdapterV2 file change approvals", () => {
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({
         reason: "  Update configuration. ",
+        grantRoot: "/workspace",
         fileChanges,
       }),
-      "Update configuration.",
+      "Update configuration.\n\nGrant root: /workspace\nadd /tmp/added.ts\nupdate /tmp/moved.ts -> /tmp/renamed.ts\ndelete /tmp/removed.md",
     );
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", fileChanges }),
@@ -128,11 +129,11 @@ describe("CodexAdapterV2 file change approvals", () => {
   it("falls back to a nonblank grant root and omits empty details", () => {
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " /workspace " }),
-      "/workspace",
+      "Grant root: /workspace",
     );
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges: {}, grantRoot: "/workspace" }),
-      "/workspace",
+      "Grant root: /workspace",
     );
     assert.isUndefined(
       CodexAdapterV2.codexFileChangeApprovalPrompt({
@@ -143,7 +144,7 @@ describe("CodexAdapterV2 file change approvals", () => {
     );
   });
 
-  it("bounds large patch descriptions without losing the remaining count", () => {
+  it("keeps every file path in a large patch description", () => {
     const fileChanges = Object.fromEntries(
       Array.from({ length: 25 }, (_, index) => [
         `/tmp/file-${String(index).padStart(2, "0")}.ts`,
@@ -151,10 +152,9 @@ describe("CodexAdapterV2 file change approvals", () => {
       ]),
     );
     const detail = CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges });
-    assert.equal(detail?.split("\n").length, 21);
+    assert.equal(detail?.split("\n").length, 25);
     assert.isTrue(detail?.startsWith("add /tmp/file-00.ts") ?? false);
-    assert.isTrue(detail?.endsWith("+5 more") ?? false);
-    assert.notInclude(detail, "file-20.ts");
+    assert.isTrue(detail?.endsWith("add /tmp/file-24.ts") ?? false);
   });
 });
 
@@ -699,6 +699,7 @@ describe("CodexAdapterV2 process spawning", () => {
         model: "gpt-5.4",
         config: {
           "tools.update_plan.enabled": true,
+          "features.default_mode_request_user_input": true,
           mcp_servers: {
             "t3-code": {
               url: "http://127.0.0.1:43123/mcp",
@@ -2766,6 +2767,230 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           });
         }
         assert.isEmpty(assistantMessages(harness.events));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("includes the native command and reason in a command approval request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "command-approval-thread";
+        const nativeTurnId = "command-approval-turn";
+        const itemId = "command-approval-item";
+        const reason = "Run the requested inspection.";
+        const command = "git status --porcelain=v1";
+        const requestRaised = yield* Deferred.make<void>();
+        const transcript = makeCodexReplayTranscript({
+          scenario: "command-approval-prompt",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Inspect status." }),
+            {
+              type: "emit_inbound",
+              label: "command approval",
+              frame: {
+                id: 4,
+                method: "item/commandExecution/requestApproval",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId,
+                  approvalId: "command-approval-id",
+                  startedAtMs: 1782622445000,
+                  reason,
+                  command,
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "command approval response",
+              frame: { id: 4, result: { decision: "accept" } },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "runtime_request.updated"
+            ? Deferred.succeed(requestRaised, undefined)
+            : Effect.void,
+        );
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("command-approval-attempt"),
+            text: "Inspect status.",
+          }),
+        );
+        yield* Deferred.await(requestRaised);
+        const requestEvent = harness.events.findLast(
+          (event) => event.type === "runtime_request.updated",
+        );
+        assert.equal(requestEvent?.type, "runtime_request.updated");
+        if (requestEvent?.type !== "runtime_request.updated") return;
+
+        const approvalItem = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.requestId === requestEvent.runtimeRequest.id,
+        );
+        assert.equal(
+          approvalItem?.type === "turn_item.updated" &&
+            approvalItem.turnItem.type === "approval_request"
+            ? approvalItem.turnItem.prompt
+            : undefined,
+          reason + "\n\n" + command,
+        );
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: requestEvent.runtimeRequest.id,
+          decision: "accept",
+        });
+        yield* harness.firstTerminal;
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("uses started file changes in a V2 file-change approval request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "file-change-approval-thread";
+        const nativeTurnId = "file-change-approval-turn";
+        const itemId = "file-change-approval-item";
+        const reason = "Update the requested files.";
+        const requestRaised = yield* Deferred.make<void>();
+        const transcript = makeCodexReplayTranscript({
+          scenario: "file-change-approval-prompt",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Update files." }),
+            {
+              type: "emit_inbound",
+              label: "file change started",
+              frame: {
+                method: "item/started",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  startedAtMs: 1782622445000,
+                  item: {
+                    type: "fileChange",
+                    id: itemId,
+                    status: "inProgress",
+                    changes: [
+                      {
+                        path: "/workspace/removed.md",
+                        kind: { type: "delete" },
+                        diff: "--- a/workspace/removed.md",
+                      },
+                      {
+                        path: "/workspace/old.ts",
+                        kind: { type: "update", move_path: "/workspace/new.ts" },
+                        diff: "--- a/workspace/old.ts",
+                      },
+                      {
+                        path: "/workspace/added.ts",
+                        kind: { type: "add" },
+                        diff: "+++ b/workspace/added.ts",
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "file change approval",
+              frame: {
+                id: 4,
+                method: "item/fileChange/requestApproval",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId,
+                  startedAtMs: 1782622445000,
+                  reason,
+                  grantRoot: "/workspace",
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "file change approval response",
+              frame: { id: 4, result: { decision: "accept" } },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "runtime_request.updated"
+            ? Deferred.succeed(requestRaised, undefined)
+            : Effect.void,
+        );
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("file-change-approval-attempt"),
+            text: "Update files.",
+          }),
+        );
+        yield* Deferred.await(requestRaised);
+        const requestEvent = harness.events.findLast(
+          (event) => event.type === "runtime_request.updated",
+        );
+        assert.equal(requestEvent?.type, "runtime_request.updated");
+        if (requestEvent?.type !== "runtime_request.updated") return;
+
+        const approvalItem = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.requestId === requestEvent.runtimeRequest.id,
+        );
+        assert.equal(
+          approvalItem?.type === "turn_item.updated" &&
+            approvalItem.turnItem.type === "approval_request"
+            ? approvalItem.turnItem.prompt
+            : undefined,
+          `${reason}\n\nGrant root: /workspace\nadd /workspace/added.ts\nupdate /workspace/old.ts -> /workspace/new.ts\ndelete /workspace/removed.md`,
+        );
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: requestEvent.runtimeRequest.id,
+          decision: "accept",
+        });
+        yield* harness.firstTerminal;
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

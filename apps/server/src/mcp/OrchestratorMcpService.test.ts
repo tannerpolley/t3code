@@ -783,6 +783,13 @@ describe("OrchestratorMcpService provider resolution", () => {
   const projectId = ProjectId.make("project:mcp-providers");
   const codexInstanceId = ProviderInstanceId.make("codex");
   const antigravityInstanceId = ProviderInstanceId.make("antigravity");
+  const modelRoleStatusNow = DateTime.toEpochMillis(
+    DateTime.makeUnsafe("2026-10-12T12:00:00.000Z"),
+  );
+  const modelRoleStatusWeekMs = 7 * 24 * 60 * 60 * 1000;
+  const modelRoleStatusResetAt = (timeLeft: number) =>
+    DateTime.formatIso(DateTime.makeUnsafe(modelRoleStatusNow + modelRoleStatusWeekMs * timeLeft));
+  const modelRoleStatusCheckedAt = DateTime.formatIso(DateTime.makeUnsafe(modelRoleStatusNow));
 
   const scope: McpInvocationScope = {
     environmentId: EnvironmentId.make("environment:mcp-providers"),
@@ -1078,12 +1085,179 @@ describe("OrchestratorMcpService provider resolution", () => {
         },
       ],
     };
-    const statuses = modelRoleStatuses([role], [provider], new Set([codexInstanceId]));
+    const statuses = modelRoleStatuses(
+      [role],
+      [provider],
+      new Set([codexInstanceId]),
+      modelRoleStatusNow,
+    );
     assert.deepEqual(statuses[0]!.targets[0], { ...role.targets[0], unavailableReason: null });
     assert.equal(
       statuses[0]!.targets[1]!.unavailableReason,
       `Model ${model} on provider codex rejected options: Option reasoningEffort must be one of: medium, high.`,
     );
+  });
+
+  it("orders role choices by weekly headroom, keeping unknown and unavailable choices last", () => {
+    const instance = (id: string) => ProviderInstanceId.make(id);
+    const configured = ["balanced", "unknown", "roomy", "missing-reset", "blocked"] as const;
+    const target = (id: string) => ({ providerInstanceId: instance(id), model: id });
+    const weekly = (usedPercent: number, timeLeft?: number) => ({
+      id: "weekly",
+      kind: "weekly" as const,
+      label: "Weekly",
+      usedPercent,
+      windowDurationMins: 7 * 24 * 60,
+      ...(timeLeft === undefined ? {} : { resetsAt: modelRoleStatusResetAt(timeLeft) }),
+    });
+    const provider = (
+      id: string,
+      window?: ReturnType<typeof weekly>,
+      unavailable = false,
+    ): ServerProvider => ({
+      ...providerSnapshot({
+        instanceId: instance(id),
+        driver: ProviderDriverKind.make("codex"),
+        model: id,
+      }),
+      ...(unavailable ? { auth: { status: "unauthenticated" as const } } : {}),
+      ...(window === undefined
+        ? {}
+        : {
+            usageLimits: {
+              checkedAt: modelRoleStatusCheckedAt,
+              windows: [window],
+            },
+          }),
+    });
+    const roles: ReadonlyArray<ModelRole> = [
+      {
+        id: "builder",
+        name: "Builder",
+        description: "",
+        targets: [
+          target("balanced"),
+          target("unknown"),
+          target("roomy"),
+          target("missing-reset"),
+          target("blocked"),
+        ],
+      },
+    ];
+    const statuses = modelRoleStatuses(
+      roles,
+      [
+        provider("balanced", weekly(20, 0.8)),
+        provider("unknown"),
+        provider("roomy", weekly(40, 0.2)),
+        provider("missing-reset", weekly(10)),
+        provider("blocked", weekly(0, 0.01), true),
+      ],
+      new Set(configured.map(instance)),
+      modelRoleStatusNow,
+    );
+    const choices = statuses[0]!.targets;
+
+    assert.deepEqual(
+      choices.map((choice) => choice.model),
+      ["roomy", "balanced", "unknown", "missing-reset", "blocked"],
+    );
+    assert.deepEqual(choices[0]!.weeklyUsage, {
+      remainingPercent: 60,
+      resetsAt: modelRoleStatusResetAt(0.2),
+      pace: "under",
+    });
+    assert.deepEqual(choices[1]!.weeklyUsage, {
+      remainingPercent: 80,
+      resetsAt: modelRoleStatusResetAt(0.8),
+      pace: "on",
+    });
+    assert.equal(choices[2]!.weeklyUsage, undefined);
+    assert.deepEqual(choices[3]!.weeklyUsage, {
+      remainingPercent: 90,
+      resetsAt: null,
+      pace: null,
+    });
+    assert.include(choices[4]!.unavailableReason!, "not authenticated");
+  });
+
+  it("uses Claude's matching model-scoped weekly quota before the general window", () => {
+    const claude = ProviderInstanceId.make("claude");
+    const role: ModelRole = {
+      id: "builder",
+      name: "Builder",
+      description: "",
+      targets: [
+        { providerInstanceId: claude, model: "claude-sonnet-4-6" },
+        { providerInstanceId: claude, model: "claude-opus-4-6" },
+        { providerInstanceId: claude, model: "claude-3-5-haiku" },
+      ],
+    };
+    const provider: ServerProvider = {
+      ...providerSnapshot({
+        instanceId: claude,
+        driver: ProviderDriverKind.make("claudeAgent"),
+        model: "claude-opus-4-6",
+      }),
+      models: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-3-5-haiku"].map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: null,
+      })),
+      usageLimits: {
+        checkedAt: modelRoleStatusCheckedAt,
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 60,
+            windowDurationMins: 7 * 24 * 60,
+            resetsAt: modelRoleStatusResetAt(0.5),
+          },
+          {
+            id: "seven_day_opus",
+            kind: "weekly",
+            label: "Weekly · Opus",
+            usedPercent: 10,
+            windowDurationMins: 7 * 24 * 60,
+            resetsAt: modelRoleStatusResetAt(0.1),
+          },
+          {
+            id: "seven_day_sonnet",
+            kind: "weekly",
+            label: "Weekly · Sonnet",
+            usedPercent: 20,
+            windowDurationMins: 7 * 24 * 60,
+            resetsAt: modelRoleStatusResetAt(0.4),
+          },
+        ],
+      },
+    };
+    const choices = modelRoleStatuses([role], [provider], new Set([claude]), modelRoleStatusNow)[0]!
+      .targets;
+    const byModel = new Map(choices.map((choice) => [choice.model, choice.weeklyUsage]));
+
+    assert.deepEqual(
+      choices.map((choice) => choice.model),
+      ["claude-opus-4-6", "claude-sonnet-4-6", "claude-3-5-haiku"],
+    );
+    assert.deepEqual(byModel.get("claude-opus-4-6"), {
+      remainingPercent: 90,
+      resetsAt: modelRoleStatusResetAt(0.1),
+      pace: "under",
+    });
+    assert.deepEqual(byModel.get("claude-sonnet-4-6"), {
+      remainingPercent: 80,
+      resetsAt: modelRoleStatusResetAt(0.4),
+      pace: "under",
+    });
+    assert.deepEqual(byModel.get("claude-3-5-haiku"), {
+      remainingPercent: 40,
+      resetsAt: modelRoleStatusResetAt(0.5),
+      pace: "ahead",
+    });
   });
 
   it.effect("lists the user's model roles, marking targets delegate_task would reject", () => {

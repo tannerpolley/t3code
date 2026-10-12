@@ -237,6 +237,33 @@ const decodeCodexAppServerReplayTranscript = Schema.decodeUnknownEffect(
   CodexReplay.CodexAppServerReplayTranscript,
 );
 
+// Historical provider recordings keep their frames; T3's thread defaults follow the adapter.
+function withCurrentThreadConfig(transcript: CodexReplay.CodexAppServerReplayTranscript) {
+  return {
+    ...transcript,
+    entries: transcript.entries.map((entry) => {
+      if (
+        entry.type !== "expect_outbound" ||
+        !Predicate.isObject(entry.frame) ||
+        !["thread/start", "thread/resume", "thread/fork"].includes(String(entry.frame.method)) ||
+        !Predicate.isObject(entry.frame.params) ||
+        !Predicate.isObject(entry.frame.params.config)
+      )
+        return entry;
+      return {
+        ...entry,
+        frame: {
+          ...entry.frame,
+          params: {
+            ...entry.frame.params,
+            config: { ...CodexAdapterV2.CODEX_THREAD_CONFIG, ...entry.frame.params.config },
+          },
+        },
+      };
+    }),
+  };
+}
+
 export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   CodexReplay.CodexAppServerReplayTranscript,
   CodexOrchestratorReplayHarnessError
@@ -244,6 +271,7 @@ export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness
   driver: CodexAdapterV2.CODEX_DRIVER_KIND,
   decodeTranscript: (transcript) =>
     decodeCodexAppServerReplayTranscript(transcript).pipe(
+      Effect.map(withCurrentThreadConfig),
       Effect.mapError(
         (cause) =>
           new CodexReplayTranscriptDecodeError({

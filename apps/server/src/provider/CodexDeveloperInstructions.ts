@@ -179,7 +179,7 @@ Your active mode changes only when new developer instructions with a different \
 
 Use the \`request_user_input\` tool only when it is listed in the available tools for this turn.
 
-In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
+In Default mode, make reasonable assumptions for routine, reversible choices. When a missing answer would materially change the task and cannot be learned from available context, ask with \`request_user_input\` and wait for the answer before doing dependent work. Continue independent work while the answer is pending. If the tool is unavailable or fails, report the blocker and pause dependent work; do not ask in ordinary chat or guess.
 </collaboration_mode>`;
 
 export interface CodexRuntimeInfo {

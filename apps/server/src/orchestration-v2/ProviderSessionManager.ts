@@ -491,7 +491,13 @@ export const layerWithOptions = (
             ? yield* providerRegistry.value.getProviders
             : [];
           const capableInstanceIds = new Set(yield* registry.list());
-          const modelRoles = modelRoleStatuses(settings.modelRoles, providers, capableInstanceIds);
+          const now = yield* Clock.currentTimeMillis;
+          const modelRoles = modelRoleStatuses(
+            settings.modelRoles,
+            providers,
+            capableInstanceIds,
+            now,
+          );
           const withRoles = yield* mcpSessions.read(threadId);
           if (withRoles !== undefined) yield* mcpSessions.set({ ...withRoles, modelRoles });
         }).pipe(Effect.ignore);

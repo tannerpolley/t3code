@@ -149,6 +149,11 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  delegatedRequestOwner,
+  delegatedRequestDetails,
+  delegatedRequestResponseInstructions,
+} from "./DelegatedRequestRouting.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -12341,18 +12346,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.catchCause((cause) => Effect.logWarning("Failed to deliver held steers", { cause })),
   );
 
-  // Questions leave the child's run open, so terminal-result delivery cannot tell its parent.
+  // Requests leave the child's run open, so terminal-result delivery cannot tell its parent.
   const notifyParentOfChildQuestion = Effect.fnUntraced(
     function* (childThreadId: ThreadId, requestId: RuntimeRequestId) {
-      const childThread = yield* projectionStore.getThreadShell(childThreadId);
-      const parentThreadId = childThread?.lineage.parentThreadId;
-      if (
-        childThread?.lineage.relationshipToParent !== "subagent" ||
-        parentThreadId == null ||
-        childThread.forkedFrom?.type !== "node"
-      )
-        return;
-      const taskId = childThread.forkedFrom.nodeId;
+      const owner = yield* delegatedRequestOwner(projectionStore, childThreadId);
+      if (owner === undefined) return;
+      const { parentThreadId, taskId } = owner;
       yield* threadDispatch.withLock(
         parentThreadId,
         Effect.gen(function* () {
@@ -12362,7 +12361,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             { turnItemTypes: ["user_input_request", "approval_request"] },
           );
           const request = pendingUserRequests(child).find((request) => request.id === requestId);
-          if (request === undefined) return;
+          const runtimeRequest = child.runtimeRequests.find((request) => request.id === requestId);
+          if (
+            request === undefined ||
+            runtimeRequest === undefined ||
+            !child.turnItems.some(
+              (item) =>
+                (item.type === "user_input_request" || item.type === "approval_request") &&
+                item.requestId === requestId,
+            )
+          )
+            return;
+          // Requests persisted before routing existed acquire the marker through a durable event.
+          if (runtimeRequest.routedTo !== parentThreadId) {
+            const routed = yield* threadDispatch.withLock(
+              childThreadId,
+              Effect.gen(function* () {
+                const current = yield* projectionStore.getRuntimeRequest(childThreadId, requestId);
+                if (current?.status !== "pending") return false;
+                const commandId = CommandId.make(
+                  `server:child-request-routing:${childThreadId}:${requestId}`,
+                );
+                yield* eventSink.write({
+                  commandId,
+                  events: [
+                    {
+                      id: yield* idAllocator.allocate.event({ threadId: childThreadId, commandId }),
+                      type: "runtime-request.updated",
+                      threadId: childThreadId,
+                      nodeId: current.nodeId,
+                      occurredAt: yield* DateTime.now,
+                      payload: { ...current, routedTo: parentThreadId },
+                    },
+                  ],
+                });
+                return true;
+              }),
+            );
+            if (!routed) return;
+          }
           const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
             "subagents",
             "runs",
@@ -12393,7 +12430,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: CommandId.make(`server:child-question:${childThreadId}:${requestId}`),
             threadId: parentThreadId,
             messageId: MessageId.make(`message:child-question:${childThreadId}:${requestId}`),
-            text: `${title} is waiting on the user: ${request.summary}. Relay it to the user or answer it if you can (task ${task.id}, child thread ${childThreadId}, request ${requestId}).`,
+            text: `${title} is waiting on you, its orchestrator (task ${task.id}).\n\n${delegatedRequestDetails(runtimeRequest, child.turnItems)}\n\n${delegatedRequestResponseInstructions(childThreadId, runtimeRequest)}`,
             notification: {
               source: { kind: "delegated_task", taskIds: [task.id] },
               outcome: "updated",
@@ -12528,13 +12565,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   yield* eventSink
     .stream({ afterSequence: terminalEventsAfterSequence, eventType: "runtime-request.updated" })
     .pipe(
-      Stream.filter(
-        (stored) =>
-          stored.event.type === "runtime-request.updated" &&
-          stored.event.payload.status !== "pending",
-      ),
+      Stream.filter((stored) => stored.event.type === "runtime-request.updated"),
       Stream.runForEach((stored) =>
-        promoteOtherIssueQueues(stored.event.threadId).pipe(
+        (stored.event.type === "runtime-request.updated" &&
+        stored.event.payload.status === "pending"
+          ? String(stored.commandId).startsWith("command:runtime-reconcile:")
+            ? Effect.void
+            : notifyParentOfChildQuestion(stored.event.threadId, stored.event.payload.id)
+          : promoteOtherIssueQueues(stored.event.threadId)
+        ).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Failed to resume issue work after a user response", { cause }),
           ),

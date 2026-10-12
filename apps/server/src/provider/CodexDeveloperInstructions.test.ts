@@ -23,6 +23,17 @@ describe("buildCodexDeveloperInstructions", () => {
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
   });
 
+  it("routes unresolved Default mode questions through the native question tool", () => {
+    const instructions = buildCodexDeveloperInstructions("default");
+
+    NodeAssert.match(instructions, /Use the `request_user_input` tool only when it is listed/);
+    NodeAssert.match(
+      instructions,
+      /When a missing answer would materially change the task[\s\S]*ask with `request_user_input` and wait for the answer/,
+    );
+    NodeAssert.match(instructions, /If the tool is unavailable or fails, report the blocker/);
+  });
+
   it("describes Markdown media support in the runtime context in both modes", () => {
     {
       const instructions = runtimeInstructions({

@@ -537,7 +537,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
-it("taskStatus reports a child waiting on the user, but not an auth refresh", async () => {
+it("taskStatus reports a child waiting on the orchestrator, but not an auth refresh", async () => {
   const parentProjection = {
     thread: baseThread({
       threadId: parentThreadId,
@@ -605,6 +605,7 @@ it("taskStatus reports a child waiting on the user, but not an auth refresh", as
         id: "request-mcp-question",
         kind: "user_input",
         status: "pending",
+        routedTo: parentThreadId,
       },
       {
         id: "request-mcp-auth",
@@ -669,7 +670,8 @@ it("taskStatus reports a child waiting on the user, but not an auth refresh", as
     expect(result.waitingOnUser).toEqual({
       kind: "input",
       requestIds: ["request-mcp-question"],
-      preview: "Fix the lexer too?",
+      waitingOn: "orchestrator",
+      preview: expect.stringContaining("Fix the lexer too?"),
     });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

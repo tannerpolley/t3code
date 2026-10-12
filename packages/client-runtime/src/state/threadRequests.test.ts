@@ -3,6 +3,7 @@ import {
   ProviderSessionId,
   RuntimeRequestId,
   TurnItemId,
+  ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -203,4 +204,18 @@ it("restores old text answers without mutating history or replacing unchanged ro
   expect(row.item).not.toHaveProperty("questionAnswer");
   expect(project(answered)).toBe(result);
   expect(project({ ...answered, visibleTurnItems: [...rows] })[0]).toBe(result[0]);
+});
+
+it("retains an answerable routed request when the owner opens the child", () => {
+  const routedTo = ThreadId.make("orchestrator");
+  const routed = {
+    ...projection,
+    runtimeRequests: projection.runtimeRequests.map((request) => ({ ...request, routedTo })),
+  };
+  expect(derivePendingThreadRequests(routed).userInputs[0]).toMatchObject({
+    requestId,
+    routedTo,
+    responseCapability: "message",
+    questions: expect.arrayContaining([expect.objectContaining({ id: "next" })]),
+  });
 });

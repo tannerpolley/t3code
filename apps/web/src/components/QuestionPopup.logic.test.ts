@@ -6,7 +6,7 @@ import { collectPendingQuestions, visibleQuestionQueue } from "./QuestionPopup.l
 
 function thread(
   id: string,
-  request: { kind: "user_input" | "command"; at: string } | null,
+  request: { kind: "user_input" | "command"; at: string; routedTo?: ThreadId } | null,
   archived = false,
 ) {
   return {
@@ -17,6 +17,7 @@ function thread(
           id: RuntimeRequestId.make(`request-${id}`),
           kind: request.kind,
           createdAt: DateTime.makeUnsafe(request.at),
+          ...(request.routedTo === undefined ? {} : { routedTo: request.routedTo }),
         }
       : null,
   };
@@ -32,6 +33,11 @@ describe("question popup queue", () => {
         environmentId: one,
         threads: [
           thread("late", { kind: "user_input", at: "2026-09-30T10:05:00Z" }),
+          thread("routed-child", {
+            kind: "user_input",
+            at: "2026-09-30T09:00:00Z",
+            routedTo: ThreadId.make("parent"),
+          }),
           thread("approval", { kind: "command", at: "2026-09-30T10:00:00Z" }),
           thread("archived", { kind: "user_input", at: "2026-09-30T09:00:00Z" }, true),
           thread("idle", null),

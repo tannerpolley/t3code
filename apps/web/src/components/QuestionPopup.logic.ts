@@ -15,8 +15,8 @@ export interface PendingQuestion {
 }
 
 /**
- * Every unarchived thread, subagents included, whose shell reports a pending
- * question, oldest first. Answered, dismissed and cancelled questions leave
+ * Owner-facing questions on unarchived threads, oldest first.
+ * Answered, dismissed and cancelled questions leave
  * the shell, so they leave this list with it.
  */
 export function collectPendingQuestions(
@@ -31,7 +31,12 @@ export function collectPendingQuestions(
   for (const { environmentId, threads } of environments) {
     for (const thread of threads) {
       const request = thread.pendingRuntimeRequest;
-      if (request?.kind !== "user_input" || thread.archivedAt !== null) continue;
+      if (
+        request?.kind !== "user_input" ||
+        request.routedTo !== undefined ||
+        thread.archivedAt !== null
+      )
+        continue;
       questions.push({
         key: JSON.stringify([environmentId, thread.id, request.id]),
         environmentId,

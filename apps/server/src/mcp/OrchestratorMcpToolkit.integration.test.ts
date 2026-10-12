@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
@@ -82,6 +83,10 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -195,6 +200,7 @@ function makeDeterministicAdapter(input: {
     turn: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Deferred.Deferred<void> | undefined;
   readonly response: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => string;
+  readonly respondToRuntimeRequest?: ProviderAdapter.ProviderAdapterV2SessionRuntime["respondToRuntimeRequest"];
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -403,7 +409,7 @@ function makeDeterministicAdapter(input: {
                 },
               ]);
             }),
-          respondToRuntimeRequest: () => Effect.void,
+          respondToRuntimeRequest: input.respondToRuntimeRequest ?? (() => Effect.void),
           readThreadSnapshot: () =>
             unsupported(input.driver, "readThreadSnapshot is unused in this test"),
           rollbackThread: () => unsupported(input.driver, "rollbackThread is unused in this test"),
@@ -419,16 +425,16 @@ function waitForProjection(
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
 ) {
   return Effect.gen(function* () {
-    for (let attempt = 0; attempt < 1_000; attempt += 1) {
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      if (predicate(projection)) {
-        return projection;
-      }
-      yield* Effect.sleep("5 millis");
-    }
-    return yield* Effect.die(
-      new Error(`Timed out waiting for orchestration projection ${threadId}.`),
+    const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+    const current = yield* orchestrator.getThreadProjection(threadId);
+    if (predicate(current)) return current;
+    const result = yield* orchestrator.streamStoredEventsFrom({ threadId, afterSequence }).pipe(
+      Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
+      Stream.filter(predicate),
+      Stream.runHead,
     );
+    if (Option.isNone(result)) return yield* Effect.die(`Projection stream ended for ${threadId}.`);
+    return result.value;
   });
 }
 
@@ -528,6 +534,12 @@ describe("orchestrator MCP toolkit", () => {
         Effect.gen(function* () {
           const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const approvalResponse =
+            yield* Deferred.make<
+              Parameters<
+                ProviderAdapter.ProviderAdapterV2SessionRuntime["respondToRuntimeRequest"]
+              >[0]
+            >();
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
@@ -549,6 +561,8 @@ describe("orchestrator MCP toolkit", () => {
                   ? deliveryTerminalGates.get(turn.threadId)
                   : parentTerminalGates.get(turn.threadId),
               response: (turn) => `Codex completed: ${turn.message.text}`,
+              respondToRuntimeRequest: (response) =>
+                Deferred.succeed(approvalResponse, response).pipe(Effect.asVoid),
             }),
             makeDeterministicAdapter({
               instanceId: claudeInstanceId,
@@ -713,6 +727,7 @@ describe("orchestrator MCP toolkit", () => {
                 Layer.provide(layerOrchestration),
               ),
             ),
+            Layer.provideMerge(McpProviderSessions.layer),
             Layer.provide(NodeServices.layer),
           );
 
@@ -782,21 +797,47 @@ describe("orchestrator MCP toolkit", () => {
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
 
-            const scopeForThread = (projection: OrchestrationV2ThreadProjection) => {
-              const providerThread = projection.providerThreads.find(
-                (thread) => thread.id === projection.thread.activeProviderThreadId,
-              );
-              if (providerThread?.providerSessionId == null)
-                throw new Error(`Thread ${projection.thread.id} has no active provider session.`);
-              return {
-                ...invocation,
-                thread: {
+            const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+            const credentialRegistry = yield* McpSessionRegistry.__testing.make().pipe(
+              Effect.provide(NodeCrypto.layer),
+              Effect.provideService(
+                HttpServer.HttpServer,
+                HttpServer.HttpServer.of({
+                  address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+                  serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+                }),
+              ),
+              Effect.provideService(
+                ServerEnvironment.ServerEnvironment,
+                ServerEnvironment.ServerEnvironment.of({
+                  getEnvironmentId: Effect.succeed(invocation.environmentId),
+                  getDescriptor: Effect.die("unused"),
+                }),
+              ),
+            );
+            const scopeForThread = (projection: OrchestrationV2ThreadProjection) =>
+              Effect.gen(function* () {
+                const providerThread = projection.providerThreads.find(
+                  (thread) => thread.id === projection.thread.activeProviderThreadId,
+                );
+                if (providerThread?.providerSessionId == null)
+                  return yield* Effect.die(
+                    `Thread ${projection.thread.id} has no active provider session.`,
+                  );
+                const issued = yield* credentialRegistry.issue({
                   threadId: projection.thread.id,
-                  providerSessionId: providerThread.providerSessionId,
                   providerInstanceId: providerThread.providerInstanceId,
-                },
-              } satisfies McpInvocationContext.McpInvocationScope;
-            };
+                });
+                yield* mcpSessions.set(issued.config);
+                const scope = yield* credentialRegistry.resolve(
+                  issued.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+                );
+                if (scope === undefined)
+                  return yield* Effect.die("The issued MCP credential did not resolve.");
+                expect(scope.thread.providerSessionId).toMatch(/^[0-9a-f-]{36}$/);
+                expect(scope.thread.providerSessionId).not.toBe(providerThread.providerSessionId);
+                return scope;
+              });
             const startQuestion = (
               callScope: McpInvocationContext.McpInvocationScope,
               questions: ReadonlyArray<OrchestrationV2UserInputQuestion>,
@@ -826,6 +867,17 @@ describe("orchestrator MCP toolkit", () => {
                     ),
                     Stream.runHead,
                     Effect.orDie,
+                    Effect.raceFirst(
+                      Fiber.join(call).pipe(
+                        Effect.flatMap((result) =>
+                          Effect.die(
+                            new Error(
+                              `Question tool ended before creating its card: ${JSON.stringify(declaredFailure(result))}`,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   );
                 if (Option.isNone(pendingEvent))
                   return yield* Effect.die("The T3 question card was not created.");
@@ -919,7 +971,7 @@ describe("orchestrator MCP toolkit", () => {
             }
 
             let parentRootNodeId = parentRun.rootNodeId;
-            const scopeForCaller = scopeForThread(parent);
+            let scopeForCaller = yield* scopeForThread(parent);
             const areasQuestion: OrchestrationV2UserInputQuestion = {
               id: "areas",
               header: "Areas",
@@ -949,14 +1001,13 @@ describe("orchestrator MCP toolkit", () => {
             };
             yield* answerQuestion(scopeForCaller, multiSelectQuestions, multipleAnswers);
 
-            const staleSessionCall = yield* invokeAs(
-              {
-                ...scopeForCaller,
-                thread: { ...scopeForCaller.thread, providerSessionId: "stale-provider-session" },
-              },
-              "t3_request_user_input",
-              { questions: [areasQuestion] },
+            const supersededScope = scopeForCaller;
+            scopeForCaller = yield* scopeForThread(
+              yield* orchestrator.getThreadProjection(parentThreadId),
             );
+            const staleSessionCall = yield* invokeAs(supersededScope, "t3_request_user_input", {
+              questions: [areasQuestion],
+            });
             expect(declaredFailure(staleSessionCall)).toMatchObject({ code: "parent_not_active" });
 
             const answeredBeforeSubscribeId = RuntimeRequestId.make(
@@ -1124,7 +1175,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(Option.isSome(stopTurnStarted)).toBe(true);
             const stopQuestionProjection =
               yield* orchestrator.getThreadProjection(stopQuestionThreadId);
-            const stopScope = scopeForThread(stopQuestionProjection);
+            const stopScope = yield* scopeForThread(stopQuestionProjection);
             const stopQuestion = yield* startQuestion(stopScope, [dismissQuestion]);
             const stopRun = stopQuestionProjection.runs.find((run) => run.status === "running");
             if (stopRun === undefined)
@@ -1192,7 +1243,7 @@ describe("orchestrator MCP toolkit", () => {
               );
             const endedQuestionProjection =
               yield* orchestrator.getThreadProjection(endedQuestionThreadId);
-            const endedScope = scopeForThread(endedQuestionProjection);
+            const endedScope = yield* scopeForThread(endedQuestionProjection);
             const endedQuestion = yield* startQuestion(endedScope, [dismissQuestion]);
             const endedRun = endedQuestionProjection.runs.find((run) => run.status === "running");
             if (endedRun === undefined)
@@ -3151,6 +3202,10 @@ describe("orchestrator MCP toolkit", () => {
             yield* waitForProjection(orchestrator, questionChildThreadId, (projection) =>
               projection.runs.some((run) => run.status === "running"),
             );
+            const questionChild = yield* orchestrator.getThreadProjection(questionChildThreadId);
+            const questionProviderThread = questionChild.providerThreads.find(
+              (thread) => thread.id === questionChild.thread.activeProviderThreadId,
+            )!;
             const questionRequestId = RuntimeRequestId.make("request:question-wait");
             const questionNodeId = NodeId.make("node:question-wait");
             const questionAt = yield* DateTime.now;
@@ -3169,7 +3224,10 @@ describe("orchestrator MCP toolkit", () => {
                     nativeRequestRef: null,
                     kind: "user_input",
                     status: "pending",
-                    responseCapability: { type: "message" },
+                    responseCapability: {
+                      type: "app_owned",
+                      providerSessionId: questionProviderThread.providerSessionId!,
+                    },
                     createdAt: questionAt,
                     resolvedAt: null,
                   },
@@ -3214,7 +3272,8 @@ describe("orchestrator MCP toolkit", () => {
               waitingOnUser: {
                 kind: "input",
                 requestIds: [questionRequestId],
-                preview: "Fix the lexer too?",
+                waitingOn: "orchestrator",
+                preview: expect.stringContaining("Fix the lexer too?"),
               },
             });
             expect(
@@ -3222,6 +3281,103 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id === questionTask.id,
               )?.completionWake,
             ).toBe("always");
+            const questionResponse = yield* invoke("t3_pending_request_respond", {
+              threadId: questionChildThreadId,
+              requestId: questionRequestId,
+              answers: { q1: "No" },
+            });
+            expect(questionResponse.isError).toBe(false);
+            const answeredQuestionChild =
+              yield* orchestrator.getThreadProjection(questionChildThreadId);
+            const answeredQuestionItem = answeredQuestionChild.turnItems.find(
+              (item) => item.type === "user_input_request" && item.requestId === questionRequestId,
+            );
+            expect(answeredQuestionItem).toMatchObject({
+              status: "completed",
+              respondedBy: "orchestrator",
+            });
+            if (answeredQuestionItem?.type !== "user_input_request")
+              return yield* Effect.die("The answered question was not found.");
+            const {
+              type: _type,
+              questions: _questions,
+              questionAnswer: _questionAnswer,
+              respondedBy: _respondedBy,
+              ...approvalItemBase
+            } = answeredQuestionItem;
+            const approvalRequestId = RuntimeRequestId.make("request:native-child-approval");
+            // This parent answers in its blocking call; asynchronous wake delivery is tested separately.
+            yield* orchestrator.dispatch({
+              type: "delegated_task.wake-policy",
+              commandId: CommandId.make("command:native-approval-blocking-wait"),
+              parentThreadId,
+              taskId: questionTask.id,
+              completionWake: "settled_only",
+            });
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("event:native-child-approval-request"),
+                  type: "runtime-request.updated",
+                  threadId: questionChildThreadId,
+                  occurredAt: questionAt,
+                  payload: {
+                    id: approvalRequestId,
+                    nodeId: questionNodeId,
+                    providerTurnId: null,
+                    nativeRequestRef: null,
+                    kind: "command",
+                    status: "pending",
+                    responseCapability: {
+                      type: "live",
+                      providerSessionId: questionProviderThread.providerSessionId!,
+                    },
+                    createdAt: questionAt,
+                    resolvedAt: null,
+                  },
+                },
+                {
+                  id: EventId.make("event:native-child-approval-item"),
+                  type: "turn-item.updated",
+                  threadId: questionChildThreadId,
+                  occurredAt: questionAt,
+                  payload: {
+                    ...approvalItemBase,
+                    id: TurnItemId.make("item:native-child-approval"),
+                    type: "approval_request",
+                    requestId: approvalRequestId,
+                    requestKind: "command",
+                    status: "waiting",
+                    completedAt: null,
+                    prompt: "cat /tmp/requested-file",
+                  },
+                },
+              ],
+            });
+            const readApproval = yield* invoke("t3_pending_request_read", {
+              threadId: questionChildThreadId,
+              requestId: approvalRequestId,
+            });
+            expect(readApproval.structuredContent).toMatchObject({
+              requestId: approvalRequestId,
+              requestKind: "command",
+              prompt: "cat /tmp/requested-file",
+            });
+            const approveChild = yield* invoke("t3_pending_request_respond", {
+              threadId: questionChildThreadId,
+              requestId: approvalRequestId,
+              decision: "accept",
+            });
+            expect(approveChild.isError).toBe(false);
+            expect(yield* Deferred.await(approvalResponse)).toEqual({
+              requestId: approvalRequestId,
+              decision: "accept",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(questionChildThreadId)).turnItems.find(
+                (item) => item.type === "approval_request" && item.requestId === approvalRequestId,
+              ),
+            ).toMatchObject({ status: "completed", respondedBy: "orchestrator" });
             // Clean up without a parent wake: settle delivery before the child terminalizes.
             yield* orchestrator.dispatch({
               type: "delegated_task.completion-delivery.dispose",
