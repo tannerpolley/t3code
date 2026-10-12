@@ -1561,6 +1561,9 @@ export function threadShellFromProjection(
             id: pendingRuntimeRequest.id,
             kind: pendingRuntimeRequest.kind,
             createdAt: pendingRuntimeRequest.createdAt,
+            ...(pendingRuntimeRequest.routedTo === undefined
+              ? {}
+              : { routedTo: pendingRuntimeRequest.routedTo }),
           },
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
@@ -1893,6 +1896,9 @@ function shellFromState(input: {
             id: input.state.pendingRuntimeRequest.id,
             kind: input.state.pendingRuntimeRequest.kind,
             createdAt: input.state.pendingRuntimeRequest.createdAt,
+            ...(input.state.pendingRuntimeRequest.routedTo === undefined
+              ? {}
+              : { routedTo: input.state.pendingRuntimeRequest.routedTo }),
           },
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,

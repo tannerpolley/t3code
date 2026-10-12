@@ -99,6 +99,7 @@ import {
   buildCodexAdditionalContext,
   buildCodexDeveloperInstructions,
 } from "../../provider/CodexDeveloperInstructions.ts";
+import { combineApprovalPrompt } from "../../provider/approvalPrompt.ts";
 import {
   describeMcpElicitation,
   toMcpElicitationResponse,
@@ -152,26 +153,32 @@ const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
-/** Describe approval scope even when Codex omits or blanks the optional reason. */
+/** Preserve the reason and every operation Codex provides for the approval. */
 export function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
   readonly grantRoot?: string | null;
   readonly fileChanges?: CodexSchema.ServerRequest__ApplyPatchApprovalParams["fileChanges"];
+  readonly itemChanges?: ReadonlyArray<CodexSchema.V2ItemStartedNotification__FileUpdateChange>;
 }): string | undefined {
-  const reason = input.reason?.trim();
-  if (reason) return reason;
   const entries = Object.entries(input.fileChanges ?? {}).toSorted(([left], [right]) =>
     left.localeCompare(right),
   );
-  if (entries.length > 0) {
-    const described = entries.slice(0, 20).map(([path, change]) => {
+  const itemChanges = input.itemChanges?.toSorted((left, right) =>
+    left.path.localeCompare(right.path),
+  );
+  const grantRoot = input.grantRoot?.trim();
+  const details = [
+    grantRoot ? `Grant root: ${grantRoot}` : undefined,
+    ...entries.map(([path, change]) => {
       const movePath = change.type === "update" ? change.move_path : undefined;
       return movePath ? `${change.type} ${path} -> ${movePath}` : `${change.type} ${path}`;
-    });
-    const remaining = entries.length - described.length;
-    return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
-  }
-  return input.grantRoot?.trim() || undefined;
+    }),
+    ...(itemChanges ?? []).map(({ kind, path }) => {
+      const movePath = kind.type === "update" ? kind.move_path : undefined;
+      return movePath ? `${kind.type} ${path} -> ${movePath}` : `${kind.type} ${path}`;
+    }),
+  ].filter((detail): detail is string => detail !== undefined);
+  return combineApprovalPrompt([input.reason], details.join("\n"));
 }
 
 // Reasoning effort changes future generation, not the existing context's tokenizer
@@ -1139,6 +1146,10 @@ interface ActiveCodexTurnContext {
     string,
     { readonly ordinal: number; readonly startedAt: DateTime.Utc }
   >;
+  readonly fileChangesByItem: Map<
+    string,
+    ReadonlyArray<CodexSchema.V2ItemStartedNotification__FileUpdateChange>
+  >;
 }
 
 interface ActiveCodexProviderRetry {
@@ -1305,7 +1316,10 @@ export class CodexAppServerClientFactory extends Context.Service<
  * Codex 0.152 made the `update_plan` checklist tool opt-in; T3 renders it as the
  * todo list. Codex layers these above the user's and project's `config.toml`.
  */
-export const CODEX_THREAD_CONFIG = { "tools.update_plan.enabled": true } as const;
+export const CODEX_THREAD_CONFIG = {
+  "tools.update_plan.enabled": true,
+  "features.default_mode_request_user_input": true,
+} as const;
 
 export function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
@@ -2014,6 +2028,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               subagent: null,
               startedAt: input.startedAt,
               itemPositions: new Map(),
+              fileChangesByItem: new Map(),
             };
             yield* Ref.update(limitedTurnItems, (current) => {
               const next = new Map(current);
@@ -2654,6 +2669,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               subagent,
               startedAt: turn.startedAt,
               itemPositions: new Map(),
+              fileChangesByItem: new Map(),
             };
             beginTurnTokenUsage(activeContext);
             yield* Ref.update(activeTurns, (current) => {
@@ -4728,6 +4744,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
 
+            if (payload.item.type === "fileChange") {
+              context.fileChangesByItem.set(payload.item.id, payload.item.changes);
+            }
+
             yield* completeProviderRetry(context, yield* DateTime.now);
             // Reasoning streams per part, so its parts take their own first-seen times.
             if (payload.item.type !== "reasoning") {
@@ -4736,6 +4756,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload.item.id,
                 DateTime.makeUnsafe(payload.startedAtMs),
               );
+            }
+
+            if (payload.item.type === "fileChange") {
+              return;
             }
 
             if (payload.item.type === "agentMessage") {
@@ -4956,6 +4980,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "fileChange") {
+              context.fileChangesByItem.delete(payload.item.id);
               const artifacts = yield* buildFileChangeArtifacts(context, payload.item);
               if (artifacts === null) {
                 return;
@@ -5157,9 +5182,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeItemId: payload.itemId,
               nativeRequestId,
               requestKind: "command",
-              ...((payload.reason ?? payload.command) === undefined
-                ? {}
-                : { prompt: payload.reason ?? payload.command }),
+              prompt: combineApprovalPrompt([payload.reason], payload.command) ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -5214,12 +5237,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             }
 
+            const itemChanges = context.fileChangesByItem.get(payload.itemId);
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind: "file-change",
-              prompt: codexFileChangeApprovalPrompt(payload) ?? null,
+              prompt:
+                codexFileChangeApprovalPrompt({
+                  ...payload,
+                  ...(itemChanges === undefined ? {} : { itemChanges }),
+                }) ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -5424,7 +5452,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeItemId: payload.callId,
               nativeRequestId,
               requestKind: "command",
-              prompt: payload.reason ?? payload.command.join(" "),
+              prompt: combineApprovalPrompt([payload.reason], payload.command.join(" ")) ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -5819,6 +5847,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (current !== input.context) {
                 return false;
               }
+              input.context.fileChangesByItem.clear();
               const providerRetry = yield* Ref.modify(providerRetries, (current) => {
                 const retry = current.get(input.context.providerTurnId);
                 if (retry === undefined) {
@@ -6175,6 +6204,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             subagent: null,
             startedAt: now,
             itemPositions: new Map(),
+            fileChangesByItem: new Map(),
           };
           const providerTurn = {
             id: context.providerTurnId,
@@ -6337,7 +6367,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               managedIssue: mcpSession?.managedIssue ?? false,
-              ...(mcpSession?.modelRoles === undefined ? {} : { modelRoles: mcpSession.modelRoles }),
+              ...(mcpSession?.modelRoles === undefined
+                ? {}
+                : { modelRoles: mcpSession.modelRoles }),
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
             });

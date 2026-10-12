@@ -5,10 +5,12 @@ import type {
   ProviderApprovalOption,
   ProviderRequestKind,
   RuntimeRequestId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 export interface ThreadPendingApproval {
+  readonly routedTo?: ThreadId;
   readonly requestId: RuntimeRequestId;
   readonly requestKind: ProviderRequestKind;
   readonly createdAt: string;
@@ -28,6 +30,7 @@ export interface ThreadUserInputQuestion extends Omit<
 }
 
 export interface ThreadPendingUserInput {
+  readonly routedTo?: ThreadId;
   readonly requestId: RuntimeRequestId;
   readonly createdAt: string;
   readonly questions: ReadonlyArray<ThreadUserInputQuestion>;
@@ -79,6 +82,7 @@ export function derivePendingThreadRequests(
       );
       if (item === undefined || item.type !== "user_input_request") continue;
       userInputs.push({
+        ...(request.routedTo === undefined ? {} : { routedTo: request.routedTo }),
         requestId: request.id,
         createdAt: DateTime.formatIso(request.createdAt),
         questions: item.questions.map((question) => ({
@@ -102,6 +106,7 @@ export function derivePendingThreadRequests(
       (candidate) => candidate.type === "approval_request" && candidate.requestId === request.id,
     );
     approvals.push({
+      ...(request.routedTo === undefined ? {} : { routedTo: request.routedTo }),
       requestId: request.id,
       requestKind: request.kind,
       createdAt: DateTime.formatIso(request.createdAt),

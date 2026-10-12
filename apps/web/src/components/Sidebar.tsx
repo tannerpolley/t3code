@@ -2857,7 +2857,7 @@ export default function Sidebar() {
     () => groupRunningSubagentsByParent(threads),
     [threads],
   );
-  // The Working shelf and return tracker see the same child attention as the parent row.
+  // Owner-facing flags omit orchestrator-routed requests on the shelf and parent row alike.
   const activityThreads = useMemo(
     () =>
       threads.map((thread) => {

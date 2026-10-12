@@ -237,6 +237,8 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     Schema.Struct({
       kind: Schema.Literals(["input", "approval"]),
       requestIds: Schema.Array(RuntimeRequestId),
+      /** The legacy result field name is retained; delegated requests wait on the parent. */
+      waitingOn: Schema.optional(Schema.Literal("orchestrator")),
       preview: Schema.String,
     }),
   ),
@@ -533,8 +535,8 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
 /**
- * A model role as orchestrators see it. Each choice reports why
- * `delegate_task` would reject that target right now, or null.
+ * A model role as orchestrators see it. Choices are ordered by current weekly
+ * headroom; each reports why `delegate_task` would reject it, when relevant.
  */
 export const OrchestratorMcpModelRole = Schema.Struct({
   ...ModelRole.fields,
@@ -542,6 +544,14 @@ export const OrchestratorMcpModelRole = Schema.Struct({
     Schema.Struct({
       ...ModelRoleTarget.fields,
       unavailableReason: Schema.NullOr(Schema.String),
+      /** Current provider weekly usage, when the target's provider reports one. */
+      weeklyUsage: Schema.optional(
+        Schema.Struct({
+          remainingPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+          resetsAt: Schema.NullOr(IsoDateTime),
+          pace: Schema.NullOr(Schema.Literals(["ahead", "on", "under"])),
+        }),
+      ),
     }),
   ).check(Schema.isMaxLength(MAX_MODEL_ROLE_TARGETS)),
 });
@@ -557,8 +567,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
   /**
-   * The user's model roles: defaults to use at the agent's discretion when
-   * picking a `delegate_task` target. Explicit user instructions win.
+   * The user's model roles: alternatives for delegated work, ordered by
+   * current weekly headroom. Task fit and explicit user instructions take priority.
    */
   modelRoles: Schema.Array(OrchestratorMcpModelRole),
   features: Schema.Struct({

@@ -1086,8 +1086,8 @@ export function groupRunningSubagentsByParent<
 }
 
 /**
- * A parent shows its children's questions as its own, so a subagent asking the user is visible
- *  without opening the parent. Its own urgent states win. A settled
+ * A parent shows children's owner-facing requests; orchestrator-routed requests
+ * have no owner attention flags. Its own urgent states win. A settled
  * parent with children still at work reads as waiting on them, like its own background work.
  */
 export function withChildNeeds(

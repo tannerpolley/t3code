@@ -137,4 +137,24 @@ describe("projectThreadAwarenessV2", () => {
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
   });
+
+  it.each(["user_input", "command"] as const)(
+    "keeps a routed %s request out of owner activity",
+    (kind) => {
+      expect(
+        projectThreadAwarenessV2({
+          environmentId: "env-1" as EnvironmentId,
+          project,
+          thread: v2Thread({
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("request-routed"),
+              kind,
+              routedTo: "orchestrator" as ThreadId,
+              createdAt: updatedAt,
+            },
+          }),
+        }),
+      ).toMatchObject({ phase: "running", headline: "Agent is working" });
+    },
+  );
 });

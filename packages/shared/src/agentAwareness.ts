@@ -87,11 +87,15 @@ export function projectThreadAwarenessV2(
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
 ): AgentAwarenessPhase | null {
-  if (thread.pendingRuntimeRequest?.kind === "user_input") {
+  if (
+    thread.pendingRuntimeRequest?.kind === "user_input" &&
+    thread.pendingRuntimeRequest.routedTo === undefined
+  ) {
     return "waiting_for_input";
   }
   if (
     thread.pendingRuntimeRequest !== null &&
+    thread.pendingRuntimeRequest.routedTo === undefined &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";

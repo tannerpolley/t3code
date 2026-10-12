@@ -49,13 +49,25 @@ describe("T3 orchestration provider instructions", () => {
     const unavailable = "Provider codex cannot run a child task: Provider is not authenticated.";
     const roles = DEFAULT_MODEL_ROLES.map((role) => ({
       ...role,
-      targets: Arr.map(role.targets, (target) => ({
+      targets: Arr.map(role.targets, (target, index) => ({
         ...target,
         unavailableReason: role.id === "strong-reviewer" ? unavailable : null,
+        ...(role.name === "Fast builder" && index === 0
+          ? {
+              weeklyUsage: {
+                remainingPercent: 42,
+                resetsAt: "2026-07-24T08:59:00.000Z",
+                pace: "under" as const,
+              },
+            }
+          : {}),
       })),
     }));
     const text = t3ModelRolesInstructions(roles);
-    assert.include(text, "Use them at your discretion; explicit user instructions win.");
+    assert.include(
+      text,
+      "The user's choices for delegated work are equal alternatives, ordered by current weekly headroom, with more quota left relative to time remaining first. You may override this order for task fit; explicit user instructions win.",
+    );
     assert.include(
       text,
       '- Checker: Read-only review of a build: missed places, weak tests, edge cases; budget review and sanity checks. gpt-6.1-sol high (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-6.1-sol","options":{"reasoningEffort":"high"}}`',
@@ -64,16 +76,20 @@ describe("T3 orchestration provider instructions", () => {
       text,
       '- Quick Claude: Quick, well-specified Claude-side work. claude-sonnet-5-5 medium (claudeAgent). Target JSON: `{"providerInstanceId":"claudeAgent","model":"claude-sonnet-5-5","options":{"effort":"medium"}}`',
     );
-    assert.include(text, "The first choice is the default; you may pick another by your judgment.");
+    assert.notInclude(text, "The first choice is the default");
     const fastBuilder = text.split("\n").find((line) => line.startsWith("- Fast builder:"))!;
     assert.include(
       fastBuilder,
-      'claude-opus-5-5 medium (claudeAgent). Target JSON: `{"providerInstanceId":"claudeAgent","model":"claude-opus-5-5","options":{"effort":"medium"}}` or gpt-6.1-sol medium (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-6.1-sol","options":{"reasoningEffort":"medium"}}`',
+      "claude-opus-5-5 medium (claudeAgent). Weekly usage: 42% left; resets 2026-07-24T08:59:00.000Z; pace under. Target JSON:",
+    );
+    assert.include(
+      fastBuilder,
+      'claude-opus-5-5 medium (claudeAgent). Weekly usage: 42% left; resets 2026-07-24T08:59:00.000Z; pace under. Target JSON: `{"providerInstanceId":"claudeAgent","model":"claude-opus-5-5","options":{"effort":"medium"}}` or gpt-6.1-sol medium (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-6.1-sol","options":{"reasoningEffort":"medium"}}`',
     );
     // An unavailable choice keeps its label but offers no target JSON to delegate to.
     assert.include(
       text,
-      `- Strong reviewer: Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call. gpt-6-astra xhigh (codex) Unavailable: ${unavailable}`,
+      `- Strong reviewer: Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call. gpt-6-astra xhigh (codex). Unavailable: ${unavailable}`,
     );
     assert.notInclude(text, '"model":"gpt-6-astra"');
     assert.equal(text.split("\n").filter((line) => line.startsWith("- ")).length, 8);
@@ -82,7 +98,7 @@ describe("T3 orchestration provider instructions", () => {
     assert.equal(t3OrchestrationInstructions([]), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 
-  it("keeps a usable alternative when the default choice is unavailable", () => {
+  it("keeps an available alternative when an earlier choice is unavailable", () => {
     const role = DEFAULT_MODEL_ROLES[1]!;
     const text = t3ModelRolesInstructions([
       {
@@ -95,7 +111,7 @@ describe("T3 orchestration provider instructions", () => {
     ]);
     assert.include(
       text,
-      "claude-opus-5-5 medium (claudeAgent) Unavailable: Provider is disabled. or",
+      "claude-opus-5-5 medium (claudeAgent). Unavailable: Provider is disabled. or",
     );
     assert.notInclude(text, '"providerInstanceId":"claudeAgent"');
     assert.include(

@@ -108,6 +108,7 @@ import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispa
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
+import { combineApprovalPrompt } from "../../provider/approvalPrompt.ts";
 import { claudeTaskOutputDir, reportedTaskOutputPaths } from "../backgroundTaskOutput.ts";
 import { classifyShellCommand } from "@t3tools/shared/shellCommand";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -2203,11 +2204,11 @@ function webSearchResultsFromClaudeOutput(
 function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInput): string {
   const command = firstStringInputField(input, ["command", "cmd", "script"]);
   if (command !== undefined) {
-    return `${toolName}: ${command.slice(0, 400)}`;
+    return `${toolName}: ${command}`;
   }
   const path = firstStringInputField(input, ["file_path", "path", "filename", "fileName"]);
   if (path !== undefined) {
-    return `${toolName}: ${path.slice(0, 400)}`;
+    return `${toolName}: ${path}`;
   }
   const serialized = jsonStringifyForTool(claudeNativeToolInputValue(input));
   return serialized.length <= 400
@@ -8202,17 +8203,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
-          const prompt =
-            callbackOptions.title ??
-            callbackOptions.description ??
-            callbackOptions.decisionReason ??
-            summarizeClaudeToolRequest(toolName, nativeToolInput);
+          const prompt = combineApprovalPrompt(
+            [callbackOptions.title, callbackOptions.description, callbackOptions.decisionReason],
+            summarizeClaudeToolRequest(toolName, nativeToolInput),
+          );
           const artifacts = yield* buildApprovalRequestArtifacts({
             context,
             nativeItemId: nativeRequestId,
             nativeRequestId,
             requestKind,
-            prompt,
+            ...(prompt === undefined ? {} : { prompt }),
           });
           const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {

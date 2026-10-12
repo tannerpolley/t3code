@@ -1,5 +1,6 @@
 import {
   CommandId,
+  EventId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
@@ -33,6 +34,7 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { delegatedRequestOwner } from "./DelegatedRequestRouting.ts";
 
 /**
  * ERRORS
@@ -323,28 +325,88 @@ const layerBase: Layer.Layer<
         });
       });
 
-    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
-      const runOrdinals = new Map(
-        events.flatMap((event) =>
-          event.type === "run.created" || event.type === "run.updated"
-            ? [[event.payload.id, event.payload.ordinal] as const]
-            : [],
-        ),
-      );
-      return Effect.forEach(
-        events,
-        (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
-          event.type === "turn-item.updated"
-            ? turnItemPositions
-                .normalize(
-                  event.payload,
-                  event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.gen(function* () {
+        const inactiveParents = events.filter(
+          (event) =>
+            (event.type === "thread.archived" ||
+              event.type === "thread.deleted" ||
+              event.type === "thread.metadata-updated") &&
+            (event.payload.archivedAt !== null || event.payload.deletedAt !== null),
+        );
+        const inactiveParentIds = new Set(inactiveParents.map((event) => event.threadId));
+        const fallbacks: OrchestrationV2DomainEvent[] = [];
+        for (const parentEvent of inactiveParents) {
+          const { subagents } = yield* projectionStore.getThreadRecords(parentEvent.threadId, [
+            "subagents",
+          ]);
+          for (const task of subagents) {
+            if (task.origin !== "app_owned" || task.childThreadId === null) continue;
+            if ((yield* projectionStore.getThreadShell(task.childThreadId)) === null) continue;
+            const { runtimeRequests } = yield* projectionStore.getThreadRecords(
+              task.childThreadId,
+              ["runtimeRequests"],
+            );
+            for (const request of runtimeRequests) {
+              if (
+                request.status !== "pending" ||
+                request.routedTo !== parentEvent.threadId ||
+                events.some(
+                  (event) =>
+                    event.type === "runtime-request.updated" &&
+                    event.threadId === task.childThreadId &&
+                    event.payload.id === request.id,
                 )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
-        { concurrency: 1 },
-      );
-    };
+              )
+                continue;
+              fallbacks.push({
+                id: EventId.make(`${parentEvent.id}:request-owner:${request.id}`),
+                type: "runtime-request.updated",
+                threadId: task.childThreadId,
+                nodeId: request.nodeId,
+                occurredAt: parentEvent.occurredAt,
+                payload: request,
+              });
+            }
+          }
+        }
+        const runOrdinals = new Map(
+          events.flatMap((event) =>
+            event.type === "run.created" || event.type === "run.updated"
+              ? [[event.payload.id, event.payload.ordinal] as const]
+              : [],
+          ),
+        );
+        return yield* Effect.forEach(
+          [...events, ...fallbacks],
+          (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
+            event.type === "turn-item.updated"
+              ? turnItemPositions
+                  .normalize(
+                    event.payload,
+                    event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+                  )
+                  .pipe(Effect.map((payload) => ({ ...event, payload })))
+              : event.type === "runtime-request.updated" &&
+                  event.payload.status === "pending" &&
+                  event.payload.kind !== "auth_refresh" &&
+                  event.payload.kind !== "dynamic_tool_call"
+                ? delegatedRequestOwner(projectionStore, event.threadId, inactiveParentIds).pipe(
+                    Effect.map((owner) => {
+                      const { routedTo: _routedTo, ...request } = event.payload;
+                      return {
+                        ...event,
+                        payload: {
+                          ...request,
+                          ...(owner === undefined ? {} : { routedTo: owner.parentThreadId }),
+                        },
+                      };
+                    }),
+                  )
+                : Effect.succeed(event),
+          { concurrency: 1 },
+        );
+      });
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>
       Effect.gen(function* () {

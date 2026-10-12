@@ -163,6 +163,7 @@ export function createEnvironmentThreadShellAtoms(input: {
           pending.push(child.id);
           if (
             child.pendingRuntimeRequest?.kind === "user_input" &&
+            child.pendingRuntimeRequest.routedTo === undefined &&
             !isProviderNativeSubagentThread(child)
           ) {
             next.push(scopedThread(ref.environmentId, child));

@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ProjectId,
   ThreadId,
+  RuntimeRequestId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -222,4 +223,58 @@ describe("v2 thread shell lists", () => {
       harness.registry.dispose();
     }
   });
+});
+
+it("hides routed questions and approvals from owner attention and child-input banners", () => {
+  const { registry, threads, snapshotAtom } = makeHarness();
+  const parent = v2ThreadShell;
+  const children = ["user_input", "command"].map((kind, index) => ({
+    ...parent,
+    id: ThreadId.make(`routed-child-${index}`),
+    lineage: {
+      ...parent.lineage,
+      parentThreadId: parent.id,
+      relationshipToParent: "subagent" as const,
+    },
+    pendingRuntimeRequest: {
+      id: RuntimeRequestId.make(`routed-request-${index}`),
+      kind: kind as "user_input" | "command",
+      createdAt: parent.createdAt,
+      routedTo: parent.id,
+    },
+  }));
+  registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [parent, ...children] });
+  const banner = threads.childThreadInputsAtom({ environmentId, threadId: parent.id });
+  const dispose = registry.mount(banner);
+  expect(registry.get(banner)).toEqual([]);
+  for (const child of children) {
+    const summary = registry.get(threads.threadShellAtom({ environmentId, threadId: child.id }));
+    expect(summary?.hasPendingUserInput).toBe(false);
+    expect(summary?.hasPendingApprovals).toBe(false);
+  }
+  registry.set(snapshotAtom(environmentId), {
+    ...v2ShellSnapshot,
+    threads: [
+      parent,
+      ...children.map((child) => ({
+        ...child,
+        pendingRuntimeRequest: {
+          id: child.pendingRuntimeRequest.id,
+          kind: child.pendingRuntimeRequest.kind,
+          createdAt: child.pendingRuntimeRequest.createdAt,
+        },
+      })),
+    ],
+  });
+  expect(registry.get(banner).map((child) => child.id)).toEqual([children[0]!.id]);
+  expect(
+    registry.get(threads.threadShellAtom({ environmentId, threadId: children[0]!.id }))
+      ?.hasPendingUserInput,
+  ).toBe(true);
+  expect(
+    registry.get(threads.threadShellAtom({ environmentId, threadId: children[1]!.id }))
+      ?.hasPendingApprovals,
+  ).toBe(true);
+  dispose();
+  registry.dispose();
 });

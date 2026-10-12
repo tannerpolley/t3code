@@ -27,7 +27,6 @@ import {
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestions,
   ProjectId,
-  ProviderSessionId,
   type ProviderUserInputAnswers,
   ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
@@ -54,6 +53,8 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { isDelegatedDescendant } from "./DelegatedRequestRouting.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
@@ -185,8 +186,8 @@ export interface ThreadManagementUserInputInput {
     OrchestrationV2ThreadShell,
     "id" | "projectId" | "activeProviderThreadId"
   > & { readonly activeRunId: RunId };
-  /** The provider session the question came from; a stale one is refused. */
-  readonly providerSessionId: string;
+  /** The MCP credential the question came from; a superseded one is refused. */
+  readonly mcpCredentialId: string;
   readonly commandId: CommandId;
   readonly questions: OrchestrationV2UserInputQuestions;
 }
@@ -197,6 +198,23 @@ export type ThreadManagementUserInputResult =
   /** Dismissed, interrupted, or its run or session ended. */
   | { readonly type: "dismissed" }
   | { readonly type: "stream_ended" };
+
+export class ThreadManagementPendingRequestError extends Schema.TaggedError<ThreadManagementPendingRequestError>()(
+  "ThreadManagementPendingRequestError",
+  {
+    reason: Schema.Literals(["not-found", "invalid-response", "outside-descendants"]),
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+  },
+) {
+  override get message() {
+    return this.reason === "outside-descendants"
+      ? "An orchestrator may answer or approve only requests in its own delegated descendant subtree."
+      : this.reason === "not-found"
+        ? "The pending question or approval was not found."
+        : "Pass answers for a question, or an accept/decline decision for an approval.";
+  }
+}
 
 export class ThreadManagementThreadNotFoundError extends Schema.TaggedError<ThreadManagementThreadNotFoundError>()(
   "ThreadManagementThreadNotFoundError",
@@ -452,6 +470,22 @@ export interface ThreadManagementServiceShape {
   readonly requestUserInput: (
     input: ThreadManagementUserInputInput,
   ) => Effect.Effect<ThreadManagementUserInputResult, ThreadManagementFailure>;
+  readonly respondToPendingRequest: (input: {
+    readonly projectId: ProjectId;
+    readonly threadId: ThreadId;
+    readonly callerThreadId?: ThreadId;
+    readonly requestId: RuntimeRequestId;
+    readonly commandId: CommandId;
+    readonly answers?: ProviderUserInputAnswers;
+    readonly decision?: "accept" | "decline";
+  }) => Effect.Effect<
+    Orchestrator.OrchestratorV2DispatchResult,
+    | Orchestrator.OrchestratorV2Error
+    | ThreadManagementProjectionLoadError
+    | ThreadManagementThreadNotFoundError
+    | ThreadManagementPendingRequestError
+    | ThreadManagementProviderInstanceDisabledError
+  >;
   /**
    * Asks the provider to stop a running workflow coordinator. The provider's
    * own terminal notification then settles the coordinator and its members.
@@ -543,6 +577,7 @@ const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const layerScope = yield* Effect.scope;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -1015,16 +1050,23 @@ const make = Effect.gen(function* () {
 
   const requestUserInput: ThreadManagementServiceShape["requestUserInput"] = Effect.fn(
     "orchestrationV2.threadManagement.requestUserInput",
-  )(function* ({ thread, providerSessionId, commandId, questions }) {
-    // A stale session is refused here; the orchestrator checks the live turn itself.
-    const { providerThreads } = yield* getProjectThreadRecords(
+  )(function* ({ thread, mcpCredentialId, commandId, questions }) {
+    const credential = yield* mcpSessions.read(thread.id);
+    const current = yield* getProjectThreadRecords(
       { projectId: thread.projectId, threadId: thread.id },
-      ["providerThreads"],
+      ["providerThreads", "runs"],
     );
-    const activeProviderThread = providerThreads.find(
-      (providerThread) => providerThread.id === thread.activeProviderThreadId,
+    const activeProviderThread = current.providerThreads.find(
+      (providerThread) => providerThread.id === current.thread.activeProviderThreadId,
     );
-    if (activeProviderThread?.providerSessionId !== providerSessionId)
+    if (
+      credential?.providerSessionId !== mcpCredentialId ||
+      credential.providerInstanceId !== activeProviderThread?.providerInstanceId ||
+      activeProviderThread?.providerSessionId == null ||
+      !current.runs.some((run) => run.id === thread.activeRunId && run.status === "running") ||
+      current.thread.archivedAt !== null ||
+      current.thread.deletedAt !== null
+    )
       return { type: "session_not_active" } as const;
     const requestId = RuntimeRequestId.make(`${commandId}:user-input`);
     const created = yield* dispatch({
@@ -1033,7 +1075,7 @@ const make = Effect.gen(function* () {
       threadId: thread.id,
       requestId,
       runId: thread.activeRunId,
-      providerSessionId: ProviderSessionId.make(providerSessionId),
+      providerSessionId: activeProviderThread.providerSessionId,
       questions,
     });
     const resolution = yield* orchestrator
@@ -1055,6 +1097,48 @@ const make = Effect.gen(function* () {
       ? ({ type: "answered", answers: event.payload.answers } as const)
       : ({ type: "dismissed" } as const);
   });
+  const respondToPendingRequest: ThreadManagementServiceShape["respondToPendingRequest"] =
+    Effect.fn("orchestrationV2.threadManagement.respondToPendingRequest")(function* (input) {
+      const projection = yield* getProjectThreadRecords(input, ["runtimeRequests"]);
+      const request = projection.runtimeRequests.find(
+        (request) => request.id === input.requestId && request.status === "pending",
+      );
+      const fail = (reason: ThreadManagementPendingRequestError["reason"]) =>
+        new ThreadManagementPendingRequestError({ ...input, reason });
+      if (
+        request === undefined ||
+        request.kind === "auth_refresh" ||
+        request.kind === "dynamic_tool_call"
+      )
+        return yield* fail("not-found");
+      const question = request.kind === "user_input";
+      if (
+        question
+          ? input.answers === undefined || input.decision !== undefined
+          : input.decision === undefined || input.answers !== undefined
+      )
+        return yield* fail("invalid-response");
+      const descendant =
+        input.callerThreadId !== undefined &&
+        input.callerThreadId !== input.threadId &&
+        (yield* isDelegatedDescendant(orchestrator, input.callerThreadId, input.threadId));
+      if (
+        (!question && !descendant) ||
+        (input.callerThreadId !== undefined &&
+          input.callerThreadId !== input.threadId &&
+          !descendant)
+      )
+        return yield* fail("outside-descendants");
+      return yield* dispatch({
+        type: "runtime-request.respond",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        requestId: input.requestId,
+        ...(input.answers === undefined ? {} : { answers: input.answers }),
+        ...(input.decision === undefined ? {} : { decision: input.decision }),
+        ...(descendant ? { respondedBy: "orchestrator" as const } : {}),
+      });
+    });
   const stopWorkflow: ThreadManagementServiceShape["stopWorkflow"] = (input) =>
     Effect.gen(function* () {
       const records = yield* orchestrator
@@ -1222,6 +1306,7 @@ const make = Effect.gen(function* () {
     settleThread,
     interruptThread,
     requestUserInput,
+    respondToPendingRequest,
     stopDelegatedTasks,
     stopWorkflow,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
@@ -1253,6 +1338,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(ThreadManagementService, make).pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
   Layer.provide(ThreadCommandExecutor.layer),
+  Layer.provide(McpProviderSessions.layer),
 );
 
 export const layerWithLegacyImporter: Layer.Layer<
@@ -1263,4 +1349,7 @@ export const layerWithLegacyImporter: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
-> = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(ThreadCommandExecutor.layer));
+> = Layer.effect(ThreadManagementService, make).pipe(
+  Layer.provide(ThreadCommandExecutor.layer),
+  Layer.provide(McpProviderSessions.layer),
+);

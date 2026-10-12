@@ -58,7 +58,7 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   return { sequence: result.sequence };
 });
 
-const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
+const readPendingRequest = Effect.fn("mcp.readPendingRequest")(function* (input: {
   threadId?: ThreadId | undefined;
   requestId: RuntimeRequestId;
 }) {
@@ -66,16 +66,22 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
   const request = context.projection.runtimeRequests.find(
     (request) =>
       request.id === input.requestId &&
-      request.kind === "user_input" &&
+      request.kind !== "auth_refresh" &&
+      request.kind !== "dynamic_tool_call" &&
       request.status === "pending",
   );
   const item = context.projection.turnItems.find(
-    (item) => item.type === "user_input_request" && item.requestId === input.requestId,
+    (item) =>
+      (item.type === "user_input_request" || item.type === "approval_request") &&
+      item.requestId === input.requestId,
   );
-  if (request === undefined || item?.type !== "user_input_request")
+  if (
+    request === undefined ||
+    (item?.type !== "user_input_request" && item?.type !== "approval_request")
+  )
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
-      message: "The pending user-input request was not found.",
+      message: "The pending question or approval was not found.",
     });
   return { ...context, request, item };
 });
@@ -221,7 +227,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const result = yield* threads
         .requestUserInput({
           thread: { ...caller, activeRunId: caller.activeRunId },
-          providerSessionId: scope.thread.providerSessionId,
+          mcpCredentialId: scope.thread.providerSessionId,
           commandId: yield* newCommandId(),
           questions: input.questions,
         })
@@ -249,29 +255,58 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
       return {
         requestIds: projection.runtimeRequests
-          .filter((request) => request.kind === "user_input" && request.status === "pending")
+          .filter(
+            (request) =>
+              request.kind !== "auth_refresh" &&
+              request.kind !== "dynamic_tool_call" &&
+              request.status === "pending",
+          )
           .map((request) => request.id),
       };
     }),
   ),
   t3_pending_request_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const { item } = yield* readQuestion(input);
-      return { requestId: input.requestId, questions: item.questions };
+      const { item } = yield* readPendingRequest(input);
+      return item.type === "user_input_request"
+        ? { requestId: input.requestId, questions: item.questions }
+        : {
+            requestId: input.requestId,
+            requestKind: item.requestKind,
+            ...(item.prompt === undefined ? {} : { prompt: item.prompt }),
+            ...(item.options === undefined ? {} : { options: item.options }),
+          };
     }),
   ),
   t3_pending_request_respond: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection } = yield* readQuestion(input);
+      const { threads, projection, caller } = yield* readThread(input.threadId);
       const result = yield* threads
-        .dispatch({
-          type: "runtime-request.respond",
+        .respondToPendingRequest({
+          projectId: projection.thread.projectId,
           threadId: projection.thread.id,
+          ...(caller === undefined ? {} : { callerThreadId: caller.id }),
           commandId: yield* newCommandId(),
           requestId: input.requestId,
-          answers: input.answers,
+          ...(input.answers === undefined ? {} : { answers: input.answers }),
+          ...(input.decision === undefined ? {} : { decision: input.decision }),
         })
-        .pipe(Effect.mapError(dispatchFailure));
+        .pipe(
+          Effect.mapError((error) =>
+            error._tag === "ThreadManagementPendingRequestError"
+              ? new OrchestratorMcpFailure({
+                  code:
+                    error.reason === "outside-descendants"
+                      ? "capability_denied"
+                      : "invalid_request",
+                  message: error.message,
+                })
+              : error._tag === "ThreadManagementProjectionLoadError" ||
+                  error._tag === "ThreadManagementThreadNotFoundError"
+                ? unavailable()
+                : dispatchFailure(error),
+          ),
+        );
       return { sequence: result.sequence };
     }),
   ),

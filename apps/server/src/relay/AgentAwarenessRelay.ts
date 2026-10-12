@@ -290,7 +290,10 @@ function describeThreadShellForAwareness(
     activityRunStatus: shell.activityRunStatus ?? null,
     activeRunId: shell.activeRunId ?? null,
     latestRunId: shell.latestRunId ?? null,
-    pendingRuntimeRequestKind: shell.pendingRuntimeRequest?.kind ?? null,
+    pendingRuntimeRequestKind:
+      shell.pendingRuntimeRequest?.routedTo === undefined
+        ? (shell.pendingRuntimeRequest?.kind ?? null)
+        : null,
     hasActionableProposedPlan: shell.hasActionableProposedPlan,
   };
 }

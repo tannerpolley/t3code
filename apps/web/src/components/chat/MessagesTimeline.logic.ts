@@ -180,9 +180,17 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
 }
 
-/** Marks a question or approval that Don't ask mode answered for the user. */
-export function workEntryDontAskModeLabel(entry: Pick<WorkLogEntry, "projectedItem">) {
+/** Identifies the automatic or orchestrator response on the child's answered item. */
+export function workEntryResponderLabel(entry: Pick<WorkLogEntry, "projectedItem">) {
   const item = entry.projectedItem?.item;
+  if (
+    (item?.type === "approval_request" || item?.type === "user_input_request") &&
+    item.respondedBy === "orchestrator"
+  ) {
+    if (item.type === "approval_request")
+      return item.status === "cancelled" ? "Declined by orchestrator" : "Approved by orchestrator";
+    if (item.type === "user_input_request") return "Answered by orchestrator";
+  }
   if (item?.type === "approval_request" && item.respondedBy === "dont_ask_mode") {
     return "Approved by Don't ask mode";
   }

@@ -6466,6 +6466,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const firstAttempt = RunAttemptId.make("attempt-claude-wake-approval-1");
         const userAttempt = RunAttemptId.make("attempt-claude-wake-approval-2");
         const bashToolUseId = "toolu_01WakeApprovalBash";
+        const title = "Inspect repository state";
+        const description = "Review the selected shell command.";
+        const command = "git status --porcelain=v1 " + "x".repeat(450);
         const stamp = (frame: SDKMessage, promptIndex: number) =>
           claudeSdkFrame({
             ...frame,
@@ -6526,7 +6529,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   type: "tool_use",
                   id: bashToolUseId,
                   name: "Bash",
-                  input: { command: "git status" },
+                  input: { command },
                 },
               ],
             },
@@ -6544,11 +6547,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const permission = yield* Effect.promise(() =>
           harness.getOpenedOptions()!.canUseTool!(
             "Bash",
-            { command: "git status" },
+            { command },
             {
               signal: new AbortController().signal,
               toolUseID: bashToolUseId,
               requestId: "request-wake-bash",
+              title,
+              description,
+              decisionReason: title,
             },
           ),
         ).pipe(Effect.forkScoped);
@@ -6572,6 +6578,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isNotEmpty(bashItems);
         assert.isTrue(bashItems.every((runId) => runId === RunId.make(`run-${userAttempt}`)));
         if (request?.type !== "runtime_request.updated") return;
+        const approvalItem = harness.events.find(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.requestId === request.runtimeRequest.id,
+        );
+        assert.equal(
+          approvalItem?.type === "turn_item.updated" &&
+            approvalItem.turnItem.type === "approval_request"
+            ? approvalItem.turnItem.prompt
+            : undefined,
+          title + "\n\n" + description + "\n\nBash: " + command,
+        );
         yield* harness.runtime.respondToRuntimeRequest({
           requestId: request.runtimeRequest.id,
           decision: "accept",
