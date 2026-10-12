@@ -474,6 +474,8 @@ export const make = Effect.gen(function* () {
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
 
+    // Only the relay interaction (signing the proof and the call) is exported;
+    // the reads that decide what to publish are the user's local work.
     const publishState = (input: {
       readonly projectId: string | null;
       readonly state: RelayAgentActivityState | null;
@@ -519,7 +521,7 @@ export const make = Effect.gen(function* () {
           ok: response.ok,
           deliveries: deliveryStats(response.deliveries),
         });
-      });
+      }).pipe(Effect.withSpan("relay.agent_activity.publish"), withRelayClientTracing);
 
     // Per-thread shell read: this publish runs for every activity-relevant
     // domain event, so materializing the full shell here would make the cost
@@ -662,7 +664,6 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.andThen(schedulePublishRetry(threadId)));
       }),
       Effect.withSpan("AgentAwarenessRelay.publishThread"),
-      withRelayClientTracing,
     );
   });
 

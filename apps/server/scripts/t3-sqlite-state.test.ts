@@ -9,7 +9,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "../src/orchestration-v2/ProjectionStore.ts";
 import { runSqliteState } from "./t3-sqlite-state.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const createFixtureDatabase = Effect.fn("createSqliteStateFixtureDatabase")(function* (
@@ -99,7 +99,7 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
           sql: "INSERT INTO fixtures (id, label) VALUES (2, 'seeded')",
         });
         assert.equal(mutation.operation, "exec");
-        if (mutation.operation === "exec" && (yield* HostProcessPlatform) !== "win32") {
+        if (mutation.operation === "exec" && (yield* HostProcess.Platform) !== "win32") {
           // NTFS has no POSIX mode bits to report.
           assert.equal((yield* fs.stat(mutation.backup)).mode & 0o777, 0o600);
         }
@@ -158,7 +158,6 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
 
         yield* fs.writeFileString(
           path.join(baseDir, "userdata", "server-runtime.json"),
-          // @effect-diagnostics-next-line preferSchemaOverJson:off - fixture file content.
           JSON.stringify({
             version: 1,
             pid: process.pid,
@@ -183,7 +182,6 @@ it.layer(NodeServices.layer)("t3-sqlite-state", (it) => {
       const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       const timestamp = "2026-10-02T00:00:00.000Z";
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - fixture payload.
       const payload = JSON.stringify({ body: "x".repeat(10 * 1024) });
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;

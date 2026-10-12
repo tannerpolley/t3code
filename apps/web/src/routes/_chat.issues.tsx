@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { type EnvironmentId, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -10,7 +11,9 @@ import { sameRepository } from "../components/issues/issueWorkspace.logic";
 import { RightPanelTabs } from "../components/RightPanelTabs";
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
+import { isElectron } from "../env";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { isTerminalFocused } from "../lib/terminalFocus";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import {
   ISSUES_PANEL_REF,
@@ -23,6 +26,7 @@ import {
   type RightPanelSurface,
 } from "../rightPanelStore";
 import { useThreadShell } from "../state/entities";
+import { primaryServerKeybindingsAtom } from "../state/server";
 
 export interface IssuesSearch {
   readonly environmentId?: EnvironmentId;
@@ -43,6 +47,18 @@ type IssuesSearchPatch = {
 
 const EMPTY_SURFACES: ReadonlyArray<RightPanelSurface> = [];
 const EMPTY_PENDING_SURFACES = new Set<string>();
+
+function getShortcutContext() {
+  return {
+    terminalFocus: isTerminalFocused(),
+    terminalOpen: false,
+    previewFocus: false,
+    previewOpen: false,
+    modelPickerOpen: false,
+    isWeb: !isElectron,
+    isDesktop: isElectron,
+  };
+}
 
 function optionalString(value: unknown, maxLength = 253): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -91,6 +107,7 @@ function IssuesRouteView() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const isNarrow = useMediaQuery("max-md");
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const repositories = useIssueRepositoryTargets();
   const { repositoryTargets } = repositories;
   const originThreadRef = useMemo<ScopedThreadRef | null>(
@@ -373,6 +390,8 @@ function IssuesRouteView() {
         environmentId={panelEnvironmentId}
         filesAvailable={false}
         mode="inline"
+        keybindings={keybindings}
+        getShortcutContext={getShortcutContext}
         onActivate={(surface) => {
           if (surface.kind === "issue") activateSurface(surface);
         }}

@@ -13,7 +13,7 @@ layer("055_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 62 }, (_, index) => index + 1),
+        Array.from({ length: 61 }, (_, index) => index + 1),
       );
     }),
   );
@@ -28,12 +28,11 @@ layer("055_OrchestrationV2", (it) => {
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
         [55, "OrchestrationV2"],
         [56, "RemoveRedundantProjectionIndexes"],
-        [57, "ProjectionMessagesLatestAssistant"],
-        [58, "ProjectionTurnItemCounts"],
-        [59, "ThreadIssueWork"],
-        [60, "RepositoryOrchestration"],
-        [61, "RepositoryScheduledWork"],
-        [62, "IssueChanges"],
+        [57, "ScheduledTaskWebhooks"],
+        [58, "WebhookRelayDeliveries"],
+        [59, "McpAppModelContext"],
+        [60, "ThreadSnapshotWindowIndexes"],
+        [61, "PullRequestReviewGuides"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -56,12 +55,11 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 54, name: "ProjectionThreadsAutoSettleDisabledAt" },
         { migration_id: 55, name: "OrchestrationV2" },
         { migration_id: 56, name: "RemoveRedundantProjectionIndexes" },
-        { migration_id: 57, name: "ProjectionMessagesLatestAssistant" },
-        { migration_id: 58, name: "ProjectionTurnItemCounts" },
-        { migration_id: 59, name: "ThreadIssueWork" },
-        { migration_id: 60, name: "RepositoryOrchestration" },
-        { migration_id: 61, name: "RepositoryScheduledWork" },
-        { migration_id: 62, name: "IssueChanges" },
+        { migration_id: 57, name: "ScheduledTaskWebhooks" },
+        { migration_id: 58, name: "WebhookRelayDeliveries" },
+        { migration_id: 59, name: "McpAppModelContext" },
+        { migration_id: 60, name: "ThreadSnapshotWindowIndexes" },
+        { migration_id: 61, name: "PullRequestReviewGuides" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

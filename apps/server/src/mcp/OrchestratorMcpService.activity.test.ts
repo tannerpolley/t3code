@@ -19,19 +19,22 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "vite-plus/test";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
+import * as ThreadToolkitHandlers from "./toolkits/thread/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
-import { AttachmentHandlersLive } from "./toolkits/attachment/handlers.ts";
+import * as AttachmentToolkitHandlers from "./toolkits/attachment/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");
@@ -155,10 +158,12 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
               ? Effect.succeed(projection)
               : Effect.die(`unexpected thread ${input.threadId}`),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
@@ -219,10 +224,12 @@ it("readThread prefers waiting activity status over a newer cancelled queued run
               ? Effect.succeed(projection)
               : Effect.die(`unexpected thread ${input.threadId}`),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
@@ -332,10 +339,12 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
             return Effect.die(`unexpected thread ${threadId}`);
           },
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
@@ -454,10 +463,12 @@ it("readThread and sendToThread reach threads in other projects", async () => {
               delivery: "started",
             } as unknown as ThreadManagementService.ThreadManagementSendResult),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () =>
             Effect.succeed({
@@ -634,6 +645,8 @@ it("taskStatus reports a child waiting on the user, but not an auth refresh", as
             return Effect.die(`unexpected thread ${threadId}`);
           },
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
@@ -725,6 +738,8 @@ it("refuses delegated child messages, attachments, and queue sends to ancestors"
               delivery: "started",
             } as unknown as ThreadManagementService.ThreadManagementSendResult),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -759,7 +774,9 @@ it("refuses delegated child messages, attachments, and queue sends to ancestors"
     expect((yield* send(childId, unrelatedId)).threadId).toBe(unrelatedId);
     expect((yield* send(rootId, childId)).threadId).toBe(childId);
 
-    const toolkit = yield* ThreadToolkit.pipe(Effect.provide(ThreadToolkitHandlersLive));
+    const toolkit = yield* ThreadToolkit.pipe(
+      Effect.provide(McpToolAccess.HandlersLayer.layer(ThreadToolkitHandlers.layer)),
+    );
     const queueTarget = { threadId: rootId, queuedRunId: RunId.make("run-parent-queued") };
     const edited = yield* toolkit
       .handle("t3_queue_edit", { ...queueTarget, text: "child-injected text" })
@@ -771,7 +788,9 @@ it("refuses delegated child messages, attachments, and queue sends to ancestors"
     expect(promoted.at(-1)?.result).toMatchObject({ code: "ancestor_send_denied" });
     expect(dispatches).toBe(0);
 
-    const attachments = yield* AttachmentToolkit.pipe(Effect.provide(AttachmentHandlersLive));
+    const attachments = yield* AttachmentToolkit.pipe(
+      Effect.provide(McpToolAccess.HandlersLayer.layer(AttachmentToolkitHandlers.layer)),
+    );
     const attachmentSend = yield* attachments
       .handle("t3_thread_send_attachments", {
         threadId: rootId,

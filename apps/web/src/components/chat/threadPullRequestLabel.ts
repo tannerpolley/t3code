@@ -12,7 +12,7 @@ export function threadPullRequestLabel(
 ): string {
   const own = [
     sourceControlRepositorySelector(threadRepository),
-    threadRepository?.originRepository,
+    threadRepository?.origin?.displayName,
   ]
     .filter((repository) => typeof repository === "string")
     .map((repository) => repository.toLowerCase());

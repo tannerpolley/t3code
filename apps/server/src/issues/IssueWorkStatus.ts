@@ -1,7 +1,7 @@
 import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 
 import type { IssueWorkStatus, OrchestrationV2RuntimeRequest } from "@t3tools/contracts";
-import { runtimeRequestNeedsUser } from "../orchestration-v2/SubagentProjection.ts";
+import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
 
 /** Derive issue progress from orchestration state so status cannot drift from runs and children. */
 export function deriveIssueWorkStatus(input: {

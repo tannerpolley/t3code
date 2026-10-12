@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceipts from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -46,7 +46,7 @@ it.effect(
       EventStore.layer,
       ProjectStore.layer,
       TurnItemPositions.layer,
-    ).pipe(Layer.provideMerge(SqlitePersistenceMemory));
+    ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
     const testLayer = EventSink.layerFromStores.pipe(Layer.provideMerge(dependencies));
     return Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;

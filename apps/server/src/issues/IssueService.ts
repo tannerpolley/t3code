@@ -1,7 +1,4 @@
-import * as NodeOS from "node:os";
-
 import * as Context from "effect/Context";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,14 +27,11 @@ import {
   type IssueRepositoryRef,
   type ThreadLinkedIssue as ThreadLinkedIssueType,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
-import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
-import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
-import * as GitHubPullRequestCli from "../pullRequest/GitHubPullRequestCli.ts";
-
-const API_TIMEOUT_MS = 30_000;
 const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 // A detail read carries up to DETAIL_COMMENT_LIMIT comment bodies of up to 64 KiB each.
 const DETAIL_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -103,7 +97,22 @@ const RawRepositorySchema = Schema.Struct({
 type RawRepository = Schema.Schema.Type<typeof RawRepositorySchema>;
 
 const GRAPHQL_PULL_REQUEST_FIELDS = "number title state isDraft url repository { nameWithOwner }";
-const ISSUE_DETAIL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+const ISSUE_LINK_FIELDS = `closedByPullRequestsReferences(first: 25, includeClosedPrs: true) {
+          nodes { ${GRAPHQL_PULL_REQUEST_FIELDS} }
+        }
+        timelineItems(last: 100, itemTypes: [CROSS_REFERENCED_EVENT]) {
+          nodes {
+            ... on CrossReferencedEvent {
+              source { __typename ... on PullRequest { ${GRAPHQL_PULL_REQUEST_FIELDS} } }
+            }
+          }
+        }`;
+/**
+ * The issue with its linked pull requests. Without links it is the fallback read for an issue
+ * whose cross-references GitHub partly refuses (an organization's SSO hides one), which fails
+ * the whole GraphQL answer.
+ */
+const issueDetailQuery = (links: boolean) => `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issueOrPullRequest(number: $number) {
       __typename
@@ -121,34 +130,11 @@ const ISSUE_DETAIL_QUERY = `query($owner: String!, $name: String!, $number: Int!
           totalCount
           nodes { author { login avatarUrl } body createdAt url }
         }
-        closedByPullRequestsReferences(first: 25, includeClosedPrs: true) {
-          nodes { ${GRAPHQL_PULL_REQUEST_FIELDS} }
-        }
-        timelineItems(last: 100, itemTypes: [CROSS_REFERENCED_EVENT]) {
-          nodes {
-            ... on CrossReferencedEvent {
-              source { __typename ... on PullRequest { ${GRAPHQL_PULL_REQUEST_FIELDS} } }
-            }
-          }
-        }
+        ${links ? ISSUE_LINK_FIELDS : ""}
       }
     }
   }
 }`;
-
-const encodeGraphQlRequest = Schema.encodeSync(
-  Schema.fromJsonString(
-    Schema.Struct({
-      query: Schema.String,
-      variables: Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number])),
-    }),
-  ),
-);
-const encodeWriteRequestBody = Schema.encodeSync(
-  Schema.fromJsonString(
-    Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Null])),
-  ),
-);
 
 /** A connection whose nodes GitHub may null out, e.g. when an organization's SSO hides one. */
 const graphQlNodes = <S extends Schema.Top>(node: S) =>
@@ -262,16 +248,20 @@ const GraphQlIssueSchema = Schema.Struct({
       }),
     ).fields,
   }),
-  closedByPullRequestsReferences: Schema.NullOr(graphQlNodes(GraphQlPullRequestSchema)),
-  timelineItems: graphQlNodes(
-    Schema.Struct({
-      // Other sources (issues) carry only their __typename.
-      source: Schema.optional(
-        Schema.NullOr(
-          Schema.Union([GraphQlPullRequestSchema, Schema.Struct({ __typename: Schema.String })]),
+  closedByPullRequestsReferences: Schema.optional(
+    Schema.NullOr(graphQlNodes(GraphQlPullRequestSchema)),
+  ),
+  timelineItems: Schema.optional(
+    graphQlNodes(
+      Schema.Struct({
+        // Other sources (issues) carry only their __typename.
+        source: Schema.optional(
+          Schema.NullOr(
+            Schema.Union([GraphQlPullRequestSchema, Schema.Struct({ __typename: Schema.String })]),
+          ),
         ),
-      ),
-    }),
+      }),
+    ),
   ),
 });
 type GraphQlIssue = Schema.Schema.Type<typeof GraphQlIssueSchema>;
@@ -293,13 +283,9 @@ const GraphQlIssueDetailResponseSchema = Schema.Struct({
     ),
   ),
 });
-const GraphQlErrorsSchema = Schema.Struct({
-  errors: Schema.optional(Schema.Array(Schema.Struct({ type: Schema.optional(Schema.String) }))),
-});
 const decodeGraphQlIssueDetail = Schema.decodeEffect(
   Schema.fromJsonString(GraphQlIssueDetailResponseSchema),
 );
-const decodeGraphQlErrors = Schema.decodeUnknownOption(Schema.fromJsonString(GraphQlErrorsSchema));
 
 const IssueCursorSchema = Schema.Struct({
   v: Schema.Literal(2),
@@ -323,9 +309,7 @@ type IssueOperation = IssueReadError["operation"];
 
 interface ApiResponse {
   readonly body: string;
-  readonly headers: ReadonlyMap<string, string>;
-  readonly status: number;
-  readonly httpEnvelope: boolean;
+  readonly headers: Readonly<Record<string, string | undefined>>;
 }
 
 interface PageResult<A> {
@@ -508,11 +492,11 @@ function normalizeGraphQlIssue(
 
 /** Closing pull requests first, then ones that only mention the issue, each listed once. */
 function linkedPullRequests(issue: GraphQlIssue): IssueLinkedPullRequest[] {
-  const referencing = presentNodes(issue.timelineItems).flatMap(({ source }) =>
+  const referencing = presentNodes(issue.timelineItems ?? null).flatMap(({ source }) =>
     source != null && "number" in source ? [source] : [],
   );
   const candidates: Array<readonly [GraphQlPullRequest, boolean]> = [
-    ...presentNodes(issue.closedByPullRequestsReferences).map((pr) => [pr, true] as const),
+    ...presentNodes(issue.closedByPullRequestsReferences ?? null).map((pr) => [pr, true] as const),
     ...referencing.map((pr) => [pr, false] as const),
   ];
   const linked = new Map<string, IssueLinkedPullRequest>();
@@ -532,38 +516,11 @@ function linkedPullRequests(issue: GraphQlIssue): IssueLinkedPullRequest[] {
   return [...linked.values()];
 }
 
-function responseFromStdout(stdout: string): ApiResponse | null {
-  const lines = stdout.split(/\r?\n/u);
-  const statusIndexes = lines
-    .map((line, index) => ({ line, index }))
-    .filter(({ line }) => /^HTTP\/\d(?:\.\d+)?\s+\d{3}\b/iu.test(line));
-  const statusLine = statusIndexes.at(-1);
-  if (statusLine === undefined) {
-    return { body: stdout, headers: new Map(), status: 200, httpEnvelope: false };
-  }
-  const statusMatch = /^HTTP\/\d(?:\.\d+)?\s+(\d{3})\b/iu.exec(statusLine.line);
-  const status = Number(statusMatch?.[1]);
-  if (!Number.isInteger(status)) return null;
-  const bodyStart = lines.findIndex(
-    (line, index) => index > statusLine.index && line.trim().length === 0,
-  );
-  if (bodyStart < 0) return null;
-  const headers = new Map<string, string>();
-  for (const line of lines.slice(statusLine.index + 1, bodyStart)) {
-    const separator = line.indexOf(":");
-    if (separator <= 0) continue;
-    const name = line.slice(0, separator).trim().toLowerCase();
-    const value = line.slice(separator + 1).trim();
-    headers.set(name, headers.has(name) ? `${headers.get(name)}, ${value}` : value);
-  }
-  return { body: lines.slice(bodyStart + 1).join("\n"), headers, status, httpEnvelope: true };
-}
-
 function nextPageFromHeaders(
-  headers: ReadonlyMap<string, string>,
+  headers: Readonly<Record<string, string | undefined>>,
   page: number,
 ): number | null | undefined {
-  const link = headers.get("link");
+  const link = headers["link"];
   if (link === undefined) return null;
   const next = /<([^>]+)>\s*;\s*rel=["']?next["']?/iu.exec(link)?.[1];
   if (next === undefined) return null;
@@ -577,40 +534,60 @@ function nextPageFromHeaders(
   }
 }
 
-function retryAtFromHeaders(headers: ReadonlyMap<string, string>, now: number): number | undefined {
-  const retryAfter = SourceControlRateLimit.retryAtFromHeader(headers.get("retry-after"), now);
-  if (retryAfter !== undefined) return retryAfter;
-  const reset = Number(headers.get("x-ratelimit-reset"));
-  if (!Number.isSafeInteger(reset)) return undefined;
-  const retryAt = reset * 1_000;
-  return retryAt > now ? retryAt : undefined;
-}
-
-function isRateLimitedResponse(response: ApiResponse): boolean {
-  return (
-    response.status === 429 ||
-    (response.status === 403 &&
-      (response.headers.get("x-ratelimit-remaining") === "0" ||
-        (response.headers.get("retry-after")?.trim().length ?? 0) > 0))
-  );
-}
-
+/**
+ * What a GitHub failure means for an issue read or write. A write that tracks its create outcome
+ * reports a refusal, or a request never sent, as `rejected` and a server error as `uncertain`;
+ * a transport failure carries no outcome, since GitHub may have applied it.
+ */
 function mapGitHubError(
   operation: IssueOperation,
-  error: GitHubPullRequestCli.GitHubPullRequestCliError,
+  error: GitHubPullRequestApi.GitHubPullRequestApiError,
+  write?: { readonly tracksOutcome: boolean },
 ): IssueReadError {
+  const outcome = (value: "rejected" | "uncertain") =>
+    write?.tracksOutcome === true ? value : undefined;
+  const inaccessible = () =>
+    readError(
+      operation,
+      "inaccessible",
+      write === undefined
+        ? "The GitHub repository is not accessible."
+        : "GitHub issue write denied. Check repository access and Issues write permission.",
+      undefined,
+      outcome("rejected"),
+    );
+  const failed =
+    write === undefined
+      ? "GitHub could not complete the read."
+      : "GitHub could not complete the issue write.";
   switch (error._tag) {
-    case "GitHubCliUnavailableError":
-      return readError(operation, "missing-tool", "GitHub CLI is not available.");
-    case "GitHubCliAuthenticationError":
-      return readError(operation, "unauthenticated", "GitHub authentication is unavailable.");
-    case "GitHubCliRateLimitError":
+    case "GitHubCliMissingError":
+      return readError(
+        operation,
+        "missing-tool",
+        "No GitHub credential is available.",
+        undefined,
+        outcome("rejected"),
+      );
+    case "GitHubNotSignedInError":
+    case "GitHubHostDisabledError":
+    case "GitHubCliFailedError":
+    case "GitHubApiAuthenticationError":
+      return readError(
+        operation,
+        "unauthenticated",
+        "GitHub authentication is unavailable.",
+        undefined,
+        outcome("rejected"),
+      );
+    case "GitHubApiRateLimitError":
     case "SourceControlRateLimitPausedError":
       return readError(
         operation,
         "rate-limited",
         "GitHub API rate limit is active.",
         error.retryAt,
+        outcome("rejected"),
       );
     case "GitHubViewerLoginUnavailableError":
       return readError(
@@ -618,12 +595,23 @@ function mapGitHubError(
         "verification-unavailable",
         "GitHub account verification is unavailable.",
       );
-    case "GitHubPullRequestNotFoundError":
-      return readError(operation, "inaccessible", "The GitHub repository is not accessible.");
-    case "GitHubPullRequestListDecodeError":
-    case "GitHubChangeRequestListDecodeError":
-    case "GitHubPullRequestDecodeError":
-    case "GitHubRepositoryDecodeError":
+    case "GitHubApiNotFoundError":
+      return inaccessible();
+    case "GitHubApiResponseError":
+      if (error.status === 403) return inaccessible();
+      // A 2xx failure is a GraphQL answer: one GitHub cut at the size cap, or one carrying errors.
+      if (error.status < 300) {
+        return error.githubErrors === undefined
+          ? readError(operation, "invalid-response", "GitHub returned a truncated response.")
+          : readError(operation, "inaccessible", "GitHub did not return every requested field.");
+      }
+      return readError(
+        operation,
+        "upstream",
+        failed,
+        undefined,
+        outcome(error.status < 500 ? "rejected" : "uncertain"),
+      );
     case "GitHubPullRequestReadError":
       return readError(operation, "invalid-response", "GitHub returned an invalid response.");
     case "GitHubRepositorySelectorError":
@@ -633,7 +621,7 @@ function mapGitHubError(
         "The registered repository cannot be addressed.",
       );
     default:
-      return readError(operation, "upstream", "GitHub could not complete the read.");
+      return readError(operation, "upstream", failed);
   }
 }
 
@@ -760,15 +748,11 @@ export class IssueService extends Context.Service<
 export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Return<
   IssueService["Service"],
   never,
-  | GitHubCli.GitHubCli
-  | GitHubGraphQlBudget.GitHubGraphQlBudget
-  | GitHubPullRequestCli.GitHubPullRequestCli
-  | SourceControlRateLimit.SourceControlRateLimit
+  GitHubApi.GitHubApi | GitHubPullRequestApi.GitHubPullRequestApi
 > {
-  const github = yield* GitHubCli.GitHubCli;
-  const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
-  const githubPullRequests = yield* GitHubPullRequestCli.GitHubPullRequestCli;
-  const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
+  const api = yield* GitHubApi.GitHubApi;
+  const githubPullRequests = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
 
   const resolveScope = Effect.fn("IssueService.resolveScope")(function* (
     operation: IssueOperation,
@@ -783,8 +767,8 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         "The repository cannot be addressed.",
       );
     }
-    // Issue reads address the repository explicitly, so gh needs no project checkout.
-    return { cwd: NodeOS.homedir(), host, repository };
+    // Issue reads address the repository explicitly, so they need no project checkout.
+    return { cwd: homeDirectory, host, repository };
   });
 
   const executeApi = Effect.fn("IssueService.executeApi")(function* (input: {
@@ -792,166 +776,75 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     readonly scope: IssueRepositoryScope;
     readonly endpoint: string;
     readonly maxOutputBytes: number;
-    /** Sent over stdin to the `graphql` endpoint. */
     readonly graphql?: {
       readonly query: string;
       readonly variables: Readonly<Record<string, string | number>>;
+      /** Read instead when GitHub refuses part of `query`. */
+      readonly fallbackQuery?: string;
     };
     readonly onRequest?: () => void;
     readonly requestMethod?: "POST" | "PATCH" | "DELETE";
     readonly requestBody?: Readonly<Record<string, string | number | null>>;
   }): Effect.fn.Return<ApiResponse, IssueReadError> {
-    const key = { provider: "github" as const, host: input.scope.host };
-    const lease = yield* rateLimits
-      .check(key)
-      .pipe(
-        Effect.mapError((error) =>
-          readError(
-            input.operation,
-            "rate-limited",
-            "GitHub API rate limit is active.",
-            error.retryAt,
-          ),
-        ),
-      );
-    const graphql =
-      input.graphql === undefined
-        ? undefined
-        : {
-            // The shared GraphQL budget adds a `rateLimit` reading and holds reads near the floor.
-            query: yield* graphQlBudget
-              .query(input.scope.host, input.graphql.query)
-              .pipe(
-                Effect.mapError((error) =>
-                  readError(
-                    input.operation,
-                    "rate-limited",
-                    "GitHub API rate limit is active.",
-                    error.retryAt,
-                  ),
-                ),
+    const { host } = input.scope;
+    const operation = `issues.${input.operation}`;
+    const graphql = input.graphql;
+    const query = (document: string, variables: Readonly<Record<string, string | number>>) =>
+      api
+        .graphql({
+          host,
+          operation,
+          query: document,
+          variables,
+          maxResponseBytes: input.maxOutputBytes,
+        })
+        .pipe(Effect.map((body): ApiResponse | null => ({ body, headers: {} })));
+    const send: Effect.Effect<ApiResponse | null, GitHubApi.GitHubApiError> =
+      graphql === undefined
+        ? api
+            .rest({
+              host,
+              operation,
+              path: input.endpoint,
+              ...(input.requestMethod === undefined ? {} : { method: input.requestMethod }),
+              ...(input.requestBody === undefined ? {} : { body: input.requestBody }),
+              maxResponseBytes: input.maxOutputBytes,
+            })
+            .pipe(
+              Effect.map((response): ApiResponse | null =>
+                response.truncated ? null : { body: response.body, headers: response.headers },
               ),
-            variables: input.graphql.variables,
-          };
+            )
+        : query(graphql.query, graphql.variables).pipe(
+            Effect.catchIf(
+              (error) =>
+                graphql.fallbackQuery !== undefined &&
+                error._tag === "GitHubApiResponseError" &&
+                error.status < 300 &&
+                error.githubErrors !== undefined,
+              () => query(graphql.fallbackQuery!, graphql.variables),
+            ),
+          );
     input.onRequest?.();
-    return yield* github
-      .execute({
-        cwd: input.scope.cwd,
-        args:
-          graphql === undefined
-            ? [
-                "api",
-                "--include",
-                "--hostname",
-                input.scope.host,
-                ...(input.requestMethod === undefined
-                  ? []
-                  : ["--method", input.requestMethod, "--input", "-"]),
-                input.endpoint,
-              ]
-            : ["api", "--include", "--hostname", input.scope.host, "graphql", "--input", "-"],
-        ...(graphql === undefined
-          ? input.requestBody === undefined
-            ? {}
-            : { stdin: encodeWriteRequestBody(input.requestBody) }
-          : { stdin: encodeGraphQlRequest(graphql) }),
-        timeoutMs: API_TIMEOUT_MS,
-        maxOutputBytes: input.maxOutputBytes,
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.mapError((error) => mapGitHubError(input.operation, error)),
-        Effect.flatMap((result) =>
-          Effect.gen(function* () {
-            if (result.stdoutTruncated || result.stderrTruncated) {
-              return yield* readError(
-                input.operation,
-                "invalid-response",
-                "GitHub returned a truncated response.",
-              );
-            }
-            const response = responseFromStdout(result.stdout);
-            if (graphql !== undefined && response !== null) {
-              yield* graphQlBudget.observe(input.scope.host, response.body);
-            }
-            // gh also exits non-zero for a 200 GraphQL answer that carries errors; the caller
-            // reads those from the body.
-            if (
-              response === null ||
-              (result.exitCode !== 0 &&
-                (!response.httpEnvelope || (response.status < 400 && input.graphql === undefined)))
-            ) {
-              return yield* readError(
-                input.operation,
-                "invalid-response",
-                "GitHub returned an invalid response.",
-              );
-            }
-            const graphQlRateLimited =
-              input.graphql !== undefined &&
-              Option.match(decodeGraphQlErrors(response.body), {
-                onNone: () => false,
-                onSome: ({ errors }) => errors?.some((e) => e.type === "RATE_LIMITED") === true,
-              });
-            if (graphQlRateLimited || isRateLimitedResponse(response)) {
-              const retryAt = retryAtFromHeaders(response.headers, yield* Clock.currentTimeMillis);
-              return yield* readError(
-                input.operation,
-                "rate-limited",
-                "GitHub API rate limit is active.",
-                retryAt,
-                input.onRequest === undefined ? undefined : "rejected",
-              );
-            }
-            if (response.status === 401) {
-              return yield* readError(
-                input.operation,
-                "unauthenticated",
-                "GitHub authentication is unavailable.",
-                undefined,
-                input.onRequest === undefined ? undefined : "rejected",
-              );
-            }
-            if (response.status === 403 || response.status === 404) {
-              return yield* readError(
-                input.operation,
-                "inaccessible",
-                input.requestMethod === undefined
-                  ? "The GitHub repository is not accessible."
-                  : "GitHub issue write denied. Check repository access and Issues write permission.",
-                undefined,
-                input.onRequest === undefined ? undefined : "rejected",
-              );
-            }
-            if (response.status < 200 || response.status >= 300) {
-              return yield* readError(
-                input.operation,
-                "upstream",
-                input.requestMethod === undefined
-                  ? "GitHub could not complete the read."
-                  : "GitHub could not complete the issue write.",
-                undefined,
-                input.onRequest === undefined
-                  ? undefined
-                  : response.status >= 400 && response.status < 500
-                    ? "rejected"
-                    : "uncertain",
-              );
-            }
-            return response;
-          }),
+    const response = yield* send.pipe(
+      Effect.mapError((error) =>
+        mapGitHubError(
+          input.operation,
+          error,
+          input.requestMethod === undefined
+            ? undefined
+            : { tracksOutcome: input.onRequest !== undefined },
         ),
-        Effect.tapError((error) =>
-          error.code === "rate-limited"
-            ? rateLimits.recordRateLimit({
-                ...key,
-                lease,
-                ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
-              })
-            : Effect.void,
-        ),
-        Effect.tap(() => rateLimits.recordSuccess({ ...key, lease })),
+      ),
+    );
+    if (response === null) {
+      return yield* readError(
+        input.operation,
+        "invalid-response",
+        "GitHub returned a truncated response.",
       );
+    }
+    return response;
   });
 
   const decodeApiResponse = <A, I>(
@@ -1374,7 +1267,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
           identity,
         ): Effect.Effect<
           IssueListResultType,
-          IssueReadError | GitHubPullRequestCli.GitHubPullRequestCliError
+          IssueReadError | GitHubPullRequestApi.GitHubPullRequestApiError
         > =>
           Effect.gen(function* () {
             if (cursor !== null && cursor.accountId !== identity.accountId) {
@@ -1435,7 +1328,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
             identity,
           ): Effect.Effect<
             IssueDetailResultType,
-            IssueReadError | GitHubPullRequestCli.GitHubPullRequestCliError
+            IssueReadError | GitHubPullRequestApi.GitHubPullRequestApiError
           > =>
             Effect.gen(function* () {
               if (
@@ -1455,8 +1348,9 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 endpoint: "graphql",
                 maxOutputBytes: DETAIL_MAX_OUTPUT_BYTES,
                 graphql: {
-                  query: ISSUE_DETAIL_QUERY,
+                  query: issueDetailQuery(true),
                   variables: { owner: owner!, name: name!, number: input.number },
+                  fallbackQuery: issueDetailQuery(false),
                 },
               });
               const decoded = yield* decodeGraphQlIssueDetail(response.body).pipe(
@@ -1464,7 +1358,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                   readError("detail", "invalid-response", "GitHub returned an invalid issue."),
                 ),
               );
-              // A missing repository or number comes back as null data plus a NOT_FOUND error.
+              // GitHubApi fails a NOT_FOUND answer; null data without one reads the same way.
               const raw = decoded.data?.repository?.issueOrPullRequest ?? null;
               if (raw === null) {
                 return yield* readError(
@@ -1540,7 +1434,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     "IssueService.repositories",
   )(function* () {
     const scope: IssueRepositoryScope = {
-      cwd: NodeOS.homedir(),
+      cwd: homeDirectory,
       host: GITHUB_HOST,
       repository: "",
     };
@@ -1551,7 +1445,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
           identity,
         ): Effect.Effect<
           IssueRepositoriesResultType,
-          IssueReadError | GitHubPullRequestCli.GitHubPullRequestCliError
+          IssueReadError | GitHubPullRequestApi.GitHubPullRequestApiError
         > =>
           Effect.gen(function* () {
             const raw: RawRepository[] = [];
@@ -1852,8 +1746,5 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
 export const layer: Layer.Layer<
   IssueService,
   never,
-  | GitHubCli.GitHubCli
-  | GitHubGraphQlBudget.GitHubGraphQlBudget
-  | GitHubPullRequestCli.GitHubPullRequestCli
-  | SourceControlRateLimit.SourceControlRateLimit
+  GitHubApi.GitHubApi | GitHubPullRequestApi.GitHubPullRequestApi
 > = Layer.effect(IssueService, make());

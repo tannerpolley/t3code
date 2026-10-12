@@ -7,9 +7,9 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /**
- * The building blocks every Usage metric view shares, so Cost, Tokens, and
- * Limits read as one page: headline and provider rows beside a chart, a
- * Totals strip, and a Breakdown table.
+ * The building blocks of Limits in the Cost and Tokens layout, matching the
+ * sections `UsagePage` draws for Cost and Tokens: headline and provider rows
+ * beside a chart, a Totals strip, and a Breakdown table.
  */
 
 type ProviderIdentity = { readonly driverKind: ProviderDriverKind; readonly label: string };
@@ -152,7 +152,7 @@ export function UsageProviderRow({
         render={
           <div
             tabIndex={0}
-            className="flex cursor-default flex-col gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex cursor-default flex-col gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
         }
       >

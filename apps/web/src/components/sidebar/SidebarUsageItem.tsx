@@ -13,7 +13,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getDriverOption } from "../settings/providerDriverMeta";
+import { providerClients } from "../settings/providerDriverMeta";
 import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { limitReadouts, memberWindowSpan, poolWindowSpan } from "../usage/usageLimitModels";
@@ -77,7 +77,7 @@ function useLimitReadoutRows(enabled: {
       return [
         {
           driver: pool.driver,
-          label: getDriverOption(pool.driver)?.label ?? String(pool.driver),
+          label: providerClients.get(pool.driver)?.label ?? String(pool.driver),
           readouts,
         },
       ];

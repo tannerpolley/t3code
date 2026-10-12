@@ -25,7 +25,7 @@ import * as Stream from "effect/Stream";
 import * as IssueService from "./IssueService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
-import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 
 // Actor authority is supplied by the authenticated transport, never decoded from a proposal.
 type Actor = {

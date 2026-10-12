@@ -5,9 +5,12 @@ import type {
   UsageProviderKind,
   UsageSummaryInput,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import {
   collectExternalUsageLinks,
+  collectLimitAccounts,
   collectLimitNotices,
+  collectLimitPools,
   formatDuration,
   formatResetsIn,
   type LimitPace,
@@ -28,14 +31,18 @@ import {
 import { InfoIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
+import { useClientSettings } from "../../hooks/useSettings";
+import { environmentPresentations } from "../../state/presentation";
 import { useUsage } from "../../state/usage";
-import { getDriverOption } from "../settings/providerDriverMeta";
+import { providerClients } from "../settings/providerDriverMeta";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { barColor, PaceIcon, ResetCredits } from "./UsageLimits";
 import { AccountAvatar, ExternalUsageLinks, LimitNotices } from "./UsageLimitsPooled";
 import {
   attributeWindow,
   limitChartColumns,
+  limitWindowOptions,
   localDay,
   poolWindowSpan,
   type WindowAttribution,
@@ -113,6 +120,132 @@ function formatRefill(reset: LimitPoolWindow["resets"][number], now: number): st
 /** A model's name, qualified by its window when its provider has several of this kind. */
 function modelLabel(row: LimitRow, model: string): string {
   return row.label === row.provider.label ? model : `${model} · ${row.label}`;
+}
+
+type LimitWindowKind = LimitPoolWindow["kind"];
+
+/**
+ * The selected environments without hidden providers' accounts, matching what
+ * `UsageLimitsSection` shows.
+ */
+function visibleLimitPresentations(
+  presentations: LimitPresentations,
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null,
+  hiddenProviders: ReadonlySet<UsageProviderKind>,
+): LimitPresentations {
+  const hiddenDrivers = new Set<ServerProvider["driver"]>(
+    [...hiddenProviders].map((provider) => PROVIDER_PRESENTATION[provider].driverKind),
+  );
+  const isVisible = (driver: ServerProvider["driver"]) => !hiddenDrivers.has(driver);
+  return new Map(
+    [...presentations].flatMap(([id, presentation]) => {
+      if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(id)) return [];
+      const config = presentation.serverConfig;
+      if (hiddenDrivers.size === 0 || config === null) return [[id, presentation] as const];
+      return [
+        [
+          id,
+          {
+            ...presentation,
+            serverConfig: {
+              ...config,
+              providers: config.providers?.filter((provider) => isVisible(provider.driver)),
+              usageLimitSources: config.usageLimitSources?.flatMap((source) => {
+                const accounts = source.accounts.filter((account) => isVisible(account.driver));
+                return accounts.length === 0 && source.accounts.length > 0
+                  ? []
+                  : [{ ...source, accounts }];
+              }),
+            },
+          },
+        ] as const,
+      ];
+    }),
+  );
+}
+
+/**
+ * The page's side of Limits in the Cost and Tokens layout (the
+ * `usageLimitModelBreakdown` client setting): the pools to show and the
+ * window kind picked. A saved kind no provider reports right now falls back
+ * without being forgotten.
+ */
+export function useLimitsOverview({
+  showingLimits,
+  selectedEnvironmentIds,
+  hiddenProviders,
+  now,
+  savedWindow,
+}: {
+  readonly showingLimits: boolean;
+  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
+  readonly now: number;
+  readonly savedWindow: LimitWindowKind | undefined;
+}) {
+  const enabled = useClientSettings((settings) => settings.usageLimitModelBreakdown);
+  const allPresentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useMemo(
+    () => visibleLimitPresentations(allPresentations, selectedEnvironmentIds, hiddenProviders),
+    [allPresentations, hiddenProviders, selectedEnvironmentIds],
+  );
+  const pools = useMemo(
+    () =>
+      showingLimits && enabled ? collectLimitPools(collectLimitAccounts(presentations), now) : [],
+    [enabled, now, presentations, showingLimits],
+  );
+  const windows = limitWindowOptions(pools);
+  const window = windows.find((option) => option.value === savedWindow) ?? windows[0];
+  return { enabled, presentations, pools, windows, window };
+}
+
+/** Picks the limit window kind in place of the usage period; `compact` is the narrow header's. */
+export function LimitWindowPicker({
+  windows,
+  value,
+  onValueChange,
+  compact = false,
+}: {
+  readonly windows: ReturnType<typeof limitWindowOptions>;
+  readonly value: LimitWindowKind;
+  readonly onValueChange: (value: LimitWindowKind) => void;
+  readonly compact?: boolean;
+}) {
+  if (!compact) {
+    return (
+      <SegmentedToggle
+        ariaLabel="Limit window"
+        value={value}
+        options={windows}
+        onValueChange={onValueChange}
+      />
+    );
+  }
+  return (
+    <Select
+      value={value}
+      onValueChange={(next) => {
+        const option = windows.find((candidate) => candidate.value === next);
+        if (option) onValueChange(option.value);
+      }}
+    >
+      <SelectTrigger
+        aria-label="Limit window"
+        size="compact"
+        variant="ghost"
+        className="w-auto min-w-0"
+      >
+        <SelectValue>{windows.find((option) => option.value === value)?.label}</SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        {windows.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
+  );
 }
 
 /**
@@ -253,7 +386,7 @@ export function UsageLimitsOverview({
 }: {
   readonly presentations: LimitPresentations;
   readonly pools: readonly LimitPool[];
-  readonly kind: LimitPoolWindow["kind"] | undefined;
+  readonly kind: LimitWindowKind | undefined;
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
@@ -265,7 +398,7 @@ export function UsageLimitsOverview({
     () =>
       pools.flatMap((pool): LimitRow[] => {
         const windows = pool.windows.filter((window) => window.kind === kind);
-        const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
+        const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
         return windows.map((window) => ({
           key: `${pool.driver}:${window.id}`,
           provider: { driverKind: pool.driver, label },

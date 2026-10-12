@@ -253,7 +253,7 @@ export function SidebarHeaderIconButton({
             aria-label={label}
             {...rest}
             className={cn(
-              "relative inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 [&_svg]:size-4",
+              "relative inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 [&_svg]:size-4",
               className,
             )}
           />
@@ -278,7 +278,7 @@ export function SidebarHeaderLabeledButton({ className, ...props }: ComponentPro
       type="button"
       {...props}
       className={cn(
-        "flex h-7 w-auto min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 [&>span]:truncate [&_svg]:size-3.5",
+        "flex h-7 w-auto min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 [&>span]:truncate [&_svg]:size-3.5",
         className,
       )}
     />

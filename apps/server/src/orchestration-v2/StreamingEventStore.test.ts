@@ -14,14 +14,14 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
 import { EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
 import { ProjectionMaintenanceV2, layer as maintenanceLayer } from "./ProjectionMaintenance.ts";
 import { ProjectionStoreV2, layer as projectionLayer } from "./ProjectionStore.ts";
 
 const stores = Layer.mergeAll(eventStoreLayer, projectionLayer).pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 const services = Layer.mergeAll(eventSinkLayer, maintenanceLayer).pipe(Layer.provideMerge(stores));
 

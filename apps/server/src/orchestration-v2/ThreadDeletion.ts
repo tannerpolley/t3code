@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
-import type { IdAllocatorV2, IdAllocatorV2Error } from "./IdAllocator.ts";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 export interface ThreadDeletionPlan {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -42,10 +42,10 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
   >;
   readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
-  readonly idAllocator: IdAllocatorV2["Service"];
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
 }): Effect.fn.Return<
   ThreadDeletionPlan,
-  IdAllocatorV2Error | RegisteredRepositoryRootDeletionError
+  IdAllocator.IdAllocatorV2Error | RegisteredRepositoryRootDeletionError
 > {
   const { command, projection, now, idAllocator } = input;
   if (isRegisteredRepositoryRoot(projection.thread))
@@ -238,6 +238,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     commandId: command.commandId,
     threadId: command.threadId,
     request: { type: "terminal.cleanup" },
+  });
+  effects.push({
+    id: `effect:${command.commandId}:preview.cleanup`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "preview.cleanup" },
   });
   const attachmentIds = Array.from(new Set(input.attachmentIds));
   if (attachmentIds.length > 0) {

@@ -18,7 +18,7 @@ describe("findIssueProject", () => {
     locator: { source: "git-remote", remoteName: "upstream", remoteUrl: "git@github.com:acme/app" },
     provider: "github",
     displayName: "acme/app",
-    originRepository: "me/app",
+    origin: { canonicalKey: "github.com/me/app", displayName: "me/app" },
   };
   const projects = [
     { id: ProjectId.make("other"), environmentId, repositoryIdentity: null },

@@ -21,7 +21,7 @@ import { afterAll, assert, describe, it } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import {
@@ -237,7 +237,7 @@ describe("followBackgroundTaskInTerminal", () => {
   };
   const dependencies = Layer.mergeAll(
     Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
-    SqlitePersistenceMemory,
+    SqlitePersistence.layerMemory,
     ServerConfig.layerTest(dir, { prefix: "bg-task-follow-config-" }),
     Layer.mock(TerminalManager)({
       open: (input) => Effect.sync(() => (opened.push(input), snapshot(input))),

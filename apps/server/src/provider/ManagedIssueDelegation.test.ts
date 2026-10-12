@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
-import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import { codexThreadRuntimeParams } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import {
   claudeEffectiveQueryPolicyKey,
@@ -22,15 +21,14 @@ describe("repository-managed native delegation", () => {
       authorizationHeader: "Bearer test-token",
       browserToolsAvailable: false,
     };
-    try {
-      McpProviderSession.setMcpProviderSession(session);
-      assert.isUndefined(codexThreadRuntimeParams({ threadId }).config["features.multi_agent"]);
-      McpProviderSession.setMcpProviderSession({ ...session, managedIssue: true });
-      assert.isFalse(codexThreadRuntimeParams({ threadId }).config["features.multi_agent"]);
-      assert.isFalse(codexThreadRuntimeParams({ threadId }).config["features.multi_agent_v2"]);
-    } finally {
-      McpProviderSession.clearMcpProviderSession(threadId);
-    }
+    assert.isUndefined(
+      codexThreadRuntimeParams({ mcpSession: session }).config["features.multi_agent"],
+    );
+    const managed = codexThreadRuntimeParams({
+      mcpSession: { ...session, managedIssue: true },
+    }).config;
+    assert.isFalse(managed["features.multi_agent"]);
+    assert.isFalse(managed["features.multi_agent_v2"]);
   });
 
   it("removes Claude spawning tools in bypass mode and changes the live-query reuse key", () => {
@@ -44,34 +42,31 @@ describe("repository-managed native delegation", () => {
       authorizationHeader: "Bearer test-token",
       browserToolsAvailable: false,
     };
-    try {
-      McpProviderSession.setMcpProviderSession(session);
-      const ordinary = claudeMcpQueryOverrides({ threadId, readOnlySandbox: false });
-      McpProviderSession.setMcpProviderSession({ ...session, managedIssue: true });
-      const managed = claudeMcpQueryOverrides({ threadId, readOnlySandbox: false });
-      const policy = claudeRuntimeQueryPolicyForRuntimePolicy({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: "/workspace",
-      });
-      assert.notEqual(
-        claudeEffectiveQueryPolicyKey(policy, ordinary),
-        claudeEffectiveQueryPolicyKey(policy, managed),
-      );
-      const options = makeClaudeQueryOptions({
-        modelSelection: { instanceId: session.providerInstanceId, model: "claude-sonnet-5-5" },
-        nativeThreadId: "managed-native-claude",
-        resume: true,
-        cwd: "/workspace",
-        permissionMode: "bypassPermissions",
-        ...managed,
-      });
-      assert.equal(options.permissionMode, "bypassPermissions");
-      assert.deepEqual(options.disallowedTools, ["Agent", "Task", "TeamCreate"]);
-      assert.include(options.allowedTools ?? [], "mcp__t3-code__*");
-      assert.isUndefined(ordinary.disallowedTools);
-    } finally {
-      McpProviderSession.clearMcpProviderSession(threadId);
-    }
+    const ordinary = claudeMcpQueryOverrides({ mcpSession: session, readOnlySandbox: false });
+    const managed = claudeMcpQueryOverrides({
+      mcpSession: { ...session, managedIssue: true },
+      readOnlySandbox: false,
+    });
+    const policy = claudeRuntimeQueryPolicyForRuntimePolicy({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: "/workspace",
+    });
+    assert.notEqual(
+      claudeEffectiveQueryPolicyKey(policy, ordinary),
+      claudeEffectiveQueryPolicyKey(policy, managed),
+    );
+    const options = makeClaudeQueryOptions({
+      modelSelection: { instanceId: session.providerInstanceId, model: "claude-sonnet-5-5" },
+      nativeThreadId: "managed-native-claude",
+      resume: true,
+      cwd: "/workspace",
+      permissionMode: "bypassPermissions",
+      ...managed,
+    });
+    assert.equal(options.permissionMode, "bypassPermissions");
+    assert.deepEqual(options.disallowedTools, ["Agent", "Task", "TeamCreate"]);
+    assert.include(options.allowedTools ?? [], "mcp__t3-code__*");
+    assert.isUndefined(ordinary.disallowedTools);
   });
 });

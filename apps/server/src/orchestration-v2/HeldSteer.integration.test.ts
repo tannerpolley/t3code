@@ -19,14 +19,10 @@ import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import type {
-  ProviderAdapterV2Event,
-  ProviderAdapterV2Shape,
-  ProviderAdapterV2TurnInput,
-} from "./ProviderAdapter.ts";
-import { makeSingleLayer } from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -38,9 +34,9 @@ const capabilities = CodexProviderCapabilitiesV2;
 const runScenario = <E>(
   name: string,
   body: (input: {
-    readonly started: ReadonlyArray<ProviderAdapterV2TurnInput>;
+    readonly started: ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>;
     readonly steered: ReadonlyArray<MessageId>;
-    readonly events: Queue.Queue<ProviderAdapterV2Event>;
+    readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
     readonly cwd: string;
   }) => Effect.Effect<
     void,
@@ -51,10 +47,10 @@ const runScenario = <E>(
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`held-steer-${name}`);
-      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
-      const started: ProviderAdapterV2TurnInput[] = [];
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
       const steered: MessageId[] = [];
-      const adapter: ProviderAdapterV2Shape = {
+      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
         getCapabilities: () => Effect.succeed(capabilities),
@@ -110,9 +106,11 @@ const runScenario = <E>(
       };
       yield* body({ started, steered, events, cwd }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry({ name }, makeSingleLayer(adapter), {
-            runEffectWorker: false,
-          }),
+          ProviderReplayHarness.layerWithRegistry(
+            { name },
+            ProviderAdapterRegistry.layerSingle(adapter),
+            { runEffectWorker: false },
+          ),
         ),
       );
     }),
@@ -187,7 +185,7 @@ const sendSteer = (id: string) =>
   });
 
 const providerTurnFor = (
-  turn: ProviderAdapterV2TurnInput,
+  turn: ProviderAdapter.ProviderAdapterV2TurnInput,
   status: "running" | "completed",
   now: DateTime.Utc,
 ) => ({

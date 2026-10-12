@@ -21,16 +21,16 @@ import * as Stream from "effect/Stream";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DontAskModeWorker from "./DontAskModeWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
@@ -39,20 +39,20 @@ const adapter = {
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("Requests are committed directly; no provider process runs"),
-} as ProviderAdapterV2Shape;
-const database = SqlitePersistenceMemory;
+} as ProviderAdapter.ProviderAdapterV2["Service"];
+const database = SqlitePersistence.layerMemory;
 const testLayer = Layer.mergeAll(
   database,
   ProjectionStore.layer.pipe(Layer.provide(database)),
-  makeOrchestratorV2ReplayLayerWithRegistry(
+  ProviderReplayHarness.layerWithRegistry(
     { name: "dont-ask-mode" },
-    ProviderAdapterRegistry.makeLayer([adapter]),
+    ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: database, runEffectWorker: false },
   ),
   // The real settings service: the worker reacts to its change stream.
   ServerSettings.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
-    Layer.provide(Layer.fresh(SqlitePersistenceMemory)),
+    Layer.provide(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provide(
       Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-dont-ask-test-" })),
     ),

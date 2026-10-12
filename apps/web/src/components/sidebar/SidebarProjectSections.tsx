@@ -820,7 +820,7 @@ function SortableSectionHeader(props: {
         {...(draggable && codexStyle ? { ...attributes, ...listeners } : {})}
         aria-expanded={expanded}
         className={cn(
-          "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+          "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           // Codex style sets sections apart from the project rows under them: a small uppercase label.
           codexStyle ? "gap-2 text-2xs font-semibold uppercase tracking-wide" : "gap-1.5 text-xs",
         )}
@@ -855,7 +855,7 @@ function SortableSectionHeader(props: {
           {codexStyle || !draggable ? null : (
             <button
               aria-label={`Reorder ${section.name} section`}
-              className="inline-flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
+              className="inline-flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
               ref={setActivatorNodeRef}
               type="button"
               {...attributes}
@@ -870,7 +870,7 @@ function SortableSectionHeader(props: {
                 <button
                   aria-label={`Actions for ${section.name}`}
                   className={cn(
-                    "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100",
+                    "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100",
                     // Codex style overlays the empty time and status slots, as on project rows.
                     codexStyle && "absolute end-1 top-0.5",
                   )}
@@ -999,7 +999,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           ref={codexStyle ? setActivatorNodeRef : undefined}
           aria-expanded={props.isProjectExpanded}
           className={cn(
-            "flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+            "flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
             // Codex style makes room for the actions menu only while it shows.
             codexStyle
               ? "group-hover/project-row:pe-8 group-focus-within/project-row:pe-8"
@@ -1055,7 +1055,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           {codexStyle ? null : (
             <button
               aria-label={`Reorder ${project.displayName}`}
-              className="pointer-events-auto inline-flex size-6 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
+              className="pointer-events-auto inline-flex size-6 cursor-grab items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
               ref={setActivatorNodeRef}
               type="button"
               {...attributes}
@@ -1069,7 +1069,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               render={
                 <button
                   aria-label={`Actions for ${project.displayName}`}
-                  className="pointer-events-auto inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-pointer group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
+                  className="pointer-events-auto inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-pointer group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100"
                   type="button"
                 />
               }

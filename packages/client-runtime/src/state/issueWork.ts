@@ -6,14 +6,15 @@ import {
   type IssueWorkStatusResult,
   type ProjectId,
   type RepositoryIdentity,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
 /** Issues belong to the checkout's origin, including when pull requests target upstream. */
 export function threadIssueRepository(identity: RepositoryIdentity | null | undefined) {
   if (identity?.provider !== "github") return null;
-  const repository = identity.originRepository ?? sourceControlRepositorySelector(identity);
-  const host = pullRequestHostOf(identity, "github");
+  const repository = identity.origin?.displayName ?? sourceControlRepositorySelector(identity);
+  const host = pullRequestHostOf(identity, SourceControlProviderKind.make("github"));
   return repository === null || host !== "github.com" ? null : { host, repository };
 }
 

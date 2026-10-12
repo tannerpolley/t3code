@@ -5,11 +5,12 @@ import * as Exit from "effect/Exit";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { FORK_MIGRATIONS_TABLE, forkMigrationEntries } from "./ForkMigrations.ts";
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import RemoveRedundantProjectionIndexes from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
 import OrchestrationV2 from "./Migrations/055_OrchestrationV2.ts";
-import ProjectionMessagesLatestAssistant from "./Migrations/057_ProjectionMessagesLatestAssistant.ts";
+import ProjectionMessagesLatestAssistant from "./ForkMigrations/001_ProjectionMessagesLatestAssistant.ts";
 
 // The V2 schema is unchanged from the published September 15–16 previews.
 const seedPreview = Effect.gen(function* () {
@@ -38,12 +39,11 @@ describe("V2 preview upgrade", () => {
         [53, "PullRequestFilesViewed"],
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
         [56, "RemoveRedundantProjectionIndexes"],
-        [57, "ProjectionMessagesLatestAssistant"],
-        [58, "ProjectionTurnItemCounts"],
-        [59, "ThreadIssueWork"],
-        [60, "RepositoryOrchestration"],
-        [61, "RepositoryScheduledWork"],
-        [62, "IssueChanges"],
+        [57, "ScheduledTaskWebhooks"],
+        [58, "WebhookRelayDeliveries"],
+        [59, "McpAppModelContext"],
+        [60, "ThreadSnapshotWindowIndexes"],
+        [61, "PullRequestReviewGuides"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -131,15 +131,23 @@ describe("V2 preview upgrade", () => {
       yield* sql`DROP TRIGGER fail_fork_upgrade`;
       assert.deepStrictEqual(yield* runMigrations(), [
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
-        [58, "ProjectionTurnItemCounts"],
-        [59, "ThreadIssueWork"],
-        [60, "RepositoryOrchestration"],
-        [61, "RepositoryScheduledWork"],
-        [62, "IssueChanges"],
+        [57, "ScheduledTaskWebhooks"],
+        [58, "WebhookRelayDeliveries"],
+        [59, "McpAppModelContext"],
+        [60, "ThreadSnapshotWindowIndexes"],
+        [61, "PullRequestReviewGuides"],
       ]);
+      // The preview reconciler moves the fork's 56 to 57; the fork ledger then takes it as 1.
       assert.deepStrictEqual(
-        yield* sql`SELECT name, created_at FROM effect_sql_migrations WHERE migration_id BETWEEN 55 AND 57 ORDER BY migration_id`,
+        [
+          ...(yield* sql`SELECT name, created_at FROM effect_sql_migrations WHERE migration_id BETWEEN 55 AND 56 ORDER BY migration_id`),
+          ...(yield* sql`SELECT name, created_at FROM ${sql(FORK_MIGRATIONS_TABLE)} WHERE migration_id = 1`),
+        ],
         original,
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT migration_id, name FROM ${sql(FORK_MIGRATIONS_TABLE)} ORDER BY migration_id`,
+        forkMigrationEntries.map(([migration_id, name]) => ({ migration_id, name })),
       );
       const ledger = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
       assert.deepStrictEqual(yield* runMigrations(), []);
@@ -212,12 +220,11 @@ describe("V2 preview upgrade", () => {
         [53, "PullRequestFilesViewed"],
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
         [56, "RemoveRedundantProjectionIndexes"],
-        [57, "ProjectionMessagesLatestAssistant"],
-        [58, "ProjectionTurnItemCounts"],
-        [59, "ThreadIssueWork"],
-        [60, "RepositoryOrchestration"],
-        [61, "RepositoryScheduledWork"],
-        [62, "IssueChanges"],
+        [57, "ScheduledTaskWebhooks"],
+        [58, "WebhookRelayDeliveries"],
+        [59, "McpAppModelContext"],
+        [60, "ThreadSnapshotWindowIndexes"],
+        [61, "PullRequestReviewGuides"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

@@ -67,9 +67,9 @@ Drag a thread from Projects onto the composer to add it as context for your next
 message; subagent rows in Projects and rows in **Lineage** drag the same way.
 Running subagents and background tasks appear beneath their parent
 thread. A branch icon marks a child working in its own worktree; hover it
-for the worktree's name. A child's question or approval also appears on the parent. Blue marks
-show work in progress; amber spinners show a thread waiting on background work.
-Times show known work duration, rather than time since the last message.
+for the worktree's name. A child's question or approval also appears on the parent.
+An amber spinner means the thread is waiting on its background work. Times show
+how long the work has run, rather than time since the last message.
 
 ## Pin and reorder threads
 
@@ -167,6 +167,13 @@ sending an answer or restarting the agent. Settling also closes the thread's
 terminals that wait at an idle prompt, and keeps their output. A terminal that
 runs a command, such as a dev server, stays open.
 
+To reclaim disk space from settled work, turn on **Run in the thread's worktree when the
+thread settles** for one of the project's actions, or set `"runOnSettle": true` on a
+`t3.json` script, for example `cargo clean`. It runs each time a thread in its own
+worktree settles, manually or automatically, even if a terminal there still runs a
+command such as a dev server. Threads in the project's main checkout skip it. Its terminal
+closes when the command succeeds and stays open when it fails.
+
 On web and desktop, press a thread's **Settle** button and drag up or down to
 settle every thread in that section between it and the one you release on.
 The **Un-settle** and **Wake** buttons work the same way in their sections.
@@ -240,27 +247,23 @@ the snooze. Enable **Snooze limited threads** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
-On web and desktop, open **Agents** to follow delegated work and inspect
-**Lineage** for parent and fork relationships. Expand a row for its model, effort, progress, and workspace details.
-Use **Clear** under **Previous agents** to hide finished agents, and **Show** to restore them. To clear
-them automatically, set **Settings → Customizations → Clear finished agents automatically**
-to 30 minutes or 1 hour. Turn off **Redesigned Lineage** there for the original
-rows without details or clearing. Background shell summaries appear
-alongside the agents.
+On web and desktop, open **Agents** to follow delegated work and **Lineage** to see
+parent and fork relationships. Stop on a thread also stops the subagents it delegated to.
+Use **Clear** under **Previous agents** to hide finished agents, and **Show** to restore
+them. To clear them automatically, set **Settings → Customizations → Clear finished agents
+automatically** to 30 minutes or 1 hour. Turn off **Redesigned Lineage** there for the
+original rows.
 
 Click a Codex or Claude background command or monitor in Projects, Lineage, or
-the expandable background-work line above the composer to follow its live output.
-It opens a terminal tab in the owning thread; clicking again returns to that tab.
-The tab also follows existing log files the command reads or writes. Ctrl+C stops
-following and leaves a usable terminal; it does not stop the background task.
-Hosts that cannot follow in a terminal show live output in a popover instead.
+the background-work line above the composer to follow its live output in a terminal
+tab of the owning thread. The tab also follows log files the command reads or writes.
+Ctrl+C stops following and leaves a usable terminal; it does not stop the background
+task. Hosts that cannot follow in a terminal show live output in a popover instead.
+Turn off **Settings → Customizations → Background process output** to disable this.
 
-Task rows show their age and command kind. CPU and memory appear when the host
-can attribute a process tree to that task. A non-server shell running for over
-two hours is marked as possibly stuck. Hover a task row, or focus its Stop control,
-to stop that task. **Stop** above the composer stops all the thread's background
-work. Turn off **Settings → Customizations → Background process output** to
-disable opening output from task rows.
+To stop one background task, hover its row and use its Stop control. **Stop** above
+the composer stops all the thread's background work. A non-server shell running for
+over two hours is marked as possibly stuck.
 
 To tell agents which model and effort suit each kind of delegated work, edit
 **Model roles** in **Settings → Customizations** on web and desktop. Agents use these

@@ -106,7 +106,7 @@ it("matches projects in the selected environment, including fork and upstream", 
       remoteName: "upstream",
       remoteUrl: "git@github.com:upstream/repo",
     },
-    originRepository: "owner/repo",
+    origin: { canonicalKey: "github.com/owner/repo", displayName: "owner/repo" },
   };
   const projects = [
     {

@@ -13,7 +13,7 @@ const forkCheckout: RepositoryIdentity = {
   provider: "github",
   owner: "pingdotgg",
   name: "t3code",
-  originRepository: "tannerpolley/t3code",
+  origin: { canonicalKey: "github.com/tannerpolley/t3code", displayName: "tannerpolley/t3code" },
 };
 
 describe("threadPullRequestLabel", () => {

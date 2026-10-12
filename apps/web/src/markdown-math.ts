@@ -1,3 +1,7 @@
+import rehypeKatex from "rehype-katex";
+import remarkMath from "remark-math";
+import type { PluggableList } from "unified";
+
 /**
  * A complete inline `$…$` span: no space just inside either dollar, no escaped closing
  * dollar, and no digit right after it. "$2/x$" qualifies; "$5 and $10" does not.
@@ -135,6 +139,10 @@ export function normalizeProviderMathDelimiters(
   return normalized;
 }
 
+// The chat sanitizer keeps only `language-*` classes on code, so a provider display formula
+// crosses it under this class and gets the classes rehype-katex reads afterwards.
+const PROVIDER_DISPLAY_MATH_CLASS = "language-math-display";
+
 type MathAstNode = {
   type?: string;
   value?: string;
@@ -166,7 +174,10 @@ export function remarkProviderMath() {
             data: {
               hName: "code",
               hProperties: {
-                className: ["language-math", match[1] === "D" ? "math-display" : "math-inline"],
+                className:
+                  match[1] === "D"
+                    ? [PROVIDER_DISPLAY_MATH_CLASS]
+                    : ["language-math", "math-inline"],
               },
               // remark-math sets this too; without it the formula never reaches KaTeX.
               hChildren: [{ type: "text", value }],
@@ -184,3 +195,36 @@ export function remarkProviderMath() {
     visit(tree);
   };
 }
+
+type MathHastNode = {
+  type?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: MathHastNode[];
+};
+
+function rehypeProviderDisplayMath() {
+  return (tree: MathHastNode) => {
+    const visit = (node: MathHastNode) => {
+      const className = node.properties?.className;
+      if (
+        node.tagName === "code" &&
+        Array.isArray(className) &&
+        className.includes(PROVIDER_DISPLAY_MATH_CLASS)
+      ) {
+        node.properties = { ...node.properties, className: ["language-math", "math-display"] };
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+/** Appended to the shared chat markdown remark plugins while the `chatMath` setting is on. */
+export const CHAT_MATH_REMARK_PLUGINS: PluggableList = [remarkMath, remarkProviderMath];
+
+/**
+ * Appended after the shared chat markdown rehype plugins, so after the sanitizer. KaTeX output
+ * is generated from the formula text, not taken from the source.
+ */
+export const CHAT_MATH_REHYPE_PLUGINS: PluggableList = [rehypeProviderDisplayMath, rehypeKatex];

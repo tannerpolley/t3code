@@ -57,7 +57,7 @@ export function SidebarCaretToggle(props: {
       aria-expanded={props.open}
       aria-label={props.label}
       className={cn(
-        "absolute start-0.5 flex cursor-pointer items-center rounded px-1.5 text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+        "absolute start-0.5 flex cursor-pointer items-center rounded px-1.5 text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         props.className,
       )}
       onClick={props.onToggle}

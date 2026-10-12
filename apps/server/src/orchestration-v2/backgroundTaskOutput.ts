@@ -39,13 +39,13 @@ import {
   type OrchestrationV2StopBackgroundTaskInput,
   type OrchestrationV2StopBackgroundTaskError,
 } from "@t3tools/contracts";
-import { isHostWindows } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { classifyShellCommand, shellCommandWaitPids } from "@t3tools/shared/shellCommand";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -174,7 +174,7 @@ export function codexBackgroundTaskLogPath(
   return NodePath.join(
     logsDir,
     "background-tasks",
-    `${Encoding.encodeBase64Url(threadId)}.${Encoding.encodeBase64Url(nativeItemId)}.output`,
+    `${Base64Url.encode(threadId)}.${Base64Url.encode(nativeItemId)}.output`,
   );
 }
 
@@ -595,7 +595,7 @@ const followBackgroundTaskInTerminal = Effect.fn("terminal.followBackgroundTask"
 ) {
   const { taskId, ...openInput } = input;
   // ponytail: POSIX shells only (bash, zsh, fish, sh); Windows hosts fall back to the viewer.
-  if (yield* isHostWindows) {
+  if ((yield* HostProcess.Platform) === "win32") {
     return yield* outputError(taskId, "Following a shell in a terminal needs a POSIX host.");
   }
   const { path, appearsLater } = yield* resolveBackgroundTaskOutputFile(input);

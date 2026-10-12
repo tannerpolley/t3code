@@ -33,7 +33,7 @@ describe("threadIssueRepository", () => {
         remoteUrl: "git@github.com:acme/frontend",
       },
     });
-    expect(threadIssueRepository({ ...upstream, originRepository: "me/frontend" })).toEqual({
+    expect(threadIssueRepository({ ...upstream, origin: { canonicalKey: "github.com/me/frontend", displayName: "me/frontend" } })).toEqual({
       host: "github.com",
       repository: "me/frontend",
     });

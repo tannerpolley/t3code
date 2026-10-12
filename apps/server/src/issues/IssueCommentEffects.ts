@@ -6,6 +6,8 @@ import {
   type ThreadLinkedIssue,
   type IssueWorkStatus,
   type OrchestrationV2StoredEvent,
+  type OrchestrationV2AppThread,
+  type RunId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -18,13 +20,51 @@ import {
   type EffectOutboxV2Shape,
 } from "../orchestration-v2/EffectOutbox.ts";
 import type { ProjectionStoreV2Shape } from "../orchestration-v2/ProjectionStore.ts";
-import { delegatedTaskProgress } from "../orchestration-v2/SubagentProjection.ts";
+import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 
 const decodeRequest = Schema.decodeEffect(Schema.fromJsonString(IssueWorkRequested));
 const decodeCommentEffect = Schema.decodeEffect(
   Schema.fromJsonString(OrchestrationEffectRequestV2),
 );
+
+export function issueCloseoutEffect(input: {
+  readonly issue: ThreadLinkedIssue;
+  readonly thread: Pick<OrchestrationV2AppThread, "id" | "branch" | "modelSelection">;
+  readonly runId: RunId;
+  readonly status: IssueWorkStatus;
+  readonly completedAt: DateTime.Utc;
+  readonly result: string;
+}): PendingOrchestrationEffectV2 {
+  const { issue, thread, runId } = input;
+  const writeKey = `issue-closeout:${issue.host}:${issue.repositoryId}:${issue.id}:${thread.id}:${runId}`;
+  const marker = `<!-- t3-issue-closeout:${issue.host}:${issue.repositoryId}:${issue.id}:${thread.id}:${runId} -->`;
+  return {
+    id: `effect:issue-comment:${writeKey}`,
+    commandId: CommandId.make(`command:issue-comment:${writeKey}`),
+    threadId: thread.id,
+    request: {
+      type: "issue.github.comment",
+      operation: "closeout_create",
+      issue,
+      writeKey,
+      resultEventId: String(runId),
+      marker,
+      body: [
+        `## T3 Code closeout: ${input.status}`,
+        `Issue: [#${issue.number} ${issue.title}](${issue.url})`,
+        `Thread: ${thread.id}`,
+        `Model: ${thread.modelSelection.model}`,
+        ...(thread.branch === null ? [] : [`Branch: ${thread.branch}`]),
+        `Completed: ${DateTime.formatIso(input.completedAt)}`,
+        "",
+        input.result,
+        "",
+        marker,
+      ].join("\n"),
+    },
+  };
+}
 
 function statusCommentEffect(input: {
   readonly issue: ThreadLinkedIssue;

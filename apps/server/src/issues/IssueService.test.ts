@@ -1,22 +1,34 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { ChildProcessSpawner } from "effect/process";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import { IssueReadError } from "@t3tools/contracts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
+import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
 
-import * as GitHubCli from "../sourceControl/GitHubCli.ts";
-import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
-import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
-import * as GitHubPullRequestCli from "../pullRequest/GitHubPullRequestCli.ts";
 import * as IssueService from "./IssueService.ts";
 
 const HOST = "github.enterprise.test";
 const REPOSITORY = "acme/web";
 const ACCOUNT_ID = "account-1";
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
-type MockResponse = string | { readonly stdout: string; readonly exitCode: number };
+interface MockResponse {
+  readonly body: string;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly status?: number;
+}
+/** One request the service sent, as GitHub received it. */
+interface ApiCall {
+  readonly method: string;
+  readonly url: string;
+  readonly body: string | undefined;
+}
 
 function rawIssue(number: number, overrides: Readonly<Record<string, unknown>> = {}) {
   return {
@@ -57,58 +69,75 @@ function httpResponse(
   body: unknown,
   headers: Readonly<Record<string, string>> = {},
   status = 200,
-): string {
-  return [
-    `HTTP/2 ${status} OK`,
-    ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
-    "",
-    JSON.stringify(body),
-  ].join("\r\n");
+): MockResponse {
+  return { body: JSON.stringify(body), headers, status };
 }
 
-function output(stdout: string, exitCode = 0) {
-  return {
-    exitCode: ChildProcessSpawner.ExitCode(exitCode),
-    stdout,
-    stderr: "",
-    stdoutTruncated: false,
-    stderrTruncated: false,
-  } satisfies {
-    readonly exitCode: ChildProcessSpawner.ExitCode;
-    readonly stdout: string;
-    readonly stderr: string;
-    readonly stdoutTruncated: boolean;
-    readonly stderrTruncated: boolean;
-  };
-}
-
+/**
+ * The real GitHub transport over a scripted HTTP client, so GitHub's answers are classified as
+ * they are in production.
+ */
 function makeHarness(input: {
   readonly responses: ReadonlyArray<MockResponse>;
   readonly accountId?: string;
-  readonly verificationError?: GitHubPullRequestCli.GitHubPullRequestCliError;
-  readonly rateLimitError?: SourceControlRateLimit.SourceControlRateLimitPausedError;
+  readonly verificationError?: GitHubPullRequestApi.GitHubPullRequestApiError;
 }) {
   const responses = [...input.responses];
-  const calls: Array<ReadonlyArray<string>> = [];
-  const stdins: Array<string | undefined> = [];
+  const calls: Array<ApiCall> = [];
   const rateLimitRecords: Array<unknown> = [];
-  const github = Layer.mock(GitHubCli.GitHubCli)({
-    execute: (request) => {
-      calls.push([...request.args]);
-      stdins.push(request.stdin);
+  const http = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => {
+      calls.push({
+        method: request.method,
+        url: request.url,
+        body:
+          request.body._tag === "Uint8Array"
+            ? new TextDecoder().decode(request.body.body)
+            : undefined,
+      });
       const response = responses.shift();
       return response === undefined
         ? Effect.die("unexpected GitHub API call")
         : Effect.succeed(
-            typeof response === "string"
-              ? output(response)
-              : output(response.stdout, response.exitCode),
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(response.body, {
+                status: response.status ?? 200,
+                headers: response.headers ?? {},
+              }),
+            ),
           );
-    },
+    }),
+  );
+  const credentials = Layer.succeed(
+    GitHubCredentials.GitHubCredentials,
+    GitHubCredentials.GitHubCredentials.of({
+      get: (host) =>
+        Effect.succeed({
+          host,
+          token: Redacted.make("token"),
+          source: "gh" as const,
+          fingerprint: `${host}:token`,
+        }),
+      invalidate: () => Effect.void,
+    }),
+  );
+  const rateLimits = Layer.mock(SourceControlRateLimit.SourceControlRateLimit)({
+    check: () => Effect.succeed(0),
+    recordRateLimit: (record) =>
+      Effect.sync(() => {
+        rateLimitRecords.push(record);
+      }),
+    recordSuccess: () => Effect.void,
   });
+  const api = GitHubApi.layer.pipe(
+    Layer.provide(Layer.mergeAll(http, credentials, rateLimits)),
+    Layer.provide(GitHubQuota.layer),
+  );
   const verifier =
     input.verificationError === undefined
-      ? Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+      ? Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
           withVerifiedCredential: (_request, use) =>
             use({
               accountId: input.accountId ?? ACCOUNT_ID,
@@ -116,24 +145,11 @@ function makeHarness(input: {
               credentialFingerprint: "credential-fingerprint",
             }),
         })
-      : Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+      : Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
           withVerifiedCredential: () => Effect.fail(input.verificationError!),
         });
-  const rateLimits = Layer.mock(SourceControlRateLimit.SourceControlRateLimit)({
-    check: () =>
-      input.rateLimitError === undefined ? Effect.succeed(0) : Effect.fail(input.rateLimitError),
-    recordRateLimit: (record) =>
-      Effect.sync(() => {
-        rateLimitRecords.push(record);
-      }),
-    recordSuccess: () => Effect.void,
-  });
-  const budget = Layer.mock(GitHubGraphQlBudget.GitHubGraphQlBudget)({
-    query: (_host, document) => Effect.succeed(document),
-    observe: () => Effect.void,
-  });
-  const layer = Layer.mergeAll(github, verifier, rateLimits, budget);
-  return { layer, calls, stdins, rateLimitRecords };
+  const layer = Layer.mergeAll(api, verifier);
+  return { layer, calls, rateLimitRecords };
 }
 
 function service(harness: ReturnType<typeof makeHarness>) {
@@ -164,7 +180,7 @@ it.effect("paginates only the selected milestone during repository reconciliatio
       [1, 2],
     );
     assert.isTrue(result.complete);
-    assert.isTrue(harness.calls.every((call) => call.at(-1)?.includes("milestone=7")));
+    assert.isTrue(harness.calls.every((call) => call.url.includes("milestone=7")));
   }),
 );
 
@@ -242,7 +258,7 @@ it.effect("resolves a repository identity without requiring an issue", () =>
     const result = yield* (yield* service(harness)).repositoryIdentity(listInput);
     assert.deepEqual(result, { host: HOST, repository: REPOSITORY, repositoryId: "123" });
     assert.equal(harness.calls.length, 1);
-    assert.include(harness.calls[0]!.join(" "), "repos/acme/web");
+    assert.include(harness.calls[0]!.url, "repos/acme/web");
   }),
 );
 
@@ -273,8 +289,8 @@ it.effect("resolves the stable GitHub repository and issue identities", () =>
       url: `https://${HOST}/${REPOSITORY}/issues/7`,
       title: "Stable identity",
     });
-    assert.include(harness.calls[0]!.join(" "), "repos/acme/web");
-    assert.include(harness.calls[1]!.join(" "), "repos/acme/web/issues/7");
+    assert.include(harness.calls[0]!.url, "repos/acme/web");
+    assert.include(harness.calls[1]!.url, "repos/acme/web/issues/7");
   }),
 );
 
@@ -310,8 +326,8 @@ it.effect("reconciles an uncertain closeout create by marker before retrying it"
 
     assert.deepEqual(retry, { commentId: "789" });
     assert.equal(harness.calls.length, 3);
-    assert.include(harness.calls[1]!.join(" "), "--method POST");
-    assert.notInclude(harness.calls[2]!.join(" "), "--method POST");
+    assert.equal(harness.calls[1]!.method, "POST");
+    assert.notEqual(harness.calls[2]!.method, "POST");
   }),
 );
 
@@ -349,8 +365,8 @@ it.effect(
       );
       const recovered = yield* issues.createIssue(input);
       assert.equal(recovered.issue.id, "456");
-      assert.equal(harness.calls.filter((call) => call.includes("POST")).length, 1);
-      const payload = yield* decodeJson(harness.stdins[1]!);
+      assert.equal(harness.calls.filter((call) => call.method === "POST").length, 1);
+      const payload = yield* decodeJson(harness.calls[1]!.body!);
       assert.deepEqual(payload, {
         title: "Exact title",
         body: `Exact body\n\n${marker}`,
@@ -381,7 +397,7 @@ it.effect(
       yield* issues.setState({ ...ref, state: "open" });
       yield* issues.setSubIssue({ parent, child, action: "add" });
       yield* issues.setSubIssue({ parent, child, action: "remove" });
-      const payloads = yield* Effect.forEach(harness.stdins, (stdin) => decodeJson(stdin!));
+      const payloads = yield* Effect.forEach(harness.calls, (call) => decodeJson(call.body!));
       assert.deepEqual(payloads, [
         { body: "Exact replacement\n" },
         { milestone: null },
@@ -390,14 +406,10 @@ it.effect(
         { sub_issue_id: 789 },
         { sub_issue_id: 789 },
       ]);
-      assert.include(
-        harness.calls[4]!.join(" "),
-        "--method POST --input - repos/acme/web/issues/7/sub_issues",
-      );
-      assert.include(
-        harness.calls[5]!.join(" "),
-        "--method DELETE --input - repos/acme/web/issues/7/sub_issue",
-      );
+      assert.equal(harness.calls[4]!.method, "POST");
+      assert.isTrue(harness.calls[4]!.url.endsWith("/repos/acme/web/issues/7/sub_issues"));
+      assert.equal(harness.calls[5]!.method, "DELETE");
+      assert.isTrue(harness.calls[5]!.url.endsWith("/repos/acme/web/issues/7/sub_issue"));
     }),
 );
 
@@ -462,9 +474,9 @@ it.effect("filters mixed and PR-only pages without re-requesting a completed str
     assert.isTrue(second.milestonesComplete);
     assert.isNotNull(second.nextCursor);
     assert.equal(harness.calls.length, 3);
-    assert.include(harness.calls[2]!.join(" "), "repos/acme/web/issues");
-    assert.include(harness.calls[2]!.join(" "), "page=2");
-    assert.notInclude(harness.calls[2]!.join(" "), "milestones");
+    assert.include(harness.calls[2]!.url, "repos/acme/web/issues");
+    assert.include(harness.calls[2]!.url, "page=2");
+    assert.notInclude(harness.calls[2]!.url, "milestones");
 
     const third = yield* issues.list({ ...listInput, cursor: second.nextCursor! });
     assert.deepEqual(
@@ -475,8 +487,8 @@ it.effect("filters mixed and PR-only pages without re-requesting a completed str
     assert.isTrue(third.milestonesComplete);
     assert.isNull(third.nextCursor);
     assert.equal(harness.calls.length, 4);
-    assert.include(harness.calls[3]!.join(" "), "page=3");
-    assert.notInclude(harness.calls[3]!.join(" "), "milestones");
+    assert.include(harness.calls[3]!.url, "page=3");
+    assert.notInclude(harness.calls[3]!.url, "milestones");
 
     const otherAccount = makeHarness({ responses: [], accountId: "account-2" });
     const otherAccountIssues = yield* service(otherAccount);
@@ -512,9 +524,9 @@ it.effect("continues milestones after issues finish and does not request issues 
     assert.isTrue(second.issuesComplete);
     assert.isTrue(second.milestonesComplete);
     assert.equal(harness.calls.length, 3);
-    assert.notInclude(harness.calls[2]!.join(" "), "/issues?");
-    assert.include(harness.calls[2]!.join(" "), "/milestones?");
-    assert.include(harness.calls[2]!.join(" "), "page=2");
+    assert.notInclude(harness.calls[2]!.url, "/issues?");
+    assert.include(harness.calls[2]!.url, "/milestones?");
+    assert.include(harness.calls[2]!.url, "page=2");
   }),
 );
 
@@ -552,8 +564,8 @@ it.effect("reads closed issues only when asked and keeps cursors bound to their 
         [8, "closed"],
       ],
     );
-    assert.include(harness.calls[0]!.join(" "), "/issues?state=all");
-    assert.include(harness.calls[1]!.join(" "), "/milestones?state=all");
+    assert.include(harness.calls[0]!.url, "/issues?state=all");
+    assert.include(harness.calls[1]!.url, "/milestones?state=all");
 
     const error = yield* issues
       .list({ ...listInput, state: "open", cursor: all.nextCursor! })
@@ -625,8 +637,8 @@ it.effect("lists only repositories the viewer owns or administers, across pages"
     );
     assert.isTrue(result.complete);
     assert.equal(result.viewer.login, "octocat");
-    assert.include(harness.calls[0]!.join(" "), "user/repos?affiliation=owner,organization_member");
-    assert.include(harness.calls[1]!.join(" "), "page=2");
+    assert.include(harness.calls[0]!.url, "user/repos?affiliation=owner,organization_member");
+    assert.include(harness.calls[1]!.url, "page=2");
   }),
 );
 
@@ -634,9 +646,8 @@ it.effect("maps credential failures without exposing credential details", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
       responses: [],
-      verificationError: new GitHubCli.GitHubCliAuthenticationError({
-        command: "gh",
-        cwd: "/home/test",
+      verificationError: new GitHubCredentials.GitHubCliFailedError({
+        host: HOST,
         cause: new Error("token=do-not-return-this"),
       }),
     });
@@ -653,10 +664,7 @@ it.effect("shares a 403 Retry-After pause with the rate-limit service", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
       responses: [
-        {
-          stdout: httpResponse({ message: "secondary rate limit" }, { "Retry-After": "10" }, 403),
-          exitCode: 1,
-        },
+        httpResponse({ message: "secondary rate limit" }, { "Retry-After": "10" }, 403),
       ],
     });
     const issues = yield* service(harness);
@@ -672,7 +680,7 @@ it.effect("shares a 403 Retry-After pause with the rate-limit service", () =>
 it.effect("maps malformed upstream data safely and normalizes null detail bodies", () =>
   Effect.gen(function* () {
     const malformed = makeHarness({
-      responses: [{ stdout: '{"token":"secret-token"', exitCode: 1 }],
+      responses: [{ body: '{"token":"secret-token"' }],
     });
     const malformedService = yield* service(malformed);
     const malformedError = yield* malformedService.list(listInput).pipe(Effect.flip);
@@ -791,8 +799,6 @@ it.effect("reads issue detail, comments, and linked pull requests in one GraphQL
                 ],
               },
             }),
-            // Partial errors, such as an SSO-hidden cross-reference, keep the issue readable.
-            [{ type: "FORBIDDEN", message: "Resource protected by organization SAML" }],
           ),
         ),
       ],
@@ -801,7 +807,7 @@ it.effect("reads issue detail, comments, and linked pull requests in one GraphQL
     const detail = yield* issues.detail({ ...listInput, number: 7 });
 
     assert.equal(harness.calls.length, 1);
-    assert.include(harness.calls[0]!.join(" "), "graphql");
+    assert.include(harness.calls[0]!.url, "graphql");
     assert.equal(detail.issue.state, "closed");
     assert.equal(detail.issue.stateReason, "not_planned");
     assert.equal(detail.issue.commentCount, 150);
@@ -830,17 +836,40 @@ it.effect("reads issue detail, comments, and linked pull requests in one GraphQL
   }),
 );
 
+it.effect("rereads an issue without its links when GitHub refuses a cross-reference", () =>
+  Effect.gen(function* () {
+    // JSON leaves the undefined link fields out, as the narrower query does.
+    const issue = graphQlIssue({
+      closedByPullRequestsReferences: undefined,
+      timelineItems: undefined,
+    });
+    const harness = makeHarness({
+      responses: [
+        httpResponse(
+          graphQlDetail(graphQlIssue(), [
+            { type: "FORBIDDEN", message: "Resource protected by organization SAML" },
+          ]),
+        ),
+        httpResponse(graphQlDetail(issue)),
+      ],
+    });
+    const detail = yield* (yield* service(harness)).detail({ ...listInput, number: 7 });
+
+    assert.equal(detail.issue.number, 7);
+    assert.deepEqual(detail.linkedPullRequests, []);
+    assert.equal(harness.calls.length, 2);
+    assert.notInclude(harness.calls[1]!.body!, "timelineItems");
+  }),
+);
+
 it.effect("maps a missing issue to inaccessible and a GraphQL rate limit to rate-limited", () =>
   Effect.gen(function* () {
     const missing = makeHarness({
       responses: [
-        {
-          stdout: httpResponse({
-            data: { repository: null },
-            errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository" }],
-          }),
-          exitCode: 1,
-        },
+        httpResponse({
+          data: { repository: null },
+          errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository" }],
+        }),
       ],
     });
     const missingError = yield* (yield* service(missing))
@@ -850,10 +879,7 @@ it.effect("maps a missing issue to inaccessible and a GraphQL rate limit to rate
 
     const limited = makeHarness({
       responses: [
-        {
-          stdout: httpResponse({ errors: [{ type: "RATE_LIMITED", message: "limit" }] }),
-          exitCode: 1,
-        },
+        httpResponse({ errors: [{ type: "RATE_LIMITED", message: "limit" }] }),
       ],
     });
     const limitedError = yield* (yield* service(limited))
@@ -907,7 +933,7 @@ it.effect("an uncertain create cannot duplicate an issue after its marker is rem
     assert.equal(first.createOutcome, "uncertain");
     const recovery = yield* issues.createIssue({ ...input, recover: true }).pipe(Effect.flip);
     assert.equal(recovery.createOutcome, "unresolved");
-    assert.equal(harness.calls.filter((call) => call.includes("POST")).length, 1);
+    assert.equal(harness.calls.filter((call) => call.method === "POST").length, 1);
   }),
 );
 
@@ -935,7 +961,7 @@ it.effect(
       const harness = makeHarness({ responses: [httpResponse({ message: "Denied" }, {}, 403)] });
       const issues = yield* service(harness);
       assert.equal((yield* issues.createIssue(input).pipe(Effect.flip)).createOutcome, "rejected");
-      assert.equal(harness.calls.filter((call) => call.includes("POST")).length, 0);
+      assert.equal(harness.calls.filter((call) => call.method === "POST").length, 0);
     }),
 );
 
@@ -1001,6 +1027,6 @@ it.effect("a denied recovery read does not turn an uncertain create into a rejec
       (yield* issues.createIssue({ ...input, recover: true }).pipe(Effect.flip)).createOutcome,
       "unresolved",
     );
-    assert.equal(harness.calls.filter((call) => call.includes("POST")).length, 1);
+    assert.equal(harness.calls.filter((call) => call.method === "POST").length, 1);
   }),
 );

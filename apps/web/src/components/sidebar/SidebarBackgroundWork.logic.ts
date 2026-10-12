@@ -1,6 +1,6 @@
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
-import { fileBasename } from "@t3tools/client-runtime/markdown-links";
+import { fileBasename } from "@t3tools/shared/path";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import type {
   OrchestrationV2PendingBackgroundTask,

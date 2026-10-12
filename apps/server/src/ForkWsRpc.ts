@@ -1,0 +1,52 @@
+/**
+ * WebSocket handlers for the fork's own RPCs (`ForkWsRpcGroup`): issues, issue work, issue
+ * changes and background-task output. `ws.ts` merges this layer next to upstream's handlers.
+ */
+import { ForkWsRpcGroup, ORCHESTRATION_V2_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+
+import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as IssueChangeService from "./issues/IssueChangeService.ts";
+import * as IssueService from "./issues/IssueService.ts";
+import * as IssueWorkService from "./issues/IssueWorkService.ts";
+import { RpcInstrumentation } from "./observability/RpcInstrumentation.ts";
+import * as BackgroundTasks from "./orchestration-v2/backgroundTaskOutput.ts";
+
+export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
+  ForkWsRpcGroup.middleware(RpcInstrumentation).toLayer(
+    Effect.gen(function* () {
+      const backgroundTasks = yield* BackgroundTasks.BackgroundTasks.pipe(
+        Effect.provide(BackgroundTasks.layer),
+      );
+      const issues = yield* IssueService.IssueService;
+      const issueWork = yield* IssueWorkService.IssueWorkService;
+      const issueChanges = yield* IssueChangeService.IssueChangeService;
+      return {
+        [WS_METHODS.serverGetBackgroundTaskResourceUsage]: (input) =>
+          backgroundTasks.resourceUsage(input),
+        [WS_METHODS.terminalFollowBackgroundTask]: (input) =>
+          backgroundTasks.followInTerminal(input),
+        [ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask]: (input) => backgroundTasks.stop(input),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput]: (input) =>
+          Stream.unwrap(backgroundTasks.subscribeOutput(input)),
+        [WS_METHODS.issuesStart]: (input) => issueWork.start(input),
+        [WS_METHODS.issuesWorkStatus]: (input) => issueWork.workStatus(input),
+        [WS_METHODS.issuesWorkMilestone]: (input) => issueWork.workMilestone(input),
+        [WS_METHODS.issuesRepositoryStatus]: (input) => issueWork.repositoryStatus(input),
+        [WS_METHODS.issuesSetPaused]: (input) => issueWork.setPaused(input),
+        [WS_METHODS.issuesHandoff]: (input) => issueWork.handoff(input),
+        [WS_METHODS.issueChangesList]: (input) => issueChanges.list(input),
+        [WS_METHODS.issueChangesSubscribe]: (input) => issueChanges.subscribe(input),
+        [WS_METHODS.issueChangesDecide]: (input) =>
+          issueChanges.decide(input, {
+            kind: "user",
+            subject: currentSession.subject,
+            scopes: currentSession.scopes,
+          }),
+        [WS_METHODS.issuesRepositories]: () => issues.repositories(),
+        [WS_METHODS.issuesList]: (input) => issues.list(input),
+        [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
+      };
+    }),
+  );

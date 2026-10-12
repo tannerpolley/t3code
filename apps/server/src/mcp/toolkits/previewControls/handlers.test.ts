@@ -1,3 +1,5 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -11,10 +13,17 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../../../config.ts";
 import * as Preview from "../../../preview/Manager.ts";
+import * as ProjectFaviconResolver from "../../../project/ProjectFaviconResolver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as WorkspacePaths from "../../../workspace/WorkspacePaths.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { PreviewControlsHandlersLive } from "./handlers.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
+import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as PreviewControlsHandlers from "./handlers.ts";
 import { PreviewControlsToolkit } from "./tools.ts";
 
 it.effect.each([
@@ -45,24 +54,47 @@ it.effect.each([
         capabilities: new Set(effective.enableAgentBrowserAccess ? ["preview"] : []),
         issuedAt: 0,
       };
-      const manager = yield* Preview.make.pipe(Effect.provide(ServerSettings.layerTest()));
+      const configLayer = ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-preview-controls-",
+      }).pipe(Layer.provide(NodeServices.layer));
+      const manager = yield* Preview.make.pipe(
+        Effect.provide(Layer.mergeAll(configLayer, NodeCrypto.layer, ServerSettings.layerTest())),
+      );
       const tab = yield* manager.open({ threadId, url: "http://localhost:3000" });
-      const dependencies = Layer.mergeAll(
+      const layerDependencies = Layer.mergeAll(
+        // The broker reads the agent tab limit and can sign file URLs; neither runs here.
+        PreviewAutomationBroker.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              configLayer,
+              NodeServices.layer,
+              ServerSettings.layerTest(),
+              Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
+              Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+              Layer.mock(WorkspacePaths.WorkspacePaths)({}),
+            ),
+          ),
+        ),
         Layer.succeed(Preview.PreviewManager, manager),
         Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
+        McpToolAccessTestkit.liveThreadsLayer,
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed(settings),
         }),
       );
       const toolkit = yield* PreviewControlsToolkit.pipe(
-        Effect.provide(PreviewControlsHandlersLive.pipe(Layer.provide(dependencies))),
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(PreviewControlsHandlers.layer).pipe(
+            Layer.provide(layerDependencies),
+          ),
+        ),
       );
       const listed = yield* toolkit
         .handle("t3_preview_list", {})
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
       const closed = yield* toolkit
         .handle("t3_preview_close", { tabId: tab.tabId })
-        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
       if (projectAccess) {
         expect(listed.at(-1)?.result).toMatchObject({ sessions: [tab], nextCursor: null });
         expect(closed.at(-1)?.result).toEqual({});

@@ -12,6 +12,7 @@ import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
+import { moveForkMigrationsOutOfUpstreamLedger, runForkMigrations } from "./ForkMigrations.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -70,12 +71,11 @@ import Migration0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import Migration0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 import Migration0055 from "./Migrations/055_OrchestrationV2.ts";
 import Migration0056 from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
-import Migration0057 from "./Migrations/057_ProjectionMessagesLatestAssistant.ts";
-import Migration0058 from "./Migrations/058_ProjectionTurnItemCounts.ts";
-import Migration0059 from "./Migrations/059_ThreadIssueWork.ts";
-import Migration0060 from "./Migrations/060_RepositoryOrchestration.ts";
-import Migration0061 from "./Migrations/061_RepositoryScheduledWork.ts";
-import Migration0062 from "./Migrations/062_IssueChanges.ts";
+import Migration0057 from "./Migrations/057_ScheduledTaskWebhooks.ts";
+import Migration0058 from "./Migrations/058_WebhookRelayDeliveries.ts";
+import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
+import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
+import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -146,12 +146,11 @@ export const migrationEntries = [
   // Preserve this migration's schema. Future V2 schema changes need new migrations.
   [55, "OrchestrationV2", Migration0055],
   [56, "RemoveRedundantProjectionIndexes", Migration0056],
-  [57, "ProjectionMessagesLatestAssistant", Migration0057],
-  [58, "ProjectionTurnItemCounts", Migration0058],
-  [59, "ThreadIssueWork", Migration0059],
-  [60, "RepositoryOrchestration", Migration0060],
-  [61, "RepositoryScheduledWork", Migration0061],
-  [62, "IssueChanges", Migration0062],
+  [57, "ScheduledTaskWebhooks", Migration0057],
+  [58, "WebhookRelayDeliveries", Migration0058],
+  [59, "McpAppModelContext", Migration0059],
+  [60, "ThreadSnapshotWindowIndexes", Migration0060],
+  [61, "PullRequestReviewGuides", Migration0061],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -173,6 +172,8 @@ const run = Migrator.make({});
 
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
+  /** Fork migrations run on a full run, or through this fork id when set. */
+  readonly toForkMigrationInclusive?: number | undefined;
 }
 
 /**
@@ -181,22 +182,40 @@ export interface RunMigrationsOptions {
  * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
  * then runs any migrations with ID greater than the latest recorded migration.
  *
- * Returns array of [id, name] tuples for migrations that were run.
+ * Returns array of [id, name] tuples for upstream migrations that were run;
+ * fork migrations (ForkMigrations.ts) run after them and are only logged.
  *
  * @returns Effect containing array of executed migrations
  */
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
+  toForkMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   const previewMigrations =
     toMigrationInclusive === undefined || toMigrationInclusive >= 55
       ? yield* reconcileV2PreviewMigration()
       : [];
+  const movedForkMigrations =
+    toMigrationInclusive === undefined || toMigrationInclusive >= 57
+      ? yield* moveForkMigrationsOutOfUpstreamLedger()
+      : [];
   const executedMigrations = [
     ...previewMigrations,
     ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
   ];
-  const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
+  const forkMigrations =
+    toMigrationInclusive === undefined || toForkMigrationInclusive !== undefined
+      ? yield* runForkMigrations(toForkMigrationInclusive)
+      : [];
+  if (movedForkMigrations.length > 0) {
+    yield* Effect.log("Moved fork migrations to their own ledger").pipe(
+      Effect.annotateLogs({ moved: movedForkMigrations.map(([id, name]) => `${id}_${name}`) }),
+    );
+  }
+  const migrations = [
+    ...executedMigrations.map(([id, name]) => `${id}_${name}`),
+    ...forkMigrations.map(([id, name]) => `fork_${id}_${name}`),
+  ];
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));

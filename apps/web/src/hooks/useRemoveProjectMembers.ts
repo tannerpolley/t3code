@@ -5,6 +5,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
@@ -15,7 +16,8 @@ import { readLocalApi } from "../localApi";
 import type { SidebarProjectGroupMember, SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 import { useThreadShells } from "../state/entities";
 import { projectEnvironment } from "../state/projects";
-import { useAtomCommand } from "../state/use-atom-command";
+import { readEnvironmentScope } from "../state/session";
+import { useOrchestrationCommand } from "../state/use-orchestration-command";
 
 export interface RemoveProjectMembersInput {
   readonly group: SidebarProjectSnapshot;
@@ -31,10 +33,13 @@ export interface RemoveProjectMembersInput {
 export function useRemoveProjectMembers(): (input: RemoveProjectMembersInput) => Promise<void> {
   const navigate = useNavigate();
   const threads = useThreadShells();
-  const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
+  const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
+    reportFailure: false,
+  });
 
   return useCallback(
     async ({ group, hasOtherMembers, members }: RemoveProjectMembersInput) => {
+      if (deniedProjectAccess(members)) return;
       const api = readLocalApi();
       if (!api) return;
 
@@ -74,9 +79,11 @@ export function useRemoveProjectMembers(): (input: RemoveProjectMembersInput) =>
         ),
       );
       if (confirmed._tag === "Failure" || !confirmed.value) return;
+      if (deniedProjectAccess(members)) return;
 
       const draftStore = useComposerDraftStore.getState();
       for (const member of members) {
+        if (deniedProjectAccess([member])) return;
         const memberThreads = projectThreads.filter(
           (thread) =>
             thread.environmentId === member.environmentId && thread.projectId === member.id,
@@ -119,4 +126,20 @@ export function useRemoveProjectMembers(): (input: RemoveProjectMembersInput) =>
     },
     [deleteProject, navigate, threads],
   );
+}
+
+/** Reports and returns true when this connection cannot change one of the projects. */
+function deniedProjectAccess(members: ReadonlyArray<SidebarProjectGroupMember>): boolean {
+  const denied = members.find(
+    (member) => !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
+  );
+  if (!denied) return false;
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: "Failed to remove project",
+      description: `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
+    }),
+  );
+  return true;
 }

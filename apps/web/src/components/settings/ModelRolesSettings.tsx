@@ -48,7 +48,7 @@ export function ModelRolesSection() {
   const { environment } = useSettingsScope();
   const providers = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
   const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(settings, providers);
   const serverRoles = settings.modelRoles;
@@ -181,6 +181,7 @@ export function ModelRolesSection() {
                           {targetIndex === 0 ? "Default" : "Make default"}
                         </Button>
                         <ProviderModelPicker
+                          environmentId={environment?.environmentId ?? null}
                           activeInstanceId={target.providerInstanceId}
                           model={target.model}
                           lockedProvider={null}

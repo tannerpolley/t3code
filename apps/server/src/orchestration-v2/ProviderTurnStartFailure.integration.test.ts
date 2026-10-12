@@ -21,17 +21,11 @@ import * as TestClock from "effect/testing/TestClock";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import {
-  ProviderAdapterEnsureThreadError,
-  type ProviderAdapterV2Shape,
-} from "./ProviderAdapter.ts";
-import { makeSingleLayer } from "./ProviderAdapterRegistry.ts";
-import {
-  type ProviderContinuationRequest,
-  ProviderContinuationRequests,
-} from "./ProviderContinuationRequests.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -43,10 +37,10 @@ const failedChildTest = (stalledTransport: boolean) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("provider-turn-start-failure");
-      const wake = yield* Deferred.make<ProviderContinuationRequest>();
+      const wake = yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
       const childEnsureEntered = yield* Deferred.make<void>();
       let childEnsureAttempts = 0;
-      const adapter: ProviderAdapterV2Shape = {
+      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
         getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
@@ -82,11 +76,15 @@ const failedChildTest = (stalledTransport: boolean) =>
                       Effect.flatMap(() => Effect.die("The stalled peer cannot reply")),
                       Effect.mapError(
                         (cause) =>
-                          new ProviderAdapterEnsureThreadError({ driver, threadId, cause }),
+                          new ProviderAdapter.ProviderAdapterEnsureThreadError({
+                            driver,
+                            threadId,
+                            cause,
+                          }),
                       ),
                     );
                   return Effect.fail(
-                    new ProviderAdapterEnsureThreadError({
+                    new ProviderAdapter.ProviderAdapterEnsureThreadError({
                       driver,
                       threadId,
                       cause: new Error(startError),
@@ -208,13 +206,13 @@ const failedChildTest = (stalledTransport: boolean) =>
         else assert.equal(task.result, startError);
       }).pipe(
         Effect.provide(
-          makeOrchestratorV2ReplayLayerWithRegistry(
+          ProviderReplayHarness.layerWithRegistry(
             { name: "provider-turn-start-failure" },
-            makeSingleLayer(adapter),
+            ProviderAdapterRegistry.layerSingle(adapter),
             { runEffectWorker: false },
           ).pipe(
             Layer.provide(
-              Layer.succeed(ProviderContinuationRequests, {
+              Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
                 offer: (request) => Deferred.succeed(wake, request).pipe(Effect.asVoid),
                 take: Effect.never,
               }),

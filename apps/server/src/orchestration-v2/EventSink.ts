@@ -24,7 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { enqueueIssueStatusEffects, refreshIssueStatus } from "../issues/IssueCommentEffects.ts";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
-import type { UnsequencedProjectEvent } from "../persistence/Services/OrchestrationEventStore.ts";
+import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -97,6 +97,7 @@ export interface EventSinkV2Shape {
     readonly activeAttemptId: RunAttemptId;
     readonly expectedStatus: OrchestrationV2Run["status"];
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<
     {
       readonly committed: boolean;
@@ -197,7 +198,7 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
 /**
  * IMPLEMENTATIONS
  */
-const baseLayer: Layer.Layer<
+const layerBase: Layer.Layer<
   EventSinkV2,
   never,
   | CommandReceiptStore.CommandReceiptStoreV2
@@ -462,12 +463,17 @@ const baseLayer: Layer.Layer<
               events: normalized,
             });
             const statusEffectCount = yield* applyStoredEvents(storedEvents);
+            yield* effectOutbox.enqueue(input.effects ?? []);
             return { committed: true as const, storedEvents, statusEffectCount };
           }),
           (result) =>
-            result.committed
-              ? publishStoredEvents(result.storedEvents, result.statusEffectCount)
-              : Effect.void,
+            Effect.gen(function* () {
+              if (!result.committed) return;
+              if (input.effects !== undefined && input.effects.length > 0) {
+                yield* effectOutbox.notifyAvailable(input.effects.length);
+              }
+              yield* publishStoredEvents(result.storedEvents, result.statusEffectCount);
+            }),
         );
         return { committed: result.committed, storedEvents: result.storedEvents };
       },
@@ -926,13 +932,13 @@ const baseLayer: Layer.Layer<
  * important because enqueue notifications are in-memory wakeups backed by the
  * durable SQL queue.
  */
-export const layerFromStores = baseLayer;
+export const layerFromStores = layerBase;
 
 export const layer: Layer.Layer<
   EventSinkV2,
   never,
   EventStore.EventStoreV2 | ProjectionStore.ProjectionStoreV2 | SqlClient.SqlClient
-> = baseLayer.pipe(
+> = layerBase.pipe(
   Layer.provide(
     Layer.mergeAll(
       CommandReceiptStore.layer,

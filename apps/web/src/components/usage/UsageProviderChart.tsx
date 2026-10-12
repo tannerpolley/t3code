@@ -10,17 +10,22 @@ import {
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
+import { cn } from "~/lib/utils";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { observeResize } from "~/lib/observeResize";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
 const TICK_COUNT = 4;
 const PLOT_TOP = 8;
+const NONE_LOADING: ReadonlySet<UsageProviderKind> = new Set();
 
 export type UsageChartMetric = "tokens" | "cost";
 
 interface UsageProviderChartProps {
   readonly providers: readonly UsageProviderKind[];
+  /** Providers whose figures are still coming in: their lines are muted. */
+  readonly loadingProviders?: ReadonlySet<UsageProviderKind>;
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly hours: readonly string[];
@@ -37,6 +42,8 @@ export interface UsageChartSeries {
   readonly label: string;
   readonly color: string;
   readonly driverKind: ProviderDriverKind;
+  /** Figures still coming in: the line is muted. */
+  readonly loading?: boolean;
 }
 
 interface UsageSeriesChartProps {
@@ -168,6 +175,10 @@ function curvePath(segments: readonly CurveSegment[]): string {
   return path;
 }
 
+function areaPath(line: string) {
+  return line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`;
+}
+
 /**
  * Builds a scale whose maximum is a readable 1/2/5 x 10^n step at or above the
  * peak.
@@ -190,9 +201,77 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
   return { max, ticks };
 }
 
+const PLACEHOLDER_TICKS = Array.from({ length: TICK_COUNT + 1 }, (_, index) => index);
+
+/**
+ * Scales to the largest single series-period. With nothing to show yet while
+ * series load, unlabeled placeholder gridlines hold their usual spacing so
+ * nothing shifts on arrival.
+ */
+function seriesScale(columns: readonly (readonly number[])[], loading: boolean) {
+  // Not the sum: layered series each measure from zero, so a combined peak
+  // would leave the plot permanently half empty.
+  const peak = columns.reduce(
+    (max, column) => column.reduce((inner, value) => Math.max(inner, value), max),
+    0,
+  );
+  return peak === 0 && loading
+    ? { max: TICK_COUNT, ticks: PLACEHOLDER_TICKS, labeled: false }
+    : { ...niceScale(peak, TICK_COUNT), labeled: true };
+}
+
+/** `seriesScale` over provider columns. */
+export function chartScale(
+  columns: readonly DayColumn[],
+  loadingProviders: ReadonlySet<UsageProviderKind>,
+) {
+  return seriesScale(
+    columns.map((column) => column.bands.map((band) => band.value)),
+    loadingProviders.size > 0,
+  );
+}
+
+// Leave room above the top gridline so the constant-width stroke is not
+// clipped when a series reaches the peak.
+function valueToY(value: number, max: number) {
+  return max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
+}
+
+/** Per-series paths in paint order, heaviest first. */
+function buildChart(
+  periods: readonly string[],
+  columns: readonly (readonly number[])[],
+  series: readonly UsageChartSeries[],
+) {
+  const scale = seriesScale(columns, series.some((entry) => entry.loading === true));
+  const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
+  const paths = series.map(({ key, color, loading = false }, seriesIndex) => {
+    const line = curvePath(
+      smoothCurve(
+        periods.map((_, periodIndex) => ({
+          x: periodIndex * stepX,
+          y: valueToY(columns[periodIndex]?.[seriesIndex] ?? 0, scale.max),
+        })),
+      ),
+    );
+    return {
+      key,
+      color,
+      loading,
+      total: columns.reduce((sum, column) => sum + (column[seriesIndex] ?? 0), 0),
+      line,
+      area: areaPath(line),
+    };
+  });
+
+  // Paint the heavier series first so the lighter one is not buried.
+  return { scale, stepX, paths: paths.toSorted((a, b) => b.total - a.total) };
+}
+
 /** Cost or tokens per provider over the page's period. */
 export function UsageProviderChart({
   providers,
+  loadingProviders = NONE_LOADING,
   days,
   daily,
   hours,
@@ -209,14 +288,17 @@ export function UsageProviderChart({
         ? new Map(hourly.map((entry) => [entry.hourStart, entry]))
         : new Map(daily.map((entry) => [entry.day, entry]));
     return buildPeriodColumns(periods, byPeriod, metric).map((column) =>
-      providers.map(
-        (provider) => column.bands.find((band) => band.provider === provider)?.value ?? 0,
-      ),
+      providers.map((provider) => column.bands[PROVIDER_ORDER.indexOf(provider)]?.value ?? 0),
     );
   }, [daily, hourly, metric, periods, providers, resolution]);
   const series = useMemo(
-    () => providers.map((provider) => ({ key: provider, ...PROVIDER_PRESENTATION[provider] })),
-    [providers],
+    () =>
+      providers.map((provider) => ({
+        key: provider,
+        ...PROVIDER_PRESENTATION[provider],
+        loading: loadingProviders.has(provider),
+      })),
+    [loadingProviders, providers],
   );
   return (
     <UsageSeriesChart
@@ -248,56 +330,14 @@ export function UsageSeriesChart({
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
 
-  const { paths, ticks, stepX, toY } = useMemo(() => {
-    if (periods.length === 0) {
-      return {
-        paths: [],
-        stepX: 0,
-        ticks: [0] as readonly number[],
-        toY: () => VIEW_HEIGHT,
-      };
-    }
-
-    // The scale tops out at the largest single series-period, not the sum:
-    // layered series each measure from zero, so a combined peak would leave
-    // the plot permanently half empty.
-    const peak = columns.reduce(
-      (max, column) => column.reduce((inner, value) => Math.max(inner, value), max),
-      0,
-    );
-    const { max, ticks: tickValues } = niceScale(peak, TICK_COUNT);
-    const step = periods.length === 1 ? 0 : VIEW_WIDTH / (periods.length - 1);
-    // Leave room above the top gridline so the constant-width stroke is not
-    // clipped when a series reaches the peak.
-    const toY = (value: number) =>
-      max === 0 ? VIEW_HEIGHT : VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
-
-    const built = series.map(({ key, color }, seriesIndex) => {
-      const line = curvePath(
-        smoothCurve(
-          periods.map((_, periodIndex) => ({
-            x: periodIndex * step,
-            y: toY(columns[periodIndex]?.[seriesIndex] ?? 0),
-          })),
-        ),
-      );
-      return {
-        key,
-        color,
-        total: columns.reduce((sum, column) => sum + (column[seriesIndex] ?? 0), 0),
-        area: line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`,
-        line,
-      };
-    });
-
-    // Paint the heavier series first so the lighter one is not buried.
-    return {
-      paths: built.toSorted((a, b) => b.total - a.total),
-      stepX: step,
-      ticks: tickValues,
-      toY,
-    };
-  }, [columns, periods, series]);
+  const { scale, paths, stepX } = useMemo(
+    () => buildChart(periods, columns, series),
+    [columns, periods, series],
+  );
+  const toY = (value: number) => valueToY(value, scale.max);
+  // The delay keeps a quick answer from flashing, as with the page's figures.
+  const seriesClassName = (loading: boolean) =>
+    cn("transition-opacity", loading && "opacity-40 delay-150");
 
   const positionTooltip = useCallback(() => {
     const plot = plotRef.current;
@@ -330,12 +370,9 @@ export function UsageSeriesChart({
 
     const plot = plotRef.current;
     const tooltip = tooltipRef.current;
-    if (plot === null || tooltip === null || typeof ResizeObserver === "undefined") return;
+    if (plot === null || tooltip === null) return;
 
-    const observer = new ResizeObserver(positionTooltip);
-    observer.observe(plot);
-    observer.observe(tooltip);
-    return () => observer.disconnect();
+    return observeResize([plot, tooltip], positionTooltip);
   }, [hoverIndex, positionTooltip]);
 
   const handleMove = useCallback(
@@ -357,6 +394,7 @@ export function UsageSeriesChart({
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
   const hoveredColumn = hoverIndex === null ? undefined : columns[hoverIndex];
+  const partial = series.some((entry) => entry.loading === true);
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
@@ -369,15 +407,17 @@ export function UsageSeriesChart({
       <div className="flex gap-2">
         {/* Axis labels sit outside the plot so they stay aligned to gridlines. */}
         <div className="relative h-56 w-14 shrink-0">
-          {ticks.map((tick) => (
-            <span
-              key={tick}
-              className="absolute right-0 -translate-y-1/2 text-3xs text-muted-foreground tabular-nums"
-              style={{ top: `${(toY(tick) / VIEW_HEIGHT) * 100}%` }}
-            >
-              {tick === 0 ? "0" : format(tick)}
-            </span>
-          ))}
+          {scale.labeled
+            ? scale.ticks.map((tick) => (
+                <span
+                  key={tick}
+                  className="absolute right-0 -translate-y-1/2 text-3xs text-muted-foreground tabular-nums"
+                  style={{ top: `${(toY(tick) / VIEW_HEIGHT) * 100}%` }}
+                >
+                  {tick === 0 ? "0" : format(tick)}
+                </span>
+              ))
+            : null}
         </div>
 
         <div
@@ -396,7 +436,7 @@ export function UsageSeriesChart({
             role="img"
             aria-label={ariaLabel}
           >
-            {ticks.map((tick) => {
+            {scale.ticks.map((tick) => {
               const y = toY(tick);
               return (
                 <line
@@ -414,13 +454,20 @@ export function UsageSeriesChart({
             })}
 
             {/* Fills first, then every stroke, so no series covers another's line. */}
-            {paths.map(({ key, area, color }) => (
-              <path key={key} d={area} fill={color} fillOpacity={0.12} />
+            {paths.map(({ key, loading, area, color }) => (
+              <path
+                key={key}
+                d={area}
+                className={seriesClassName(loading)}
+                fill={color}
+                fillOpacity={0.12}
+              />
             ))}
-            {paths.map(({ key, line, color }) => (
+            {paths.map(({ key, loading, line, color }) => (
               <path
                 key={key}
                 d={line}
+                className={seriesClassName(loading)}
                 fill="none"
                 stroke={color}
                 strokeWidth={2}
@@ -452,7 +499,7 @@ export function UsageSeriesChart({
               }}
             >
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
-              {series.map(({ key, label, driverKind }, seriesIndex) => (
+              {series.map(({ key, label, driverKind, loading }, seriesIndex) => (
                 <div key={key} className="flex items-center justify-between gap-3">
                   <span className="flex items-center gap-1.5 text-muted-foreground">
                     <ProviderInstanceIcon
@@ -462,14 +509,24 @@ export function UsageSeriesChart({
                     />
                     {label}
                   </span>
-                  <span className="text-foreground tabular-nums">
+                  <span
+                    className={cn(
+                      "tabular-nums",
+                      loading === true ? "text-muted-foreground" : "text-foreground",
+                    )}
+                  >
                     {format(hoveredColumn?.[seriesIndex] ?? 0)}
                   </span>
                 </div>
               ))}
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
                 <span className="text-muted-foreground">Total</span>
-                <span className="text-foreground tabular-nums">
+                <span
+                  className={cn(
+                    "tabular-nums",
+                    partial ? "text-muted-foreground" : "text-foreground",
+                  )}
+                >
                   {format(hoveredColumn?.reduce((sum, value) => sum + value, 0) ?? 0)}
                 </span>
               </div>

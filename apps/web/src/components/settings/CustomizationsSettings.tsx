@@ -127,13 +127,6 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Model labels drop the company name the provider icon already shows and lead with the model's own name, then its version: Opus 5.5, Sonnet 5, Sol 6. Applies to the sidebar, Lineage, agent details and the composer's model button, always right after the icon; the model list keeps full names. Off restores the full names.",
   },
   {
-    key: "composerCodeFormatting",
-    searchId: "composer-code-formatting",
-    section: "composer",
-    description:
-      "With rich text on, typing ``` or ```python and pressing Enter starts a code block in the composer, sent as a normal Markdown fence. Enter adds lines; press Enter on two blank last lines, or ArrowDown at the end, to leave it. Off keeps fences as plain text.",
-  },
-  {
     key: "chatMath",
     searchId: "chat-math",
     section: "composer",
@@ -319,7 +312,7 @@ function UnavailablePlugins({
   const [open, setOpen] = useState(false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex min-h-9 w-full items-center gap-2 rounded-md px-3 text-left text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-4">
+      <CollapsibleTrigger className="flex min-h-9 w-full items-center gap-2 rounded-md px-3 text-left text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
         <ChevronRightIcon
           aria-hidden
           className={cn(

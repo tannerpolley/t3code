@@ -16,7 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { layer as eventStoreLayer } from "./EventStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
@@ -25,10 +25,10 @@ import {
   layer as projectionMaintenanceLayer,
 } from "./ProjectionMaintenance.ts";
 import { ProjectionStoreV2, layer as projectionLayer } from "./ProjectionStore.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { selectTitleRefreshThreads } from "./ThreadTitleRefreshWorker.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const MINUTE_MS = 60_000;
 const NOW_MS = Date.parse("2026-09-29T12:00:00.000Z");
@@ -146,8 +146,8 @@ const adapter = {
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("No provider process needed for title refresh"),
-} as ProviderAdapterV2Shape;
-const database = SqlitePersistenceMemory;
+} as ProviderAdapter.ProviderAdapterV2["Service"];
+const database = SqlitePersistence.layerMemory;
 const orchestratorLayer = Layer.mergeAll(
   database,
   projectionLayer.pipe(Layer.provide(database)),
@@ -160,9 +160,9 @@ const orchestratorLayer = Layer.mergeAll(
       ),
     ),
   ),
-  makeOrchestratorV2ReplayLayerWithRegistry(
+  ProviderReplayHarness.layerWithRegistry(
     { name: "thread-title-refresh" },
-    ProviderAdapterRegistry.makeLayer([adapter]),
+    ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: database, runEffectWorker: false },
   ),
 );

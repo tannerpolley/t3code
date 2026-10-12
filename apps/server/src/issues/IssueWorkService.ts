@@ -16,6 +16,7 @@ import {
   type ThreadId,
   type IssueWorkRead,
   type ThreadLinkedIssue,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -29,10 +30,10 @@ import { IssueWorkStore } from "./IssueWorkStore.ts";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
-import { IdAllocatorV2 } from "../orchestration-v2/IdAllocator.ts";
+import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import { delegatedTaskProgress } from "../orchestration-v2/SubagentProjection.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
+import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { checkDelegateTarget } from "../mcp/delegateTaskTarget.ts";
 import {
@@ -183,11 +184,11 @@ export const layer = Layer.effect(
           const project = yield* projects.getById(input.projectId).pipe(Effect.mapError(mapError));
           const identity = Option.isSome(project) ? project.value.repositoryIdentity : null;
           const repository =
-            identity?.originRepository ?? sourceControlRepositorySelector(identity);
+            identity?.origin?.displayName ?? sourceControlRepositorySelector(identity);
           const upstream = sourceControlRepositorySelector(identity);
           if (
             identity?.provider !== "github" ||
-            pullRequestHostOf(identity, "github").toLowerCase() !== issue.host.toLowerCase() ||
+            pullRequestHostOf(identity, SourceControlProviderKind.make("github")).toLowerCase() !== issue.host.toLowerCase() ||
             (repository?.toLowerCase() !== issue.repository.toLowerCase() &&
               upstream?.toLowerCase() !== issue.repository.toLowerCase())
           )
