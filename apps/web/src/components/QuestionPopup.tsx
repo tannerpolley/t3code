@@ -3,7 +3,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import type { RuntimeRequestId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { MessageCircleQuestionIcon, XIcon } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
 

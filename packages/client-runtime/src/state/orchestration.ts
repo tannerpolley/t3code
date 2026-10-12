@@ -3,7 +3,7 @@ import {
   type OrchestrationV2BackgroundTaskOutputChunk,
   ORCHESTRATION_V2_WS_METHODS,
 } from "@t3tools/contracts";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,

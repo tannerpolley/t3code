@@ -10,7 +10,7 @@ import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work"
 import { CheckCircle2Icon, CircleDotIcon, ListIcon, MinusIcon, PlusIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";

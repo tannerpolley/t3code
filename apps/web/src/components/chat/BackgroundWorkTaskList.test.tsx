@@ -1,7 +1,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { AtomRegistry } from "effect/unstable/reactivity";
-import type * as Atom from "effect/unstable/reactivity/Atom";
+import { AtomRegistry } from "effect/reactivity";
+import type * as Atom from "effect/reactivity/Atom";
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -19,7 +19,7 @@ vi.mock("../../hooks/useSettings", () => ({
     select({ backgroundProcessOutput: state.processOutput }),
 }));
 vi.mock("../../state/orchestration", async () => {
-  const { AsyncResult, Atom } = await import("effect/unstable/reactivity");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
   const streams = Atom.family((key: string) => {
     const output = Atom.make("first line\n");
     state.outputAtoms.set(key, output);

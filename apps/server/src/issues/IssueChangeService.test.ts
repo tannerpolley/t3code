@@ -19,7 +19,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as IssueChangeService from "./IssueChangeService.ts";
 import * as IssueService from "./IssueService.ts";

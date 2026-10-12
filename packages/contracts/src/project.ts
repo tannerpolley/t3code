@@ -4,12 +4,15 @@ import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   CommandId,
+  ForwardCompatibleUnion,
+  isUnknownUnionMember,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
   ProjectId,
   TrimmedNonEmptyString,
   TrimmedString,
+  type UnknownUnionMember,
 } from "./baseSchemas.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
@@ -93,19 +96,6 @@ const ProjectFolderIcon = Schema.Struct({
   kind: Schema.Literal("folder"),
   color: ProjectIconColor,
 });
-const ProjectIcon = Schema.Union([
-  ProjectLucideIcon,
-  ProjectEmojiIcon,
-  ProjectMonogramIcon,
-  ProjectFolderIcon,
-]);
-const ProjectLucideIconWire = Schema.Struct({
-  ...ProjectLucideIcon.fields,
-  monogramText: Schema.optional(ProjectMonogramText),
-  monogram: Schema.optional(ProjectMonogramText),
-  folder: Schema.optional(Schema.Boolean),
-});
-
 /** A workspace-relative image a project may use as its favicon. */
 export const ProjectFaviconPath = TrimmedNonEmptyString.check(
   Schema.isMaxLength(1024),
@@ -113,43 +103,71 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
-// Older peers only know lucide/emoji. Keep monograms out of their validated
-// `monogram` field too: old grapheme counters can reject otherwise valid text.
+/** A project's chosen icon, as clients set it. */
 export const ProjectIconOverride = Schema.Union([
-  ProjectLucideIconWire,
+  ProjectLucideIcon,
   ProjectEmojiIcon,
   ProjectMonogramIcon,
   ProjectFolderIcon,
-]).pipe(
+]);
+export type ProjectIconOverride = typeof ProjectIconOverride.Type;
+
+/**
+ * Before v2, servers sent a monogram as a lucide icon carrying its text, so
+ * older clients showed a folder. Icons stored then, and v2 servers released
+ * before this change, still use that shape; it is read here, never written.
+ */
+const ProjectLucideIconWithLegacyMonogram = Schema.Struct({
+  ...ProjectLucideIcon.fields,
+  monogramText: Schema.optional(ProjectMonogramText),
+  monogram: Schema.optional(ProjectMonogramText),
+  // Fork builds before v2.11 sent folder icons as lucide "folder" with this flag.
+  folder: Schema.optional(Schema.Boolean),
+});
+const projectIconMembers = [
+  ProjectLucideIconWithLegacyMonogram,
+  ProjectEmojiIcon,
+  ProjectMonogramIcon,
+  ProjectFolderIcon,
+] as const;
+type ProjectIconMember = (typeof projectIconMembers)[number]["Type"];
+
+const fromLegacyMonogram = (icon: ProjectIconMember): ProjectIconOverride => {
+  if (icon.kind !== "lucide") return icon;
+  if (icon.folder === true) return { kind: "folder", color: icon.color };
+  const text = icon.monogramText ?? icon.monogram;
+  return text === undefined
+    ? { kind: "lucide", name: icon.name, color: icon.color }
+    : { kind: "monogram", text, color: icon.color };
+};
+
+/** An icon the server stores; it reads legacy monograms and writes the plain shape. */
+export const StoredProjectIcon = Schema.Union(projectIconMembers).pipe(
   Schema.decodeTo(
-    ProjectIcon,
-    SchemaTransformation.transform({
-      decode: (icon): typeof ProjectIcon.Type => {
-        if (icon.kind !== "lucide") return icon;
-        if (icon.folder === true) return { kind: "folder", color: icon.color };
-        const text = icon.monogramText ?? icon.monogram;
-        return text === undefined
-          ? { kind: "lucide", name: icon.name, color: icon.color }
-          : { kind: "monogram", text, color: icon.color };
-      },
-      encode: (icon) => {
-        if (icon.kind === "monogram") {
-          return {
-            kind: "lucide" as const,
-            name: "folder-code",
-            color: icon.color,
-            monogramText: icon.text,
-          };
-        }
-        if (icon.kind === "folder") {
-          return { kind: "lucide" as const, name: "folder", color: icon.color, folder: true };
-        }
-        return icon;
-      },
+    Schema.toType(ProjectIconOverride),
+    SchemaTransformation.transform<ProjectIconOverride, ProjectIconMember>({
+      decode: fromLegacyMonogram,
+      encode: (icon) => icon,
     }),
   ),
 );
-export type ProjectIconOverride = typeof ProjectIconOverride.Type;
+
+/**
+ * An icon as clients receive it. A kind from a newer server decodes as no
+ * override, so the client shows the project's default icon.
+ */
+export const ReceivedProjectIcon = ForwardCompatibleUnion(projectIconMembers, "kind").pipe(
+  Schema.decodeTo(
+    Schema.NullOr(Schema.toType(ProjectIconOverride)),
+    SchemaTransformation.transform<
+      ProjectIconOverride | null,
+      ProjectIconMember | UnknownUnionMember<"kind">
+    >({
+      decode: (icon) => (isUnknownUnionMember(icon) ? null : fromLegacyMonogram(icon)),
+      encode: (icon) => icon as ProjectIconMember,
+    }),
+  ),
+);
 
 export const Project = Schema.Struct({
   id: ProjectId,
@@ -157,7 +175,7 @@ export const Project = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
+  projectIcon: Schema.optional(Schema.NullOr(ReceivedProjectIcon)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   // Opt-in because background sync performs network I/O and may move the checkout.
