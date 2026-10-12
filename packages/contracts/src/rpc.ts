@@ -2048,9 +2048,10 @@ const WsOrchestrationV2StopBackgroundTaskRpc = Rpc.make(
 );
 
 /**
- * The fork's own RPCs. A separate group keeps each server handler layer under the type
- * checker's instantiation limit and keeps the fork's handlers out of `ws.ts`
- * (`apps/server/src/ForkWsRpc.ts`).
+ * The fork's own RPCs. Serving them from their own handler layer
+ * (`apps/server/src/ForkWsRpc.ts`) keeps each `toLayer` under the type checker's
+ * instantiation limit and keeps the fork's handlers out of `ws.ts`. Keep `WsRpcGroup`
+ * one flat `make`: building it with `merge` or `add` made the web typecheck take minutes.
  */
 const forkWsRpcs = [
   WsTerminalFollowBackgroundTaskRpc,
