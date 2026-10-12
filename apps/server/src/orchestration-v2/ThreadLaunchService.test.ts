@@ -81,6 +81,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -5035,6 +5036,8 @@ describe("fresh-thread repository handoff", () => {
       ProjectionMaintenance.layer.pipe(Layer.provide(dependencies)),
       ...(options.recovery
         ? [
+            // Memoized: the same lock instance the orchestrator dispatches under.
+            ThreadCommandExecutor.layer,
             EffectWorker.layer.pipe(
               Layer.provide(
                 Layer.mergeAll(
@@ -5653,6 +5656,137 @@ describe("fresh-thread repository handoff", () => {
           assert.isFalse(yield* store.hasAttempt(linked(9), "first"));
         }
       }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  const createLead = (threadId: ThreadId) =>
+    ThreadManagement.ThreadManagementService.use((threads) =>
+      threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId,
+        title: "Existing lead",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      }),
+    );
+  const registerInput = (targetThreadId: ThreadId, key: string) => ({
+    ...restoreInput,
+    expectedRootThreadId: null,
+    expectedRevision: null,
+    targetThreadId,
+    clientRequestId: CommandId.make(key),
+  });
+
+  it.effect("an adopted lead's ownership survives a transfer through compacted rebuild", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const adopted = ThreadId.make("adopted-lead");
+      const successor = ThreadId.make("successor-lead");
+      yield* createLead(adopted);
+      yield* createLead(successor);
+      yield* service.restoreRoot(registerInput(adopted, "adopted:register"));
+      yield* service.setPaused({
+        ...reference,
+        paused: true,
+        clientRequestId: CommandId.make("adopted:pause"),
+      });
+      const owner = (yield* store.repositoryOwner(config))!;
+      yield* service.restoreRoot({
+        ...restoreInput,
+        expectedRootThreadId: adopted,
+        expectedRevision: owner.revision,
+        targetThreadId: successor,
+        clientRequestId: CommandId.make("adopted:transfer"),
+      });
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+      // Compaction drops the adopted lead's registration snapshot and keeps its retired one.
+      yield* maintenance.compactEventStore;
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      const rebuilt = yield* store.repositoryOwner(config);
+      assert.equal(rebuilt?.rootThreadId, successor);
+      assert.equal(rebuilt?.revision, owner.revision + 1);
+      assert.equal((yield* store.configuration(adopted))!.retiredToThreadId, successor);
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect("rejects a child restore target without taking locks a child follow-up holds", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const childId = yield* createOriginalLead;
+      yield* service.restoreRoot(registerInput(originalLeadId, "lead:register"));
+      // A user follow-up to the child holds the parent's lock, then takes the child's.
+      const holdingParent = yield* Deferred.make<void>();
+      const restoreRejected = yield* Deferred.make<void>();
+      const followUp = yield* locks
+        .withLock(
+          originalLeadId,
+          Deferred.succeed(holdingParent, undefined).pipe(
+            Effect.andThen(Deferred.await(restoreRejected)),
+            Effect.andThen(locks.withLock(childId, Effect.void)),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(holdingParent);
+      const restored = yield* service
+        .restoreRoot({
+          ...restoreInput,
+          expectedRootThreadId: originalLeadId,
+          expectedRevision: 1,
+          targetThreadId: childId,
+          clientRequestId: CommandId.make("lead:restore-child"),
+        })
+        .pipe(Effect.result);
+      assert.equal(restored._tag, "Failure");
+      if (restored._tag === "Failure") assert.include(restored.failure.message, "top-level");
+      yield* Deferred.succeed(restoreRejected, undefined);
+      yield* Fiber.join(followUp);
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect("a fresh Start request adopts a lead corrected after a rejected adoption", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const lead = ThreadId.make("corrected-lead");
+      yield* createLead(lead);
+      yield* threads.dispatch({
+        type: "thread.archive",
+        threadId: lead,
+        commandId: CommandId.make("corrected-lead:archive"),
+      });
+      const input = {
+        ...reference,
+        number: 9,
+        projectId,
+        modelRoleId: "worker",
+        workspace: "project" as const,
+        orchestratorThreadId: lead,
+      };
+      const rejected = yield* service
+        .start({ ...input, clientRequestId: CommandId.make("corrected-lead:start-archived") })
+        .pipe(Effect.result);
+      assert.equal(rejected._tag, "Failure");
+      yield* threads.dispatch({
+        type: "thread.unarchive",
+        threadId: lead,
+        commandId: CommandId.make("corrected-lead:unarchive"),
+      });
+      const started = yield* service.start({
+        ...input,
+        clientRequestId: CommandId.make("corrected-lead:start-again"),
+      });
+      assert.equal(started.rootThreadId, lead);
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
   it.effect(

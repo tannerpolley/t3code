@@ -162,7 +162,12 @@ export const layer = Layer.effect(
     const ensureRoot = (
       input: Pick<
         IssueWorkStartInput,
-        "projectId" | "modelRoleId" | "workspace" | "orchestratorThreadId" | "createOrchestrator"
+        | "projectId"
+        | "modelRoleId"
+        | "workspace"
+        | "orchestratorThreadId"
+        | "createOrchestrator"
+        | "clientRequestId"
       >,
       issue: Pick<ThreadLinkedIssue, "host" | "repository" | "repositoryId">,
       requireExplicitRoot = false,
@@ -245,17 +250,28 @@ export const layer = Layer.effect(
               "Select an existing repository orchestrator or explicitly create the first one before starting issue work.",
           });
         if (root === null && input.orchestratorThreadId !== undefined) {
+          const selectedLead = input.orchestratorThreadId;
+          // Scoped to this Start request, so a fresh request re-checks a corrected lead.
           yield* restoreRoot({
             ...issue,
             projectId: input.projectId,
             expectedRootThreadId: null,
             expectedRevision: null,
-            targetThreadId: input.orchestratorThreadId,
+            targetThreadId: selectedLead,
             reason: "User selected this existing lead for issue work",
-            clientRequestId: CommandId.make(
-              `issue-root-adopt:${issue.host}:${issue.repositoryId}:${input.orchestratorThreadId}`,
+            clientRequestId: CommandId.make(`${input.clientRequestId}:adopt-root`),
+          }).pipe(
+            // A concurrent Start that registered the same lead is this request's success too.
+            Effect.catch((error) =>
+              store
+                .repositoryOwner(issue)
+                .pipe(
+                  Effect.flatMap((owner) =>
+                    owner?.rootThreadId === selectedLead ? Effect.void : Effect.fail(error),
+                  ),
+                ),
             ),
-          });
+          );
           root = yield* store.repositoryOwner(issue);
           if (root?.rootThreadId !== input.orchestratorThreadId)
             return yield* new IssueWorkError({

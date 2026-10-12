@@ -3,12 +3,7 @@ import type {
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
-import {
-  IssueRef,
-  DEFAULT_REPOSITORY_WORK_SETTINGS,
-  OrchestratorMcpTarget,
-  type ThreadLinkedIssue,
-} from "@t3tools/contracts";
+import { IssueRef, OrchestratorMcpTarget, type ThreadLinkedIssue } from "@t3tools/contracts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import {
   issueEligibility,
@@ -114,6 +109,7 @@ import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { IssueReadSnapshots, makeIssueWorkDispatch } from "./IssueWorkDispatch.ts";
+import { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import {
   applyToProjection,
@@ -916,6 +912,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const { threadExecutor, threadDispatch, readIssueSnapshots } = yield* makeIssueWorkDispatch;
+  const issueWorkRecovery = yield* makeIssueWorkRecovery;
 
   const mapDispatchError =
     (command: OrchestrationV2ServerCommand) =>
@@ -11728,246 +11725,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
         break;
-      case "issue.work.cancel": {
-        if (Option.isNone(issueWorkStore))
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Issue ownership service is unavailable.",
-          });
-        const store = issueWorkStore.value;
-        const request = yield* store.request(command.requestId).pipe(mapDispatchError(command));
-        const root = yield* projectionStore
-          .getThread(command.threadId)
-          .pipe(mapDispatchError(command));
-        if (
-          request === null ||
-          request.rootThreadId !== command.threadId ||
-          root.projectId !== command.projectId ||
-          root.repositoryOrchestration?.projectId !== command.projectId ||
-          request.issue.host !== root.repositoryOrchestration.host ||
-          request.issue.repositoryId !== root.repositoryOrchestration.repositoryId
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "The request does not belong to the selected repository root and project.",
-          });
-        if (request.cancellation !== undefined) {
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "issue.work.cancelled",
-            threadId: command.threadId,
-            occurredAt: yield* DateTime.now,
-            payload: {
-              requestedRequestId: command.requestId,
-              requestId: request.requestId,
-              issue: request.issue,
-              cancellation: request.cancellation,
-            },
-          });
-          break;
-        }
-        const repository = yield* store
-          .repositoryOwner(request.issue)
-          .pipe(mapDispatchError(command));
-        const owner = yield* store.issueOwner(request.issue).pipe(mapDispatchError(command));
-        const previousAttempt =
-          owner === null
-            ? null
-            : yield* projectionStore
-                .getThreadRecords(owner, ["runs", "messages", "subagents"])
-                .pipe(mapDispatchError(command));
-        const shell =
-          owner === null
-            ? null
-            : yield* projectionStore.getThreadShell(owner).pipe(mapDispatchError(command));
-        if (
-          repository?.rootThreadId !== command.threadId ||
-          request.issueThreadId !== null ||
-          (owner !== null &&
-            (request.attemptKey !== owner ||
-              previousAttempt === null ||
-              delegatedTaskProgress({
-                ...previousAttempt,
-                pendingBackgroundTasks: shell?.pendingBackgroundTasks ?? [],
-              }).state !== "result_available"))
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause:
-              "Only an unclaimed issue start request can be cancelled; claimed worker work must be handled explicitly.",
-          });
-        const now = yield* DateTime.now;
-        // Duplicate Start clicks authorize one admission, so release all coalesced receipts.
-        for (const pending of yield* store
-          .requestsForAttempt(request)
+      case "issue.work.cancel":
+        for (const event of yield* issueWorkRecovery
+          .cancel(command)
           .pipe(mapDispatchError(command)))
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "issue.work.cancelled",
-            threadId: command.threadId,
-            occurredAt: now,
-            payload: {
-              requestedRequestId: command.requestId,
-              requestId: pending.requestId,
-              issue: pending.issue,
-              cancellation: {
-                commandId: command.commandId,
-                reason: command.reason,
-                cancelledAt: DateTime.formatIso(now),
-              },
-            },
-          });
+          yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
         break;
-      }
       case "repository.work.restore": {
-        if (Option.isNone(issueWorkStore))
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Issue ownership service is unavailable.",
-          });
-        const owner = yield* issueWorkStore.value
-          .repositoryOwner(command)
-          .pipe(mapDispatchError(command));
-        const target = yield* projectionStore
-          .getThread(command.targetThreadId)
-          .pipe(mapDispatchError(command));
-        const targetConfig = target.repositoryOrchestration;
-        if (
-          target.projectId !== command.projectId ||
-          target.deletedAt !== null ||
-          target.archivedAt !== null ||
-          target.lineage.parentThreadId !== null ||
-          target.lineage.rootThreadId !== target.id ||
-          target.linkedIssue !== undefined ||
-          isProviderNativeSubagentThread(target) ||
-          (targetConfig !== undefined &&
-            (targetConfig.host !== command.host ||
-              targetConfig.repositoryId !== command.repositoryId ||
-              targetConfig.projectId !== command.projectId))
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Select an existing active top-level thread in the same repository project.",
-          });
-        const rootAdapter = yield* providerAdapters
-          .get(target.modelSelection.instanceId)
-          .pipe(mapDispatchError(command));
-        if (!supportsManagedIssueWork(rootAdapter.driver))
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            detail: managedIssueProviderError,
-          });
-        let config: import("@t3tools/contracts").RepositoryOrchestration;
-        const now = yield* DateTime.now;
-        const emitEvent = emit(events, command);
-        if (command.expectedRootThreadId === null) {
-          if (
-            owner !== null ||
-            command.expectedRevision !== null ||
-            command.threadId !== target.id ||
-            targetConfig !== undefined
-          )
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause:
-                "A repository orchestrator is already registered. Refresh ownership before registering a lead.",
-            });
-          config = {
-            host: command.host,
-            repository: command.repository,
-            repositoryId: command.repositoryId,
-            projectId: command.projectId,
-            workspace: target.worktreePath === null ? "project" : "worktree",
-            launchCommandId: command.commandId,
-            revision: 1,
-            paused: false,
-            ...DEFAULT_REPOSITORY_WORK_SETTINGS,
-            milestones: [],
-            suspendedIssues: [],
-          };
-        } else {
-          const shell = yield* projectionStore
-            .getThread(command.threadId)
-            .pipe(mapDispatchError(command));
-          const prior = shell.repositoryOrchestration;
-          if (
-            prior === undefined ||
-            prior.retiredToThreadId !== undefined ||
-            command.expectedRootThreadId !== shell.id ||
-            shell.id === target.id ||
-            owner?.rootThreadId !== shell.id ||
-            owner.revision !== command.expectedRevision ||
-            prior.revision !== command.expectedRevision ||
-            prior.host !== command.host ||
-            prior.repositoryId !== command.repositoryId ||
-            prior.repository.toLowerCase() !== command.repository.toLowerCase() ||
-            prior.projectId !== command.projectId ||
-            shell.projectId !== command.projectId ||
-            owner.projectId !== command.projectId
-          )
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause:
-                "Repository ownership changed. Refresh the registered root and revision before restoring.",
-            });
-          if (!prior.paused)
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause: "Pause repository work before restoring its owner.",
-            });
-          yield* guardRepositoryRootLifecycle(command, shell);
-          yield* emitEvent({
-            type: "thread.metadata-updated",
-            threadId: shell.id,
-            occurredAt: now,
-            payload: {
-              ...shell,
-              repositoryOrchestration: { ...prior, retiredToThreadId: target.id },
-              updatedAt: now,
-            },
-          });
-          config = {
-            ...prior,
-            handoff: undefined,
-            retiredToThreadId: undefined,
-            launchCommandId: command.commandId,
-            revision: prior.revision + 1,
-            handoffHistory: [
-              ...(prior.handoffHistory ?? []),
-              { threadId: shell.id, transferredAt: DateTime.formatIso(now) },
-            ],
-          };
-        }
-        yield* emitEvent({
-          type: "thread.metadata-updated",
-          threadId: target.id,
-          occurredAt: now,
-          payload: { ...target, repositoryOrchestration: config, updatedAt: now },
-        });
-        yield* emitEvent({
-          type: "repository.work.restored",
-          threadId: target.id,
-          occurredAt: now,
-          payload: {
-            previousRootThreadId: command.expectedRootThreadId,
-            targetThreadId: target.id,
-            expectedRevision: command.expectedRevision,
-            reason: command.reason,
-          },
-        });
+        const restored = yield* issueWorkRecovery.restore(command).pipe(mapDispatchError(command));
+        if (restored.retiringRoot !== null)
+          yield* guardRepositoryRootLifecycle(command, restored.retiringRoot);
+        for (const event of restored.events)
+          yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
         break;
       }
       case "repository.work.update": {
@@ -12517,7 +12286,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       if (command.type === "repository.work.restore") {
         // Existing target metadata must not race its own turns or child delivery.
-        const keys = [...new Set([command.threadId, command.targetThreadId])].sort();
+        const keys = yield* issueWorkRecovery
+          .restoreLockKeys(command)
+          .pipe(mapDispatchError(command));
         return yield* keys.reduceRight(
           (effect, key) => threadExecutor.withLock(key, effect),
           dispatchEffect,

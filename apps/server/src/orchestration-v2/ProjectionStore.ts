@@ -1969,6 +1969,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.gen(function* () {
         switch (event.type) {
           case "repository.work.restored":
+            // Registering an existing lead has no thread.created to keep its first owner, and
+            // compaction keeps only each thread's newest snapshot.
+            if (event.payload.previousRootThreadId === null)
+              yield* registerRepositoryOwner(
+                event.payload.repositoryOrchestration,
+                event.payload.targetThreadId,
+                event.occurredAt,
+              );
             return;
           case "issue.work.cancelled": {
             const payload = yield* encodeIssueCancellation(event.payload);
@@ -2101,9 +2109,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               }>`UPDATE orchestration_v2_projection_repository_orchestration
                 SET paused = ${owner.paused ? 1 : 0}, revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
                 WHERE root_thread_id = ${event.threadId} RETURNING root_thread_id`;
-              if (updated.length === 0 && owner.handoffHistory === undefined) {
-                yield* registerRepositoryOwner(owner, event.threadId, event.occurredAt);
-              } else if (updated.length === 0) {
+              if (updated.length === 0) {
                 // The command checks the exact owner/revision under the repository
                 // lock before committing. Compacted replay can skip intermediate
                 // owners, so a complete snapshot may advance past any earlier root.

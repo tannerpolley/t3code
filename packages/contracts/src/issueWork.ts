@@ -135,6 +135,8 @@ export const RepositoryWorkRestored = Schema.Struct({
   targetThreadId: ThreadId,
   expectedRevision: Schema.NullOr(Schema.Int),
   reason: TrimmedNonEmptyString,
+  /** The restored owner. A registration (no previous root) projects it as the first owner. */
+  repositoryOrchestration: RepositoryOrchestration,
 });
 
 export const RepositoryWorkResult = Schema.Struct({
