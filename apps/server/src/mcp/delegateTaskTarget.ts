@@ -217,11 +217,9 @@ export function modelRoleStatuses(
 
 function weeklyHeadroom(window: ServerProviderUsageWindow, now: number): number | undefined {
   const elapsed = elapsedShare(window, now);
-  if (elapsed === null) return undefined;
-  const remaining = remainingPercent(window) / 100;
-  const timeLeft = 1 - elapsed;
-  if (timeLeft === 0) return remaining === 0 ? 0 : Number.POSITIVE_INFINITY;
-  return remaining / timeLeft;
+  // A snapshot kept past its reset is unknown until fresh usage arrives.
+  if (elapsed === null || elapsed === 1) return undefined;
+  return remainingPercent(window) / 100 / (1 - elapsed);
 }
 
 function weeklyWindowForModel(

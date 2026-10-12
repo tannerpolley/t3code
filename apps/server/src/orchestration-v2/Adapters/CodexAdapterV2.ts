@@ -99,7 +99,10 @@ import {
   buildCodexAdditionalContext,
   buildCodexDeveloperInstructions,
 } from "../../provider/CodexDeveloperInstructions.ts";
-import { combineApprovalPrompt } from "../../provider/approvalPrompt.ts";
+import {
+  codexPermissionsApprovalPrompt,
+  combineApprovalPrompt,
+} from "../../provider/approvalPrompt.ts";
 import {
   describeMcpElicitation,
   toMcpElicitationResponse,
@@ -5308,7 +5311,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind,
-              ...(payload.reason === undefined ? {} : { prompt: payload.reason }),
+              prompt: codexPermissionsApprovalPrompt(payload) ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {

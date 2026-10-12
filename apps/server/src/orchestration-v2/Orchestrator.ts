@@ -150,9 +150,11 @@ import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
 import {
+  delegatedRequestNoticeId,
   delegatedRequestOwner,
   delegatedRequestDetails,
   delegatedRequestResponseInstructions,
+  releaseStrandedDelegatedRequest,
 } from "./DelegatedRequestRouting.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
@@ -12349,7 +12351,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // Requests leave the child's run open, so terminal-result delivery cannot tell its parent.
   const notifyParentOfChildQuestion = Effect.fnUntraced(
     function* (childThreadId: ThreadId, requestId: RuntimeRequestId) {
-      const owner = yield* delegatedRequestOwner(projectionStore, childThreadId);
+      yield* wakeParentForChildQuestion(childThreadId, requestId);
+      yield* threadDispatch.withLock(
+        childThreadId,
+        releaseStrandedDelegatedRequest(
+          { projections: projectionStore, eventSink, ids: idAllocator.allocate },
+          childThreadId,
+          requestId,
+        ),
+      );
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to notify parent of child question", { cause }),
+    ),
+  );
+
+  const wakeParentForChildQuestion = Effect.fnUntraced(
+    function* (childThreadId: ThreadId, requestId: RuntimeRequestId) {
+      const owner = yield* delegatedRequestOwner(projectionStore, childThreadId, requestId);
       if (owner === undefined) return;
       const { parentThreadId, taskId } = owner;
       yield* threadDispatch.withLock(
@@ -12429,7 +12448,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             type: "message.dispatch",
             commandId: CommandId.make(`server:child-question:${childThreadId}:${requestId}`),
             threadId: parentThreadId,
-            messageId: MessageId.make(`message:child-question:${childThreadId}:${requestId}`),
+            messageId: delegatedRequestNoticeId(childThreadId, requestId),
             text: `${title} is waiting on you, its orchestrator (task ${task.id}).\n\n${delegatedRequestDetails(runtimeRequest, child.turnItems)}\n\n${delegatedRequestResponseInstructions(childThreadId, runtimeRequest)}`,
             notification: {
               source: { kind: "delegated_task", taskIds: [task.id] },

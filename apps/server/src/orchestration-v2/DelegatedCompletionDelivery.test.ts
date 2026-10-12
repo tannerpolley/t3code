@@ -39,6 +39,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
@@ -1792,6 +1793,8 @@ const seedChildWaitingOnUser = (input: {
   readonly legacyUnrouted?: boolean;
   /** settled_only with the parent run active is a blocking delegate_task wait. */
   readonly completionWake?: "always" | "settled_only";
+  /** A Codex async question, answered by message, survives a restart. */
+  readonly answeredByMessage?: boolean;
 }) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1865,10 +1868,12 @@ const seedChildWaitingOnUser = (input: {
           nativeRequestRef: null,
           kind: input.requestKind,
           status: "pending",
-          responseCapability: {
-            type: "app_owned",
-            providerSessionId: ProviderSessionId.make("provider-session:question-test"),
-          },
+          responseCapability: input.answeredByMessage
+            ? { type: "message" }
+            : {
+                type: "app_owned",
+                providerSessionId: ProviderSessionId.make("provider-session:question-test"),
+              },
           createdAt: now,
           resolvedAt: null,
         },
@@ -1999,6 +2004,53 @@ it.layer(layerTest)("child question wake", (it) => {
 });
 
 it.layer(layerTest)("delegated request routing", (it) => {
+  it.effect("returns a question to the owner when a restart strands its parent wake", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const held = yield* seedChildWaitingOnUser({
+        name: "restart-held",
+        requestKind: "user_input",
+        answeredByMessage: true,
+      });
+      const cancelled = yield* seedChildWaitingOnUser({
+        name: "restart-cancelled",
+        requestKind: "user_input",
+        answeredByMessage: true,
+      });
+      // Each wake queues behind its parent's running turn.
+      yield* orchestrator.recoverDelegatedTasks;
+      const wakeRun = (parentThreadId: ThreadId) =>
+        Effect.gen(function* () {
+          const [notice] = yield* childQuestionNotices(parentThreadId);
+          const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+          return parent.runs.find((run) => run.id === notice?.runId);
+        });
+      const cancelledWake = yield* wakeRun(cancelled.parentThreadId);
+      assert.equal(cancelledWake?.status, "queued");
+      yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make("command:cancel-child-question-wake"),
+        threadId: cancelled.parentThreadId,
+        runId: cancelledWake!.id,
+      });
+
+      yield* recovery.recover;
+      yield* orchestrator.recoverDelegatedTasks;
+
+      for (const child of [held, cancelled]) {
+        const request = (yield* orchestrator.getThreadProjection(child.childThreadId))
+          .runtimeRequests[0];
+        assert.equal(request?.status, "pending");
+        assert.isUndefined(request?.routedTo);
+        assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 1);
+      }
+      // The restart's queue hold stays for the owner to resume.
+      const heldWake = yield* wakeRun(held.parentThreadId);
+      assert.deepEqual([heldWake?.status, heldWake?.queueHeld], ["queued", true]);
+    }),
+  );
+
   it.effect("routes approvals with their full command and records parent responses", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

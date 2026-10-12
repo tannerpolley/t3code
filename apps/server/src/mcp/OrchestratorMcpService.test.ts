@@ -1100,7 +1100,14 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   it("orders role choices by weekly headroom, keeping unknown and unavailable choices last", () => {
     const instance = (id: string) => ProviderInstanceId.make(id);
-    const configured = ["balanced", "unknown", "roomy", "missing-reset", "blocked"] as const;
+    const configured = [
+      "expired",
+      "balanced",
+      "unknown",
+      "roomy",
+      "missing-reset",
+      "blocked",
+    ] as const;
     const target = (id: string) => ({ providerInstanceId: instance(id), model: id });
     const weekly = (usedPercent: number, timeLeft?: number) => ({
       id: "weekly",
@@ -1136,6 +1143,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         name: "Builder",
         description: "",
         targets: [
+          target("expired"),
           target("balanced"),
           target("unknown"),
           target("roomy"),
@@ -1147,6 +1155,8 @@ describe("OrchestratorMcpService provider resolution", () => {
     const statuses = modelRoleStatuses(
       roles,
       [
+        // A kept snapshot that reset yesterday says nothing about today's quota.
+        provider("expired", weekly(99, -1 / 7)),
         provider("balanced", weekly(20, 0.8)),
         provider("unknown"),
         provider("roomy", weekly(40, 0.2)),
@@ -1160,7 +1170,7 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     assert.deepEqual(
       choices.map((choice) => choice.model),
-      ["roomy", "balanced", "unknown", "missing-reset", "blocked"],
+      ["roomy", "balanced", "expired", "unknown", "missing-reset", "blocked"],
     );
     assert.deepEqual(choices[0]!.weeklyUsage, {
       remainingPercent: 60,
@@ -1172,13 +1182,13 @@ describe("OrchestratorMcpService provider resolution", () => {
       resetsAt: modelRoleStatusResetAt(0.8),
       pace: "on",
     });
-    assert.equal(choices[2]!.weeklyUsage, undefined);
-    assert.deepEqual(choices[3]!.weeklyUsage, {
+    assert.equal(choices[3]!.weeklyUsage, undefined);
+    assert.deepEqual(choices[4]!.weeklyUsage, {
       remainingPercent: 90,
       resetsAt: null,
       pace: null,
     });
-    assert.include(choices[4]!.unavailableReason!, "not authenticated");
+    assert.include(choices[5]!.unavailableReason!, "not authenticated");
   });
 
   it("uses Claude's matching model-scoped weekly quota before the general window", () => {

@@ -2999,6 +2999,106 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("shows the whole requested permission profile in a permissions approval", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "permissions-approval-thread";
+        const nativeTurnId = "permissions-approval-turn";
+        const reason = "Run the requested inspection.";
+        const permissions = {
+          fileSystem: {
+            read: ["/repo/docs"],
+            write: ["/tmp/approved-target"],
+            entries: [{ access: "deny", path: { type: "glob_pattern", pattern: "/repo/**/.env" } }],
+          },
+          network: { enabled: true },
+        };
+        const requestRaised = yield* Deferred.make<void>();
+        const transcript = makeCodexReplayTranscript({
+          scenario: "permissions-approval-prompt",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Inspect." }),
+            {
+              type: "emit_inbound",
+              label: "permissions approval",
+              frame: {
+                id: 4,
+                method: "item/permissions/requestApproval",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId: "permissions-approval-item",
+                  startedAtMs: 1782622445000,
+                  cwd: "/repo",
+                  reason,
+                  permissions,
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "permissions approval response",
+              frame: { id: 4, result: { permissions, scope: "turn" } },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "runtime_request.updated"
+            ? Deferred.succeed(requestRaised, undefined)
+            : Effect.void,
+        );
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("permissions-approval-attempt"),
+            text: "Inspect.",
+          }),
+        );
+        yield* Deferred.await(requestRaised);
+        const requestEvent = harness.events.findLast(
+          (event) => event.type === "runtime_request.updated",
+        );
+        if (requestEvent?.type !== "runtime_request.updated") return assert.fail("no request");
+        const approvalItem = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.requestId === requestEvent.runtimeRequest.id,
+        );
+        assert.equal(
+          approvalItem?.type === "turn_item.updated" &&
+            approvalItem.turnItem.type === "approval_request"
+            ? approvalItem.turnItem.prompt
+            : undefined,
+          `${reason}\n\nWorking directory: /repo\nread /repo/docs\nwrite /tmp/approved-target\ndeny /repo/**/.env\nnetwork enabled`,
+        );
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: requestEvent.runtimeRequest.id,
+          decision: "accept",
+        });
+        yield* harness.firstTerminal;
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("preserves T3 context on the wire and restores it after compaction", () =>
     Effect.scoped(
       Effect.gen(function* () {
