@@ -269,8 +269,11 @@ To run issue work, open an issue, choose **Start agent**, then a model role and 
 repository workspace. Use a model role with an available Codex or Claude target.
 **Start agent on issue…** in the command palette opens the current
 repository’s issues beside the thread, or the Issues page when there is no current repository.
-Work goes to the repository's existing orchestrator, which keeps its issue workers linked to GitHub.
-Later starts use that orchestrator's project. You can choose a new worktree or that project's checkout
+Work goes to the repository's registered orchestrator, which keeps its issue workers linked to GitHub.
+If none is registered, choose an existing lead in the matching project or explicitly choose
+**Create first orchestrator**. When you open issues beside a thread, its lead is selected for you.
+Start agent registers the selected lead and follows the issue parent tree for its workers. Later
+starts use that orchestrator's project. You can choose a new worktree or that project's checkout
 for the worker. Starting allows T3 to update one status comment and publish a closeout comment for
 each finished attempt; the publishing policy is shown before you start. Select the worker’s name
 to open its conversation with the issue beside it; before a worker exists, open the repository orchestrator instead.

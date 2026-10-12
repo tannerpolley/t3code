@@ -201,6 +201,8 @@ export function applyOrchestrationV2ProjectionEvent(
   const latestLocalTurnOrdinal = options?.latestLocalTurnOrdinal;
   const base = { ...projection, updatedAt: event.occurredAt };
   switch (event.type) {
+    case "issue.work.cancelled":
+    case "repository.work.restored":
     case "issue.work.requested":
     case "issue.github-comment.recorded":
       return projection;

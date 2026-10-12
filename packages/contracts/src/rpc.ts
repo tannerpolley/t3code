@@ -185,6 +185,9 @@ import {
   RepositoryWorkInput,
   RepositoryHandoffInput,
   RepositoryWorkControlInput,
+  RepositoryWorkRestoreInput,
+  IssueWorkCancelInput,
+  IssueWorkRequested,
   RepositoryWorkResult,
 } from "./issueWork.ts";
 import { IssueRepositoryRef } from "./issue.ts";
@@ -572,6 +575,8 @@ export const WS_METHODS = {
   issueChangesDecide: "issues.changes.decide",
   issueChangesSubscribe: "issues.changes.subscribe",
   issuesHandoff: "issues.handoff",
+  issuesCancelRequest: "issues.cancelRequest",
+  issuesRestoreRoot: "issues.restoreRoot",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -1069,6 +1074,17 @@ const WsIssueChangesSubscribeRpc = Rpc.make(WS_METHODS.issueChangesSubscribe, {
   stream: true,
   error: IssueRpcError,
 });
+const WsIssuesCancelRequestRpc = Rpc.make(WS_METHODS.issuesCancelRequest, {
+  payload: IssueWorkCancelInput,
+  success: IssueWorkRequested,
+  error: IssueRpcError,
+});
+const WsIssuesRestoreRootRpc = Rpc.make(WS_METHODS.issuesRestoreRoot, {
+  payload: RepositoryWorkRestoreInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+
 const WsIssuesHandoffRpc = Rpc.make(WS_METHODS.issuesHandoff, {
   payload: RepositoryHandoffInput,
   success: RepositoryWorkResult,
@@ -2050,6 +2066,8 @@ const forkWsRpcs = [
   WsIssuesRepositoryStatusRpc,
   WsIssuesSetPausedRpc,
   WsIssuesHandoffRpc,
+  WsIssuesCancelRequestRpc,
+  WsIssuesRestoreRootRpc,
   WsIssueChangesListRpc,
   WsIssueChangesDecideRpc,
   WsIssueChangesSubscribeRpc,
@@ -2266,6 +2284,8 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issuesRepositoryStatus,
   WS_METHODS.issuesSetPaused,
   WS_METHODS.issuesHandoff,
+  WS_METHODS.issuesCancelRequest,
+  WS_METHODS.issuesRestoreRoot,
   WS_METHODS.issueChangesList,
   WS_METHODS.issueChangesDecide,
   WS_METHODS.issueChangesSubscribe,

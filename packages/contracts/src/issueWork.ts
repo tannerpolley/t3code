@@ -53,6 +53,12 @@ export const RepositoryOrchestration = Schema.Struct({
   retiredToThreadId: Schema.optional(ThreadId),
 });
 export type RepositoryOrchestration = typeof RepositoryOrchestration.Type;
+export const DEFAULT_REPOSITORY_WORK_SETTINGS = {
+  workerLimit: 4,
+  publishStatusComments: true,
+  publishCloseoutComments: true,
+} as const;
+
 export const RepositoryWorkTarget = Schema.Struct({
   host: TrimmedNonEmptyString,
   repositoryId: TrimmedNonEmptyString,
@@ -91,6 +97,46 @@ export const RepositoryHandoffInput = Schema.Union([
   }),
 ]);
 export type RepositoryHandoffInput = typeof RepositoryHandoffInput.Type;
+/** User-only recovery; expectations prevent overwriting a newer repository owner. */
+export const RepositoryWorkRestoreInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  repositoryId: TrimmedNonEmptyString,
+  projectId: ProjectId,
+  expectedRootThreadId: Schema.NullOr(ThreadId),
+  expectedRevision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  targetThreadId: ThreadId,
+  reason: TrimmedNonEmptyString,
+  clientRequestId: CommandId,
+});
+export type RepositoryWorkRestoreInput = typeof RepositoryWorkRestoreInput.Type;
+/** Cancels one unclaimed admission, including duplicate requests coalesced into the same attempt. */
+export const IssueWorkCancelInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  projectId: ProjectId,
+  expectedRootThreadId: ThreadId,
+  requestId: CommandId,
+  reason: TrimmedNonEmptyString,
+  clientRequestId: CommandId,
+});
+export type IssueWorkCancelInput = typeof IssueWorkCancelInput.Type;
+const IssueWorkCancellation = Schema.Struct({
+  commandId: CommandId,
+  reason: TrimmedNonEmptyString,
+  cancelledAt: Schema.String,
+});
+export const IssueWorkCancelled = Schema.Struct({
+  requestedRequestId: CommandId,
+  requestId: CommandId,
+  issue: ThreadLinkedIssue,
+  cancellation: IssueWorkCancellation,
+});
+export const RepositoryWorkRestored = Schema.Struct({
+  previousRootThreadId: Schema.NullOr(ThreadId),
+  targetThreadId: ThreadId,
+  expectedRevision: Schema.NullOr(Schema.Int),
+  reason: TrimmedNonEmptyString,
+});
+
 export const RepositoryWorkResult = Schema.Struct({
   rootThreadId: Schema.NullOr(ThreadId),
   orchestration: Schema.NullOr(RepositoryOrchestration),
@@ -102,6 +148,10 @@ export const IssueWorkStartInput = Schema.Struct({
   projectId: ProjectId,
   modelRoleId: TrimmedNonEmptyString,
   workspace: Schema.Literals(["project", "worktree"]),
+  /** Selected existing lead; otherwise reuse the registered owner or explicitly create the first one. */
+  orchestratorThreadId: Schema.optional(ThreadId),
+  /** Explicit consent to create the first orchestrator when none is registered. */
+  createOrchestrator: Schema.optional(Schema.Boolean),
   clientRequestId: CommandId,
 });
 export type IssueWorkStartInput = typeof IssueWorkStartInput.Type;
@@ -177,5 +227,6 @@ export const IssueWorkRequested = Schema.Struct({
   attemptKey: Schema.String,
   modelSelection: ModelSelection,
   workspace: Schema.Literals(["project", "worktree"]),
+  cancellation: Schema.optional(IssueWorkCancellation),
 });
 export type IssueWorkRequested = typeof IssueWorkRequested.Type;

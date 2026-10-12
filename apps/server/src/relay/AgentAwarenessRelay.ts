@@ -92,6 +92,8 @@ export function shouldPublishAgentAwarenessEvent(
   // ended background item can release a held completion). Message bodies and
   // tool progress cannot change the published activity.
   switch (event.type) {
+    case "issue.work.cancelled":
+    case "repository.work.restored":
     case "issue.work.requested":
     case "issue.github-comment.recorded":
       return false;

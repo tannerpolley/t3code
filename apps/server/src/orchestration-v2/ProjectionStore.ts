@@ -1,4 +1,4 @@
-import { IssueWorkRequested } from "@t3tools/contracts";
+import { IssueWorkCancelled, IssueWorkRequested } from "@t3tools/contracts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import { makeThreadFind, findProjectedThreadItems } from "./ThreadFind.ts";
@@ -354,6 +354,7 @@ export interface ProjectionStoreV2Shape {
     readonly issueId: string;
   }) => Effect.Effect<
     {
+      readonly requestCancelled: boolean;
       readonly ownerThreadId: ThreadId | null;
       readonly effectiveStatusThreadId: ThreadId | null;
       readonly latestStatusWriteKey: string | null;
@@ -762,6 +763,8 @@ export function applyToProjection(
   };
 
   switch (event.type) {
+    case "issue.work.cancelled":
+    case "repository.work.restored":
     case "issue.work.requested":
     case "issue.github-comment.recorded":
       return projection;
@@ -1077,6 +1080,7 @@ const encodeTimelineSources = Schema.encodeEffect(
 );
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
+const encodeIssueCancellation = Schema.encodeEffect(Schema.fromJsonString(IssueWorkCancelled));
 const encodeIssueRequest = Schema.encodeEffect(Schema.fromJsonString(IssueWorkRequested));
 const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
@@ -1942,9 +1946,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       END
     `;
 
+    const registerRepositoryOwner = (
+      owner: import("@t3tools/contracts").RepositoryOrchestration,
+      threadId: ThreadId,
+      occurredAt: DateTime.Utc,
+    ) =>
+      sql`
+                INSERT INTO orchestration_v2_projection_repository_orchestration (
+                  host, repository_id, repository, root_thread_id, project_id, workspace,
+                  launch_command_id, revision, paused, worker_limit, publish_status_comments,
+                  publish_closeout_comments, created_at, updated_at
+                ) VALUES (
+                  ${owner.host}, ${owner.repositoryId}, ${owner.repository}, ${threadId},
+                  ${owner.projectId}, ${owner.workspace}, ${owner.launchCommandId},
+                  ${owner.revision}, ${owner.paused ? 1 : 0}, ${owner.workerLimit},
+                  ${owner.publishStatusComments ? 1 : 0}, ${owner.publishCloseoutComments ? 1 : 0},
+                  ${DateTime.formatIso(occurredAt)}, ${DateTime.formatIso(occurredAt)}
+                )
+              `;
+
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
         switch (event.type) {
+          case "repository.work.restored":
+            return;
+          case "issue.work.cancelled": {
+            const payload = yield* encodeIssueCancellation(event.payload);
+            yield* sql`
+              UPDATE orchestration_v2_projection_issue_work_requests
+              SET payload_json = json_set(payload_json, '$.cancellation', json_extract(${payload}, '$.cancellation'))
+              WHERE request_id = ${event.payload.requestId}
+                AND json_type(payload_json, '$.cancellation') IS NULL
+            `;
+            return;
+          }
           case "issue.work.requested": {
             const request = event.payload;
             if (request.issueThreadId === null) {
@@ -2034,19 +2069,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               event.payload.repositoryOrchestration !== undefined
             ) {
               const owner = event.payload.repositoryOrchestration;
-              yield* sql`
-                INSERT INTO orchestration_v2_projection_repository_orchestration (
-                  host, repository_id, repository, root_thread_id, project_id, workspace,
-                  launch_command_id, revision, paused, worker_limit, publish_status_comments,
-                  publish_closeout_comments, created_at, updated_at
-                ) VALUES (
-                  ${owner.host}, ${owner.repositoryId}, ${owner.repository}, ${event.threadId},
-                  ${owner.projectId}, ${owner.workspace}, ${owner.launchCommandId},
-                  ${owner.revision}, ${owner.paused ? 1 : 0}, ${owner.workerLimit},
-                  ${owner.publishStatusComments ? 1 : 0}, ${owner.publishCloseoutComments ? 1 : 0},
-                  ${DateTime.formatIso(event.occurredAt)}, ${DateTime.formatIso(event.occurredAt)}
-                )
-              `;
+              yield* registerRepositoryOwner(owner, event.threadId, event.occurredAt);
             }
             if (event.type === "thread.created" && event.payload.linkedIssue !== undefined) {
               const issue = event.payload.linkedIssue;
@@ -2078,7 +2101,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               }>`UPDATE orchestration_v2_projection_repository_orchestration
                 SET paused = ${owner.paused ? 1 : 0}, revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
                 WHERE root_thread_id = ${event.threadId} RETURNING root_thread_id`;
-              if (updated.length === 0) {
+              if (updated.length === 0 && owner.handoffHistory === undefined) {
+                yield* registerRepositoryOwner(owner, event.threadId, event.occurredAt);
+              } else if (updated.length === 0) {
                 // The command checks the exact owner/revision under the repository
                 // lock before committing. Compacted replay can skip intermediate
                 // owners, so a complete snapshot may advance past any earlier root.
@@ -2104,7 +2129,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 yield* sql`
                   UPDATE orchestration_v2_projection_issue_work_requests
                   SET root_thread_id = ${event.threadId}, payload_json = json_set(payload_json, '$.rootThreadId', ${event.threadId})
-                  WHERE root_thread_id IN ${sql.in(owner.handoffHistory!.map((entry) => entry.threadId))} AND (NOT EXISTS (
+                  WHERE root_thread_id IN ${sql.in(owner.handoffHistory!.map((entry) => entry.threadId))}
+                    AND json_type(payload_json, '$.cancellation') IS NULL AND (NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_issue_work work
                     WHERE work.host = orchestration_v2_projection_issue_work_requests.host
                       AND work.repository_id = orchestration_v2_projection_issue_work_requests.repository_id
@@ -6254,11 +6280,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         sql<{
           readonly owner_thread_id: string | null;
           readonly status_comment_id: string | null;
+          readonly request_cancelled: number;
           readonly request_root_id: string | null;
           readonly attempt_key: string | null;
           readonly latest_write_key: string | null;
         }>`
           SELECT work.owner_thread_id, work.status_comment_id,
+            COALESCE((SELECT json_type(request.payload_json, '$.cancellation') IS NOT NULL
+              FROM orchestration_v2_projection_issue_work_requests request
+              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id
+              ORDER BY request.rowid DESC LIMIT 1), 0) AS request_cancelled,
             (SELECT root_thread_id FROM orchestration_v2_projection_issue_work_requests request
               WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id
               ORDER BY request.rowid DESC LIMIT 1) AS request_root_id,
@@ -6283,6 +6314,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ? row.request_root_id
                 : row.owner_thread_id;
             return {
+              requestCancelled: row.request_cancelled === 1,
               ownerThreadId:
                 row.owner_thread_id === null ? null : ThreadId.make(row.owner_thread_id),
               effectiveStatusThreadId: effectiveId === null ? null : ThreadId.make(effectiveId),

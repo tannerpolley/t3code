@@ -59,6 +59,25 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination operate grant for issue ownership recovery", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        for (const method of [WS_METHODS.issuesCancelRequest, WS_METHODS.issuesRestoreRoot]) {
+          const recovery = createCommandPermissions(runtime, method);
+          expect(registry.get(recovery.permissionAtom(env))).toBe(true);
+          yield* recovery.authorize(registry, env);
+          expect(registry.get(recovery.permissionAtom(other))).toBe(false);
+          expect((yield* recovery.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+            "EnvironmentAuthorizationError",
+          );
+        }
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

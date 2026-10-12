@@ -43,6 +43,8 @@ import {
   OrchestrationV2ThreadProjectionJson,
   ScheduledTaskId,
   type ServerProvider,
+  IssueWorkRequested,
+  IssueWorkCancelled,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -86,6 +88,8 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 const projectId = ProjectId.make("project:launch-test");
 const otherProjectId = ProjectId.make("project:launch-other");
 const encodeThreadProjection = Schema.encodeEffect(OrchestrationV2ThreadProjectionJson);
+const decodeIssueRequest = Schema.decodeEffect(Schema.fromJsonString(IssueWorkRequested));
+const decodeIssueCancellation = Schema.decodeEffect(Schema.fromJsonString(IssueWorkCancelled));
 const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.1-codex",
@@ -3020,6 +3024,7 @@ describe("managed issue work", () => {
       Parameters<IssueService.IssueService["Service"]["writeManagedComment"]>[0]
     > = [];
     const issueReads = Layer.mock(IssueService.IssueService)({
+      repositoryIdentity: () => Effect.succeed(issue),
       workRead,
       writeManagedComment: (request) =>
         Effect.sync(() => {
@@ -3106,11 +3111,27 @@ describe("managed issue work", () => {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const sink = yield* EventSink.EventSinkV2;
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const selectedLeadId = ThreadId.make("issue-selected-existing-lead");
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("issue-selected-existing-lead:create"),
+        threadId: selectedLeadId,
+        projectId,
+        title: "Existing repository lead",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
       const input = {
         host: issue.host,
         repository: issue.repository,
         number: issue.number,
         projectId,
+        orchestratorThreadId: selectedLeadId,
         modelRoleId: "worker",
         workspace: "project" as const,
       };
@@ -3122,6 +3143,9 @@ describe("managed issue work", () => {
         { concurrency: 2 },
       );
       assert.equal(starts[0].rootThreadId, starts[1].rootThreadId);
+      assert.equal(starts[0].rootThreadId, selectedLeadId);
+      assert.isFalse(starts[0].createdRoot);
+      assert.isFalse(starts[1].createdRoot);
       assert.equal(
         (yield* sql`SELECT * FROM orchestration_v2_projection_repository_orchestration`).length,
         1,
@@ -4911,6 +4935,7 @@ describe("fresh-thread repository handoff", () => {
   };
   const fixture = (
     options: {
+      recovery?: boolean;
       inventoryComplete?: () => boolean;
       providerAvailable?: () => boolean;
       continuation?: boolean;
@@ -4918,6 +4943,18 @@ describe("fresh-thread repository handoff", () => {
     } = {},
   ) => {
     const reads = Layer.mock(IssueService.IssueService)({
+      repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: config.repositoryId }),
+      resolveLinkedIssue: (input) => Effect.succeed(linked(input.number)),
+      detail: (input) =>
+        Effect.succeed({
+          repository: reference,
+          viewer: null,
+          fetchedAt: "2026-10-12T00:00:00Z",
+          issue: summary(input.number),
+          body: "Authorized issue",
+          comments: [],
+          linkedPullRequests: [],
+        }),
       workRead: (input) =>
         Effect.succeed({
           issue: linked(input.number),
@@ -4947,6 +4984,34 @@ describe("fresh-thread repository handoff", () => {
     };
     const harness = makeHarness({
       providers: [provider],
+      ...(options.recovery
+        ? {
+            projectRepositoryIdentity: {
+              canonicalKey: "github.com/tannerpolley/t3code",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "https://github.com/tannerpolley/t3code.git",
+              },
+              provider: "github" as const,
+              owner: "tannerpolley",
+              name: "t3code",
+              displayName: "tannerpolley/t3code",
+            },
+            serverSettings: {
+              modelRoles: [
+                {
+                  id: "worker",
+                  name: "Worker",
+                  description: "Issue worker",
+                  targets: [
+                    { providerInstanceId: modelSelection.instanceId, model: modelSelection.model },
+                  ],
+                },
+              ],
+            },
+          }
+        : {}),
       adapters: [handoffAdapter],
       issueServiceLayer: reads,
       runContinuationWorker: options.continuation ?? false,
@@ -4968,6 +5033,20 @@ describe("fresh-thread repository handoff", () => {
       service,
       OrchestratorMcp.layer.pipe(Layer.provide(service)),
       ProjectionMaintenance.layer.pipe(Layer.provide(dependencies)),
+      ...(options.recovery
+        ? [
+            EffectWorker.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  dependencies,
+                  Layer.mock(EffectWorker.OrchestrationEffectExecutorV2)({
+                    execute: () => Effect.void,
+                  }),
+                ),
+              ),
+            ),
+          ]
+        : []),
     );
   };
   const createRoot = Effect.gen(function* () {
@@ -5055,6 +5134,600 @@ describe("fresh-thread repository handoff", () => {
         Stream.runDrain,
       ),
     );
+
+  const originalLeadId = ThreadId.make("original-existing-lead");
+  const createOriginalLead = Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("original:create"),
+      threadId: originalLeadId,
+      projectId,
+      title: "Original lead",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* threads.sendToThread({
+      projectId,
+      threadId: originalLeadId,
+      commandId: CommandId.make("original:start"),
+      messageId: MessageId.make("original:start"),
+      text: "Continue approved work",
+      attachments: [],
+      mode: "auto",
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (yield* threads.getThreadRecords(originalLeadId, ["runs"])).runs.at(-1)!;
+    const delegated = yield* threads.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("original:ordinary-child"),
+      parentThreadId: originalLeadId,
+      parentRunId: run.id,
+      parentNodeId: run.rootNodeId!,
+      task: "Read-only issue diagnosis",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    return delegated.storedEvents.find((stored) => stored.event.type === "thread.created")!.event
+      .threadId;
+  });
+  const createRecoveryRoot = Effect.gen(function* () {
+    yield* createRoot;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "repository.work.update",
+      threadId: rootId,
+      commandId: CommandId.make("recovery:no-plan"),
+      expectedRevision: 1,
+      orchestration: { ...config, milestones: [] },
+    });
+  });
+  const cancelInput = {
+    ...reference,
+    projectId,
+    expectedRootThreadId: rootId,
+    requestId: CommandId.make("wrong-root:issue-start"),
+    reason: "Cancel accidental unclaimed start",
+    clientRequestId: CommandId.make("wrong-root:cancel-request"),
+  };
+  const restoreInput = {
+    ...reference,
+    repositoryId: config.repositoryId,
+    projectId,
+    expectedRootThreadId: rootId,
+    expectedRevision: 3,
+    targetThreadId: originalLeadId,
+    reason: "Restore the explicitly selected original lead",
+    clientRequestId: CommandId.make("original:restore"),
+  };
+  const startWrongRoot = Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "issue.work.start",
+      commandId: cancelInput.requestId,
+      threadId: rootId,
+      issue: linked(9),
+      workerModelSelection: modelSelection,
+      workspace: "project",
+      createdBy: "user",
+      creationSource: "web",
+    });
+  });
+
+  it.effect(
+    "standalone Start agent explicitly creates the first orchestrator once and reuses a registered owner",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const input = {
+          ...reference,
+          number: 9,
+          projectId,
+          modelRoleId: "worker",
+          workspace: "project" as const,
+          createOrchestrator: true,
+        };
+        const results = yield* Effect.all(
+          [
+            service.start({ ...input, clientRequestId: CommandId.make("explicit-create:first") }),
+            service.start({
+              ...input,
+              clientRequestId: CommandId.make("explicit-create:concurrent"),
+            }),
+          ],
+          { concurrency: 2 },
+        );
+        const owner = yield* store.repositoryOwner(config);
+        assert.isNotNull(owner);
+        assert.equal(results[0].rootThreadId, owner!.rootThreadId);
+        assert.equal(results[1].rootThreadId, owner!.rootThreadId);
+        const sql = yield* SqlClient.SqlClient;
+        assert.equal(
+          (yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads`).length,
+          1,
+        );
+        const run = (yield* threads.getThreadRecords(owner!.rootThreadId, ["runs"])).runs.at(-1)!;
+        const delegated = yield* threads.dispatch({
+          type: "delegated_task.request",
+          commandId: CommandId.make("explicit-create:worker"),
+          parentThreadId: owner!.rootThreadId,
+          parentRunId: run.id,
+          parentNodeId: run.rootNodeId!,
+          issue: linked(9),
+          task: "Authorized issue work",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        const childId = delegated.storedEvents.find(
+          (stored) => stored.event.type === "thread.created",
+        )!.event.threadId;
+        assert.equal(
+          (yield* threads.getThreadRecords(childId, [])).thread.lineage.parentThreadId,
+          owner!.rootThreadId,
+        );
+        const reused = yield* service.start({
+          ...input,
+          clientRequestId: CommandId.make("explicit-create:reuse-existing"),
+        });
+        assert.equal(reused.rootThreadId, owner!.rootThreadId);
+        assert.isFalse(reused.createdRoot);
+        assert.equal(
+          (yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads`).length,
+          2,
+        );
+        yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect(
+    "Start agent requires an explicit existing lead, registers it once and creates workers following the issue tree",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const ordinaryChild = yield* createOriginalLead;
+        const ordinaryLineage = (yield* threads.getThreadRecords(ordinaryChild, [])).thread.lineage;
+        const input = {
+          ...reference,
+          number: 2,
+          projectId,
+          modelRoleId: "worker",
+          workspace: "project" as const,
+        };
+        const noSelection = yield* service
+          .start({ ...input, clientRequestId: CommandId.make("start:unselected") })
+          .pipe(Effect.result);
+        assert.equal(noSelection._tag, "Failure");
+        if (noSelection._tag === "Failure")
+          assert.include(noSelection.failure.message, "Select an existing");
+        assert.isNull(yield* store.repositoryOwner(config));
+        assert.equal(
+          (yield* service
+            .restoreRoot({
+              ...restoreInput,
+              expectedRootThreadId: null,
+              expectedRevision: null,
+              repositoryId: "wrong-id",
+              clientRequestId: CommandId.make("register:wrong-id"),
+            })
+            .pipe(Effect.result))._tag,
+          "Failure",
+        );
+
+        const accepted = yield* service.start({
+          ...input,
+          orchestratorThreadId: originalLeadId,
+          clientRequestId: CommandId.make("start:selected"),
+        });
+        assert.equal(accepted.rootThreadId, originalLeadId);
+        assert.isFalse(accepted.createdRoot);
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, originalLeadId);
+        const delegate = (parentThreadId: ThreadId, number: number) =>
+          Effect.gen(function* () {
+            const run = (yield* threads.getThreadRecords(parentThreadId, ["runs"])).runs.findLast(
+              (entry) => entry.status !== "queued",
+            )!;
+            const result = yield* threads.dispatch({
+              type: "delegated_task.request",
+              commandId: CommandId.make(`selected:delegate:${number}`),
+              parentThreadId,
+              parentRunId: run.id,
+              parentNodeId: run.rootNodeId!,
+              issue: linked(number),
+              task: `Authorized issue ${number}`,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            return result.storedEvents.find((stored) => stored.event.type === "thread.created")!
+              .event.threadId;
+          });
+        const parentWorker = yield* delegate(originalLeadId, 1);
+        const childWorker = yield* delegate(parentWorker, 2);
+        assert.equal(
+          (yield* threads.getThreadRecords(parentWorker, [])).thread.lineage.parentThreadId,
+          originalLeadId,
+        );
+        const child = (yield* threads.getThreadRecords(childWorker, [])).thread;
+        assert.equal(child.lineage.parentThreadId, parentWorker);
+        assert.equal(child.lineage.rootThreadId, originalLeadId);
+        assert.equal(child.linkedIssue!.id, linked(2).id);
+        assert.deepEqual(
+          (yield* threads.getThreadRecords(ordinaryChild, [])).thread.lineage,
+          ordinaryLineage,
+        );
+        assert.equal((yield* service.workStatus(input)).threadId, childWorker);
+        // Registered ownership remains authoritative for standalone requests without a thread origin.
+        assert.equal(
+          (yield* service.start({
+            ...input,
+            number: 9,
+            clientRequestId: CommandId.make("start:registered"),
+          })).rootThreadId,
+          originalLeadId,
+        );
+        assert.equal(
+          (yield* service
+            .start({
+              ...input,
+              orchestratorThreadId: ordinaryChild,
+              clientRequestId: CommandId.make("start:conflicting-selection"),
+            })
+            .pipe(Effect.result))._tag,
+          "Failure",
+        );
+        const sql = yield* SqlClient.SqlClient;
+        assert.equal(
+          (yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads`).length,
+          4,
+        );
+        yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+        assert.equal((yield* store.repositoryOwner(config))!.rootThreadId, originalLeadId);
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect(
+    "cancels a stopped paused root request, restores the existing lead and child, archives normally, and starts through that lead",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const childId = yield* createOriginalLead;
+        const childBefore = yield* threads.getThreadRecords(childId, ["runs"]);
+        assert.isUndefined(
+          (yield* threads.getThreadRecords(originalLeadId, [])).thread.repositoryOrchestration,
+        );
+        // A historical explicit issue claim under the original lead must survive adoption too.
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("original:retained-claim"),
+              type: "thread.created",
+              threadId: childId,
+              occurredAt: yield* DateTime.now,
+              payload: { ...childBefore.thread, linkedIssue: linked(1) },
+            },
+          ],
+        });
+        yield* createRecoveryRoot;
+        yield* startWrongRoot;
+        yield* threads.dispatch({
+          type: "issue.work.start",
+          commandId: CommandId.make("wrong-root:duplicate-start"),
+          threadId: rootId,
+          issue: linked(9),
+          workerModelSelection: modelSelection,
+          workspace: "project",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* service.setPaused({
+          ...reference,
+          paused: true,
+          clientRequestId: CommandId.make("wrong:pause"),
+        });
+        yield* threads.dispatch({
+          type: "run.interrupt",
+          threadId: rootId,
+          runId: (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!.id,
+          commandId: CommandId.make("wrong:stop"),
+        });
+        yield* worker.drain();
+        yield* threads.dispatch({
+          type: "thread.settle",
+          threadId: rootId,
+          commandId: CommandId.make("wrong:settle"),
+        });
+        const stopped = yield* threads.getThreadShell(rootId);
+        assert.isNull(stopped!.activeRunId);
+        assert.isNotNull(stopped!.settledAt);
+        assert.isTrue(yield* store.hasUnclaimedRequests(rootId));
+        const archive = (key: string) =>
+          threads.dispatch({
+            type: "thread.archive",
+            threadId: rootId,
+            commandId: CommandId.make(key),
+          });
+        const blocked = yield* archive("wrong:blocked-archive").pipe(Effect.result);
+        assert.equal(blocked._tag, "Failure");
+        if (blocked._tag === "Failure") assert.include(blocked.failure.message, "active work");
+        const cancelled = yield* service.cancelRequest(cancelInput);
+        assert.deepEqual(
+          cancelled.cancellation,
+          (yield* service.cancelRequest(cancelInput)).cancellation,
+        );
+        assert.equal(cancelled.cancellation!.commandId, cancelInput.clientRequestId);
+        assert.equal(
+          (yield* service
+            .cancelRequest({
+              ...cancelInput,
+              requestId: CommandId.make("wrong-root:duplicate-start"),
+            })
+            .pipe(Effect.result))._tag,
+          "Failure",
+        );
+
+        assert.equal(cancelled.rootThreadId, rootId);
+        assert.isFalse(yield* store.hasUnclaimedRequests(rootId));
+        assert.isFalse(yield* store.hasAttempt(linked(9), "first"));
+        assert.lengthOf(yield* store.pendingRequests(rootId), 0);
+        assert.notInclude(yield* store.activeRoots(), rootId);
+        assert.notInclude(
+          (yield* store.recoveryInventory(config)).map((row) => row.detail).join("\n"),
+          "#9",
+        );
+        assert.equal((yield* service.workStatus({ ...reference, number: 9 })).status, "cancelled");
+        assert.equal(
+          (yield* service.start({
+            ...reference,
+            number: 9,
+            projectId,
+            modelRoleId: "worker",
+            workspace: "project",
+            clientRequestId: cancelInput.requestId,
+          })).status,
+          "cancelled",
+        );
+        yield* archive("wrong:archive-after-cancel");
+        yield* threads.dispatch({
+          type: "thread.unarchive",
+          threadId: rootId,
+          commandId: CommandId.make("wrong:unarchive-for-restore"),
+        });
+        const restored = yield* service.restoreRoot(restoreInput);
+        assert.equal(restored.rootThreadId, originalLeadId);
+        assert.isTrue(restored.orchestration!.paused);
+        assert.equal(restored.orchestration!.revision, 4);
+        assert.equal((yield* service.restoreRoot(restoreInput)).rootThreadId, originalLeadId);
+        assert.equal(
+          (yield* service
+            .restoreRoot({ ...restoreInput, targetThreadId: childId })
+            .pipe(Effect.result))._tag,
+          "Failure",
+        );
+
+        assert.equal((yield* store.configuration(rootId))!.retiredToThreadId, originalLeadId);
+        assert.equal(yield* store.issueOwner(linked(1)), childId);
+        assert.equal(yield* store.currentIssueOwner(linked(1)), childId);
+        const childAfter = yield* threads.getThreadRecords(childId, ["runs"]);
+        assert.deepEqual(childAfter.thread.lineage, childBefore.thread.lineage);
+        assert.deepEqual(childAfter.runs, childBefore.runs);
+        assert.equal(childAfter.thread.lineage.parentThreadId, originalLeadId);
+        yield* archive("wrong:final-archive");
+        assert.isNotNull((yield* threads.getThreadShell(rootId))!.archivedAt);
+        yield* service.setPaused({
+          ...reference,
+          paused: false,
+          clientRequestId: CommandId.make("original:resume"),
+        });
+        const started = yield* service.start({
+          ...reference,
+          number: 9,
+          projectId,
+          modelRoleId: "worker",
+          workspace: "project",
+          clientRequestId: CommandId.make("original:subsequent-start"),
+        });
+        assert.equal(started.rootThreadId, originalLeadId);
+        assert.isFalse(started.createdRoot);
+        assert.isTrue(yield* store.hasAttempt(linked(9), "first"));
+        assert.equal(
+          (yield* store.pendingRequests(originalLeadId))[0]!.rootThreadId,
+          originalLeadId,
+        );
+        const sql = yield* SqlClient.SqlClient;
+        assert.equal(
+          (yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads`).length,
+          3,
+        );
+        const audit = yield* sql<{
+          event_type: string;
+          payload_json: string;
+        }>`SELECT event_type, payload_json FROM orchestration_events WHERE event_type IN ('issue.work.requested', 'issue.work.cancelled', 'repository.work.restored') ORDER BY sequence`;
+        assert.deepEqual(
+          audit.map((event) => event.event_type),
+          [
+            "issue.work.requested",
+            "issue.work.requested",
+            "issue.work.cancelled",
+            "issue.work.cancelled",
+            "repository.work.restored",
+            "issue.work.requested",
+          ],
+        );
+        const originalRequest = yield* decodeIssueRequest(audit[0]!.payload_json);
+        const cancellation = yield* decodeIssueCancellation(audit[2]!.payload_json);
+        assert.isUndefined(originalRequest.cancellation);
+        assert.equal(cancellation.cancellation.reason, cancelInput.reason);
+        assert.equal(cancellation.requestedRequestId, cancelInput.requestId);
+        assert.isDefined(
+          (yield* store.request(CommandId.make("wrong-root:duplicate-start")))!.cancellation,
+        );
+        yield* worker.drain();
+        yield* maintenance.compactEventStore;
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, originalLeadId);
+        assert.equal((yield* store.request(cancelInput.requestId))!.rootThreadId, rootId);
+        assert.equal(
+          (yield* store.request(cancelInput.requestId))!.cancellation!.reason,
+          cancelInput.reason,
+        );
+        assert.equal(yield* store.currentIssueOwner(linked(1)), childId);
+        assert.deepEqual(
+          (yield* threads.getThreadRecords(childId, [])).thread.lineage,
+          childBefore.thread.lineage,
+        );
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect(
+    "serializes unclaimed cancellation against claiming without interrupting the winner's worker",
+    () =>
+      Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const service = yield* IssueWorkService.IssueWorkService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        yield* createRecoveryRoot;
+        yield* startWrongRoot;
+        const run = (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!;
+        const results = yield* Effect.all(
+          [
+            threads
+              .dispatch({
+                type: "delegated_task.request",
+                commandId: CommandId.make("race:claim"),
+                parentThreadId: rootId,
+                parentRunId: run.id,
+                parentNodeId: run.rootNodeId!,
+                issue: linked(9),
+                task: "Authorized issue worker",
+                modelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                createdBy: "agent",
+                creationSource: "mcp",
+              })
+              .pipe(Effect.result),
+            service.cancelRequest(cancelInput).pipe(Effect.result),
+          ],
+          { concurrency: 2 },
+        );
+        assert.equal(results.filter((result) => result._tag === "Success").length, 1);
+        if (results[0]._tag === "Success") {
+          const owner = yield* store.issueOwner(linked(9));
+          assert.isNotNull(owner);
+          assert.equal(
+            (yield* threads.getThreadRecords(owner!, ["runs"])).runs.at(-1)!.status,
+            "starting",
+          );
+          assert.isUndefined((yield* store.request(cancelInput.requestId))!.cancellation);
+          const retryCancel = yield* service
+            .cancelRequest({ ...cancelInput, clientRequestId: CommandId.make("claimed:cancel") })
+            .pipe(Effect.result);
+          assert.equal(retryCancel._tag, "Failure");
+          if (retryCancel._tag === "Failure")
+            assert.include(retryCancel.failure.message, "unclaimed");
+        } else {
+          assert.isNull(yield* store.issueOwner(linked(9)));
+          assert.isFalse(yield* store.hasAttempt(linked(9), "first"));
+        }
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect(
+    "rejects stale restore revisions, mismatched identities and unsafe previous-root work",
+    () =>
+      Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const service = yield* IssueWorkService.IssueWorkService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        yield* createOriginalLead;
+        yield* createRecoveryRoot;
+        yield* startWrongRoot;
+        yield* service.setPaused({
+          ...reference,
+          paused: true,
+          clientRequestId: CommandId.make("unsafe:pause"),
+        });
+        for (const input of [
+          {
+            ...restoreInput,
+            expectedRevision: 2,
+            clientRequestId: CommandId.make("restore:stale"),
+          },
+          {
+            ...restoreInput,
+            repositoryId: "other-repo",
+            clientRequestId: CommandId.make("restore:wrong-repo"),
+          },
+          {
+            ...restoreInput,
+            projectId: otherProjectId,
+            clientRequestId: CommandId.make("restore:wrong-project"),
+          },
+          { ...restoreInput, clientRequestId: CommandId.make("restore:unfinished-root") },
+        ])
+          assert.equal((yield* service.restoreRoot(input).pipe(Effect.result))._tag, "Failure");
+        yield* service.cancelRequest(cancelInput);
+        // Cancellation is only a request transition. It must not interrupt an active lead.
+        assert.isNotNull((yield* threads.getThreadShell(rootId))!.activeRunId);
+        const run = (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!;
+        assert.equal(
+          (yield* threads
+            .dispatch({
+              type: "delegated_task.request",
+              commandId: CommandId.make("cancelled:late-claim"),
+              parentThreadId: rootId,
+              parentRunId: run.id,
+              parentNodeId: run.rootNodeId!,
+              issue: linked(9),
+              task: "Attempt to claim cancelled work",
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdBy: "agent",
+              creationSource: "mcp",
+            })
+            .pipe(Effect.result))._tag,
+          "Failure",
+        );
+        assert.isNull(yield* store.issueOwner(linked(9)));
+        assert.equal(
+          (yield* service
+            .restoreRoot({
+              ...restoreInput,
+              clientRequestId: CommandId.make("restore:active-root"),
+            })
+            .pipe(Effect.result))._tag,
+          "Failure",
+        );
+        assert.equal((yield* store.repositoryOwner(config))!.rootThreadId, rootId);
+        assert.isUndefined(
+          (yield* threads.getThreadRecords(originalLeadId, [])).thread.repositoryOrchestration,
+        );
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
 
   it.effect(
     "only one concurrent revision wins, installs inventory first, and retains ownership/history through compacted rebuild",

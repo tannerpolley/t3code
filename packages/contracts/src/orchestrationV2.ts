@@ -44,7 +44,12 @@ import {
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { IssueWorkRequested, RepositoryOrchestration } from "./issueWork.ts";
+import {
+  IssueWorkRequested,
+  IssueWorkCancelled,
+  RepositoryWorkRestored,
+  RepositoryOrchestration,
+} from "./issueWork.ts";
 import { IssueGithubCommentRecorded } from "./issueComment.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import type { IssueWorkRead } from "./issue.ts";
@@ -1786,6 +1791,16 @@ const OrchestrationV2EventBase = Schema.Struct({
 export const OrchestrationV2DomainEvent = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("issue.work.cancelled"),
+    payload: IssueWorkCancelled,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("repository.work.restored"),
+    payload: RepositoryWorkRestored,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("issue.work.requested"),
     payload: IssueWorkRequested,
   }),
@@ -2623,6 +2638,16 @@ export type OrchestrationV2RawProviderEventJson = typeof OrchestrationV2RawProvi
 export const OrchestrationV2DomainEventJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("issue.work.cancelled"),
+    payload: IssueWorkCancelled,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("repository.work.restored"),
+    payload: RepositoryWorkRestored,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("issue.work.requested"),
     payload: IssueWorkRequested,
   }),
@@ -3287,6 +3312,27 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("issue.work.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    projectId: ProjectId,
+    requestId: CommandId,
+    reason: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("repository.work.restore"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    projectId: ProjectId,
+    host: TrimmedNonEmptyString,
+    repository: TrimmedNonEmptyString,
+    repositoryId: TrimmedNonEmptyString,
+    targetThreadId: ThreadId,
+    expectedRootThreadId: Schema.NullOr(ThreadId),
+    expectedRevision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+    reason: TrimmedNonEmptyString,
+  }),
   Schema.Struct({
     type: Schema.Literal("repository.work.handoff"),
     commandId: CommandId,

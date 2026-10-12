@@ -128,5 +128,5 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
       return reads;
     });
 
-  return { threadDispatch, readIssueSnapshots };
+  return { threadExecutor, threadDispatch, readIssueSnapshots };
 });

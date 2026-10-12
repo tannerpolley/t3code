@@ -68,6 +68,12 @@ export class IssueWorkStore extends Context.Service<
     readonly request: (
       requestId: CommandId,
     ) => Effect.Effect<import("@t3tools/contracts").IssueWorkRequested | null, IssueWorkError>;
+    readonly requestsForAttempt: (
+      request: import("@t3tools/contracts").IssueWorkRequested,
+    ) => Effect.Effect<
+      ReadonlyArray<import("@t3tools/contracts").IssueWorkRequested>,
+      IssueWorkError
+    >;
     readonly latestRequest: (
       issue: IssueRef,
     ) => Effect.Effect<import("@t3tools/contracts").IssueWorkRequested | null, IssueWorkError>;
@@ -157,6 +163,7 @@ export const layer = Layer.effect(
           LEFT JOIN orchestration_v2_projection_issue_work work
             ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
           WHERE request.host = ${repository.host} AND request.repository_id = ${repository.repositoryId}
+            AND json_type(request.payload_json, '$.cancellation') IS NULL
             AND (work.owner_thread_id IS NULL OR request.attempt_key = work.owner_thread_id)
           UNION ALL
           SELECT 'Pending changes', effect.effect_type || ' — ' || effect.status || ' — ' || COALESCE(effect.last_error, 'awaiting writeback')
@@ -190,6 +197,7 @@ export const layer = Layer.effect(
         LEFT JOIN orchestration_v2_projection_issue_work work
           ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
         WHERE request.root_thread_id = ${rootThreadId}
+          AND json_type(request.payload_json, '$.cancellation') IS NULL
           AND (work.owner_thread_id IS NULL OR request.attempt_key = work.owner_thread_id)
           AND request.rowid = (SELECT max(latest.rowid) FROM orchestration_v2_projection_issue_work_requests latest
             WHERE latest.host = request.host AND latest.repository_id = request.repository_id AND latest.issue_id = request.issue_id)
@@ -220,7 +228,7 @@ export const layer = Layer.effect(
             WHERE json_extract(plan.value, '$.status') <> 'complete')
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request
               LEFT JOIN orchestration_v2_projection_issue_work work ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
-              WHERE request.root_thread_id = owner.root_thread_id AND work.owner_thread_id IS NULL)
+              WHERE request.root_thread_id = owner.root_thread_id AND work.owner_thread_id IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL)
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads worker JOIN orchestration_v2_projection_runs run ON run.thread_id = worker.thread_id
               WHERE json_extract(worker.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id
                 AND json_type(worker.payload_json, '$.linkedIssue') = 'object' AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')))
@@ -301,6 +309,17 @@ export const layer = Layer.effect(
           ),
           Effect.mapError(mapError),
         ),
+      requestsForAttempt: (request) =>
+        sql<{ payload_json: string }>`
+          SELECT payload_json FROM orchestration_v2_projection_issue_work_requests
+          WHERE host = ${request.issue.host} AND repository_id = ${request.issue.repositoryId}
+            AND issue_id = ${request.issue.id} AND attempt_key = ${request.attemptKey}
+            AND root_thread_id = ${request.rootThreadId} AND json_type(payload_json, '$.cancellation') IS NULL
+          ORDER BY rowid
+        `.pipe(
+          Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeRequest(row.payload_json))),
+          Effect.mapError(mapError),
+        ),
       latestRequest: (issue) =>
         sql<{ payload_json: string }>`
       SELECT payload_json FROM orchestration_v2_projection_issue_work_requests
@@ -315,7 +334,7 @@ export const layer = Layer.effect(
       hasAttempt: (issue, attemptKey) =>
         sql<{ request_id: string }>`
       SELECT request_id FROM orchestration_v2_projection_issue_work_requests
-      WHERE host = ${issue.host} AND repository_id = ${issue.repositoryId} AND issue_id = ${issue.id} AND attempt_key = ${attemptKey} LIMIT 1
+      WHERE host = ${issue.host} AND repository_id = ${issue.repositoryId} AND issue_id = ${issue.id} AND attempt_key = ${attemptKey} AND json_type(payload_json, '$.cancellation') IS NULL LIMIT 1
     `.pipe(
           Effect.map((rows) => rows.length > 0),
           Effect.mapError(mapError),
@@ -396,7 +415,7 @@ export const layer = Layer.effect(
       SELECT requests.request_id FROM orchestration_v2_projection_issue_work_requests requests
       LEFT JOIN orchestration_v2_projection_issue_work work
         ON work.host = requests.host AND work.repository_id = requests.repository_id AND work.issue_id = requests.issue_id
-      WHERE requests.root_thread_id = ${rootThreadId} AND (work.owner_thread_id IS NULL OR requests.attempt_key = work.owner_thread_id) LIMIT 1
+      WHERE requests.root_thread_id = ${rootThreadId} AND json_type(requests.payload_json, '$.cancellation') IS NULL AND (work.owner_thread_id IS NULL OR requests.attempt_key = work.owner_thread_id) LIMIT 1
     `.pipe(
           Effect.map((rows) => rows.length > 0),
           Effect.mapError(mapError),

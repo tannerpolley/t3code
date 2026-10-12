@@ -106,6 +106,7 @@ function statusCommentEffect(input: {
 
 const STATUS_EVENTS = new Set([
   "issue.work.requested",
+  "issue.work.cancelled",
   "thread.created",
   "thread.metadata-updated",
   "thread.archived",
@@ -149,6 +150,8 @@ export const enqueueIssueStatusEffects = (input: {
     const issues = new Map<string, ThreadLinkedIssue>();
     const add = (issue: ThreadLinkedIssue) =>
       issues.set(`${issue.host}:${issue.repositoryId}:${issue.id}`, issue);
+    for (const stored of relevant)
+      if (stored.event.type === "issue.work.cancelled") add(stored.event.payload.issue);
     for (const row of managedThreads) {
       const threadId = ThreadId.make(row.thread_id);
       const thread = yield* projections.getThread(threadId);
@@ -163,6 +166,7 @@ export const enqueueIssueStatusEffects = (input: {
       LEFT JOIN orchestration_v2_projection_issue_work work
         ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
       WHERE request.root_thread_id = ${threadId}
+        AND json_type(request.payload_json, '$.cancellation') IS NULL
         AND (work.owner_thread_id IS NULL OR request.attempt_key = work.owner_thread_id)
         AND request.rowid = (SELECT max(latest.rowid) FROM orchestration_v2_projection_issue_work_requests latest
           WHERE latest.host = request.host AND latest.repository_id = request.repository_id AND latest.issue_id = request.issue_id)
@@ -251,7 +255,9 @@ export const refreshIssueStatus = (input: {
             "runtimeRequests",
           ]);
     let status: IssueWorkStatus;
-    if (requestsOnly !== null) {
+    if (queued && work.requestCancelled) {
+      status = "cancelled";
+    } else if (requestsOnly !== null) {
       status = deriveIssueWorkStatus({
         shell,
         runtimeRequests: requestsOnly.runtimeRequests,

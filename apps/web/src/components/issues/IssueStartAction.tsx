@@ -3,17 +3,23 @@ import {
   type EnvironmentId,
   type IssueRef,
   type ProjectId,
+  type ThreadId,
   type ScopedThreadRef,
   type IssueWorkStartResult,
 } from "@t3tools/contracts";
 import { issueWorkPresentation } from "@t3tools/client-runtime/state/issue-work";
 import { useNavigate } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { BotIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
-import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadShell,
+  useThreadShellsForProjectRefs,
+} from "~/state/entities";
 import { issueEnvironment } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
@@ -69,6 +75,9 @@ function IssueStartControls({
     thread?.projectId ?? null,
   );
   const [selectedProjectId, setSelectedProjectId] = useState<ProjectId | null>(null);
+  const [selectedOrchestratorId, setSelectedOrchestratorId] = useState<ThreadId | "create" | null>(
+    null,
+  );
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState<"project" | "worktree">("worktree");
   const [expanded, setExpanded] = useState(false);
@@ -76,6 +85,25 @@ function IssueStartControls({
   const request = useRef<{ key: string; id: string } | null>(null);
   const project =
     matchingProjects.find((entry) => entry.id === selectedProjectId) ?? preferredProject;
+  const threadShells = useThreadShellsForProjectRefs(
+    project === null ? [] : [scopeProjectRef(environmentId, project.id)],
+  );
+  const leads = threadShells.filter(
+    (candidate) =>
+      candidate.environmentId === environmentId &&
+      candidate.projectId === project?.id &&
+      candidate.archivedAt === null &&
+      candidate.lineage.parentThreadId === null &&
+      candidate.lineage.rootThreadId === candidate.id &&
+      candidate.linkedIssue === undefined,
+  );
+  const createOrchestrator = status?.rootThreadId == null && selectedOrchestratorId === "create";
+  const selectedLead = createOrchestrator
+    ? undefined
+    : (leads.find((candidate) => candidate.id === selectedOrchestratorId) ??
+      leads.find((candidate) => candidate.id === thread?.lineage.rootThreadId));
+  const orchestratorThreadId = status?.rootThreadId ?? selectedLead?.id;
+  const hasOrchestrator = orchestratorThreadId !== undefined || createOrchestrator;
   const role = roles.find((entry) => entry.id === selectedRoleId) ?? roles[0];
   const startIssue = useAtomCommand(issueEnvironment.start, { reportFailure: false });
   const awaitingAcceptedStatus =
@@ -99,8 +127,15 @@ function IssueStartControls({
   };
 
   const start = async () => {
-    if (starting || project === null || role === undefined) return;
-    const input = { ...reference, projectId: project.id, modelRoleId: role.id, workspace };
+    if (starting || project === null || role === undefined || !hasOrchestrator) return;
+    const input = {
+      ...reference,
+      projectId: project.id,
+      modelRoleId: role.id,
+      workspace,
+      ...(orchestratorThreadId === undefined ? {} : { orchestratorThreadId }),
+      ...(createOrchestrator ? { createOrchestrator: true } : {}),
+    };
     const key = JSON.stringify(input);
     if (request.current?.key !== key) request.current = { key, id: randomUUID() };
     setStartError(null);
@@ -232,6 +267,37 @@ function IssueStartControls({
               Uses the registered repository orchestrator’s project.
             </p>
           ) : null}
+          {status?.rootThreadId == null ? (
+            <label className="flex flex-col gap-1 text-xs">
+              Repository orchestrator
+              <Select
+                value={createOrchestrator ? "create" : (selectedLead?.id ?? null)}
+                onValueChange={(value) =>
+                  setSelectedOrchestratorId(
+                    value === "create"
+                      ? "create"
+                      : (leads.find((lead) => lead.id === value)?.id ?? null),
+                  )
+                }
+              >
+                <SelectTrigger size="compact" aria-label="Repository orchestrator">
+                  <SelectValue placeholder="Choose or create a lead" />
+                </SelectTrigger>
+                <SelectContent>
+                  {leads.map((lead) => (
+                    <SelectItem key={lead.id} value={lead.id}>
+                      {lead.title}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="create">Create first orchestrator</SelectItem>
+                </SelectContent>
+              </Select>
+              {leads.length === 0 ? (
+                <span>Choose Create first orchestrator to start with a new lead.</span>
+              ) : null}
+              <span>Issue workers run beneath this lead, following the issue parent tree.</span>
+            </label>
+          ) : null}
           <Select
             value={workspace}
             onValueChange={(value) => {
@@ -267,7 +333,7 @@ function IssueStartControls({
               Cancel
             </Button>
             <Button
-              disabled={starting || project === null || role === undefined}
+              disabled={starting || project === null || role === undefined || !hasOrchestrator}
               size="xs"
               type="submit"
             >
