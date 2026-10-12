@@ -5752,6 +5752,40 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
+  // A missing target passing the pre-lock check could be created as a child before the locked read.
+  it.effect("rejects a missing restore target before taking any lock", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      yield* createOriginalLead;
+      yield* service.restoreRoot(registerInput(originalLeadId, "lead:register"));
+      const holdingLead = yield* Deferred.make<void>();
+      const restoreRejected = yield* Deferred.make<void>();
+      const holder = yield* locks
+        .withLock(
+          originalLeadId,
+          Deferred.succeed(holdingLead, undefined).pipe(
+            Effect.andThen(Deferred.await(restoreRejected)),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(holdingLead);
+      const restored = yield* service
+        .restoreRoot({
+          ...restoreInput,
+          expectedRootThreadId: originalLeadId,
+          expectedRevision: 1,
+          targetThreadId: ThreadId.make("not-yet-created-lead"),
+          clientRequestId: CommandId.make("lead:restore-missing"),
+        })
+        .pipe(Effect.result);
+      assert.equal(restored._tag, "Failure");
+      if (restored._tag === "Failure") assert.include(restored.failure.message, "top-level");
+      yield* Deferred.succeed(restoreRejected, undefined);
+      yield* Fiber.join(holder);
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
   it.effect("a fresh Start request adopts a lead corrected after a rejected adoption", () =>
     Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;

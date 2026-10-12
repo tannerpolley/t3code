@@ -45,7 +45,8 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
   /**
    * Restore locks both roots. Lineage never changes, so a non-top-level thread is refused before
    * locking: a child follow-up holds its parent's lock first, and taking a child before its root
-   * would deadlock against it.
+   * would deadlock against it. A missing thread is refused too, since one created as a child
+   * between this read and the locked one would skip the lineage check.
    */
   const restoreLockKeys = (command: Command<"repository.work.restore">) =>
     Effect.gen(function* () {
@@ -53,8 +54,9 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
       for (const threadId of keys) {
         const shell = yield* projectionStore.getThreadShell(threadId);
         if (
-          shell !== null &&
-          (shell.lineage.parentThreadId !== null || shell.lineage.rootThreadId !== shell.id)
+          shell === null ||
+          shell.lineage.parentThreadId !== null ||
+          shell.lineage.rootThreadId !== shell.id
         )
           return yield* Effect.fail(topLevelTargetError);
       }
