@@ -1242,6 +1242,13 @@ export const layer = Layer.effect(
               status,
               publishing:
                 root === null ? "absent" : yield* store.publishing(root.rootThreadId, issue),
+              pendingRequestId:
+                request !== null &&
+                request.cancellation === undefined &&
+                request.issueThreadId === null &&
+                request.rootThreadId === root?.rootThreadId
+                  ? request.requestId
+                  : null,
             };
           }
           return {

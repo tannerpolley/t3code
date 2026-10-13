@@ -8,6 +8,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
+  ProjectId,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -25,6 +27,7 @@ import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createIssueEnvironmentAtoms } from "./issues.ts";
 
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
@@ -74,6 +77,68 @@ describe("command permissions", () => {
             "EnvironmentAuthorizationError",
           );
         }
+      }),
+    ),
+  );
+
+  it.effect("sends issue recovery commands only to an environment that grants them", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.mount(sessions(other));
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        const calls: string[] = [];
+        const session = {
+          client: {
+            [WS_METHODS.issuesCancelRequest]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesCancelRequest)),
+            [WS_METHODS.issuesRestoreRoot]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesRestoreRoot)),
+          },
+        } as unknown as RpcSession;
+        const supervisor = {
+          target: { environmentId: env, label: "target" },
+          session: yield* SubscriptionRef.make(Option.some(session)),
+        } as unknown as EnvironmentSupervisor["Service"];
+        const issues = createIssueEnvironmentAtoms(
+          Atom.runtime(
+            Layer.succeed(EnvironmentRegistry, {
+              run: (_id: EnvironmentId, effect: Effect.Effect<unknown, never, never>) =>
+                Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+            } as unknown as EnvironmentRegistry["Service"]),
+          ),
+        );
+        const scope = {
+          host: "github.com",
+          repository: "owner/repo",
+          projectId: ProjectId.make("project"),
+          reason: "recover",
+          clientRequestId: CommandId.make("recovery"),
+        };
+        const cancel = {
+          ...scope,
+          expectedRootThreadId: ThreadId.make("root"),
+          requestId: CommandId.make("request"),
+        };
+        const restore = {
+          ...scope,
+          repositoryId: "1",
+          expectedRootThreadId: ThreadId.make("root"),
+          expectedRevision: 2,
+          targetThreadId: ThreadId.make("lead"),
+        };
+        for (const environmentId of [other, env]) {
+          const outcome = environmentId === env ? "Success" : "Failure";
+          const cancelled = yield* Effect.promise(() =>
+            issues.cancelRequest.run(registry, { environmentId, input: cancel }),
+          );
+          const restored = yield* Effect.promise(() =>
+            issues.restoreRoot.run(registry, { environmentId, input: restore }),
+          );
+          expect([cancelled._tag, restored._tag]).toEqual([outcome, outcome]);
+        }
+        expect(calls).toEqual([WS_METHODS.issuesCancelRequest, WS_METHODS.issuesRestoreRoot]);
       }),
     ),
   );

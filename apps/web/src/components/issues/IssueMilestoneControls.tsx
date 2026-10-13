@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
   type EnvironmentId,
@@ -20,6 +21,7 @@ import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { findIssueProject } from "./issueWorktree.logic";
+import { useRepositoryLeads } from "./IssueStartAction";
 
 /** Shown only by servers that support repository orchestration. */
 function useIssueMilestonesCapability(environmentId: EnvironmentId) {
@@ -63,7 +65,44 @@ function RepositoryControls({
   const [summary, setSummary] = useState("");
   const pause = useAtomCommand(issueEnvironment.setPaused, { reportFailure: false });
   const handoff = useAtomCommand(issueEnvironment.handoff, { reportFailure: false });
+  const restore = useAtomCommand(issueEnvironment.restoreRoot, { reportFailure: false });
+  const canRestore = useAtomValue(issueEnvironment.restoreRoot.permissionAtom(environmentId));
+  const [restoreExpanded, setRestoreExpanded] = useState(false);
+  const [restoreTargetId, setRestoreTargetId] = useState<ThreadId | null>(null);
+  const restoreCandidates = useRepositoryLeads(environmentId, config?.projectId ?? null).filter(
+    (lead) => lead.id !== data?.rootThreadId,
+  );
   if (config == null || data?.rootThreadId == null) return null;
+  const restoreTarget = restoreCandidates.find((lead) => lead.id === restoreTargetId);
+  const replaceRoot = async () => {
+    if (busy || restoreTarget === undefined) return;
+    setBusy(true);
+    const result = await restore({
+      environmentId,
+      input: {
+        ...reference,
+        repositoryId: config.repositoryId,
+        projectId: config.projectId,
+        expectedRootThreadId: data.rootThreadId,
+        expectedRevision: config.revision,
+        targetThreadId: restoreTarget.id,
+        reason: "Chose another thread as orchestrator from the Issues page",
+        clientRequestId: CommandId.make(randomUUID()),
+      },
+    });
+    setBusy(false);
+    if (result._tag === "Failure")
+      toastManager.add({
+        type: "error",
+        title: "Could not change the repository orchestrator",
+        description: formatEnvironmentQueryError(result.cause),
+      });
+    else {
+      setRestoreExpanded(false);
+      setRestoreTargetId(null);
+    }
+    appAtomRegistry.refresh(statusAtom);
+  };
   const transfer = async (action: "approve" | "cancel") => {
     if (busy) return;
     setBusy(true);
@@ -152,7 +191,64 @@ function RepositoryControls({
             Hand off to fresh thread
           </Button>
         ) : null}
+        {config.handoff === undefined && canRestore ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => setRestoreExpanded(!restoreExpanded)}
+          >
+            Use another thread as orchestrator
+          </Button>
+        ) : null}
       </div>
+      {restoreExpanded && config.handoff === undefined ? (
+        <div className="flex w-full max-w-md flex-col gap-2 p-2">
+          <span className="text-xs text-muted-foreground">
+            The current orchestrator must be stopped, with no running workers or unclaimed start
+            requests. Existing issue workers keep their threads.
+          </span>
+          <Select
+            value={restoreTarget?.id ?? null}
+            onValueChange={(value) =>
+              setRestoreTargetId(restoreCandidates.find((lead) => lead.id === value)?.id ?? null)
+            }
+          >
+            <SelectTrigger size="compact" aria-label="New repository orchestrator">
+              <SelectValue placeholder="Choose a lead thread" />
+            </SelectTrigger>
+            <SelectContent>
+              {restoreCandidates.map((lead) => (
+                <SelectItem key={lead.id} value={lead.id}>
+                  {lead.title}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {restoreCandidates.length === 0 ? (
+            <span className="text-xs text-muted-foreground">
+              No other top-level thread in this project can lead.
+            </span>
+          ) : null}
+          <div className="flex justify-end gap-1">
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => setRestoreExpanded(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="xs"
+              disabled={busy || restoreTarget === undefined}
+              onClick={() => void replaceRoot()}
+            >
+              Make orchestrator
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {config.handoff || handoffExpanded ? (
         <div className="flex w-full max-w-md flex-col gap-2 p-2">
           <span className="text-xs text-muted-foreground" role="status">

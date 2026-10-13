@@ -2584,18 +2584,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const subtreeActive =
         Option.isNone(issueWorkStore) ||
         !(yield* issueWorkStore.value.subtreeDrained(thread.id).pipe(mapDispatchError(command)));
-      if (
-        unfinished ||
-        unclaimed ||
-        activePlan ||
-        subtreeActive ||
-        thread.repositoryOrchestration.handoff !== undefined
-      )
+      const blockers = [
+        unfinished && "unfinished runs, subagents or final deliveries",
+        unclaimed &&
+          "unclaimed issue start requests (cancel them from the issue's Start agent controls)",
+        activePlan && "an unpaused milestone plan (pause the repository)",
+        subtreeActive && "active issue workers",
+        thread.repositoryOrchestration.handoff !== undefined && "a pending handoff",
+      ].filter((blocker) => blocker !== false);
+      if (blockers.length > 0)
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause:
-            "This repository root owns active work, a handoff, or pending final delivery. Pause new work, then finish/cancel the subtree or hand off ownership before archiving.",
+          cause: `This repository root still owns active work: ${blockers.join("; ")}. Resolve these or hand off ownership before archiving or replacing this root.`,
         });
     },
   );

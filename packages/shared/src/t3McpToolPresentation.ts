@@ -141,10 +141,15 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Request", "Requesting", "Requested", "an orchestrator handoff"],
     "issue-work",
   ),
-  propose_issue_change: tool(
-    ["Propose", "Proposing", "Proposed", "an issue change"],
+  cancel_issue_request: tool(
+    ["Cancel", "Canceling", "Cancelled", "an issue start request"],
     "issue-work",
   ),
+  restore_repository_root: tool(
+    ["Change", "Changing", "Changed", "the repository orchestrator"],
+    "issue-work",
+  ),
+  propose_issue_change: tool(["Propose", "Proposing", "Proposed", "an issue change"], "issue-work"),
   task_status: tool(["Get", "Getting", "Got", "delegated task status"], "task-status"),
   task_cancel: tool(
     ["Cancel", "Canceling", "Requested cancellation of", "delegated task"],

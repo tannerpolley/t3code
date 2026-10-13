@@ -159,6 +159,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryWorkControlInput,
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
+  readonly cancelIssueRequest: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").IssueWorkCancelInput,
+  ) => Effect.Effect<import("@t3tools/contracts").IssueWorkRequested, OrchestratorMcpFailure>;
+  readonly restoreRepositoryRoot: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").RepositoryWorkRestoreInput,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly capabilities: (
     scope: McpInvocationScope,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
@@ -1779,6 +1787,26 @@ const make = Effect.gen(function* () {
           return yield* failure("orchestration_error", "Issue work is unavailable.");
         return yield* issueWork.value
           .setPaused(input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      }),
+    cancelIssueRequest: (scope, input) =>
+      Effect.gen(function* () {
+        yield* assertCurrentRepositoryCaller(scope);
+        yield* loadCaller(scope);
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .cancelRequest(input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      }),
+    restoreRepositoryRoot: (scope, input) =>
+      Effect.gen(function* () {
+        yield* assertCurrentRepositoryCaller(scope);
+        yield* loadCaller(scope);
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .restoreRoot(input)
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       }),
     scheduleTask: (scope, input) =>

@@ -44,6 +44,20 @@ const handlers = {
       return yield* service.setRepositoryPaused(scope, input);
     }),
   ),
+  cancel_issue_request: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.cancelIssueRequest(scope, input);
+    }),
+  ),
+  restore_repository_root: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.restoreRepositoryRoot(scope, input);
+    }),
+  ),
   orchestrator_capabilities: McpToolAccess.reads(() =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

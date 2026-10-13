@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
   type EnvironmentId,
@@ -24,6 +25,7 @@ import { issueEnvironment } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { randomUUID } from "~/lib/utils";
 import { ThreadWorktreeIndicator } from "../ThreadStatusIndicators";
 import { Button } from "../ui/button";
@@ -36,6 +38,22 @@ interface IssueStartActionProps {
   readonly reference: IssueRef;
   readonly threadRef: ScopedThreadRef | null;
   readonly closed: boolean;
+}
+
+/** Active top-level threads in the project that can lead its repository's issue work. */
+export function useRepositoryLeads(environmentId: EnvironmentId, projectId: ProjectId | null) {
+  const threadShells = useThreadShellsForProjectRefs(
+    projectId === null ? [] : [scopeProjectRef(environmentId, projectId)],
+  );
+  return threadShells.filter(
+    (candidate) =>
+      candidate.environmentId === environmentId &&
+      candidate.projectId === projectId &&
+      candidate.archivedAt === null &&
+      candidate.lineage.parentThreadId === null &&
+      candidate.lineage.rootThreadId === candidate.id &&
+      candidate.linkedIssue === undefined,
+  );
 }
 
 /** Older servers retain issue reads and draft preparation. */
@@ -85,18 +103,7 @@ function IssueStartControls({
   const request = useRef<{ key: string; id: string } | null>(null);
   const project =
     matchingProjects.find((entry) => entry.id === selectedProjectId) ?? preferredProject;
-  const threadShells = useThreadShellsForProjectRefs(
-    project === null ? [] : [scopeProjectRef(environmentId, project.id)],
-  );
-  const leads = threadShells.filter(
-    (candidate) =>
-      candidate.environmentId === environmentId &&
-      candidate.projectId === project?.id &&
-      candidate.archivedAt === null &&
-      candidate.lineage.parentThreadId === null &&
-      candidate.lineage.rootThreadId === candidate.id &&
-      candidate.linkedIssue === undefined,
-  );
+  const leads = useRepositoryLeads(environmentId, project?.id ?? null);
   const createOrchestrator = status?.rootThreadId == null && selectedOrchestratorId === "create";
   const selectedLead = createOrchestrator
     ? undefined
@@ -106,6 +113,13 @@ function IssueStartControls({
   const hasOrchestrator = orchestratorThreadId !== undefined || createOrchestrator;
   const role = roles.find((entry) => entry.id === selectedRoleId) ?? roles[0];
   const startIssue = useAtomCommand(issueEnvironment.start, { reportFailure: false });
+  const cancelStartRequest = useAtomCommand(issueEnvironment.cancelRequest, {
+    reportFailure: false,
+  });
+  const canCancelStartRequest = useAtomValue(
+    issueEnvironment.cancelRequest.permissionAtom(environmentId),
+  );
+  const [cancelling, setCancelling] = useState(false);
   const awaitingAcceptedStatus =
     accepted !== null && statusQuery.dataUpdatedAt <= accepted.previousStatusAt;
   const work = issueWorkPresentation(
@@ -124,6 +138,37 @@ function IssueStartControls({
       to: "/$environmentId/$threadId",
       params: { environmentId, threadId: openThreadId },
     });
+  };
+
+  const pendingRequestId = awaitingAcceptedStatus ? null : (status?.pendingRequestId ?? null);
+  const cancelPendingStart = async () => {
+    if (cancelling || pendingRequestId === null || !status?.rootThreadId || !status.projectId)
+      return;
+    setCancelling(true);
+    const result = await cancelStartRequest({
+      environmentId,
+      input: {
+        host: reference.host,
+        repository: reference.repository,
+        projectId: status.projectId,
+        expectedRootThreadId: status.rootThreadId,
+        requestId: pendingRequestId,
+        reason: "Cancelled from the issue's Start agent controls",
+        clientRequestId: CommandId.make(randomUUID()),
+      },
+    });
+    setCancelling(false);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: "Could not cancel the start request",
+        description: formatEnvironmentQueryError(result.cause),
+      });
+      return;
+    }
+    // A retried Start with the cancelled request id would only report the cancellation.
+    request.current = null;
+    appAtomRegistry.refresh(statusAtom);
   };
 
   const start = async () => {
@@ -177,6 +222,16 @@ function IssueStartControls({
               </span>
             </Button>
           </div>
+        ) : null}
+        {pendingRequestId !== null && canCancelStartRequest ? (
+          <Button
+            disabled={cancelling}
+            onClick={() => void cancelPendingStart()}
+            size="xs"
+            variant="ghost"
+          >
+            {cancelling ? "Cancelling…" : "Cancel start request"}
+          </Button>
         ) : null}
         <Button
           disabled={closed || starting}
