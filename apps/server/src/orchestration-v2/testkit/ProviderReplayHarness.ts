@@ -263,6 +263,7 @@ export function layerWithRegistry<Error>(
     McpProviderSessions.McpProviderSessions
   >,
   options: {
+    readonly checkpointService?: CheckpointService.CheckpointServiceV2["Service"];
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
@@ -340,9 +341,12 @@ export function layerWithRegistry<Error>(
     Layer.provide(layerVcsDriverRegistry),
     Layer.provide(NodeServices.layer),
   );
-  const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
-    Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer)),
-  );
+  const layerCheckpointServiceProvided =
+    options.checkpointService === undefined
+      ? CheckpointService.layer.pipe(
+          Layer.provide(Layer.mergeAll(layerCheckpointStore, IdAllocator.layer)),
+        )
+      : Layer.succeed(CheckpointService.CheckpointServiceV2, options.checkpointService);
   const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
     Layer.provide(IdAllocator.layer),
   );
@@ -429,7 +433,14 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-    Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, layerStores)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerCheckpointCaptureServiceProvided,
+        layerStores,
+        layerEventSinkProvided,
+        IdAllocator.layer,
+      ),
+    ),
   );
   const layerThreadTitleRegenerationTest = Layer.succeed(
     ThreadTitleRegenerationService.ThreadTitleRegenerationService,

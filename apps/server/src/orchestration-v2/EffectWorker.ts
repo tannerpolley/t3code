@@ -460,11 +460,14 @@ export const layerExecutor: Layer.Layer<
               );
           case "checkpoint.capture":
             return runFinalization
-              .finalize({
-                threadId: effect.threadId,
-                runId: effect.request.runId,
-                scopeId: effect.request.scopeId,
-              })
+              .finalize(
+                {
+                  threadId: effect.threadId,
+                  runId: effect.request.runId,
+                  scopeId: effect.request.scopeId,
+                },
+                { willRetry },
+              )
               .pipe(
                 Effect.mapError(
                   (cause) =>
