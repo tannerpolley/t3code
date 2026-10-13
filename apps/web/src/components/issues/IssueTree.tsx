@@ -4,6 +4,8 @@ import { type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { Badge } from "~/components/ui/badge";
+import { issueProjectChips } from "./issueProjects.logic";
 import type { IssueGroup } from "./issueTree.logic";
 
 /** Indentation for repository, milestone and issue rows; the tree has no boxes. */
@@ -125,6 +127,7 @@ export function IssueTree({
               <ul id={panelId} className="pb-1">
                 {group.issues.map((issue) => {
                   const selected = selectedIssueNumber === issue.number;
+                  const projectChips = issueProjectChips(issue.projects);
                   return (
                     <li key={issue.number}>
                       <button
@@ -143,6 +146,15 @@ export function IssueTree({
                             #{issue.number}
                           </span>
                           {issue.title || "Untitled issue"}
+                          {projectChips.length > 0 ? (
+                            <span className="mt-1 flex flex-wrap gap-1">
+                              {projectChips.map((chip) => (
+                                <Badge key={chip.key} variant="secondary" size="sm">
+                                  {chip.label}
+                                </Badge>
+                              ))}
+                            </span>
+                          ) : null}
                         </span>
                         {issue.labels.length > 0 ? (
                           <span className="hidden max-w-32 shrink-0 truncate text-2xs text-muted-foreground sm:block">

@@ -124,6 +124,26 @@ describe("GitHub issue contract boundaries", () => {
     expect(Schema.decodeUnknownSync(codec)(encoded)).toStrictEqual(listResult);
   });
 
+  it("validates Project metadata while accepting summaries from older servers", () => {
+    expect(decodeListResult(listResult).issues[0]?.projects).toBeUndefined();
+    const projects = [
+      { id: "project", title: "Planning", status: "Todo", priority: { name: "High", rank: 0 } },
+    ];
+    const result = { ...listResult, issues: [{ ...issue, projects }] };
+    const codec = Schema.toCodecJson(IssueListResult);
+    expect(Schema.decodeUnknownSync(codec)(Schema.encodeUnknownSync(codec)(result))).toEqual(
+      result,
+    );
+    expect(() =>
+      decodeListResult({
+        ...listResult,
+        issues: [
+          { ...issue, projects: [{ ...projects[0], priority: { name: "High", rank: -1 } }] },
+        ],
+      }),
+    ).toThrow();
+  });
+
   it("registers issue RPC payload, result, and error codecs", () => {
     const listRpc = WsRpcGroup.requests.get(WS_METHODS.issuesList);
     const detailRpc = WsRpcGroup.requests.get(WS_METHODS.issuesDetail);

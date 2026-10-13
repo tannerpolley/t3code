@@ -115,6 +115,35 @@ describe("issue workspace filtering", () => {
     expect(issueStateFilter({ ...preferences, closed: false })).toBeNull();
   });
 
+  it("keeps Priority first when the panel reapplies any saved sort choice", () => {
+    const withPriority = (number: number, title: string, rank: number | null) =>
+      issue(number, title, {
+        projects: [{ id: "one", title: "Planning", status: null, priority: { name: title, rank } }],
+      });
+    const issues = [
+      withPriority(1, "Zulu", 0),
+      withPriority(2, "Alpha", 0),
+      withPriority(3, "Beta", 1),
+      withPriority(4, "Unknown", null),
+    ];
+    const filters = {
+      query: "",
+      state: "all" as const,
+      milestone: "all" as const,
+      assignee: "all" as const,
+    };
+    for (const [sort, expected] of [
+      ["updated", [2, 1, 3, 4]],
+      ["oldest", [1, 2, 3, 4]],
+      ["number", [2, 1, 3, 4]],
+      ["title", [2, 1, 3, 4]],
+    ] as const) {
+      expect(filterAndSortIssues(issues, { ...filters, sort }).map((row) => row.number)).toEqual(
+        expected,
+      );
+    }
+  });
+
   it("matches the repository name so one search finds a repository's issues", () => {
     const filters = {
       query: "acme/app",

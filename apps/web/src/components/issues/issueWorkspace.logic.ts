@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { issuePriorityRank } from "./issueProjects.logic";
 
 /**
  * The issue list's Filter menu, saved per browser. Each flag is a positive "show" choice, so an
@@ -90,6 +91,25 @@ function searchableText(issue: IssueSummary, repository: string): string {
     .toLocaleLowerCase();
 }
 
+/** Project Priority comes first; the chosen sort breaks ties and orders missing priorities. */
+export function sortIssues(issues: readonly IssueSummary[], sort: IssueSort): IssueSummary[] {
+  const priorityRanks = new Map(issues.map((issue) => [issue.number, issuePriorityRank(issue)]));
+  return issues.toSorted((left, right) => {
+    const priorityOrder = priorityRanks.get(left.number)! - priorityRanks.get(right.number)!;
+    if (priorityOrder) return priorityOrder;
+    switch (sort) {
+      case "oldest":
+        return left.updatedAt.localeCompare(right.updatedAt) || left.number - right.number;
+      case "number":
+        return right.number - left.number;
+      case "title":
+        return left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+      case "updated":
+        return right.updatedAt.localeCompare(left.updatedAt) || right.number - left.number;
+    }
+  });
+}
+
 /** The search also matches the repository name, so one box finds repositories and issues. */
 export function filterAndSortIssues(
   issues: readonly IssueSummary[],
@@ -97,31 +117,19 @@ export function filterAndSortIssues(
   repository = "",
 ): IssueSummary[] {
   const terms = filters.query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  return issues
-    .filter((issue) => {
-      if (filters.state !== "all" && issue.state !== filters.state) return false;
-      if (terms.length > 0) {
-        const text = searchableText(issue, repository);
-        if (!terms.every((term) => text.includes(term))) return false;
-      }
-      if (filters.milestone === "with" && issue.milestone === null) return false;
-      if (filters.milestone === "without" && issue.milestone !== null) return false;
-      if (filters.assignee === "assigned" && issue.assignees.length === 0) return false;
-      if (filters.assignee === "unassigned" && issue.assignees.length > 0) return false;
-      return true;
-    })
-    .toSorted((left, right) => {
-      switch (filters.sort) {
-        case "oldest":
-          return left.updatedAt.localeCompare(right.updatedAt) || left.number - right.number;
-        case "number":
-          return right.number - left.number;
-        case "title":
-          return left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
-        case "updated":
-          return right.updatedAt.localeCompare(left.updatedAt) || right.number - left.number;
-      }
-    });
+  const filtered = issues.filter((issue) => {
+    if (filters.state !== "all" && issue.state !== filters.state) return false;
+    if (terms.length > 0) {
+      const text = searchableText(issue, repository);
+      if (!terms.every((term) => text.includes(term))) return false;
+    }
+    if (filters.milestone === "with" && issue.milestone === null) return false;
+    if (filters.milestone === "without" && issue.milestone !== null) return false;
+    if (filters.assignee === "assigned" && issue.assignees.length === 0) return false;
+    if (filters.assignee === "unassigned" && issue.assignees.length > 0) return false;
+    return true;
+  });
+  return sortIssues(filtered, filters.sort);
 }
 
 export type IssueRepositoryTarget = IssueRepositorySummary & {

@@ -57,6 +57,23 @@ export const IssueSummary = Schema.Struct({
   author: Schema.NullOr(IssueActor),
   assignees: Schema.Array(IssueActor),
   labels: Schema.Array(IssueLabel),
+  /** Optional for compatibility with servers that predate GitHub Project fields. */
+  projects: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: TrimmedNonEmptyString,
+        title: TrimmedNonEmptyString,
+        status: Schema.NullOr(TrimmedNonEmptyString),
+        priority: Schema.NullOr(
+          Schema.Struct({
+            name: TrimmedNonEmptyString,
+            /** Index in the Project's Priority options; unknown options have no rank. */
+            rank: Schema.NullOr(NonNegativeInt),
+          }),
+        ),
+      }),
+    ),
+  ),
   milestone: Schema.NullOr(IssueMilestone),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

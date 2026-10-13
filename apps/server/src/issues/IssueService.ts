@@ -31,6 +31,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
+import { readIssueProjects } from "./IssueProjects.ts";
 
 const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 // A detail read carries up to DETAIL_COMMENT_LIMIT comment bodies of up to 64 KiB each.
@@ -112,7 +113,9 @@ const ISSUE_LINK_FIELDS = `closedByPullRequestsReferences(first: 25, includeClos
  * whose cross-references GitHub partly refuses (an organization's SSO hides one), which fails
  * the whole GraphQL answer.
  */
-const issueDetailQuery = (links: boolean) => `query($owner: String!, $name: String!, $number: Int!) {
+const issueDetailQuery = (
+  links: boolean,
+) => `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issueOrPullRequest(number: $number) {
       __typename
@@ -1287,6 +1290,10 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               milestonePage === null
                 ? { items: [], nextPage: null }
                 : yield* listMilestonePage(scope, state, milestonePage);
+            const projects = yield* readIssueProjects(
+              scope,
+              issueResult.items.map((issue) => issue.number),
+            ).pipe(Effect.provideService(GitHubApi.GitHubApi, api));
             const nextCursor =
               issueResult.nextPage === null && milestoneResult.nextPage === null
                 ? null
@@ -1303,7 +1310,10 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               repository: { host: scope.host, repository: scope.repository },
               viewer: { accountId: identity.accountId, login: identity.viewer },
               fetchedAt: DateTime.formatIso(yield* DateTime.now),
-              issues: issueResult.items,
+              issues: issueResult.items.map((issue) => ({
+                ...issue,
+                projects: projects.get(issue.number) ?? [],
+              })),
               milestones: milestoneResult.items,
               nextCursor,
               issuesComplete: issueResult.nextPage === null,

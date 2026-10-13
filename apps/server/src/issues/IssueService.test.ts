@@ -18,6 +18,17 @@ const HOST = "github.enterprise.test";
 const REPOSITORY = "acme/web";
 const ACCOUNT_ID = "account-1";
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeProjectRequest = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      query: Schema.String,
+      variables: Schema.Record(
+        Schema.String,
+        Schema.Union([Schema.String, Schema.Number, Schema.Null]),
+      ),
+    }),
+  ),
+);
 interface MockResponse {
   readonly body: string;
   readonly headers?: Readonly<Record<string, string>>;
@@ -451,10 +462,12 @@ it.effect("filters mixed and PR-only pages without re-requesting a completed str
           link: `<https://${HOST}/repositories/123/issues?page=2>; rel="next"`,
         }),
         httpResponse([]),
+        httpResponse({ data: {} }),
         httpResponse([rawPullRequest(100)], {
           link: `<https://${HOST}/repositories/123/issues?page=3>; rel="next"`,
         }),
         httpResponse([rawIssue(8)]),
+        httpResponse({ data: {} }),
       ],
     });
     const issues = yield* service(harness);
@@ -473,10 +486,10 @@ it.effect("filters mixed and PR-only pages without re-requesting a completed str
     assert.isFalse(second.issuesComplete);
     assert.isTrue(second.milestonesComplete);
     assert.isNotNull(second.nextCursor);
-    assert.equal(harness.calls.length, 3);
-    assert.include(harness.calls[2]!.url, "repos/acme/web/issues");
-    assert.include(harness.calls[2]!.url, "page=2");
-    assert.notInclude(harness.calls[2]!.url, "milestones");
+    assert.equal(harness.calls.length, 4);
+    assert.include(harness.calls[3]!.url, "repos/acme/web/issues");
+    assert.include(harness.calls[3]!.url, "page=2");
+    assert.notInclude(harness.calls[3]!.url, "milestones");
 
     const third = yield* issues.list({ ...listInput, cursor: second.nextCursor! });
     assert.deepEqual(
@@ -486,9 +499,9 @@ it.effect("filters mixed and PR-only pages without re-requesting a completed str
     assert.isTrue(third.issuesComplete);
     assert.isTrue(third.milestonesComplete);
     assert.isNull(third.nextCursor);
-    assert.equal(harness.calls.length, 4);
-    assert.include(harness.calls[3]!.url, "page=3");
-    assert.notInclude(harness.calls[3]!.url, "milestones");
+    assert.equal(harness.calls.length, 6);
+    assert.include(harness.calls[4]!.url, "page=3");
+    assert.notInclude(harness.calls[4]!.url, "milestones");
 
     const otherAccount = makeHarness({ responses: [], accountId: "account-2" });
     const otherAccountIssues = yield* service(otherAccount);
@@ -508,6 +521,7 @@ it.effect("continues milestones after issues finish and does not request issues 
         httpResponse([rawMilestone(1)], {
           link: `<https://${HOST}/repositories/123/milestones?page=2>; rel="next"`,
         }),
+        httpResponse({ data: {} }),
         httpResponse([]),
       ],
     });
@@ -523,10 +537,10 @@ it.effect("continues milestones after issues finish and does not request issues 
     assert.deepEqual(second.milestones, []);
     assert.isTrue(second.issuesComplete);
     assert.isTrue(second.milestonesComplete);
-    assert.equal(harness.calls.length, 3);
-    assert.notInclude(harness.calls[2]!.url, "/issues?");
-    assert.include(harness.calls[2]!.url, "/milestones?");
-    assert.include(harness.calls[2]!.url, "page=2");
+    assert.equal(harness.calls.length, 4);
+    assert.notInclude(harness.calls[3]!.url, "/issues?");
+    assert.include(harness.calls[3]!.url, "/milestones?");
+    assert.include(harness.calls[3]!.url, "page=2");
   }),
 );
 
@@ -552,6 +566,7 @@ it.effect("reads closed issues only when asked and keeps cursors bound to their 
           link: `<https://${HOST}/repositories/123/issues?page=2>; rel="next"`,
         }),
         httpResponse([]),
+        httpResponse({ data: {} }),
       ],
     });
     const issues = yield* service(harness);
@@ -571,7 +586,137 @@ it.effect("reads closed issues only when asked and keeps cursors bound to their 
       .list({ ...listInput, state: "open", cursor: all.nextCursor! })
       .pipe(Effect.flip);
     assert.equal(error.code, "invalid-cursor");
-    assert.equal(harness.calls.length, 2);
+    assert.equal(harness.calls.length, 3);
+  }),
+);
+
+function projectConnection(nodes: unknown[], endCursor: string | null = null) {
+  return { nodes, pageInfo: { hasNextPage: endCursor !== null, endCursor } };
+}
+
+function projectField(field: string, name: string, optionId = "first") {
+  return {
+    __typename: "ProjectV2ItemFieldSingleSelectValue",
+    name,
+    optionId,
+    field: { name: field, options: [{ id: "first" }, { id: "second" }] },
+  };
+}
+
+function projectItem(id: string, title: string, values: unknown[], cursor: string | null = null) {
+  return {
+    id: `item:${id}`,
+    project: { id, title },
+    fieldValues: projectConnection(values, cursor),
+  };
+}
+
+it.effect("batches Project fields for the list and normalizes only Status and Priority", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(7), rawIssue(8)]),
+        httpResponse([]),
+        httpResponse({
+          data: {
+            p0: {
+              issue: {
+                projectItems: projectConnection([
+                  null,
+                  { ...projectItem("hidden", "Hidden", []), project: null },
+                  projectItem("one", "Planning", [
+                    { __typename: "ProjectV2ItemFieldTextValue" },
+                    projectField("sTaTuS", "In Progress"),
+                    projectField("PRIORITY", "Urgent", "second"),
+                    projectField("Severity", "Critical"),
+                  ]),
+                  projectItem("two", "Delivery", [projectField("Priority", "High")]),
+                ]),
+              },
+            },
+            p1: { issue: { projectItems: projectConnection([]) } },
+          },
+        }),
+      ],
+    });
+    const result = yield* (yield* service(harness)).list(listInput);
+    assert.deepEqual(result.issues[0]?.projects, [
+      {
+        id: "one",
+        title: "Planning",
+        status: "In Progress",
+        priority: { name: "Urgent", rank: 1 },
+      },
+      { id: "two", title: "Delivery", status: null, priority: { name: "High", rank: 0 } },
+    ]);
+    assert.deepEqual(result.issues[1]?.projects, []);
+    assert.equal(harness.calls.length, 3);
+    const request = yield* decodeProjectRequest(harness.calls[2]!.body!);
+    assert.deepEqual([request.variables.number0, request.variables.number1], [7, 8]);
+    assert.include(request.query, "ProjectV2ItemFieldSingleSelectValue");
+    assert.include(request.query, "options { id }");
+  }),
+);
+
+it.effect("paginates Project items and field values in batched follow-up reads", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(7)]),
+        httpResponse([]),
+        httpResponse({
+          data: {
+            p0: {
+              issue: {
+                projectItems: projectConnection(
+                  [projectItem("one", "Planning", [projectField("Status", "Todo")], "fields-1")],
+                  "projects-1",
+                ),
+              },
+            },
+          },
+        }),
+        httpResponse({
+          data: {
+            p0: {
+              issue: { projectItems: projectConnection([projectItem("two", "Delivery", [])]) },
+            },
+            p1: projectItem("one", "Planning", [projectField("Priority", "Custom", "unknown")]),
+          },
+        }),
+      ],
+    });
+    const result = yield* (yield* service(harness)).list(listInput);
+    assert.deepEqual(result.issues[0]?.projects, [
+      { id: "one", title: "Planning", status: "Todo", priority: { name: "Custom", rank: null } },
+      { id: "two", title: "Delivery", status: null, priority: null },
+    ]);
+    assert.equal(harness.calls.length, 4);
+    const request = yield* decodeProjectRequest(harness.calls[3]!.body!);
+    assert.equal(request.variables.cursor0, "projects-1");
+    assert.equal(request.variables.cursor1, "fields-1");
+    assert.equal(request.variables.id1, "item:one");
+    assert.include(request.query, "... on ProjectV2Item");
+  }),
+);
+
+it.effect("keeps the issue list usable without Project scope or access", () =>
+  Effect.gen(function* () {
+    for (const response of [
+      httpResponse({
+        errors: [{ type: "INSUFFICIENT_SCOPES", message: "Requires read:project scope" }],
+      }),
+      httpResponse({ message: "Forbidden" }, {}, 403),
+      httpResponse({ data: { p0: null } }),
+    ]) {
+      const harness = makeHarness({
+        responses: [httpResponse([rawIssue(7)]), httpResponse([]), response],
+      });
+      const result = yield* (yield* service(harness)).list(listInput);
+      assert.equal(result.issues[0]?.number, 7);
+      assert.deepEqual(result.issues[0]?.projects, []);
+      assert.isTrue(result.issuesComplete);
+    }
   }),
 );
 
@@ -663,9 +808,7 @@ it.effect("maps credential failures without exposing credential details", () =>
 it.effect("shares a 403 Retry-After pause with the rate-limit service", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
-      responses: [
-        httpResponse({ message: "secondary rate limit" }, { "Retry-After": "10" }, 403),
-      ],
+      responses: [httpResponse({ message: "secondary rate limit" }, { "Retry-After": "10" }, 403)],
     });
     const issues = yield* service(harness);
     const error = yield* issues.list(listInput).pipe(Effect.flip);
@@ -878,9 +1021,7 @@ it.effect("maps a missing issue to inaccessible and a GraphQL rate limit to rate
     assert.equal(missingError.code, "inaccessible");
 
     const limited = makeHarness({
-      responses: [
-        httpResponse({ errors: [{ type: "RATE_LIMITED", message: "limit" }] }),
-      ],
+      responses: [httpResponse({ errors: [{ type: "RATE_LIMITED", message: "limit" }] })],
     });
     const limitedError = yield* (yield* service(limited))
       .detail({ ...listInput, number: 7 })
