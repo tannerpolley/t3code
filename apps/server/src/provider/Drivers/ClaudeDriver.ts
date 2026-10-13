@@ -267,6 +267,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         Effect.provideService(Path.Path, path),
       );
 
+      const invalidateCaches = Cache.invalidateAll(capabilitiesProbeCache);
       const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({
         resolveMaintenance,
@@ -279,9 +280,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             Effect.map(stampIdentity),
           ),
         checkProvider,
-        checkProviderFresh: Cache.invalidateAll(capabilitiesProbeCache).pipe(
-          Effect.andThen(checkProvider),
-        ),
+        invalidateCaches,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>
@@ -347,7 +346,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.tap((outcome) =>
             Effect.gen(function* () {
               const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
-              yield* Cache.invalidateAll(capabilitiesProbeCache);
               const refreshed = yield* snapshot.refresh;
               const after = refreshed.usageLimits?.checkedAt;
               if (
@@ -378,7 +376,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         accentColor,
         enabled,
         snapshot,
-        invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
+        invalidateCaches,
         snapshotForCwd: (cwd: string) =>
           snapshot.getSnapshot.pipe(
             Effect.flatMap((machineSnapshot) =>

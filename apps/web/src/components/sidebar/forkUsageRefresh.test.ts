@@ -5,7 +5,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { needsSidebarUsageRefresh, refreshSidebarUsage } from "./forkUsageRefresh";
+import { sidebarUsageProvidersToRefresh, refreshSidebarUsage } from "./forkUsageRefresh";
 
 it("coalesces focus and visibility, throttles focus, and lets a manual refresh bypass the throttle", async () => {
   const id = EnvironmentId.make("sidebar-refresh-test");
@@ -45,9 +45,21 @@ it("skips a recent live reading, but catches up an old cached reading or passed 
     checkedAt: new Date(now).toISOString(),
     usageLimits: { checkedAt: new Date(now).toISOString(), windows: [] },
   };
-  expect(needsSidebarUsageRefresh([provider], now)).toBe(false);
+  const oldCodex = {
+    ...provider,
+    instanceId: ProviderInstanceId.make("codex"),
+    driver: ProviderDriverKind.make("codex"),
+    usageLimits: { checkedAt: new Date(now - 30_000).toISOString(), windows: [] },
+  };
+  expect(sidebarUsageProvidersToRefresh([provider], now)).toEqual([]);
+  expect(sidebarUsageProvidersToRefresh([provider, oldCodex], now)).toEqual([oldCodex]);
+  expect(sidebarUsageProvidersToRefresh([provider, oldCodex], now, false)).toEqual([
+    provider,
+    oldCodex,
+  ]);
+  expect(sidebarUsageProvidersToRefresh([{ ...oldCodex, enabled: false }], now)).toEqual([]);
   expect(
-    needsSidebarUsageRefresh(
+    sidebarUsageProvidersToRefresh(
       [
         {
           ...provider,
@@ -59,9 +71,9 @@ it("skips a recent live reading, but catches up an old cached reading or passed 
       ],
       now,
     ),
-  ).toBe(true);
+  ).toHaveLength(1);
   expect(
-    needsSidebarUsageRefresh(
+    sidebarUsageProvidersToRefresh(
       [
         {
           ...provider,
@@ -81,5 +93,5 @@ it("skips a recent live reading, but catches up an old cached reading or passed 
       ],
       now,
     ),
-  ).toBe(true);
+  ).toHaveLength(1);
 });

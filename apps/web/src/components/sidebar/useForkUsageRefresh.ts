@@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react"
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { needsSidebarUsageRefresh, refreshSidebarUsage } from "./forkUsageRefresh";
+import { sidebarUsageProvidersToRefresh, refreshSidebarUsage } from "./forkUsageRefresh";
 
 /** Event-driven catch-up for the sidebar, including reconnects; no additional timer. */
 export function useForkUsageRefresh() {
@@ -27,28 +27,28 @@ export function useForkUsageRefresh() {
       try {
         const results = await Promise.all(
           [...presentations].map(([environmentId, presentation]) => {
-            if (
-              presentation.connection.phase !== "connected" ||
-              !presentation.serverConfig?.providers.some(
-                (provider) =>
-                  provider.enabled &&
-                  (provider.driver === "claudeAgent" || provider.driver === "codex"),
-              )
-            )
-              return;
-            if (
-              automatic &&
-              !needsSidebarUsageRefresh(presentation.serverConfig.providers, Date.now())
-            )
-              return;
+            if (presentation.connection.phase !== "connected" || !presentation.serverConfig) return;
+            const providers = sidebarUsageProvidersToRefresh(
+              presentation.serverConfig.providers,
+              Date.now(),
+              automatic,
+            );
+            if (providers.length === 0) return;
             return refreshSidebarUsage(
               environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
+              () =>
+                Promise.all(
+                  automatic
+                    ? providers.map(({ instanceId }) =>
+                        refreshProviders({ environmentId, input: { instanceId } }),
+                      )
+                    : [refreshProviders({ environmentId, input: {} })],
+                ),
               automatic,
             );
           }),
         );
-        setFailed(results.some((result) => result?._tag === "Failure"));
+        setFailed(results.flat().some((result) => result?._tag === "Failure"));
       } catch {
         setFailed(true);
       } finally {

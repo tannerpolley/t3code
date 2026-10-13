@@ -1707,12 +1707,11 @@ it.layer(
                 }),
               ),
             getSnapshot: Effect.succeed(provider),
-            refresh: Effect.succeed(provider),
+            refresh: Ref.update(cacheInvalidations, (count) => count + 1).pipe(Effect.as(provider)),
             streamChanges: Stream.empty,
             applyUsageLimits: () => Effect.void,
           },
           snapshotForCwd,
-          invalidateCaches: Ref.update(cacheInvalidations, (count) => count + 1),
           orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
           textGeneration: {} as ProviderInstance["textGeneration"],
         });

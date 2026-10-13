@@ -18,13 +18,15 @@ export function refreshSidebarUsage<A>(
 }
 
 /** A recent live reading already caught us up; cached data keeps its original timestamp. */
-export function needsSidebarUsageRefresh(
+export function sidebarUsageProvidersToRefresh(
   providers: readonly ServerProvider[],
   now: number,
-): boolean {
-  return providers.some((provider) => {
+  automatic = true,
+): readonly ServerProvider[] {
+  return providers.filter((provider) => {
     if (!provider.enabled || (provider.driver !== "claudeAgent" && provider.driver !== "codex"))
       return false;
+    if (!automatic) return true;
     const limits = provider.usageLimits;
     return (
       Date.parse(limits?.checkedAt ?? provider.checkedAt) <= now - 30_000 ||

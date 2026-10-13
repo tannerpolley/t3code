@@ -44,7 +44,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
-  readonly checkProviderFresh?: Effect.Effect<ServerProvider, ServerSettingsError>;
+  readonly invalidateCaches?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
     readonly snapshot: ServerProvider;
@@ -151,9 +151,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
-    const probedSnapshot = yield* options?.freshProbe && input.checkProviderFresh
-      ? input.checkProviderFresh
-      : input.checkProvider;
+    if (options?.freshProbe) yield* input.invalidateCaches ?? Effect.void;
+    const probedSnapshot = yield* input.checkProvider;
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {

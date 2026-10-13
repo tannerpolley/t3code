@@ -108,10 +108,10 @@ on replaces the Usage button's icon with a compact value per provider for Claude
 sidebar** (`1d 40%`) is the share of today's budget left, and **Weekly usage in the sidebar**
 (`7d 75%`) is the weekly quota left. The daily budget paces the weekly limit at 20% per
 Monday–Friday, carrying unused room forward; it turns red when you are over pace and reads `1d off`
-on weekends. Click a readout to see its last reading time and Claude's model-specific weekly
-limits, refresh usage, or open **Usage → Limits**. Returning to the app checks older readings,
-at most once every 30 seconds. A passed reset is shown as stale until usage is read again;
-manual refresh always requests a new reading.
+on weekends. Click a readout to see its last reading time, refresh usage, or open **Usage → Limits**.
+With the weekly readout on, it also shows Claude's model-specific weekly limits. Returning to the
+app checks older readings. A passed reset is shown as stale until usage is read again; manual
+refresh always requests a new reading.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.

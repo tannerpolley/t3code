@@ -167,10 +167,15 @@ export function modelRoleStatuses(
         options: target.options,
       });
       const provider = providerById.get(target.providerInstanceId);
-      const reportedWindow =
-        provider === undefined ? undefined : weeklyWindowForModel(provider, target.model);
-      const window =
-        reportedWindow && !isUsageWindowStale(reportedWindow, now) ? reportedWindow : undefined;
+      const windows =
+        provider === undefined ? [] : weeklyWindowsForModel(provider, target.model, now);
+      const window = [...windows].sort(
+        (left, right) => remainingPercent(left) - remainingPercent(right),
+      )[0];
+      const headrooms = windows.flatMap((window) => {
+        const headroom = weeklyHeadroom(window, now);
+        return headroom === undefined ? [] : [headroom];
+      });
       const weeklyUsage =
         window === undefined
           ? undefined
@@ -187,7 +192,7 @@ export function modelRoleStatuses(
         },
         configuredOrder,
         unavailable: typeof checked !== "string",
-        headroom: window === undefined ? undefined : weeklyHeadroom(window, now),
+        headroom: headrooms.length === 0 ? undefined : Math.min(...headrooms),
       };
     });
     const sortedChoices = Arr.sort(
@@ -220,32 +225,29 @@ export function modelRoleStatuses(
 
 function weeklyHeadroom(window: ServerProviderUsageWindow, now: number): number | undefined {
   const elapsed = elapsedShare(window, now);
-  // A snapshot kept past its reset is unknown until fresh usage arrives.
-  if (elapsed === null || elapsed === 1) return undefined;
+  if (elapsed === null) return undefined;
   return remainingPercent(window) / 100 / (1 - elapsed);
 }
 
-function weeklyWindowForModel(
+function weeklyWindowsForModel(
   provider: ServerProvider,
   model: string,
-): ServerProviderUsageWindow | undefined {
-  const windows = provider.usageLimits?.windows.filter((window) => window.kind === "weekly") ?? [];
-  if (windows.length === 0) return undefined;
-  if (provider.driver !== "claudeAgent") return windows[0];
+  now: number,
+): readonly ServerProviderUsageWindow[] {
+  const windows =
+    provider.usageLimits?.windows.filter(
+      (window) => window.kind === "weekly" && !isUsageWindowStale(window, now),
+    ) ?? [];
+  if (provider.driver !== "claudeAgent") return windows.slice(0, 1);
 
   const modelTerms = model
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter((part) => part !== "claude" && !/^\d+$/.test(part));
-  const scoped = windows.find((window) => {
+  return windows.filter((window) => {
+    if (window.id.toLowerCase() === "seven_day" || window.label.toLowerCase() === "weekly")
+      return true;
     const windowTerms = `${window.id} ${window.label}`.toLowerCase().split(/[^a-z0-9]+/);
     return modelTerms.some((term) => windowTerms.includes(term));
   });
-  return (
-    scoped ??
-    windows.find(
-      (window) =>
-        window.id.toLowerCase() === "seven_day" || window.label.toLowerCase() === "weekly",
-    )
-  );
 }

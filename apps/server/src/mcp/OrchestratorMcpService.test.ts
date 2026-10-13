@@ -1193,7 +1193,48 @@ describe("OrchestratorMcpService provider resolution", () => {
     assert.include(choices[5]!.unavailableReason!, "not authenticated");
   });
 
-  it("uses Claude's matching model-scoped weekly quota before the general window", () => {
+  it("caps Sonnet's weekly headroom at the all-models allowance", () => {
+    const claude = ProviderInstanceId.make("claude");
+    const role: ModelRole = {
+      id: "builder",
+      name: "Builder",
+      description: "",
+      targets: [{ providerInstanceId: claude, model: "claude-sonnet-4-6" }],
+    };
+    const provider: ServerProvider = {
+      ...providerSnapshot({
+        instanceId: claude,
+        driver: ProviderDriverKind.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      }),
+      usageLimits: {
+        checkedAt: modelRoleStatusCheckedAt,
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 95,
+            windowDurationMins: 7 * 24 * 60,
+            resetsAt: modelRoleStatusResetAt(0.5),
+          },
+          {
+            id: "seven_day_sonnet",
+            kind: "weekly",
+            label: "Weekly · Sonnet",
+            usedPercent: 20,
+            windowDurationMins: 7 * 24 * 60,
+            resetsAt: modelRoleStatusResetAt(0.4),
+          },
+        ],
+      },
+    };
+    const choice = modelRoleStatuses([role], [provider], new Set([claude]), modelRoleStatusNow)[0]!
+      .targets[0]!;
+    assert.equal(choice.weeklyUsage?.remainingPercent, 5);
+  });
+
+  it("ranks Claude choices by the tighter general or matching model-scoped weekly quota", () => {
     const claude = ProviderInstanceId.make("claude");
     const role: ModelRole = {
       id: "builder",
@@ -1232,7 +1273,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             id: "seven_day_opus",
             kind: "weekly",
             label: "Weekly · Opus",
-            usedPercent: 10,
+            usedPercent: 95,
             windowDurationMins: 7 * 24 * 60,
             resetsAt: modelRoleStatusResetAt(0.1),
           },
@@ -1253,17 +1294,17 @@ describe("OrchestratorMcpService provider resolution", () => {
 
     assert.deepEqual(
       choices.map((choice) => choice.model),
-      ["claude-opus-4-6", "claude-sonnet-4-6", "claude-3-5-haiku"],
+      ["claude-sonnet-4-6", "claude-3-5-haiku", "claude-opus-4-6"],
     );
     assert.deepEqual(byModel.get("claude-opus-4-6"), {
-      remainingPercent: 90,
+      remainingPercent: 5,
       resetsAt: modelRoleStatusResetAt(0.1),
-      pace: "under",
+      pace: "on",
     });
     assert.deepEqual(byModel.get("claude-sonnet-4-6"), {
-      remainingPercent: 80,
-      resetsAt: modelRoleStatusResetAt(0.4),
-      pace: "under",
+      remainingPercent: 40,
+      resetsAt: modelRoleStatusResetAt(0.5),
+      pace: "ahead",
     });
     assert.deepEqual(byModel.get("claude-3-5-haiku"), {
       remainingPercent: 40,

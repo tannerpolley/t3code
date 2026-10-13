@@ -147,20 +147,24 @@ describe("makeManagedServerProvider", () => {
         const calls = yield* Ref.make<string[]>([]);
         const started = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
+        const fresh = yield* Ref.make(false);
         const provider = yield* makeManagedServerProvider<TestSettings>({
           resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: () => false,
           initialSnapshot: () => Effect.succeed(initialSnapshot),
-          checkProvider: Ref.update(calls, (previous) => [...previous, "cached"]).pipe(
-            Effect.andThen(Deferred.succeed(started, undefined)),
-            Effect.andThen(Deferred.await(release)),
-            Effect.as(refreshedSnapshot),
-          ),
-          checkProviderFresh: Ref.update(calls, (previous) => [...previous, "fresh"]).pipe(
-            Effect.as(refreshedSnapshotSecond),
-          ),
+          checkProvider: Effect.gen(function* () {
+            if (yield* Ref.getAndSet(fresh, false)) {
+              yield* Ref.update(calls, (previous) => [...previous, "fresh"]);
+              return refreshedSnapshotSecond;
+            }
+            yield* Ref.update(calls, (previous) => [...previous, "cached"]);
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+            return refreshedSnapshot;
+          }),
+          invalidateCaches: Ref.set(fresh, true),
           refreshInterval: "1 minute",
         });
         yield* Deferred.await(started);
