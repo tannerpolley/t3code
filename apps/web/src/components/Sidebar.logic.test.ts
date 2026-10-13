@@ -2505,6 +2505,20 @@ describe("groupRunningSubagentsByParent", () => {
       "asking",
     ]);
   });
+
+  it("lists a running grandchild only under its listed parent, carrying its request up", () => {
+    const middle = child("middle");
+    const leaf = {
+      ...child("leaf", { asking: true }),
+      lineage: { ...middle.lineage, parentThreadId: middle.id },
+    };
+    const grouped = groupRunningSubagentsByParent([middle, leaf]);
+    const listedUnder = (id: string) =>
+      grouped.get(scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make(id)))) ?? [];
+    expect(listedUnder("parent").map((thread) => thread.id)).toEqual(["middle"]);
+    expect(listedUnder("middle").map((thread) => thread.id)).toEqual(["leaf"]);
+    expect(listedUnder("parent")[0]!.hasPendingUserInput).toBe(true);
+  });
 });
 
 describe("withChildNeeds", () => {

@@ -1069,31 +1069,63 @@ export function groupRunningSubagentsByParent<
       ),
     ),
   );
-  const byParent = new Map<string, TThread[]>();
+  const keyOf = (thread: TThread, threadId: ThreadId) =>
+    scopedThreadKey(scopeThreadRef(thread.environmentId, threadId));
+  const listed = new Map<string, TThread>();
   for (const thread of threads) {
-    const parentThreadId = thread.lineage.parentThreadId;
     if (
-      parentThreadId === null ||
+      thread.lineage.parentThreadId === null ||
       thread.lineage.relationshipToParent !== "subagent" ||
       thread.archivedAt !== null ||
       // A child waiting on the user stays listed so its question is one click away.
       !(
         threadRuntimeIsActive(thread.runtime) ||
         backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks) ||
-        pendingTaskChildIds.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))) ||
+        pendingTaskChildIds.has(keyOf(thread, thread.id)) ||
         thread.hasPendingUserInput ||
         thread.hasPendingApprovals
       )
     ) {
       continue;
     }
-    // Nested requests must reach the root row even when their direct parent is hidden.
-    for (const ancestor of new Set([parentThreadId, thread.lineage.rootThreadId])) {
-      const key = scopedThreadKey(scopeThreadRef(thread.environmentId, ancestor));
-      const siblings = byParent.get(key);
-      if (siblings) siblings.push(thread);
-      else byParent.set(key, [thread]);
+    listed.set(keyOf(thread, thread.id), thread);
+  }
+  // A listed parent carries the owner-facing requests of listed subagents beneath it, so they
+  // reach its row and every ancestor row without listing the subagent twice.
+  const nestedNeeds = new Map<string, { approvals: boolean; input: boolean }>();
+  for (const thread of listed.values()) {
+    if (!thread.hasPendingApprovals && !thread.hasPendingUserInput) continue;
+    let ancestor = listed.get(keyOf(thread, thread.lineage.parentThreadId!));
+    while (ancestor !== undefined) {
+      const ancestorKey = keyOf(ancestor, ancestor.id);
+      const needs = nestedNeeds.get(ancestorKey) ?? { approvals: false, input: false };
+      needs.approvals ||= thread.hasPendingApprovals;
+      needs.input ||= thread.hasPendingUserInput;
+      nestedNeeds.set(ancestorKey, needs);
+      ancestor = listed.get(keyOf(ancestor, ancestor.lineage.parentThreadId!));
     }
+  }
+  const byParent = new Map<string, TThread[]>();
+  const add = (key: string, thread: TThread) => {
+    const siblings = byParent.get(key);
+    if (siblings) siblings.push(thread);
+    else byParent.set(key, [thread]);
+  };
+  for (const [threadKey, listedThread] of listed) {
+    const needs = nestedNeeds.get(threadKey);
+    const thread =
+      needs === undefined
+        ? listedThread
+        : {
+            ...listedThread,
+            hasPendingApprovals: listedThread.hasPendingApprovals || needs.approvals,
+            hasPendingUserInput: listedThread.hasPendingUserInput || needs.input,
+          };
+    const parentKey = keyOf(thread, thread.lineage.parentThreadId!);
+    add(parentKey, thread);
+    // A subagent whose direct parent is hidden still reaches the root row.
+    const rootKey = keyOf(thread, thread.lineage.rootThreadId);
+    if (!listed.has(parentKey) && rootKey !== parentKey) add(rootKey, thread);
   }
   return byParent;
 }
