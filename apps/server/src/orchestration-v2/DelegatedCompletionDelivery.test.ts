@@ -1966,6 +1966,31 @@ const childQuestionNotices = (parentThreadId: ThreadId) =>
     );
   });
 
+const childQuestionWake = (parentThreadId: ThreadId) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const [notice] = yield* childQuestionNotices(parentThreadId);
+    const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+    return parent.runs.find((run) => run.id === notice?.runId);
+  });
+
+/** Waits for the live listener to return the child's request to the owner. */
+const ownerReceives = (afterSequence: number, childThreadId: ThreadId) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    yield* sink.stream({ afterSequence, eventType: "runtime-request.updated" }).pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "runtime-request.updated" &&
+          stored.event.threadId === childThreadId &&
+          stored.event.payload.status === "pending" &&
+          stored.event.payload.routedTo === undefined,
+      ),
+      Stream.take(1),
+      Stream.runDrain,
+    );
+  });
+
 it.layer(layerTest)("child question wake", (it) => {
   it.effect(
     "recovers a pending child question once, while blocking waits and auth stay quiet",
@@ -2020,13 +2045,7 @@ it.layer(layerTest)("delegated request routing", (it) => {
       });
       // Each wake queues behind its parent's running turn.
       yield* orchestrator.recoverDelegatedTasks;
-      const wakeRun = (parentThreadId: ThreadId) =>
-        Effect.gen(function* () {
-          const [notice] = yield* childQuestionNotices(parentThreadId);
-          const parent = yield* orchestrator.getThreadProjection(parentThreadId);
-          return parent.runs.find((run) => run.id === notice?.runId);
-        });
-      const cancelledWake = yield* wakeRun(cancelled.parentThreadId);
+      const cancelledWake = yield* childQuestionWake(cancelled.parentThreadId);
       assert.equal(cancelledWake?.status, "queued");
       yield* orchestrator.dispatch({
         type: "queued-run.cancel",
@@ -2046,9 +2065,102 @@ it.layer(layerTest)("delegated request routing", (it) => {
         assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 1);
       }
       // The restart's queue hold stays for the owner to resume.
-      const heldWake = yield* wakeRun(held.parentThreadId);
+      const heldWake = yield* childQuestionWake(held.parentThreadId);
       assert.deepEqual([heldWake?.status, heldWake?.queueHeld], ["queued", true]);
     }),
+  );
+
+  it.effect(
+    "returns a question to the owner when its queued parent wake is cancelled or stopped",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const cancelled = yield* seedChildWaitingOnUser({
+          name: "live-cancelled",
+          requestKind: "user_input",
+        });
+        const stopped = yield* seedChildWaitingOnUser({
+          name: "live-stopped",
+          requestKind: "command",
+        });
+        // Each wake queues behind its parent's running turn.
+        yield* orchestrator.recoverDelegatedTasks;
+        const afterSequence = yield* sink.latestSequence();
+        yield* orchestrator.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make("command:cancel-live-child-question-wake"),
+          threadId: cancelled.parentThreadId,
+          runId: (yield* childQuestionWake(cancelled.parentThreadId))!.id,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("command:stop-live-child-question-parent"),
+          threadId: stopped.parentThreadId,
+        });
+
+        for (const child of [cancelled, stopped]) {
+          yield* ownerReceives(afterSequence, child.childThreadId);
+          const request = (yield* orchestrator.getThreadProjection(child.childThreadId))
+            .runtimeRequests[0];
+          assert.equal(request?.status, "pending");
+          assert.isUndefined(request?.routedTo);
+        }
+      }),
+  );
+
+  it.effect(
+    "returns a question to the owner when its started wake is interrupted, not completed",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const ran = yield* seedChildWaitingOnUser({ name: "wake-ran", requestKind: "user_input" });
+        const interrupted = yield* seedChildWaitingOnUser({
+          name: "wake-interrupted",
+          requestKind: "user_input",
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const afterSequence = yield* sink.latestSequence();
+        const now = yield* DateTime.now;
+        // Each parent starts its wake; one is interrupted before it answers.
+        for (const [child, outcome] of [
+          [ran, "completed"],
+          [interrupted, "interrupted"],
+        ] as const) {
+          const wake = (yield* childQuestionWake(child.parentThreadId))!;
+          for (const status of ["running", outcome] as const)
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make(`event:${wake.id}:${status}`),
+                  type: "run.updated",
+                  threadId: child.parentThreadId,
+                  runId: wake.id,
+                  occurredAt: now,
+                  payload: {
+                    ...wake,
+                    status,
+                    queuePosition: null,
+                    startedAt: now,
+                    completedAt: status === "running" ? null : now,
+                  },
+                },
+              ],
+            });
+        }
+
+        // The listener checks run updates in order, so the completed wake was checked first.
+        yield* ownerReceives(afterSequence, interrupted.childThreadId);
+        assert.isUndefined(
+          (yield* orchestrator.getThreadShell(interrupted.childThreadId))?.pendingRuntimeRequest
+            ?.routedTo,
+        );
+        assert.equal(
+          (yield* orchestrator.getThreadShell(ran.childThreadId))?.pendingRuntimeRequest?.routedTo,
+          ran.parentThreadId,
+        );
+      }),
   );
 
   it.effect("routes approvals with their full command and records parent responses", () =>

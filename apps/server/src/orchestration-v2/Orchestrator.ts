@@ -154,6 +154,7 @@ import {
   delegatedRequestOwner,
   delegatedRequestDetails,
   delegatedRequestResponseInstructions,
+  delegatedWakeRequests,
   releaseStrandedDelegatedRequest,
 } from "./DelegatedRequestRouting.ts";
 
@@ -12348,21 +12349,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.catchCause((cause) => Effect.logWarning("Failed to deliver held steers", { cause })),
   );
 
+  const releaseStrandedChildRequest = (childThreadId: ThreadId, requestId: RuntimeRequestId) =>
+    threadDispatch.withLock(
+      childThreadId,
+      releaseStrandedDelegatedRequest(
+        { projections: projectionStore, eventSink, ids: idAllocator.allocate },
+        childThreadId,
+        requestId,
+      ),
+    );
+
   // Requests leave the child's run open, so terminal-result delivery cannot tell its parent.
   const notifyParentOfChildQuestion = Effect.fnUntraced(
     function* (childThreadId: ThreadId, requestId: RuntimeRequestId) {
       yield* wakeParentForChildQuestion(childThreadId, requestId);
-      yield* threadDispatch.withLock(
-        childThreadId,
-        releaseStrandedDelegatedRequest(
-          { projections: projectionStore, eventSink, ids: idAllocator.allocate },
-          childThreadId,
-          requestId,
-        ),
-      );
+      yield* releaseStrandedChildRequest(childThreadId, requestId);
     },
     Effect.catchCause((cause) =>
       Effect.logWarning("Failed to notify parent of child question", { cause }),
+    ),
+  );
+
+  // A wake held, cancelled, interrupted or failed after dispatch no longer reaches its parent.
+  const releaseRequestsOfStrandedWake = Effect.fnUntraced(
+    function* (run: OrchestrationV2Run) {
+      for (const { childThreadId, request } of yield* delegatedWakeRequests(
+        projectionStore,
+        run.threadId,
+        run.userMessageId,
+      ))
+        yield* releaseStrandedChildRequest(childThreadId, request.id);
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to return a stranded child request to the owner", { cause }),
     ),
   );
 
@@ -12578,6 +12597,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             stored.event.payload.status === "rolled_back"),
       ),
       Stream.runForEach(handleTerminalRun),
+      Effect.forkDetach,
+    );
+
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "run.updated" })
+    .pipe(
+      Stream.runForEach((stored) =>
+        stored.event.type === "run.updated"
+          ? releaseRequestsOfStrandedWake(stored.event.payload)
+          : Effect.void,
+      ),
       Effect.forkDetach,
     );
 

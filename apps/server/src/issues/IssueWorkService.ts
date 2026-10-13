@@ -568,11 +568,49 @@ export const layer = Layer.effect(
         )
         .join("\n\n");
     });
+    /** Runs one pass per root at a time; callers arriving mid-pass share one more pass after it. */
+    const coalescedPerRoot = <E>(pass: (rootThreadId: ThreadId) => Effect.Effect<void, E>) => {
+      const passes = new Map<ThreadId, { pending: boolean; done: Deferred.Deferred<void, E> }>();
+      return (rootThreadId: ThreadId) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const { state, leader } = yield* Effect.sync(() => {
+              const existing = passes.get(rootThreadId);
+              if (existing !== undefined) {
+                existing.pending = true;
+                return { state: existing, leader: false };
+              }
+              const state = { pending: false, done: Deferred.makeUnsafe<void, E>() };
+              passes.set(rootThreadId, state);
+              return { state, leader: true };
+            });
+            if (!leader) return yield* restore(Deferred.await(state.done));
+            yield* restore(
+              Effect.gen(function* () {
+                do {
+                  state.pending = false;
+                  yield* pass(rootThreadId);
+                } while (state.pending);
+              }),
+            ).pipe(
+              Effect.onExit((exit) =>
+                Effect.gen(function* () {
+                  passes.delete(rootThreadId);
+                  yield* Deferred.done(state.done, exit);
+                }),
+              ),
+            );
+          }),
+        );
+    };
     // A draining root lets queued turns and final deliveries finish through their original lineage;
-    // new requests and milestone admissions wait until the ownership pointer moves.
-    const drainHandoff = (rootThreadId: ThreadId, config: RepositoryOrchestration) =>
+    // new requests and milestone admissions wait until the ownership pointer moves. Reconcile and
+    // the event loop both drain, so each pass re-reads the configuration the last one changed.
+    const drainHandoff = coalescedPerRoot((rootThreadId) =>
       Effect.gen(function* () {
-        const handoff = config.handoff!;
+        const config = yield* store.configuration(rootThreadId);
+        const handoff = config?.handoff;
+        if (config === null || handoff?.status !== "draining") return;
         yield* threads
           .dispatch({
             type: "repository.work.continue",
@@ -594,7 +632,8 @@ export const layer = Layer.effect(
             inventory: yield* inventory(config),
           })
           .pipe(Effect.mapError(mapError));
-      });
+      }),
+    );
     const continueLocal = (
       rootThreadId: ThreadId,
       refreshRequests = false,
@@ -629,7 +668,7 @@ export const layer = Layer.effect(
               })
               .pipe(Effect.mapError(mapError));
         }
-        if (draining) return yield* drainHandoff(rootThreadId, config);
+        if (draining) return yield* drainHandoff(rootThreadId);
         // Once an ancestor has a durable thread, deliver its selected sub-issues there.
         for (const request of yield* store.pendingRequests(rootThreadId)) {
           const read = refreshRequests
@@ -866,44 +905,7 @@ export const layer = Layer.effect(
           );
       });
 
-    const reconciliations = new Map<
-      ThreadId,
-      {
-        pending: boolean;
-        done: Deferred.Deferred<void, IssueWorkError>;
-      }
-    >();
-    const reconcile: IssueWorkService["Service"]["reconcile"] = (rootThreadId) =>
-      Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          const { state, leader } = yield* Effect.sync(() => {
-            const existing = reconciliations.get(rootThreadId);
-            if (existing !== undefined) {
-              existing.pending = true;
-              return { state: existing, leader: false };
-            }
-            const state = { pending: false, done: Deferred.makeUnsafe<void, IssueWorkError>() };
-            reconciliations.set(rootThreadId, state);
-            return { state, leader: true };
-          });
-          if (!leader) return yield* restore(Deferred.await(state.done));
-          yield* restore(
-            Effect.gen(function* () {
-              do {
-                state.pending = false;
-                yield* reconcilePass(rootThreadId);
-              } while (state.pending);
-            }),
-          ).pipe(
-            Effect.onExit((exit) =>
-              Effect.gen(function* () {
-                reconciliations.delete(rootThreadId);
-                yield* Deferred.done(state.done, exit);
-              }),
-            ),
-          );
-        }),
-      );
+    const reconcile: IssueWorkService["Service"]["reconcile"] = coalescedPerRoot(reconcilePass);
 
     const workMilestone: IssueWorkService["Service"]["workMilestone"] = (input) =>
       Effect.gen(function* () {

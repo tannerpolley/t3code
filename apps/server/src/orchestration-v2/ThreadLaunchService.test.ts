@@ -4941,6 +4941,12 @@ describe("fresh-thread repository handoff", () => {
       providerAvailable?: () => boolean;
       continuation?: boolean;
       inventoryIssues?: () => number[];
+      /** Runs first in the provider check, which the handoff command makes under the root's lock. */
+      beforeCapabilities?: () => Effect.Effect<void>;
+      /** Wraps the store the issue work service reads. */
+      wrapStore?: (
+        store: IssueWorkStore.IssueWorkStore["Service"],
+      ) => IssueWorkStore.IssueWorkStore["Service"];
     } = {},
   ) => {
     const reads = Layer.mock(IssueService.IssueService)({
@@ -4977,11 +4983,13 @@ describe("fresh-thread repository handoff", () => {
     const handoffAdapter = {
       ...adapter,
       getCapabilities: () =>
-        options.providerAvailable?.() === false
-          ? Effect.fail(
-              new ProviderAdapter.ProviderAdapterCapabilitiesError({ driver: adapter.driver }),
-            )
-          : Effect.succeed(CodexProviderCapabilitiesV2),
+        Effect.andThen(options.beforeCapabilities?.() ?? Effect.void, () =>
+          options.providerAvailable?.() === false
+            ? Effect.fail(
+                new ProviderAdapter.ProviderAdapterCapabilitiesError({ driver: adapter.driver }),
+              )
+            : Effect.succeed(CodexProviderCapabilitiesV2),
+        ),
     };
     const harness = makeHarness({
       providers: [provider],
@@ -5017,19 +5025,31 @@ describe("fresh-thread repository handoff", () => {
       issueServiceLayer: reads,
       runContinuationWorker: options.continuation ?? false,
     });
+    const store = IssueWorkStore.layer.pipe(Layer.provide(harness.layer));
     const dependencies = Layer.mergeAll(
       harness.layer,
       reads,
       NodeCrypto.layer,
       IdAllocator.layer,
       ProviderAdapterRegistry.layerFromAdapters([handoffAdapter]),
-      IssueWorkStore.layer.pipe(Layer.provide(harness.layer)),
+      store,
       EventStore.layer.pipe(Layer.provide(harness.layer)),
       ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
       Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
       Layer.mock(SecretRequests.SecretRequests)({}),
     );
-    const service = IssueWorkService.layer.pipe(Layer.provideMerge(dependencies));
+    const { wrapStore } = options;
+    const service = IssueWorkService.layer.pipe(
+      Layer.provide(
+        wrapStore === undefined
+          ? Layer.empty
+          : Layer.effect(
+              IssueWorkStore.IssueWorkStore,
+              Effect.map(IssueWorkStore.IssueWorkStore, wrapStore),
+            ).pipe(Layer.provide(store)),
+      ),
+      Layer.provideMerge(dependencies),
+    );
     return Layer.mergeAll(
       service,
       OrchestratorMcp.layer.pipe(Layer.provide(service)),
@@ -6239,6 +6259,79 @@ describe("fresh-thread repository handoff", () => {
       }).pipe(
         Effect.provide(
           fixture({ inventoryComplete: () => complete, providerAvailable: () => available }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "transfers once when a reconcile arrives while the event loop drains the handoff",
+    () => {
+      let parkTransfer = false;
+      let listings: number | undefined;
+      const parked = Deferred.makeUnsafe<void>();
+      const release = Deferred.makeUnsafe<void>();
+      const draining = Deferred.makeUnsafe<void>();
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        yield* createRoot;
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("race:root-start"),
+          threadId: rootId,
+          messageId: MessageId.make("race:root-start"),
+          text: "Work through milestone 1",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const pending = yield* service.handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Transfer once.",
+          clientRequestId: CommandId.make("handoff:race"),
+        });
+        const nextId = pending.orchestration!.handoff!.nextThreadId;
+        // Once the root's turn ends, the event loop drains it and parks inside the transfer.
+        parkTransfer = true;
+        yield* finish(rootId, "race-root");
+        yield* Deferred.await(parked);
+        // Reconcile lists workers to check suspensions, then again right before it drains.
+        listings = 0;
+        const reconcile = yield* service.reconcile(rootId).pipe(Effect.forkChild);
+        yield* Deferred.await(draining);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(reconcile);
+
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, nextId);
+        assert.lengthOf((yield* threads.getThreadRecords(nextId, ["messages"])).messages, 1);
+      }).pipe(
+        Effect.provide(
+          fixture({
+            beforeCapabilities: () => {
+              if (!parkTransfer) return Effect.void;
+              parkTransfer = false;
+              return Deferred.succeed(parked, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+              );
+            },
+            wrapStore: (store) => ({
+              ...store,
+              workerThreads: (rootThreadId) =>
+                store
+                  .workerThreads(rootThreadId)
+                  .pipe(
+                    Effect.tap(() =>
+                      listings !== undefined && ++listings === 2
+                        ? Deferred.succeed(draining, undefined)
+                        : Effect.void,
+                    ),
+                  ),
+            }),
+          }),
         ),
       );
     },

@@ -57,13 +57,16 @@ const delegatedParent = Effect.fn("delegatedParent")(function* <E>(
   return task === undefined ? undefined : { parentThreadId, taskId: task.id, parent };
 });
 
+const noticePrefix = "message:child-question:";
+
 /** The message that wakes the parent for one child request. */
 export const delegatedRequestNoticeId = (childThreadId: ThreadId, requestId: RuntimeRequestId) =>
-  MessageId.make(`message:child-question:${childThreadId}:${requestId}`);
+  MessageId.make(`${noticePrefix}${childThreadId}:${requestId}`);
 
 /**
  * A child's request goes to its live parent until the request's wake can no longer reach it:
- * held by a restart or Stop, or ended before its turn started. Then the owner answers it.
+ * held by a restart or Stop, or ended without completing its turn. A restart's continuation
+ * resumes a started wake it cancelled. Then the owner answers it.
  */
 export const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function* (
   projections: Projections,
@@ -92,12 +95,52 @@ export const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function
       wake !== undefined &&
       (wake.status === "queued"
         ? wake.queueHeld === true
-        : wake.startedAt === null && wake.completedAt !== null)
+        : wake.completedAt !== null &&
+          wake.status !== "completed" &&
+          (wake.status !== "cancelled" || wake.startedAt === null))
     )
       return undefined;
   }
   return { parentThreadId: owner.parentThreadId, taskId: owner.taskId };
 });
+
+/** Pending requests of a parent's app-owned children that are routed to that parent. */
+const routedChildRequests = (projections: Projections, parentThreadId: ThreadId) =>
+  Effect.gen(function* () {
+    const { subagents } = yield* projections.getThreadRecords(parentThreadId, ["subagents"]);
+    const routed: Array<{
+      readonly childThreadId: ThreadId;
+      readonly request: OrchestrationV2RuntimeRequest;
+    }> = [];
+    for (const task of subagents) {
+      if (task.origin !== "app_owned" || task.childThreadId === null) continue;
+      if ((yield* projections.getThreadShell(task.childThreadId)) === null) continue;
+      const { runtimeRequests } = yield* projections.getThreadRecords(task.childThreadId, [
+        "runtimeRequests",
+      ]);
+      for (const request of runtimeRequests)
+        if (request.status === "pending" && request.routedTo === parentThreadId)
+          routed.push({ childThreadId: task.childThreadId, request });
+    }
+    return routed;
+  });
+
+/** The routed requests a parent run's message woke it for; empty for every other run. */
+export const delegatedWakeRequests = (
+  projections: Projections,
+  parentThreadId: ThreadId,
+  messageId: MessageId,
+) =>
+  messageId.startsWith(noticePrefix)
+    ? routedChildRequests(projections, parentThreadId).pipe(
+        Effect.map((routed) =>
+          routed.filter(
+            ({ childThreadId, request }) =>
+              delegatedRequestNoticeId(childThreadId, request.id) === messageId,
+          ),
+        ),
+      )
+    : Effect.succeed([]);
 
 /**
  * Sets `routedTo` on every pending request a write records. Archiving or deleting a parent
@@ -118,36 +161,27 @@ export const routeDelegatedRequests = (
     const inactiveParentIds = new Set(inactiveParents.map((event) => event.threadId));
     const fallbacks: OrchestrationV2DomainEvent[] = [];
     for (const parentEvent of inactiveParents) {
-      const { subagents } = yield* projections.getThreadRecords(parentEvent.threadId, [
-        "subagents",
-      ]);
-      for (const task of subagents) {
-        if (task.origin !== "app_owned" || task.childThreadId === null) continue;
-        if ((yield* projections.getThreadShell(task.childThreadId)) === null) continue;
-        const { runtimeRequests } = yield* projections.getThreadRecords(task.childThreadId, [
-          "runtimeRequests",
-        ]);
-        for (const request of runtimeRequests) {
-          if (
-            request.status !== "pending" ||
-            request.routedTo !== parentEvent.threadId ||
-            events.some(
-              (event) =>
-                event.type === "runtime-request.updated" &&
-                event.threadId === task.childThreadId &&
-                event.payload.id === request.id,
-            )
+      for (const { childThreadId, request } of yield* routedChildRequests(
+        projections,
+        parentEvent.threadId,
+      )) {
+        if (
+          events.some(
+            (event) =>
+              event.type === "runtime-request.updated" &&
+              event.threadId === childThreadId &&
+              event.payload.id === request.id,
           )
-            continue;
-          fallbacks.push({
-            id: EventId.make(`${parentEvent.id}:request-owner:${request.id}`),
-            type: "runtime-request.updated",
-            threadId: task.childThreadId,
-            nodeId: request.nodeId,
-            occurredAt: parentEvent.occurredAt,
-            payload: request,
-          });
-        }
+        )
+          continue;
+        fallbacks.push({
+          id: EventId.make(`${parentEvent.id}:request-owner:${request.id}`),
+          type: "runtime-request.updated",
+          threadId: childThreadId,
+          nodeId: request.nodeId,
+          occurredAt: parentEvent.occurredAt,
+          payload: request,
+        });
       }
     }
     return yield* Effect.forEach(
