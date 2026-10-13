@@ -3,7 +3,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
+  backgroundWorkHoldsCompletion,
+  derivePendingBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
   EnvironmentId,
+  MessageId,
+  RunId,
   EventId,
   NodeId,
   type ModelSelection,
@@ -324,6 +330,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly beforeClose?: Effect.Effect<void>;
     readonly eventStreamEnded?: Deferred.Deferred<void>;
     /** Registers the process's closeCount finalizer before `beforeOpen` runs. */
     readonly spawnBeforeOpen?: boolean;
@@ -333,10 +340,14 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const countClose = Effect.addFinalizer(() =>
-    Ref.update(state, (current) => ({
-      ...current,
-      closeCount: current.closeCount + 1,
-    })),
+    (options.beforeClose ?? Effect.void).pipe(
+      Effect.andThen(
+        Ref.update(state, (current) => ({
+          ...current,
+          closeCount: current.closeCount + 1,
+        })),
+      ),
+    ),
   );
   // Registered after countClose so it runs first on scope close, wedging the
   // close before the closeCount finalizer, like a provider process that never
@@ -480,6 +491,7 @@ function layerTest(input: {
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly beforeClose?: Effect.Effect<void>;
   readonly eventStreamEnded?: Deferred.Deferred<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -511,6 +523,7 @@ function layerTest(input: {
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.beforeClose === undefined ? {} : { beforeClose: input.beforeClose }),
       ...(input.eventStreamEnded === undefined ? {} : { eventStreamEnded: input.eventStreamEnded }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
@@ -2770,6 +2783,289 @@ it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all 
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
+);
+
+it.effect("ProviderSessionManagerV2 idle release clears a Monitor that holds completion", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-idle-monitor");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = {
+        ...makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+        pendingBackgroundTasks: [{ taskId: "bbcaa29ff", kind: "monitor" as const }],
+      };
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+          {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: providerThread,
+          },
+          {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "run.created",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: RunId.make("run-idle-monitor"),
+              threadId,
+              ordinal: 1,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: providerThread.id,
+              userMessageId: MessageId.make("message-idle-monitor"),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+        ],
+      });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      const before = yield* projectionStore.getThreadProjection(threadId);
+      assert.isTrue(
+        backgroundWorkHoldsCompletion(
+          derivePendingBackgroundWork({
+            latestRun: before.runs.at(-1),
+            providerThreads: before.providerThreads,
+            turnItems: before.turnItems,
+          }),
+        ),
+      );
+      const afterSequence = yield* eventSink.latestSequence({ threadId });
+
+      yield* TestClock.adjust("1 second");
+      yield* eventSink
+        .stream({ threadId, afterSequence, eventType: "provider-session.updated" })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "provider-session.updated" &&
+              stored.event.payload.status === "stopped",
+          ),
+          Stream.runHead,
+        );
+
+      const after = yield* projectionStore.getThreadProjection(threadId);
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      assert.deepEqual(after.providerThreads[0]?.pendingBackgroundTasks, []);
+      assert.isFalse(
+        backgroundWorkHoldsCompletion(
+          derivePendingBackgroundWork({
+            latestRun: after.runs.at(-1),
+            providerThreads: after.providerThreads,
+            turnItems: after.turnItems,
+          }),
+        ),
+      );
+      const rosterClear = yield* eventSink
+        .stream({ threadId, afterSequence, eventType: "provider-thread.updated" })
+        .pipe(Stream.runHead);
+      assert.isTrue(Option.isSome(rosterClear));
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1000,
+          // Claude's Monitor does not pin an idle session.
+          hasPendingBackgroundWork: Effect.succeed(false),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect.each([
+  { reason: "manual_shutdown", replaced: false },
+  { reason: "runtime_error", replaced: false },
+  { reason: "server_shutdown", replaced: false },
+  { reason: "manual_shutdown", replaced: true },
+  { reason: "runtime_error", replaced: true },
+  { reason: "server_shutdown", replaced: true },
+] as const)(
+  "ProviderSessionManagerV2 $reason respects roster ownership (replaced=$replaced)",
+  ({ reason, replaced }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const closeReached = yield* Deferred.make<void>();
+      const resumeClose = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread-release-roster-${reason}`);
+        const detachedId = ThreadId.make(`thread-detached-roster-${reason}`);
+        const childId = ThreadId.make(`thread-app-owned-child-${reason}`);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const otherSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: childId,
+        });
+        const monitor = [{ taskId: "monitor", kind: "monitor" as const }];
+        const providerThreads = [
+          {
+            ...makeProviderThread({
+              idAllocator,
+              threadId,
+              providerSessionId,
+              now,
+              nativeThreadId: "attached",
+            }),
+            status: "active" as const,
+            pendingBackgroundTasks: monitor,
+          },
+          {
+            ...makeProviderThread({
+              idAllocator,
+              threadId: detachedId,
+              providerSessionId,
+              now,
+              nativeThreadId: "detached",
+            }),
+            pendingBackgroundTasks: monitor,
+          },
+          {
+            ...makeProviderThread({
+              idAllocator,
+              threadId: detachedId,
+              providerSessionId: otherSessionId,
+              now,
+              nativeThreadId: "other-session",
+            }),
+            pendingBackgroundTasks: monitor,
+          },
+          {
+            ...makeProviderThread({
+              idAllocator,
+              threadId: childId,
+              providerSessionId: otherSessionId,
+              now,
+              nativeThreadId: "app-owned-child",
+            }),
+            pendingBackgroundTasks: monitor,
+          },
+        ];
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: detachedId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: childId, now }),
+            ...(yield* Effect.forEach(providerThreads, (providerThread) =>
+              Effect.gen(function* () {
+                return {
+                  id: yield* idAllocator.allocate.event({
+                    threadId: providerThread.appThreadId!,
+                  }),
+                  type: "provider-thread.updated" as const,
+                  threadId: providerThread.appThreadId!,
+                  occurredAt: now,
+                  payload: providerThread,
+                };
+              }),
+            )),
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* manager.open({
+          threadId: detachedId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.detach({
+          providerSessionId,
+          threadId: detachedId,
+          revokeMcpCredential: true,
+        });
+        const release = yield* manager
+          .release({ providerSessionId, reason })
+          .pipe(Effect.forkChild);
+        let attachedRoster = reason === "server_shutdown" ? monitor : [];
+        if (replaced) {
+          yield* Deferred.await(closeReached);
+          // A resumed thread reuses the session id while the old process is closing.
+          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+          attachedRoster = [{ taskId: "resumed-monitor", kind: "monitor" }];
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId }),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...providerThreads[0]!,
+                  status: "active",
+                  pendingBackgroundTasks: attachedRoster,
+                },
+              },
+            ],
+          });
+          yield* Deferred.succeed(resumeClose, undefined);
+        }
+        yield* Fiber.join(release);
+
+        const attached = yield* projectionStore.getThreadProjection(threadId);
+        const detached = yield* projectionStore.getThreadProjection(detachedId);
+        const child = yield* projectionStore.getThreadProjection(childId);
+        assert.deepEqual(attached.providerThreads[0]?.pendingBackgroundTasks, attachedRoster);
+        assert.equal(
+          attached.providerThreads[0]?.status,
+          replaced || reason === "server_shutdown" ? "active" : "idle",
+        );
+        assert.equal(
+          attached.providerSessions.at(-1)?.status,
+          replaced ? "ready" : reason === "runtime_error" ? "error" : "stopped",
+        );
+        assert.deepEqual(
+          detached.providerThreads.find((thread) => thread.providerSessionId === providerSessionId)
+            ?.pendingBackgroundTasks,
+          replaced || reason === "server_shutdown" ? monitor : [],
+        );
+        assert.deepEqual(
+          detached.providerThreads.find((thread) => thread.providerSessionId === otherSessionId)
+            ?.pendingBackgroundTasks,
+          monitor,
+        );
+        assert.deepEqual(child.providerThreads[0]?.pendingBackgroundTasks, monitor);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            beforeClose: replaced
+              ? Deferred.succeed(closeReached, undefined).pipe(
+                  Effect.andThen(Deferred.await(resumeClose)),
+                )
+              : Effect.void,
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 persists release when session scope close hangs", () =>

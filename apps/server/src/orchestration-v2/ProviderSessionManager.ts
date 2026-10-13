@@ -204,6 +204,8 @@ export class ProviderSessionManagerV2 extends Context.Service<
 
 interface LiveSessionEntry {
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
+  /** Includes detached threads whose opaque task rosters belonged to this process. */
+  readonly servedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /**
    * MCP credential session id issued for each attached thread. Revocation on
@@ -699,12 +701,51 @@ export const layerWithOptions = (
                 ? (input.detail ?? "Provider runtime failed.")
                 : null,
           };
-          yield* writeProviderSessionEvents({
-            runtime: input.entry.runtime,
-            threadIds: input.entry.attachedThreadIds,
-            type: "provider-session.updated",
-            payload,
-          });
+          const events: Array<OrchestrationV2DomainEvent> = [];
+          for (const threadId of input.entry.servedThreadIds) {
+            if (input.entry.attachedThreadIds.has(threadId)) {
+              events.push({
+                id: yield* idAllocator.allocate.event({ threadId, providerSessionId: payload.id }),
+                type: "provider-session.updated",
+                threadId,
+                driver: input.entry.runtime.driver,
+                providerInstanceId: input.entry.runtime.instanceId,
+                occurredAt: now,
+                payload,
+              });
+            }
+            // Shutdown recovery records the cancelled work before clearing its roster.
+            if (input.reason === "server_shutdown") continue;
+            const projection = yield* projectionStore.getThreadRecords(threadId, [
+              "providerThreads",
+            ]);
+            for (const providerThread of projection.providerThreads) {
+              if (
+                providerThread.providerSessionId !== payload.id ||
+                (providerThread.pendingBackgroundTasks?.length ?? 0) === 0
+              ) {
+                continue;
+              }
+              // The process is gone; its opaque roster cannot wait for an adapter notification.
+              events.push({
+                id: yield* idAllocator.allocate.event({ threadId, providerSessionId: payload.id }),
+                type: "provider-thread.updated",
+                threadId,
+                driver: providerThread.driver,
+                providerInstanceId: providerThread.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...providerThread,
+                  status: providerThread.status === "active" ? "idle" : providerThread.status,
+                  pendingBackgroundTasks: [],
+                  updatedAt: now,
+                },
+              });
+            }
+          }
+          if (events.length > 0) {
+            yield* eventSink.write({ events });
+          }
         });
 
       const writeReleasedRuntimeRequestEvents = (input: {
@@ -839,6 +880,18 @@ export const layerWithOptions = (
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
 
+      const writeCurrentReleaseRecords = (
+        input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
+        openLockHeld = false,
+      ) => {
+        const providerSessionId = input.entry.runtime.providerSessionId;
+        const write = Effect.gen(function* () {
+          const replaced = (yield* Ref.get(sessions)).has(sessionKey(providerSessionId));
+          yield* writeReleaseRecords({ ...input, replaced });
+        });
+        return openLockHeld ? write : sessionOpen.withLock(providerSessionId, write);
+      };
+
       // The session already left the live map, so a later release finds
       // nothing to do. Without a retry the UI would keep a ready session and
       // answerable approvals until a server restart. Each attempt holds the
@@ -848,15 +901,7 @@ export const layerWithOptions = (
       ) => {
         const providerSessionId = input.entry.runtime.providerSessionId;
         const attempt = Effect.gen(function* () {
-          const exit = yield* Effect.exit(
-            sessionOpen.withLock(
-              providerSessionId,
-              Effect.gen(function* () {
-                const replaced = (yield* Ref.get(sessions)).has(sessionKey(providerSessionId));
-                yield* writeReleaseRecords({ ...input, replaced });
-              }),
-            ),
-          );
+          const exit = yield* Effect.exit(writeCurrentReleaseRecords(input));
           if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return yield* exit;
           yield* Effect.logWarning("orchestration-v2.provider-session-release-records-failed", {
             providerSessionId,
@@ -980,6 +1025,8 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
+        /** Failed opens release while already holding the non-reentrant open lock. */
+        readonly openLockHeld?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1012,7 +1059,7 @@ export const layerWithOptions = (
                     releasedAt,
                   };
                   const recorded = yield* Effect.exit(
-                    writeReleaseRecords({ ...records, replaced: false }),
+                    writeCurrentReleaseRecords(records, input.openLockHeld),
                   );
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);
@@ -1425,6 +1472,7 @@ export const layerWithOptions = (
             updated.set(sessionKey(input.providerSessionId), {
               ...entry,
               attachedThreadIds: new Set([...entry.attachedThreadIds, input.threadId]),
+              servedThreadIds: new Set([...entry.servedThreadIds, input.threadId]),
             });
             return [entry.runtime, updated] as const;
           }),
@@ -2370,6 +2418,7 @@ export const layerWithOptions = (
               const now = yield* Clock.currentTimeMillis;
               const entry: LiveSessionEntry = {
                 attachedThreadIds: new Set([input.threadId]),
+                servedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 mcpCredentialIdByThread:
                   mcpCredentialId === undefined
@@ -2410,19 +2459,14 @@ export const layerWithOptions = (
                 // Released on interrupt too: this entry has no event pump or
                 // idle timer yet, so nothing else would ever release it.
                 Effect.onError((cause) =>
-                  releaseEntry(
-                    Cause.hasInterruptsOnly(cause)
-                      ? {
-                          providerSessionId: input.providerSessionId,
-                          reason: "manual_shutdown",
-                          detail: "The provider session start was interrupted.",
-                        }
-                      : {
-                          providerSessionId: input.providerSessionId,
-                          reason: "runtime_error",
-                          detail: "Failed to persist the provider-session attachment.",
-                        },
-                  ).pipe(logReleaseFailure(input.providerSessionId)),
+                  releaseEntry({
+                    providerSessionId: input.providerSessionId,
+                    openLockHeld: true,
+                    reason: Cause.hasInterruptsOnly(cause) ? "manual_shutdown" : "runtime_error",
+                    detail: Cause.hasInterruptsOnly(cause)
+                      ? "The provider session start was interrupted."
+                      : "Failed to persist the provider-session attachment.",
+                  }).pipe(logReleaseFailure(input.providerSessionId)),
                 ),
               );
               yield* startEventPump(entry);

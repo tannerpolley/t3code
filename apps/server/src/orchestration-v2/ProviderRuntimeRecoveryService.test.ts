@@ -290,9 +290,9 @@ it.effect("uses the same reconciliation path to cancel runtime requests during s
   }).pipe(Effect.provide(layer));
 });
 
-it.effect(
-  "preserves a replayable waiting run while cancelling its process-bound background work",
-  () => {
+it.effect.each(["startup", "shutdown"] as const)(
+  "%s preserves a replayable waiting run while recording its cancelled background work",
+  (phase) => {
     const threadId = ThreadId.make("thread_waiting_checkpoint");
     const runId = RunId.make("run_waiting_checkpoint");
     const providerThreadId = ProviderThreadId.make("provider_thread_waiting_checkpoint");
@@ -310,8 +310,14 @@ it.effect(
           driver: ProviderDriverKind.make("claude"),
           providerInstanceId,
           status: "idle",
+          ownerNodeId: null,
           pendingBackgroundTasks: [
-            { taskId: String(backgroundItemId), description: "Finish background task" },
+            {
+              taskId: String(backgroundItemId),
+              kind: "command",
+              description: "Finish background task",
+            },
+            { taskId: "monitor", kind: "monitor", description: "Watch background changes" },
           ],
         },
       ],
@@ -368,7 +374,7 @@ it.effect(
 
     return Effect.gen(function* () {
       const summary =
-        yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+        yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile(phase);
       assert.equal(summary.terminalizedRuns, 0);
       assert.equal(summary.requeuedEffects, 1);
 
@@ -387,7 +393,7 @@ it.effect(
           runId: entry.runId,
           kinds: entry.restartCancelledBackgroundWork.map((work) => work.kind),
         })),
-        [{ runId, kinds: ["shell"] }],
+        [{ runId, kinds: ["shell", "monitor"] }],
       );
       assert.isTrue(
         command.events.some(
