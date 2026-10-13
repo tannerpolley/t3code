@@ -113,6 +113,8 @@ import {
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
+import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
@@ -219,6 +221,7 @@ import {
   buildPendingUserInputAnswers,
   carryDisplacedCustomAnswerIntoPrompt,
   derivePendingUserInputProgress,
+  projectPendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
@@ -1810,6 +1813,12 @@ export default function ChatView(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerSelectedModelSelection = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    return draft?.activeProvider
+      ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
+      : null;
+  });
   const composerHasAttachments = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
@@ -4829,6 +4838,15 @@ export default function ChatView(props: ChatViewProps) {
     )
       return;
     if (nextOpen && hasTerminalWriteAccess() && terminalUiState.terminalIds.length === 0) {
+      // Server-created setup terminals exist before this client's drawer mounts.
+      // Reuse them before allocating a shell from the still-empty UI state.
+      const existingTerminalId =
+        runningTerminalIds.find((id) => !panelTerminalIds.has(id)) ??
+        activeServerOrderedTerminalIds.find((id) => !panelTerminalIds.has(id));
+      if (existingTerminalId !== undefined) {
+        storeEnsureTerminal(activeThreadRef, existingTerminalId, { open: true, active: true });
+        return;
+      }
       if (!activeThreadId || !activeProject) {
         return;
       }
@@ -4855,6 +4873,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     setTerminalOpen(nextOpen);
   }, [
+    activeServerOrderedTerminalIds,
     activeProject,
     activeThreadId,
     activeThreadRef,
@@ -4863,6 +4882,8 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     gitCwd,
     openTerminal,
+    panelTerminalIds,
+    runningTerminalIds,
     hasTerminalWriteAccess,
     setTerminalOpen,
     storeEnsureTerminal,
@@ -7779,6 +7800,20 @@ export default function ChatView(props: ChatViewProps) {
       item.type === "user_message" &&
       (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
   );
+  const pendingHandoff = useMemo(
+    () =>
+      resolvePendingHandoff(
+        serverProjection,
+        composerSelectedModelSelection ?? activeThread?.modelSelection,
+        providerStatuses,
+      ),
+    [
+      serverProjection,
+      composerSelectedModelSelection,
+      activeThread?.modelSelection,
+      providerStatuses,
+    ],
+  );
   const compactThreadUnavailable =
     !canOperateThread ||
     !activeThread ||
@@ -10289,6 +10324,7 @@ export default function ChatView(props: ChatViewProps) {
         string,
         import("@t3tools/contracts").UserInputAttachments[string]
       >();
+      const providerAnswers = { ...answers };
       for (const question of pendingInput.questions) {
         const target = questionAttachmentDraftId(
           environmentId,
@@ -10298,6 +10334,10 @@ export default function ChatView(props: ChatViewProps) {
         );
         if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
         const draft = useComposerDraftStore.getState().getComposerDraft(target);
+        providerAnswers[question.id] = projectPendingUserInputAnswer(
+          answers[question.id],
+          draft?.threadContexts ?? [],
+        );
         const attachments = draft ? [...draft.images, ...draft.files] : [];
         if (attachments.length === 0) continue;
         const uploaded = getUploadedAttachments({ environmentId, images: attachments });
@@ -10323,7 +10363,7 @@ export default function ChatView(props: ChatViewProps) {
         input: {
           threadId: activeThreadId,
           requestId,
-          answers,
+          answers: providerAnswers,
           ...(attachmentsByQuestionId.size > 0
             ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
             : {}),
@@ -10396,6 +10436,20 @@ export default function ChatView(props: ChatViewProps) {
       const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
       if (nextPrompt !== currentPrompt) {
         setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+        if (activeThreadId) {
+          const store = useComposerDraftStore.getState();
+          const questionTarget = questionAttachmentDraftId(
+            environmentId,
+            activeThreadId,
+            activePendingUserInput.requestId,
+            questionId,
+          );
+          store.addThreadContexts(
+            composerDraftTarget,
+            store.getComposerDraft(questionTarget)?.threadContexts ?? [],
+            { appendReference: false },
+          );
+        }
       }
       setPendingUserInputAnswersByRequestId((existing) => {
         const question =
@@ -10426,8 +10480,10 @@ export default function ChatView(props: ChatViewProps) {
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
       activePendingRequestKey,
+      activeThreadId,
       composerDraftTarget,
       composerRef,
+      environmentId,
       pendingUserInputAnswersByRequestId,
       setComposerDraftPrompt,
     ],
@@ -11619,7 +11675,22 @@ export default function ChatView(props: ChatViewProps) {
                 {...(draftId ? { onWorktreeSetupWorkLocally } : {})}
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
-                footer={paintOnlyDisplayedTimeline ? null : threadStatusLine}
+                footer={
+                  paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
+                    threadStatusLine
+                  ) : (
+                    <>
+                      <div className="chat-content-lane">
+                        <HandoffRow
+                          endpoints={pendingHandoff}
+                          providers={providerStatuses}
+                          pending
+                        />
+                      </div>
+                      {threadStatusLine}
+                    </>
+                  )
+                }
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
                 providerStatuses={
