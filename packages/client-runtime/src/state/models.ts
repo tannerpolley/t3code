@@ -1,3 +1,7 @@
+import {
+  runtimeRequestIsOwnerVisible,
+  type RoutedRequestParent,
+} from "@t3tools/shared/delegatedRequestVisibility";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type {
@@ -217,7 +221,9 @@ export function scopeProject(
 export function presentThreadShell(
   environmentId: EnvironmentId,
   thread: OrchestrationV2ThreadShell,
+  parent?: RoutedRequestParent | null,
 ): EnvironmentThreadShell {
+  const ownerVisible = runtimeRequestIsOwnerVisible(thread.pendingRuntimeRequest, parent);
   const updatedAt = iso(thread.updatedAt);
   const latestRun =
     thread.latestRunId === null
@@ -264,12 +270,10 @@ export function presentThreadShell(
       : { latestUserAuthoredMessageAt: nullableIso(thread.latestUserAuthoredMessageAt) }),
     hasPendingApprovals:
       thread.pendingRuntimeRequest !== null &&
-      thread.pendingRuntimeRequest.routedTo === undefined &&
+      ownerVisible &&
       thread.pendingRuntimeRequest.kind !== "user_input" &&
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
-    hasPendingUserInput:
-      thread.pendingRuntimeRequest?.kind === "user_input" &&
-      thread.pendingRuntimeRequest.routedTo === undefined,
+    hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input" && ownerVisible,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
     providerInstanceHistory: thread.providerInstanceHistory ?? [],

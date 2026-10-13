@@ -11,6 +11,9 @@ function thread(
 ) {
   return {
     id: ThreadId.make(id),
+    status: "running" as const,
+    activeRunId: null,
+    deletedAt: null,
     archivedAt: archived ? DateTime.makeUnsafe("2026-09-30T00:00:00Z") : null,
     pendingRuntimeRequest: request
       ? {
@@ -27,11 +30,44 @@ const one = EnvironmentId.make("one");
 const two = EnvironmentId.make("two");
 
 describe("question popup queue", () => {
+  it.each([
+    "idle",
+    "completed",
+    "interrupted",
+    "cancelled",
+    "failed",
+    "archived",
+    "deleted",
+    "missing",
+  ] as const)("shows the unchanged routed request when its parent is %s", (state) => {
+    const child = thread("child", {
+      kind: "user_input",
+      at: "2026-10-12T12:00:00Z",
+      routedTo: ThreadId.make("parent"),
+    });
+    const parent = thread("parent", null);
+    expect(collectPendingQuestions([{ environmentId: one, threads: [parent, child] }])).toEqual([]);
+    const inactive = {
+      ...parent,
+      status:
+        state === "archived" || state === "deleted" || state === "missing" ? parent.status : state,
+      archivedAt: state === "archived" ? DateTime.makeUnsafe("2026-10-12T12:01:00Z") : null,
+      deletedAt: state === "deleted" ? DateTime.makeUnsafe("2026-10-12T12:01:00Z") : null,
+    };
+    // An active parent in another environment cannot hide this child's request.
+    const questions = collectPendingQuestions([
+      { environmentId: one, threads: state === "missing" ? [child] : [inactive, child] },
+      { environmentId: two, threads: [parent] },
+    ]);
+    expect(questions.map((question) => question.threadId)).toEqual([child.id]);
+  });
+
   it("lists pending questions across environments oldest first, skipping settled questions, approvals and archived threads", () => {
     const questions = collectPendingQuestions([
       {
         environmentId: one,
         threads: [
+          thread("parent", null),
           thread("late", { kind: "user_input", at: "2026-09-30T10:05:00Z" }),
           thread("routed-child", {
             kind: "user_input",

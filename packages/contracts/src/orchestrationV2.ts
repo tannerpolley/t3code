@@ -1152,7 +1152,8 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
     Schema.Literals(["dynamic_tool_call", "user_input", "auth_refresh"]),
   ]),
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
-  /** App-owned delegated requests are answered by this parent orchestrator first. */
+  /** Creation-time parent. Owner visibility is derived from its current shell activity.
+   * Legacy fallback events without this field remain valid on replay. */
   routedTo: Schema.optional(ThreadId),
   responseCapability: Schema.Union([
     Schema.Struct({ type: Schema.Literal("live"), providerSessionId: ProviderSessionId }),

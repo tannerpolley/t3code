@@ -227,7 +227,7 @@ describe("v2 thread shell lists", () => {
 
 it("hides routed questions and approvals from owner attention and child-input banners", () => {
   const { registry, threads, snapshotAtom } = makeHarness();
-  const parent = v2ThreadShell;
+  const parent = { ...v2ThreadShell, status: "running" as const };
   const children = ["user_input", "command"].map((kind, index) => ({
     ...parent,
     id: ThreadId.make(`routed-child-${index}`),
@@ -255,15 +255,8 @@ it("hides routed questions and approvals from owner attention and child-input ba
   registry.set(snapshotAtom(environmentId), {
     ...v2ShellSnapshot,
     threads: [
-      parent,
-      ...children.map((child) => ({
-        ...child,
-        pendingRuntimeRequest: {
-          id: child.pendingRuntimeRequest.id,
-          kind: child.pendingRuntimeRequest.kind,
-          createdAt: child.pendingRuntimeRequest.createdAt,
-        },
-      })),
+      { ...parent, status: "interrupted", activeRunId: null, activityRunStatus: null },
+      ...children,
     ],
   });
   expect(registry.get(banner).map((child) => child.id)).toEqual([children[0]!.id]);

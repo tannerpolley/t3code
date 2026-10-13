@@ -139,12 +139,13 @@ describe("projectThreadAwarenessV2", () => {
   });
 
   it.each(["user_input", "command"] as const)(
-    "keeps a routed %s request out of owner activity",
+    "keeps a routed %s request out of owner activity while its parent works",
     (kind) => {
       expect(
         projectThreadAwarenessV2({
           environmentId: "env-1" as EnvironmentId,
           project,
+          parent: { status: "running", activeRunId: null, archivedAt: null, deletedAt: null },
           thread: v2Thread({
             pendingRuntimeRequest: {
               id: RuntimeRequestId.make("request-routed"),

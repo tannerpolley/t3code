@@ -1,3 +1,4 @@
+import { RuntimeRequestId } from "@t3tools/contracts";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
@@ -2507,6 +2508,129 @@ describe("groupRunningSubagentsByParent", () => {
 });
 
 describe("withChildNeeds", () => {
+  it.each(["archived", "missing"] as const)(
+    "keeps an owner-visible request in the sidebar when its parent is %s",
+    (state) => {
+      const source = makeThreadFixture().source;
+      const parent = {
+        ...source,
+        status: "running" as const,
+        archivedAt: state === "archived" ? source.createdAt : null,
+      };
+      const childSource = {
+        ...source,
+        id: ThreadId.make("orphan-child"),
+        lineage: {
+          rootThreadId: parent.id,
+          parentThreadId: parent.id,
+          relationshipToParent: "subagent" as const,
+        },
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("orphan-question"),
+          kind: "user_input" as const,
+          createdAt: source.createdAt,
+          routedTo: parent.id,
+        },
+      };
+      const child = presentThreadShell(
+        localEnvironmentId,
+        childSource,
+        state === "missing" ? null : parent,
+      );
+      const parentRow = presentThreadShell(localEnvironmentId, parent);
+      // A parent in another environment cannot absorb this request's attention.
+      const remoteParent = presentThreadShell(EnvironmentId.make("remote"), {
+        ...parent,
+        archivedAt: null,
+      });
+      const rows = filterSidebarV2VisibleThreads(
+        state === "missing" ? [remoteParent, child] : [remoteParent, parentRow, child],
+        null,
+      );
+      expect(rows.map((thread) => thread.id)).toContain(child.id);
+      expect(resolveSidebarThreadStatus(child)).toBe("input");
+      expect(isSidebarThreadWorking(child)).toBe(false);
+    },
+  );
+
+  it("shows nested owner requests on the root row and keeps them out of Working", () => {
+    const source = makeThreadFixture().source;
+    const root = presentThreadShell(localEnvironmentId, { ...source, status: "running" });
+    const middle = {
+      ...source,
+      id: ThreadId.make("middle"),
+      status: "completed" as const,
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+    const leafSource = {
+      ...source,
+      id: ThreadId.make("leaf"),
+      status: "running" as const,
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: middle.id,
+        relationshipToParent: "subagent" as const,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("nested-question"),
+        kind: "user_input" as const,
+        createdAt: source.createdAt,
+        routedTo: middle.id,
+      },
+    };
+    const leaf = presentThreadShell(localEnvironmentId, leafSource, middle);
+    const children = groupRunningSubagentsByParent([
+      root,
+      presentThreadShell(localEnvironmentId, middle),
+      leaf,
+    ]).get(scopedThreadKey(scopeThreadRef(localEnvironmentId, root.id)))!;
+    expect(withChildNeeds(resolveSidebarThreadStatus(root), children)).toBe("input");
+    expect(
+      isSidebarThreadWorking({
+        ...root,
+        hasPendingUserInput: children.some((child) => child.hasPendingUserInput),
+      }),
+    ).toBe(false);
+    const handling = presentThreadShell(localEnvironmentId, leafSource, {
+      ...middle,
+      status: "running",
+    });
+    const hidden = groupRunningSubagentsByParent([root, handling]).get(
+      scopedThreadKey(scopeThreadRef(localEnvironmentId, root.id)),
+    )!;
+    expect(withChildNeeds(resolveSidebarThreadStatus(root), hidden)).toBe("working");
+  });
+
+  it("moves a routed child request from Working to owner attention when its parent stops", () => {
+    const source = makeThreadFixture().source;
+    const parent = { ...source, status: "running" as const };
+    const child = {
+      ...source,
+      status: "running" as const,
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("sidebar-routed-question"),
+        kind: "user_input" as const,
+        createdAt: source.createdAt,
+        routedTo: parent.id,
+      },
+    };
+    const working = presentThreadShell(localEnvironmentId, child, parent);
+    expect(withChildNeeds("working", [working])).toBe("working");
+    expect(isSidebarThreadWorking(working)).toBe(true);
+    const visible = presentThreadShell(localEnvironmentId, child, {
+      ...parent,
+      status: "interrupted",
+      activeRunId: null,
+      activityRunStatus: null,
+    });
+    expect(withChildNeeds("ready", [visible])).toBe("input");
+    expect(isSidebarThreadWorking(visible)).toBe(false);
+  });
+
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false };
   it("shows a child's question on a working or ready parent, but keeps the parent's own urgent state", () => {
     const asking = { hasPendingApprovals: false, hasPendingUserInput: true };

@@ -1,6 +1,4 @@
 import {
-  CommandId,
-  EventId,
   MessageId,
   type OrchestrationV2DomainEvent,
   type RuntimeRequestId,
@@ -10,12 +8,9 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import type { IdAllocatorV2Allocate } from "@t3tools/provider-core/server/IdAllocator";
 import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import type { EventSinkV2Shape } from "./EventSink.ts";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
 type Threads<E> = {
@@ -63,15 +58,10 @@ const noticePrefix = "message:child-question:";
 export const delegatedRequestNoticeId = (childThreadId: ThreadId, requestId: RuntimeRequestId) =>
   MessageId.make(`${noticePrefix}${childThreadId}:${requestId}`);
 
-/**
- * A child's request goes to its live parent until the request's wake can no longer reach it:
- * held by a restart or Stop, or ended without completing its turn. A restart's continuation
- * resumes a started wake it cancelled. Then the owner answers it.
- */
+/** Only a live app-owned parent receives newly created requests. */
 export const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function* (
   projections: Projections,
   childThreadId: ThreadId,
-  requestId: RuntimeRequestId,
   inactiveParents: ReadonlySet<ThreadId> = new Set(),
 ) {
   const owner = yield* delegatedParent(projections, childThreadId);
@@ -82,70 +72,10 @@ export const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function
     owner.parent.deletedAt !== null
   )
     return undefined;
-  const { messages } = yield* projections.getThreadRecords(owner.parentThreadId, ["messages"], {
-    messageIds: [delegatedRequestNoticeId(childThreadId, requestId)],
-  });
-  const wakeRunId = messages[0]?.runId;
-  if (wakeRunId != null) {
-    const { runs } = yield* projections.getThreadRecords(owner.parentThreadId, ["runs"], {
-      runIds: [wakeRunId],
-    });
-    const wake = runs[0];
-    if (
-      wake !== undefined &&
-      (wake.status === "queued"
-        ? wake.queueHeld === true
-        : wake.completedAt !== null &&
-          wake.status !== "completed" &&
-          (wake.status !== "cancelled" || wake.startedAt === null))
-    )
-      return undefined;
-  }
   return { parentThreadId: owner.parentThreadId, taskId: owner.taskId };
 });
 
-/** Pending requests of a parent's app-owned children that are routed to that parent. */
-const routedChildRequests = (projections: Projections, parentThreadId: ThreadId) =>
-  Effect.gen(function* () {
-    const { subagents } = yield* projections.getThreadRecords(parentThreadId, ["subagents"]);
-    const routed: Array<{
-      readonly childThreadId: ThreadId;
-      readonly request: OrchestrationV2RuntimeRequest;
-    }> = [];
-    for (const task of subagents) {
-      if (task.origin !== "app_owned" || task.childThreadId === null) continue;
-      if ((yield* projections.getThreadShell(task.childThreadId)) === null) continue;
-      const { runtimeRequests } = yield* projections.getThreadRecords(task.childThreadId, [
-        "runtimeRequests",
-      ]);
-      for (const request of runtimeRequests)
-        if (request.status === "pending" && request.routedTo === parentThreadId)
-          routed.push({ childThreadId: task.childThreadId, request });
-    }
-    return routed;
-  });
-
-/** The routed requests a parent run's message woke it for; empty for every other run. */
-export const delegatedWakeRequests = (
-  projections: Projections,
-  parentThreadId: ThreadId,
-  messageId: MessageId,
-) =>
-  messageId.startsWith(noticePrefix)
-    ? routedChildRequests(projections, parentThreadId).pipe(
-        Effect.map((routed) =>
-          routed.filter(
-            ({ childThreadId, request }) =>
-              delegatedRequestNoticeId(childThreadId, request.id) === messageId,
-          ),
-        ),
-      )
-    : Effect.succeed([]);
-
-/**
- * Sets `routedTo` on every pending request a write records. Archiving or deleting a parent
- * re-emits its children's routed requests, so the same transaction returns them to the owner.
- */
+/** Records the parent once. Visibility follows its shell, without rewriting the request. */
 export const routeDelegatedRequests = (
   projections: Projections,
   events: ReadonlyArray<OrchestrationV2DomainEvent>,
@@ -159,94 +89,30 @@ export const routeDelegatedRequests = (
         (event.payload.archivedAt !== null || event.payload.deletedAt !== null),
     );
     const inactiveParentIds = new Set(inactiveParents.map((event) => event.threadId));
-    const fallbacks: OrchestrationV2DomainEvent[] = [];
-    for (const parentEvent of inactiveParents) {
-      for (const { childThreadId, request } of yield* routedChildRequests(
-        projections,
-        parentEvent.threadId,
-      )) {
-        if (
-          events.some(
-            (event) =>
-              event.type === "runtime-request.updated" &&
-              event.threadId === childThreadId &&
-              event.payload.id === request.id,
-          )
-        )
-          continue;
-        fallbacks.push({
-          id: EventId.make(`${parentEvent.id}:request-owner:${request.id}`),
-          type: "runtime-request.updated",
-          threadId: childThreadId,
-          nodeId: request.nodeId,
-          occurredAt: parentEvent.occurredAt,
-          payload: request,
-        });
-      }
-    }
     return yield* Effect.forEach(
-      [...events, ...fallbacks],
+      events,
       (event) =>
-        event.type === "runtime-request.updated" &&
-        event.payload.status === "pending" &&
-        runtimeRequestNeedsUser(event.payload.kind)
-          ? delegatedRequestOwner(
-              projections,
-              event.threadId,
-              event.payload.id,
-              inactiveParentIds,
-            ).pipe(
-              Effect.map((owner): OrchestrationV2DomainEvent => {
-                const { routedTo: _routedTo, ...request } = event.payload;
-                return {
-                  ...event,
-                  payload: {
-                    ...request,
-                    ...(owner === undefined ? {} : { routedTo: owner.parentThreadId }),
-                  },
-                };
-              }),
-            )
-          : Effect.succeed(event),
+        Effect.gen(function* () {
+          if (
+            event.type !== "runtime-request.updated" ||
+            event.payload.status !== "pending" ||
+            !runtimeRequestNeedsUser(event.payload.kind)
+          )
+            return event;
+          const existing = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
+          const routedTo =
+            existing == null
+              ? (yield* delegatedRequestOwner(projections, event.threadId, inactiveParentIds))
+                  ?.parentThreadId
+              : existing.routedTo;
+          return {
+            ...event,
+            payload: { ...event.payload, ...(routedTo === undefined ? {} : { routedTo }) },
+          };
+        }),
       { concurrency: 1 },
     );
   });
-
-/** Returns a routed request to the owner once its parent can no longer be woken for it. */
-export const releaseStrandedDelegatedRequest = Effect.fn("releaseStrandedDelegatedRequest")(
-  function* (
-    services: {
-      readonly projections: Projections;
-      readonly eventSink: Pick<EventSinkV2Shape, "write">;
-      readonly ids: IdAllocatorV2Allocate;
-    },
-    childThreadId: ThreadId,
-    requestId: RuntimeRequestId,
-  ) {
-    const request = yield* services.projections.getRuntimeRequest(childThreadId, requestId);
-    if (
-      request?.status !== "pending" ||
-      request.routedTo === undefined ||
-      (yield* delegatedRequestOwner(services.projections, childThreadId, requestId)) !== undefined
-    )
-      return;
-    const commandId = CommandId.make(`server:child-request-owner:${childThreadId}:${requestId}`);
-    // routeDelegatedRequests drops the marker from the re-emitted request.
-    yield* services.eventSink.write({
-      commandId,
-      events: [
-        {
-          id: yield* services.ids.event({ threadId: childThreadId, commandId }),
-          type: "runtime-request.updated",
-          threadId: childThreadId,
-          nodeId: request.nodeId,
-          occurredAt: yield* DateTime.now,
-          payload: request,
-        },
-      ],
-    });
-  },
-);
 
 export const isDelegatedDescendant = Effect.fn("isDelegatedDescendant")(function* <E>(
   threads: Threads<E>,
@@ -295,5 +161,5 @@ export function delegatedRequestResponseInstructions(
     request.kind === "user_input"
       ? 'answers: {questionId: "answer"}'
       : 'decision: "accept" or "decline"';
-  return `Answer with t3_pending_request_respond using threadId: ${childThreadId}, requestId: ${request.id}, and ${response}. If you need the owner's decision, ask with your own question tool and relay their answer with t3_pending_request_respond. Child questions and approvals are routed to you; the owner receives no request notification.`;
+  return `Answer with t3_pending_request_respond using threadId: ${childThreadId}, requestId: ${request.id}, and ${response}. If you need the owner's decision, ask with your own question tool and relay their answer with t3_pending_request_respond. Child questions and approvals are routed to you while you are active. Requests left unanswered become visible to the owner when you stop.`;
 }

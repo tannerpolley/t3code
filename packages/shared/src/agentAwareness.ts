@@ -6,6 +6,11 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import {
+  runtimeRequestIsOwnerVisible,
+  type RoutedRequestParent,
+} from "./delegatedRequestVisibility.ts";
+
 import { backgroundWorkHoldsCompletion } from "./orchestrationV2PendingBackgroundWork.ts";
 
 export type AgentAwarenessPhase =
@@ -40,6 +45,7 @@ function buildAgentAwarenessDeepLink(input: {
 export interface ProjectThreadAwarenessV2Input {
   readonly environmentId: EnvironmentId;
   readonly project: Pick<Project, "title">;
+  readonly parent?: RoutedRequestParent | null | undefined;
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
     | "activityRunStatus"
@@ -59,8 +65,13 @@ export function projectThreadAwarenessV2(
   input: ProjectThreadAwarenessV2Input,
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
-  if (thread.lineage.relationshipToParent === "subagent") return null;
-  const phase = resolveThreadAwarenessPhaseV2(thread);
+  const ownerVisible = runtimeRequestIsOwnerVisible(thread.pendingRuntimeRequest, input.parent);
+  if (
+    thread.lineage.relationshipToParent === "subagent" &&
+    (!ownerVisible || thread.pendingRuntimeRequest?.kind === "auth_refresh")
+  )
+    return null;
+  const phase = resolveThreadAwarenessPhaseV2(thread, ownerVisible);
   if (phase === null) {
     return null;
   }
@@ -86,16 +97,14 @@ export function projectThreadAwarenessV2(
 
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
+  ownerVisible: boolean,
 ): AgentAwarenessPhase | null {
-  if (
-    thread.pendingRuntimeRequest?.kind === "user_input" &&
-    thread.pendingRuntimeRequest.routedTo === undefined
-  ) {
+  if (thread.pendingRuntimeRequest?.kind === "user_input" && ownerVisible) {
     return "waiting_for_input";
   }
   if (
     thread.pendingRuntimeRequest !== null &&
-    thread.pendingRuntimeRequest.routedTo === undefined &&
+    ownerVisible &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";

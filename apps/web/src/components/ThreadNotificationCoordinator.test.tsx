@@ -1,4 +1,12 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  RuntimeRequestId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { act } from "react";
@@ -19,6 +27,7 @@ const state = vi.hoisted(() => ({
   sessionError: false,
   turnError: false,
   limited: false,
+  shells: null as ReadonlyArray<OrchestrationV2ThreadShell> | null,
   subagent: false,
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
   add: vi.fn(
@@ -35,27 +44,27 @@ const state = vi.hoisted(() => ({
 
 const SHELL_NOW = DateTime.makeUnsafe("2026-09-13T09:00:00.000Z");
 
-function mockThreadShell() {
+function mockThreadShell(): OrchestrationV2ThreadShell {
   return {
-    id: "thread-1",
-    projectId: "project-1",
+    id: ThreadId.make("thread-1"),
+    projectId: ProjectId.make("project-1"),
     title: "Fix the login form",
-    providerInstanceId: "codex",
-    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
     worktreePath: null,
     activeProviderThreadId: null,
     lineage: {
-      rootThreadId: "thread-1",
-      parentThreadId: state.subagent ? "parent" : null,
+      rootThreadId: ThreadId.make("thread-1"),
+      parentThreadId: state.subagent ? ThreadId.make("parent") : null,
       relationshipToParent: state.subagent ? "subagent" : null,
     },
     forkedFrom: null,
     createdBy: "user",
     creationSource: "web",
-    latestRunId: "run-1",
+    latestRunId: RunId.make("run-1"),
     activeRunId: null,
     status: state.completedAt
       ? "completed"
@@ -64,9 +73,9 @@ function mockThreadShell() {
         : "running",
     lastErrorClass: state.limited ? "usage_limit" : null,
     pendingRuntimeRequest: state.input
-      ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
+      ? { id: RuntimeRequestId.make("request-1"), kind: "user_input", createdAt: SHELL_NOW }
       : state.approval
-        ? { id: "request-1", kind: "command", createdAt: SHELL_NOW }
+        ? { id: RuntimeRequestId.make("request-1"), kind: "command", createdAt: SHELL_NOW }
         : null,
     latestVisibleMessage: null,
     latestUserMessageAt: null,
@@ -90,7 +99,7 @@ function mockThreadShell() {
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => ({
     status: state.live ? "live" : "disconnected",
-    snapshot: Option.some({ threads: [mockThreadShell()] }),
+    snapshot: Option.some({ threads: state.shells ?? [mockThreadShell()] }),
   }),
 }));
 vi.mock("@tanstack/react-router", () => ({
@@ -152,6 +161,7 @@ beforeEach(() => {
     sessionError: false,
     turnError: false,
     limited: false,
+    shells: null,
     subagent: false,
     background: [],
   });
@@ -175,14 +185,67 @@ afterEach(async () => {
 });
 
 describe("thread notifications", () => {
-  it.each([true, false])("keeps subagents silent with focus=%s", async (focused) => {
+  it.each([
+    ["user_input", true],
+    ["command", true],
+    ["user_input", false],
+    ["command", false],
+  ] as const)(
+    "alerts once for a routed %s request when only its parent changes, focused=%s",
+    async (kind, focused) => {
+      state.focused = focused;
+      state.mode = "notifications-and-sound";
+      state.subagent = true;
+      const child = {
+        ...mockThreadShell(),
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("child-request"),
+          kind,
+          createdAt: SHELL_NOW,
+          routedTo: ThreadId.make("parent"),
+        },
+      };
+      const parent = {
+        ...child,
+        id: ThreadId.make("parent"),
+        pendingRuntimeRequest: null,
+        lineage: {
+          rootThreadId: ThreadId.make("parent"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+      };
+      state.shells = [parent, child];
+      await render();
+      expect(state.add).not.toHaveBeenCalled();
+      expect(state.notification).not.toHaveBeenCalled();
+      // The child object and request are untouched; the parent simply stops.
+      state.shells = [{ ...parent, status: "interrupted" }, child];
+      await render();
+      await render();
+      expect(state.sound).toHaveBeenCalledTimes(1);
+      expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(1);
+      const title = kind === "user_input" ? "Input needed" : "Approval needed";
+      if (focused) expect(state.add.mock.calls[0]?.[0].title).toBe(title);
+      else expect(state.notification.mock.calls[0]?.[0]).toBe(title);
+      // Resuming and stopping cannot announce the same unanswered request twice.
+      state.shells = [parent, child];
+      await render();
+      if (focused) expect(state.close).toHaveBeenCalledWith("toast-1");
+      else expect(state.notification.mock.results[0]?.value.close).toHaveBeenCalledTimes(1);
+      state.shells = [{ ...parent, status: "interrupted" }, child];
+      await render();
+      expect(state.sound).toHaveBeenCalledTimes(1);
+      expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([true, false])("keeps subagent progress silent with focus=%s", async (focused) => {
     state.subagent = true;
     state.focused = focused;
     state.mode = "notifications-and-sound";
     await render();
     await complete();
-    state.input = true;
-    await render();
     expect(state.sound).not.toHaveBeenCalled();
     expect(state.add).not.toHaveBeenCalled();
     expect(state.notification).not.toHaveBeenCalled();

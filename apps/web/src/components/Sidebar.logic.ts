@@ -574,15 +574,25 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
 }
 
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
-    environmentId: string;
-    projectId: string;
-  },
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> &
+    Partial<Pick<SidebarThreadSummary, "hasPendingApprovals" | "hasPendingUserInput">> & {
+      id?: string;
+      environmentId: string;
+      projectId: string;
+    },
 >(threads: readonly T[], scopedProjectKeys: ReadonlySet<string> | null): T[] {
+  const present = new Set(
+    threads
+      .filter((thread) => thread.archivedAt === null)
+      .map((thread) => JSON.stringify([thread.environmentId, thread.id])),
+  );
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      !isSidebarSubagentThread(thread) &&
+      (!isSidebarSubagentThread(thread) ||
+        ((thread.hasPendingApprovals || thread.hasPendingUserInput) &&
+          !present.has(JSON.stringify([thread.environmentId, thread.lineage.parentThreadId])) &&
+          !present.has(JSON.stringify([thread.environmentId, thread.lineage.rootThreadId])))) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );
@@ -1077,17 +1087,20 @@ export function groupRunningSubagentsByParent<
     ) {
       continue;
     }
-    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
-    const siblings = byParent.get(key);
-    if (siblings) siblings.push(thread);
-    else byParent.set(key, [thread]);
+    // Nested requests must reach the root row even when their direct parent is hidden.
+    for (const ancestor of new Set([parentThreadId, thread.lineage.rootThreadId])) {
+      const key = scopedThreadKey(scopeThreadRef(thread.environmentId, ancestor));
+      const siblings = byParent.get(key);
+      if (siblings) siblings.push(thread);
+      else byParent.set(key, [thread]);
+    }
   }
   return byParent;
 }
 
 /**
- * A parent shows children's owner-facing requests; orchestrator-routed requests
- * have no owner attention flags. Its own urgent states win. A settled
+ * A parent shows children's owner-facing requests. Requests its active children
+ * are handling have no owner attention flags. Its own urgent states win. A settled
  * parent with children still at work reads as waiting on them, like its own background work.
  */
 export function withChildNeeds(

@@ -11,6 +11,7 @@ import {
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
+import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -281,6 +282,7 @@ const makePublishProof = Effect.fn("makePublishProof")(function* (input: {
 // Compact, log-safe view of the fields the awareness phase ladder reads.
 function describeThreadShellForAwareness(
   thread: Option.Option<OrchestrationV2ThreadShell>,
+  parent?: OrchestrationV2ThreadShell | null,
 ): Record<string, unknown> {
   if (Option.isNone(thread)) {
     return { found: false };
@@ -292,10 +294,9 @@ function describeThreadShellForAwareness(
     activityRunStatus: shell.activityRunStatus ?? null,
     activeRunId: shell.activeRunId ?? null,
     latestRunId: shell.latestRunId ?? null,
-    pendingRuntimeRequestKind:
-      shell.pendingRuntimeRequest?.routedTo === undefined
-        ? (shell.pendingRuntimeRequest?.kind ?? null)
-        : null,
+    pendingRuntimeRequestKind: runtimeRequestIsOwnerVisible(shell.pendingRuntimeRequest, parent)
+      ? (shell.pendingRuntimeRequest?.kind ?? null)
+      : null,
     hasActionableProposedPlan: shell.hasActionableProposedPlan,
   };
 }
@@ -305,6 +306,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly threadId: ThreadId;
   readonly thread: Option.Option<OrchestrationV2ThreadShell>;
   readonly project: Option.Option<Project>;
+  readonly parent?: OrchestrationV2ThreadShell | null | undefined;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -331,6 +333,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
         environmentId: input.environmentId,
         project: input.project.value,
         thread: input.thread.value,
+        parent: input.parent,
       }),
     ),
     reason: "snapshot",
@@ -351,6 +354,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
 }): ReadonlyArray<ThreadId> {
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
+  const index = new Map(input.threads.map((thread) => [thread.id, thread]));
   return input.threads
     .filter((thread) => {
       const project = projectById.get(thread.projectId);
@@ -361,6 +365,10 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
         environmentId: input.environmentId,
         project,
         thread,
+        parent:
+          thread.pendingRuntimeRequest?.routedTo === undefined
+            ? undefined
+            : index.get(thread.pendingRuntimeRequest.routedTo),
       });
       return (
         state !== null &&
@@ -532,18 +540,26 @@ export const make = Effect.gen(function* () {
     // domain event, so materializing the full shell here would make the cost
     // of one thread's activity proportional to how many threads exist.
     const threadShell = yield* threads.getThreadShell(threadId);
+    const parent =
+      threadShell?.pendingRuntimeRequest?.routedTo === undefined
+        ? undefined
+        : yield* threads.getThreadShell(threadShell.pendingRuntimeRequest.routedTo);
+    const ownerVisible = runtimeRequestIsOwnerVisible(threadShell?.pendingRuntimeRequest, parent);
+    const parentHandlingRequest =
+      threadShell?.pendingRuntimeRequest?.routedTo !== undefined && !ownerVisible;
     if (
       threadShell?.lineage.relationshipToParent === "subagent" &&
+      (!ownerVisible || threadShell.pendingRuntimeRequest?.kind === "auth_refresh") &&
       !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
     ) {
-      // Subagents never project activity, so the relay holds no row to clear.
+      // Child progress stays quiet; only owner-visible requests project activity.
       // Their events would otherwise publish a tombstone each, and every
       // publish re-delivers the user's aggregate. Checked before the archive
       // filter so archiving one stays quiet too.
       return;
     }
     const thread =
-      threadShell === null || threadShell.archivedAt !== null
+      threadShell === null || threadShell.archivedAt !== null || threadShell.deletedAt !== null
         ? Option.none<OrchestrationV2ThreadShell>()
         : Option.some(threadShell);
     const project = Option.isSome(thread)
@@ -554,6 +570,7 @@ export const make = Effect.gen(function* () {
       threadId,
       thread,
       project,
+      parent,
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
@@ -589,8 +606,10 @@ export const make = Effect.gen(function* () {
     //   instant and sends a spurious Done notification at thread birth.
     // Defer, schedule a re-publish through the ordinary worker queue, and
     // only publish if the projection still holds when it drains.
+    // A parent taking over its routed request retracts owner attention immediately.
     const requiresConfirmation =
       (snapshot.state === null &&
+        !parentHandlingRequest &&
         publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
       (snapshot.state?.phase === "completed" && !publishedStateByThread.has(threadId));
     if (requiresConfirmation) {
@@ -603,7 +622,7 @@ export const make = Effect.gen(function* () {
           threadId,
           reason: snapshot.reason,
           statePhase: snapshot.state?.phase ?? null,
-          shell: describeThreadShellForAwareness(thread),
+          shell: describeThreadShellForAwareness(thread, parent),
         });
         yield* schedulePublishConfirm(threadId);
         return;
@@ -616,7 +635,7 @@ export const make = Effect.gen(function* () {
         threadId,
         reason: snapshot.reason,
         statePhase: snapshot.state?.phase ?? null,
-        shell: describeThreadShellForAwareness(thread),
+        shell: describeThreadShellForAwareness(thread, parent),
       });
     } else {
       publishConfirmDeadlines.delete(threadId);
@@ -840,7 +859,30 @@ export const make = Effect.gen(function* () {
           return Effect.logDebug("agent activity publishing queued thread publish", {
             eventType: event.type,
             threadId,
-          }).pipe(Effect.andThen(enqueueThreadPublish(threadId)));
+          }).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                yield* enqueueThreadPublish(threadId);
+                // Parent activity changes visibility without a child event.
+                if (
+                  event.type !== "run.updated" &&
+                  event.type !== "thread.archived" &&
+                  event.type !== "thread.unarchived" &&
+                  event.type !== "thread.deleted" &&
+                  event.type !== "thread.metadata-updated"
+                )
+                  return;
+                const { subagents } = yield* threads.getThreadRecords(threadId, ["subagents"]);
+                for (const task of subagents) {
+                  if (task.origin === "app_owned" && task.childThreadId !== null)
+                    yield* enqueueThreadPublish(task.childThreadId);
+                }
+              }),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to queue agent activity", { threadId, cause }),
+            ),
+          );
         }),
       );
     },

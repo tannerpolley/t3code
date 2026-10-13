@@ -1,3 +1,7 @@
+import {
+  runtimeRequestIsOwnerVisible,
+  type RoutedRequestParent,
+} from "@t3tools/shared/delegatedRequestVisibility";
 import type {
   EnvironmentId,
   OrchestrationV2ThreadShell,
@@ -23,17 +27,21 @@ export function collectPendingQuestions(
   environments: Iterable<{
     readonly environmentId: EnvironmentId;
     readonly threads: ReadonlyArray<
-      Pick<OrchestrationV2ThreadShell, "id" | "archivedAt" | "pendingRuntimeRequest">
+      Pick<OrchestrationV2ThreadShell, "id" | "pendingRuntimeRequest"> & RoutedRequestParent
     >;
   }>,
 ): PendingQuestion[] {
   const questions: PendingQuestion[] = [];
   for (const { environmentId, threads } of environments) {
+    const index = new Map(threads.map((thread) => [thread.id, thread]));
     for (const thread of threads) {
       const request = thread.pendingRuntimeRequest;
       if (
         request?.kind !== "user_input" ||
-        request.routedTo !== undefined ||
+        !runtimeRequestIsOwnerVisible(
+          request,
+          request.routedTo === undefined ? undefined : index.get(request.routedTo),
+        ) ||
         thread.archivedAt !== null
       )
         continue;

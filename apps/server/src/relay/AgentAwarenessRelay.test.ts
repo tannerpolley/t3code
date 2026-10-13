@@ -10,6 +10,7 @@ import {
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -145,6 +146,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     /** Serves shells from this source instead of `currentShell`. */
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
+    readonly readRecords?: ThreadManagementService.ThreadManagementService["Service"]["getThreadRecords"];
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -200,7 +202,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getTimelinePage: () => Effect.die("Unused timeline read"),
     getMessageCount: () => Effect.die("unused message count"),
     getTurnItem: () => Effect.die("unused turn item read"),
-    getThreadRecords: () => Effect.die("unused record read"),
+    getThreadRecords: options.readRecords ?? (() => Effect.die("unused record read")),
     getThreadProjection: unused,
     getCheckpointContext: unused,
     getThreadSnapshot: unused,
@@ -495,26 +497,173 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("publishes routed requests as ongoing work without owner input notifications", () =>
-    Effect.gen(function* () {
-      const { relay, currentShell, publications } = yield* makeTestRelay();
-      yield* Ref.set(
-        currentShell,
-        shell({
-          status: "running",
-          activeRunId: RunId.make("routed-run"),
-          pendingRuntimeRequest: {
-            id: RuntimeRequestId.make("routed-question"),
-            kind: "user_input",
-            createdAt: DateTime.makeUnsafe(NOW),
-            routedTo: ThreadId.make("orchestrator"),
+  it.effect.each([false, true])(
+    "re-evaluates child input on a parent-only event, answered=%s",
+    (answered) =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const pulls = yield* Queue.unbounded<void>();
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
+          readRecords: (threadId, fields, filter) =>
+            store.getThreadRecords(threadId, fields, filter).pipe(Effect.orDie),
+          domainEvents: Stream.fromEffectRepeat(
+            Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+          ),
+        });
+        const parentId = ThreadId.make("orchestrator");
+        const childId = ThreadId.make("routed-child");
+        const runId = RunId.make("parent-run");
+        const requestId = RuntimeRequestId.make("child-question");
+        const now = yield* DateTime.now;
+        const parent = { ...shell(), id: parentId, lastVisitedAt: null };
+        const child = {
+          ...parent,
+          id: childId,
+          lineage: {
+            rootThreadId: parentId,
+            parentThreadId: parentId,
+            relationshipToParent: "subagent" as const,
           },
-        }),
-      );
-      yield* relay.publishThread(THREAD_ID);
-      yield* relay.drain;
-      assert.equal(publications[0]?.state?.phase, "running");
-    }),
+        };
+        const run = {
+          id: runId,
+          threadId: parentId,
+          ordinal: 1,
+          providerInstanceId: parent.providerInstanceId,
+          modelSelection: parent.modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("parent-message"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "running" as const,
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        const request = {
+          id: requestId,
+          nodeId: NodeId.make("question-node"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input" as const,
+          status: "pending" as const,
+          routedTo: parentId,
+          responseCapability: { type: "message" as const },
+          createdAt: now,
+          resolvedAt: null,
+        };
+        const seed: OrchestrationV2DomainEvent[] = [
+          {
+            id: EventId.make("parent-created"),
+            type: "thread.created",
+            threadId: parentId,
+            occurredAt: now,
+            payload: parent,
+          },
+          {
+            id: EventId.make("child-created"),
+            type: "thread.created",
+            threadId: childId,
+            occurredAt: now,
+            payload: child,
+          },
+          {
+            id: EventId.make("parent-running"),
+            type: "run.updated",
+            threadId: parentId,
+            occurredAt: now,
+            payload: run,
+          },
+          {
+            id: EventId.make("child-request"),
+            type: "runtime-request.updated",
+            threadId: childId,
+            occurredAt: now,
+            payload: request,
+          },
+          {
+            id: EventId.make("delegated-child"),
+            type: "subagent.updated",
+            threadId: parentId,
+            occurredAt: now,
+            payload: {
+              id: NodeId.make("delegated-task"),
+              threadId: parentId,
+              runId,
+              parentNodeId: NodeId.make("root"),
+              origin: "app_owned",
+              createdBy: "agent",
+              driver: ProviderDriverKind.make("codex"),
+              providerInstanceId: parent.providerInstanceId,
+              providerThreadId: null,
+              childThreadId: childId,
+              nativeTaskRef: null,
+              prompt: "Inspect",
+              title: null,
+              model: null,
+              status: "running",
+              result: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            },
+          },
+        ];
+        for (const event of seed) yield* store.apply(event);
+        yield* relay.publishThread(childId);
+        assert.equal(publications.length, 0);
+        if (answered)
+          yield* store.apply({
+            id: EventId.make("child-answered"),
+            type: "runtime-request.updated",
+            threadId: childId,
+            occurredAt: now,
+            payload: { ...request, status: "resolved", resolvedAt: now },
+          });
+        yield* relay.start();
+        yield* Queue.take(pulls);
+        for (const id of ["parent-stopped", "parent-stopped-again"]) {
+          const event: OrchestrationV2DomainEvent = {
+            id: EventId.make(id),
+            type: "run.updated",
+            threadId: parentId,
+            occurredAt: now,
+            payload: { ...run, status: "interrupted", completedAt: now },
+          };
+          yield* store.apply(event);
+          yield* Queue.offer(events, event);
+          yield* Queue.take(pulls);
+          yield* relay.drain;
+        }
+        const inputs = publications.filter(
+          (publication) => publication.state?.threadId === childId,
+        );
+        assert.equal(inputs.length, answered ? 0 : 1);
+        if (!answered) assert.equal(inputs[0]?.state?.phase, "waiting_for_input");
+        if (!answered) {
+          // Resuming the parent removes its child's owner card without the tombstone debounce.
+          const resumed: OrchestrationV2DomainEvent = {
+            id: EventId.make("parent-resumed"),
+            type: "run.updated",
+            threadId: parentId,
+            occurredAt: now,
+            payload: run,
+          };
+          yield* store.apply(resumed);
+          yield* Queue.offer(events, resumed);
+          yield* Queue.take(pulls);
+          yield* relay.drain;
+          const childPublications = publications.filter(
+            (publication) => publication.url === inputs[0]?.url,
+          );
+          assert.equal(childPublications.length, 2);
+          assert.isNull(childPublications[1]?.state);
+        }
+      }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
   );
 
   it.effect("cancels a stale retry when a newer update publishes successfully", () =>
@@ -753,6 +902,8 @@ describe("AgentAwarenessRelay", () => {
       const pulls = yield* Queue.unbounded<void>();
       const { relay, shellReads, publications } = yield* makeTestRelay({
         readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
+        readRecords: (threadId, fields, filter) =>
+          store.getThreadRecords(threadId, fields, filter).pipe(Effect.orDie),
         domainEvents: Stream.fromEffectRepeat(
           Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
         ),

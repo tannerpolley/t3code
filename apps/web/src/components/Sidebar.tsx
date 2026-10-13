@@ -2857,7 +2857,7 @@ export default function Sidebar() {
     () => groupRunningSubagentsByParent(threads),
     [threads],
   );
-  // Owner-facing flags omit orchestrator-routed requests on the shelf and parent row alike.
+  // Only owner-visible child requests affect attention on the shelf and parent row.
   const activityThreads = useMemo(
     () =>
       threads.map((thread) => {

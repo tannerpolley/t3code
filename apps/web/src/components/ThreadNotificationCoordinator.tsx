@@ -1,3 +1,4 @@
+import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -108,6 +109,8 @@ export function ThreadNotificationCoordinator() {
 
 interface NotificationState {
   readonly raw: OrchestrationV2ThreadShell;
+  readonly parent: OrchestrationV2ThreadShell | undefined;
+  readonly notifiedAttention: string | null;
   readonly attention: string | null;
   readonly completion: number | null;
 }
@@ -143,30 +146,48 @@ function EnvironmentNotifications({
       return;
     }
     const next = new Map<ThreadId, NotificationState>();
+    const index = new Map(threads.map((thread) => [thread.id, thread]));
     for (const rawThread of threads) {
-      if (rawThread.lineage.relationshipToParent === "subagent") continue;
+      const parent =
+        rawThread.pendingRuntimeRequest?.routedTo === undefined
+          ? undefined
+          : index.get(rawThread.pendingRuntimeRequest.routedTo);
+      const child = rawThread.lineage.relationshipToParent === "subagent";
+      const ownerVisible = runtimeRequestIsOwnerVisible(rawThread.pendingRuntimeRequest, parent);
       const prior = previous.current.get(rawThread.id);
-      // The same object cannot produce a new notification.
-      if (prior?.raw === rawThread) {
+      if (child && rawThread.pendingRuntimeRequest === null && prior === undefined) continue;
+      // Parent activity can change attention even when the child object is unchanged.
+      if (prior?.raw === rawThread && prior.parent === parent) {
         next.set(rawThread.id, prior);
         continue;
       }
-      const thread = presentThreadShell(environmentId, rawThread);
+      const thread = presentThreadShell(environmentId, rawThread, parent);
       let status = resolveSidebarThreadStatus(thread);
-      if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
+      if (!child && status === "ready" && thread.latestRun?.status === "failed") status = "failed";
       const attention =
-        status === "input" || status === "approval" || status === "failed" || status === "limited"
-          ? `${thread.latestRun?.runId ?? ""}:${status}`
+        (!child || ownerVisible) &&
+        (status === "input" ||
+          status === "approval" ||
+          (!child && (status === "failed" || status === "limited")))
+          ? `${rawThread.pendingRuntimeRequest?.id ?? thread.latestRun?.runId ?? ""}:${status}`
           : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
       // Commands left running (a dev server) read as ready; subagents and monitors wait.
       const completion =
+        !child &&
         status === "ready" &&
         thread.latestRun?.status === "completed" &&
         Number.isFinite(completedAt)
           ? completedAt
           : (prior?.completion ?? null);
-      next.set(thread.id, { raw: rawThread, attention, completion });
+      const notificationState = {
+        raw: rawThread,
+        parent,
+        attention,
+        completion,
+        notifiedAttention: prior?.notifiedAttention ?? null,
+      };
+      next.set(thread.id, notificationState);
       if (prior?.attention && attention !== prior.attention) {
         // Answered, decided, or replaced by a new turn: its alert would now lie.
         const toastId = toasts.current.get(thread.id);
@@ -174,14 +195,21 @@ function EnvironmentNotifications({
         toasts.current.delete(thread.id);
         onRetract(`${environmentId}:${thread.id}`);
       }
+      if (child && rawThread.pendingRuntimeRequest === null) {
+        next.delete(thread.id);
+        continue;
+      }
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
-        attention && attention !== prior.attention
+        attention &&
+        attention !== prior.attention &&
+        (!child || attention !== prior.notifiedAttention)
           ? "input"
           : completion !== null && (prior.completion === null || completion > prior.completion)
             ? "completion"
             : null;
       if (!kind) continue;
+      if (child && kind === "input") notificationState.notifiedAttention = attention;
       const title =
         kind === "completion"
           ? "Thread completed"
