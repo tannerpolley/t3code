@@ -45,6 +45,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -220,9 +221,8 @@ export const isLocalServerHidden = (
 };
 
 /**
- * The project with the deepest root (a workspace root or a thread worktree) containing `cwd`, a
- * `/proc/<pid>/cwd` target. Roots must be physical paths, as the kernel reports cwd; on equal
- * roots the first one wins.
+ * The project with the deepest workspace root containing `cwd`, a `/proc/<pid>/cwd` target.
+ * Roots must be physical paths, as the kernel reports cwd; on equal roots the first project wins.
  */
 export const projectIdForCwd = (
   cwd: string,
@@ -418,14 +418,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
+  const { dirname, join, resolve } = yield* Path.Path;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettingsService;
-  // ponytail: reading worktrees scans every thread's payload (~75 ms for 2,000 threads), so the
-  // list is reused for 30 s; a server in a brand-new worktree waits that long for its project.
-  const listThreadWorktrees = yield* projectStore.listThreadWorktrees().pipe(
-    Effect.orElseSucceed(() => []),
-    Effect.cachedWithTTL(Duration.seconds(30)),
-  );
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -509,6 +504,30 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     Effect.orElseSucceed(() => null),
   );
 
+  /**
+   * A path inside a linked git worktree (T3 keeps these under ~/.t3/worktrees) mapped to the same
+   * path in its main checkout, whose project owns it. `<worktree>/.git` is then a file pointing at
+   * `<main>/.git/worktrees/<name>`; any other path comes back unchanged.
+   */
+  const mainCheckoutPath = Effect.fn("PortDiscovery.mainCheckoutPath")(function* (path: string) {
+    for (let dir = path; ; dir = dirname(dir)) {
+      const gitPath = join(dir, ".git");
+      if (yield* fileSystem.exists(gitPath).pipe(Effect.orElseSucceed(() => false))) {
+        // A main checkout's `.git` is a directory, which doesn't read as a string.
+        const pointer = yield* fileSystem
+          .readFileString(gitPath)
+          .pipe(Effect.orElseSucceed(() => ""));
+        const gitdir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+        const main =
+          gitdir === undefined
+            ? undefined
+            : /^(.+)\/\.git\/worktrees\/[^/]+$/.exec(resolve(dir, gitdir))?.[1];
+        return main === undefined ? path : main + path.slice(dir.length);
+      }
+      if (dirname(dir) === dir) return path;
+    }
+  });
+
   // Linux only: other platforms have no /proc, so their listeners carry no unit or project.
   const attributeListeners = Effect.fn("PortDiscovery.attributeListeners")(function* (
     servers: ReadonlyArray<DiscoveredLocalServer>,
@@ -517,14 +536,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       ...new Set(servers.flatMap((server) => (server.pid === null ? [] : [server.pid]))),
     ];
     if (hostPlatform !== "linux" || processIds.length === 0) return servers;
-    // A thread's worktree belongs to its project, wherever the worktree lives.
-    const [shells, worktrees] = yield* Effect.all([
-      projectStore.listShells().pipe(Effect.orElseSucceed(() => [])),
-      listThreadWorktrees,
-    ]);
+    const shells = yield* projectStore.listShells().pipe(Effect.orElseSucceed(() => []));
     // /proc reports physical paths, so symlinked roots are compared by their target.
     const projects = yield* Effect.forEach(
-      [...shells, ...worktrees],
+      shells,
       (project) =>
         fileSystem.realPath(project.workspaceRoot).pipe(
           Effect.orElseSucceed(() => project.workspaceRoot),
@@ -541,7 +556,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             cgroup: fileSystem
               .readFileString(`/proc/${pid}/cgroup`)
               .pipe(Effect.orElseSucceed(() => "")),
-            cwd: fileSystem.readLink(`/proc/${pid}/cwd`).pipe(Effect.orElseSucceed(() => null)),
+            cwd: fileSystem.readLink(`/proc/${pid}/cwd`).pipe(
+              Effect.flatMap(mainCheckoutPath),
+              Effect.orElseSucceed(() => null),
+            ),
           }).pipe(
             Effect.map(({ cgroup, cwd }) => {
               const systemdUnit = systemdUnitFromCgroup(cgroup);

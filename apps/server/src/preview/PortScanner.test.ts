@@ -20,6 +20,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -39,12 +40,11 @@ import * as PortScanner from "./PortScanner.ts";
 
 type ProjectRoots = ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>;
 
-const makeProjectStore = (projects: ProjectRoots = [], worktrees: ProjectRoots = []) =>
+const makeProjectStore = (projects: ProjectRoots = []) =>
   Layer.succeed(
     ProjectStore.ProjectStoreV2,
     ProjectStore.ProjectStoreV2.of({
       listShells: () => Effect.succeed(projects),
-      listThreadWorktrees: () => Effect.succeed(worktrees),
     } as never),
   );
 
@@ -81,6 +81,7 @@ const layerProbeFailure = (
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Path.layer,
         fileSystem,
         layerNoAttribution,
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
@@ -93,6 +94,7 @@ const layerProbeFailure = (
 const layerTestPortDiscovery = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      Path.layer,
       layerNoProc,
       layerNoAttribution,
       layerTestProcessRunner,
@@ -122,6 +124,7 @@ const layerLsofScanner = (input: {
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Path.layer,
         layerNoProc,
         layerNoAttribution,
         Layer.succeed(ProcessRunner.ProcessRunner, {
@@ -159,14 +162,16 @@ const makeLsofScannerWithoutSettings = (input: {
   readonly cgroups?: ReadonlyMap<number, string>;
   readonly cwds?: ReadonlyMap<number, string>;
   readonly projects?: ProjectRoots;
-  readonly worktrees?: ProjectRoots;
   readonly realPaths?: ReadonlyMap<string, string>;
+  /** `.git` files by path, as in a linked git worktree. */
+  readonly gitFiles?: ReadonlyMap<string, string>;
 }) => {
   const parents = input.parents ?? (() => new Map([[input.pid(), process.pid]]));
   const platform = input.platform ?? "linux";
   return PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Path.layer,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (command) => {
             const parentProbe =
@@ -193,11 +198,12 @@ const makeLsofScannerWithoutSettings = (input: {
             });
           },
         }),
-        makeProjectStore(input.projects, input.worktrees),
+        makeProjectStore(input.projects),
         Layer.succeed(
           FileSystem.FileSystem,
           FileSystem.makeNoop({
             realPath: (path) => Effect.succeed(input.realPaths?.get(path) ?? path),
+            exists: (path) => Effect.succeed(input.gitFiles?.has(path) ?? false),
             readLink: (path) => {
               const cwd = input.cwds?.get(Number(path.split("/")[2]));
               return cwd === undefined
@@ -210,6 +216,8 @@ const makeLsofScannerWithoutSettings = (input: {
                   readDirectory: () => Effect.sync(() => [...parents().keys()].map(String)),
                   readFileString: (path: string) =>
                     Effect.sync(() => {
+                      const gitFile = input.gitFiles?.get(path);
+                      if (gitFile !== undefined) return gitFile;
                       const pid = Number(path.split("/")[2]);
                       if (path.endsWith("/cgroup")) return input.cgroups?.get(pid) ?? "0::/";
                       return `${pid} (node worker) name) S ${parents().get(pid)} 0 0`;
@@ -451,7 +459,7 @@ describe("listener attribution", () => {
   );
 
   effectIt.effect(
-    "attributes a thread worktree to its project, not a registered parent folder",
+    "attributes a linked worktree to its main checkout's project, not a registered parent folder",
     () => {
       const home = ProjectId.make("project-home");
       const app = ProjectId.make("project-app");
@@ -466,9 +474,14 @@ describe("listener attribution", () => {
         cwds: new Map([[501, "/home/u/.t3/worktrees/app/feature/apps/web"]]),
         projects: [
           { id: home, workspaceRoot: "/home/u" },
-          { id: app, workspaceRoot: "/home/u/Code/app" },
+          { id: app, workspaceRoot: "/home/u/Code/app/apps/web" },
         ],
-        worktrees: [{ id: app, workspaceRoot: "/home/u/.t3/worktrees/app/feature" }],
+        gitFiles: new Map([
+          [
+            "/home/u/.t3/worktrees/app/feature/.git",
+            "gitdir: /home/u/Code/app/.git/worktrees/feature\n",
+          ],
+        ]),
       });
 
       return Effect.gen(function* () {

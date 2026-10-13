@@ -96,11 +96,6 @@ export class ProjectStoreV2 extends Context.Service<
     readonly listShells: (options?: {
       readonly projectIds?: ReadonlyArray<ProjectId>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectStoreV2Error>;
-    /** Distinct worktree paths of live threads in active projects, each with its thread's project. */
-    readonly listThreadWorktrees: () => Effect.Effect<
-      ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>,
-      ProjectStoreV2Error
-    >;
   }
 >()("t3/orchestration-v2/ProjectStore/ProjectStoreV2") {}
 
@@ -193,20 +188,6 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const selectThreadWorktrees = SqlSchema.findAll({
-    Request: Schema.Void,
-    Result: Schema.Struct({ id: ProjectId, workspaceRoot: Schema.String }),
-    execute: () => sql`
-      SELECT DISTINCT
-        t.project_id AS "id",
-        json_extract(t.payload_json, '$.worktreePath') AS "workspaceRoot"
-      FROM orchestration_v2_projection_threads t
-      JOIN projection_projects p ON p.project_id = t.project_id
-      WHERE t.deleted_at IS NULL AND p.deleted_at IS NULL
-        AND json_extract(t.payload_json, '$.worktreePath') IS NOT NULL
-    `,
-  });
-
   const mapError =
     (operation: string) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -291,8 +272,6 @@ export const make = Effect.gen(function* () {
       list(options?.projectIds === undefined ? undefined : { projectIds: options.projectIds }).pipe(
         Effect.map((rows) => rows.map(toShell)),
       ),
-    listThreadWorktrees: () =>
-      selectThreadWorktrees(undefined).pipe(mapError("listThreadWorktrees")),
   });
 });
 
