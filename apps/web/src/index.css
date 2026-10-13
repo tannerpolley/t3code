@@ -1984,6 +1984,11 @@ code {
   cursor: copy;
 }
 
+.chat-markdown code[data-copyable]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
 /* Brief "Copied" label over inline code, shown while the copy hook's timer runs. */
 .chat-markdown code[data-copied] {
   position: relative;

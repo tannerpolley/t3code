@@ -1418,3 +1418,82 @@ describe("ChatMarkdown in-page links", () => {
     },
   );
 });
+
+describe("ChatMarkdown copying", () => {
+  async function mount(text: string, run: (container: HTMLElement) => Promise<void>) {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<ChatMarkdown cwd={undefined} text={text} />));
+      await run(container);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      window.getSelection()?.removeAllRanges();
+      vi.unstubAllGlobals();
+    }
+  }
+
+  function stubClipboard() {
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    return writeText;
+  }
+
+  const fire = (target: Element, event: Event) => act(async () => void target.dispatchEvent(event));
+
+  it("copies inline code on click and on Enter", async () => {
+    await mount("Run `vp test run` now.", async (container) => {
+      const writeText = stubClipboard();
+      const code = container.querySelector("code")!;
+      await fire(code, new MouseEvent("click", { bubbles: true }));
+      await fire(code, new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(writeText.mock.calls).toEqual([["vp test run"], ["vp test run"]]);
+    });
+  });
+
+  it("leaves inline code alone when the click ends a selection or belongs to a link", async () => {
+    // Markdown links untag their code in the pipeline; a raw HTML anchor relies on the renderer.
+    await mount('Run `vp test` or <a href="https://example.com">`docs`</a>.', async (container) => {
+      const writeText = stubClipboard();
+      const [plain, linked] = container.querySelectorAll("code");
+      window.getSelection()!.selectAllChildren(plain!);
+      await fire(plain!, new MouseEvent("click", { bubbles: true }));
+      window.getSelection()!.removeAllRanges();
+      await fire(linked!, new MouseEvent("click", { bubbles: true, cancelable: true }));
+      expect(writeText).not.toHaveBeenCalled();
+    });
+  });
+
+  it("falls back to execCommand when the Clipboard API is missing", async () => {
+    await mount("Run `vp test run` now.", async (container) => {
+      vi.stubGlobal("navigator", {});
+      let copied = "";
+      const execCommand = vi.fn(() => {
+        copied = (document.activeElement as HTMLTextAreaElement).value;
+        return true;
+      });
+      Object.defineProperty(document, "execCommand", { value: execCommand, configurable: true });
+      try {
+        await fire(container.querySelector("code")!, new MouseEvent("click", { bubbles: true }));
+        expect(execCommand).toHaveBeenCalledWith("copy");
+        expect(copied).toBe("vp test run");
+      } finally {
+        delete (document as { execCommand?: unknown }).execCommand;
+      }
+    });
+  });
+
+  it("keeps line breaks when copying a bare pre", async () => {
+    await mount("<pre>echo one<br>echo two</pre>", async (container) => {
+      const writeText = stubClipboard();
+      await fire(
+        container.querySelector('button[aria-label="Copy code"]')!,
+        new MouseEvent("click", { bubbles: true }),
+      );
+      expect(writeText).toHaveBeenCalledWith("echo one\necho two");
+    });
+  });
+});

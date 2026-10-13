@@ -522,6 +522,8 @@ function nodeToPlainText(node: ReactNode): string {
     return node.map((child) => nodeToPlainText(child)).join("");
   }
   if (isValidElement<{ children?: ReactNode }>(node)) {
+    // Raw HTML such as `<pre>one<br>two</pre>` breaks lines with `<br>`.
+    if (node.type === "br") return "\n";
     return nodeToPlainText(node.props.children);
   }
   return "";
@@ -959,7 +961,11 @@ function MarkdownCodeBlock({
   );
 }
 
-/** Inline code copies itself on click; a click that ends a text selection leaves it alone. */
+/**
+ * Inline code copies itself on click, Enter or Space; a click that ends a text
+ * selection leaves it alone. It stays a plain focusable `<code>` (no button role)
+ * so its text remains selectable and is read as code.
+ */
 function MarkdownInlineCode(props: React.ComponentProps<"code">) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: "code",
@@ -969,10 +975,17 @@ function MarkdownInlineCode(props: React.ComponentProps<"code">) {
   return (
     <code
       {...props}
+      tabIndex={0}
+      aria-description="Copy"
       data-copyable=""
       data-copied={isCopied ? "" : undefined}
       onClick={(event) => {
         if (window.getSelection()?.toString()) return;
+        copyToClipboard(event.currentTarget.textContent ?? "");
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
         copyToClipboard(event.currentTarget.textContent ?? "");
       }}
     />
