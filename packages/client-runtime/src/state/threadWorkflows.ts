@@ -34,6 +34,8 @@ export interface ThreadQueueWorkflowState {
   readonly isHeld: boolean;
   readonly canReorder: boolean;
   readonly canPromoteToSteer: boolean;
+  /** Why a queued message cannot be steered into the active run; null when it can. */
+  readonly steerBlockedBy: "turn_ended" | "unsupported" | null;
 }
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
@@ -150,15 +152,19 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     };
   });
 
+  const steerBlockedBy = !hasSteerableProviderTurn
+    ? "turn_ended"
+    : capabilities?.supportsActiveSteering === true ||
+        capabilities?.supportsSteeringByInterruptRestart === true
+      ? null
+      : "unsupported";
   return {
     activeRun,
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
     canReorder: capabilities?.supportsQueuedMessages === true,
-    canPromoteToSteer:
-      hasSteerableProviderTurn &&
-      (capabilities?.supportsActiveSteering === true ||
-        capabilities?.supportsSteeringByInterruptRestart === true),
+    canPromoteToSteer: steerBlockedBy === null,
+    steerBlockedBy,
   };
 }
 

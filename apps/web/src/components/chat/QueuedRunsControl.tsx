@@ -465,7 +465,11 @@ export function QueuedRunsControl({
                           <TooltipPopup>
                             {activeRun === null
                               ? "There is no active run to steer"
-                              : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                              : workflow?.steerBlockedBy === "turn_ended"
+                                ? "The agent's turn has ended; this sends when the run completes"
+                                : workflow?.steerBlockedBy === "unsupported"
+                                  ? "This provider can't be steered mid-turn; this sends when the run completes"
+                                  : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>
