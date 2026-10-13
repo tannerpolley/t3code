@@ -43,6 +43,12 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     status: statusForPhase(state.phase),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
+    ...(state.attentionRequestId === undefined
+      ? {}
+      : { attentionRequestId: state.attentionRequestId }),
+    ...(state.suppressAttentionAlert === undefined
+      ? {}
+      : { suppressAttentionAlert: state.suppressAttentionAlert }),
   };
 }
 

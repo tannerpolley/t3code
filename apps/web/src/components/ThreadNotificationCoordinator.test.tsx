@@ -1,3 +1,4 @@
+import { applyShellStreamEvent } from "@t3tools/client-runtime/state/shellReducer";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import {
   ProjectId,
@@ -237,6 +238,125 @@ describe("thread notifications", () => {
       await render();
       expect(state.sound).toHaveBeenCalledTimes(1);
       expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(1);
+      // A newer request must not erase the identity of this still unanswered one.
+      state.shells = [
+        { ...parent, status: "interrupted" },
+        {
+          ...child,
+          pendingRuntimeRequest: {
+            ...child.pendingRuntimeRequest,
+            id: RuntimeRequestId.make("second-child-request"),
+          },
+        },
+      ];
+      await render();
+      expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(2);
+      state.shells = [{ ...parent, status: "interrupted" }, child];
+      await render();
+      expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(2);
+      expect(state.sound).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each([true, false])(
+    "alerts for each new child request after idle and resolution, focused=%s",
+    async (focused) => {
+      state.focused = focused;
+      state.mode = "notifications-and-sound";
+      state.subagent = true;
+      await render();
+      state.input = true;
+      await render();
+      await render();
+      expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(1);
+      state.input = false;
+      await render();
+      state.shells = [
+        {
+          ...mockThreadShell(),
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request-2"),
+            kind: "user_input",
+            createdAt: SHELL_NOW,
+          },
+        },
+      ];
+      await render();
+      await render();
+      expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(2);
+      expect(state.sound).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("alerts for a new child after the environment baseline, but not on its initial snapshot", async () => {
+    state.subagent = true;
+    state.input = true;
+    await render();
+    expect(state.add).not.toHaveBeenCalled();
+    state.shells = [mockThreadShell(), { ...mockThreadShell(), id: ThreadId.make("new-child") }];
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])(
+    "keeps a child arrival silent when transport delivers it before its parent, focused=%s",
+    async (focused) => {
+      state.focused = focused;
+      state.mode = "notifications-and-sound";
+      state.subagent = true;
+      const child = mockThreadShell();
+      const parent = {
+        ...child,
+        id: ThreadId.make("parent"),
+        status: "completed" as const,
+        activeRunId: null,
+        activityRunStatus: null,
+        lineage: {
+          rootThreadId: ThreadId.make("parent"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+      };
+      const baseline = {
+        schemaVersion: 2,
+        snapshotSequence: 0,
+        projects: [],
+        threads: [parent, child],
+        archivedThreads: [],
+      };
+      state.shells = baseline.threads;
+      await render();
+      const pendingChild = {
+        ...child,
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("arrival"),
+          kind: "user_input" as const,
+          createdAt: SHELL_NOW,
+          routedTo: parent.id,
+        },
+      };
+      const intake = applyShellStreamEvent(baseline, {
+        kind: "thread.updated",
+        sequence: 1,
+        location: "active",
+        thread: pendingChild,
+        routedRequestParent: { ...parent, status: "queued" },
+      });
+      state.shells = intake.threads;
+      await render();
+      expect(state.sound).not.toHaveBeenCalled();
+      expect(state.add).not.toHaveBeenCalled();
+      expect(state.notification).not.toHaveBeenCalled();
+      state.shells = applyShellStreamEvent(intake, {
+        kind: "thread.updated",
+        sequence: 2,
+        location: "active",
+        thread: { ...parent, status: "interrupted" },
+      }).threads;
+      await render();
+      await render();
+      expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(1);
+      expect(state.sound).toHaveBeenCalledTimes(1);
     },
   );
 

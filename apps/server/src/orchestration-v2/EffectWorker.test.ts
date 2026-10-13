@@ -349,6 +349,7 @@ function layerExecutorFor(input: {
     Layer.provide(
       Layer.mergeAll(
         layerDependencies,
+        Layer.mock(EffectOutbox.EffectOutboxV2)({}),
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
         Layer.mock(IssueService.IssueService)({
           writeManagedComment: () => Effect.die("Issue comments are unused in this test"),

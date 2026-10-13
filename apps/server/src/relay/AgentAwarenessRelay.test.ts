@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -41,6 +42,8 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
+import { attentionTransitionRows } from "../../../../infra/relay/src/agentActivity/agentActivityAlerts.ts";
+import { makeAggregateState } from "../../../../infra/relay/src/agentActivity/agentActivityAggregate.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -147,6 +150,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly readRecords?: ThreadManagementService.ThreadManagementService["Service"]["getThreadRecords"];
+    readonly projectionStore?: ProjectionStore.ProjectionStoreV2["Service"];
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -288,7 +292,14 @@ const makeTestRelay = Effect.fnUntraced(function* (
         ),
     }),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
-    Effect.provide(NodeCrypto.layer),
+    Effect.provide(
+      Layer.merge(
+        NodeCrypto.layer,
+        options.projectionStore === undefined
+          ? ProjectionStore.layerMemory
+          : Layer.succeed(ProjectionStore.ProjectionStoreV2, options.projectionStore),
+      ),
+    ),
   );
   return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
 });
@@ -497,14 +508,19 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect.each([false, true])(
-    "re-evaluates child input on a parent-only event, answered=%s",
-    (answered) =>
+  it.effect.each([
+    { answered: false, queuedResume: false },
+    { answered: false, queuedResume: true },
+    { answered: true, queuedResume: false },
+  ])(
+    "re-evaluates child input on a parent-only event, answered=$answered, queuedResume=$queuedResume",
+    ({ answered, queuedResume }) =>
       Effect.gen(function* () {
         const store = yield* ProjectionStore.ProjectionStoreV2;
         const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
         const pulls = yield* Queue.unbounded<void>();
-        const { relay, publications } = yield* makeTestRelay({
+        const { relay, publications, shellReads } = yield* makeTestRelay({
+          projectionStore: store,
           readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
           readRecords: (threadId, fields, filter) =>
             store.getThreadRecords(threadId, fields, filter).pipe(Effect.orDie),
@@ -643,16 +659,25 @@ describe("AgentAwarenessRelay", () => {
           (publication) => publication.state?.threadId === childId,
         );
         assert.equal(inputs.length, answered ? 0 : 1);
+        if (answered) assert.equal(shellReads.filter((id) => id === childId).length, 1);
         if (!answered) assert.equal(inputs[0]?.state?.phase, "waiting_for_input");
         if (!answered) {
           // Resuming the parent removes its child's owner card without the tombstone debounce.
-          const resumed: OrchestrationV2DomainEvent = {
+          const resumed = {
             id: EventId.make("parent-resumed"),
-            type: "run.updated",
+            type: queuedResume ? "run.created" : "run.updated",
             threadId: parentId,
             occurredAt: now,
-            payload: run,
-          };
+            payload: queuedResume
+              ? {
+                  ...run,
+                  id: RunId.make("queued-parent-run"),
+                  ordinal: 2,
+                  status: "queued",
+                  startedAt: null,
+                }
+              : run,
+          } satisfies OrchestrationV2DomainEvent;
           yield* store.apply(resumed);
           yield* Queue.offer(events, resumed);
           yield* Queue.take(pulls);
@@ -662,6 +687,93 @@ describe("AgentAwarenessRelay", () => {
           );
           assert.equal(childPublications.length, 2);
           assert.isNull(childPublications[1]?.state);
+
+          const aggregate = (states: RelayAgentActivityState[]) =>
+            makeAggregateState({
+              activeStates: states,
+              terminalState: null,
+              nowMs: now.epochMilliseconds,
+            })!;
+          const withoutChild = aggregate([
+            { ...inputs[0]!.state!, threadId: parentId, phase: "running" },
+          ]);
+          assert.equal(
+            attentionTransitionRows({
+              previousAggregate: withoutChild,
+              nextAggregate: aggregate([inputs[0]!.state!]),
+              preferences: null,
+            }).length,
+            1,
+          );
+
+          const stopped: OrchestrationV2DomainEvent = {
+            id: EventId.make("parent-stopped-after-resume"),
+            type: "run.updated",
+            threadId: parentId,
+            occurredAt: now,
+            payload: { ...resumed.payload, status: "interrupted", completedAt: now },
+          };
+          yield* store.apply(stopped);
+          yield* Queue.offer(events, stopped);
+          yield* Queue.take(pulls);
+          yield* relay.drain;
+          const redisplayed = publications.findLast((p) => p.state?.threadId === childId)!.state!;
+          assert.equal(publications.filter((p) => p.url === inputs[0]?.url).length, 3);
+          assert.equal(redisplayed.phase, "waiting_for_input");
+          const redisplayedAggregate = aggregate([redisplayed]);
+          assert.equal(
+            attentionTransitionRows({
+              previousAggregate: withoutChild,
+              nextAggregate: redisplayedAggregate,
+              preferences: null,
+            }).length,
+            0,
+          );
+
+          const nextQuestion = {
+            id: EventId.make("next-question"),
+            type: "runtime-request.updated",
+            threadId: childId,
+            occurredAt: now,
+            payload: {
+              ...request,
+              id: RuntimeRequestId.make("next-child-question"),
+              createdAt: DateTime.makeUnsafe(now.epochMilliseconds + 1),
+            },
+          } satisfies OrchestrationV2DomainEvent;
+          yield* store.apply(nextQuestion);
+          yield* Queue.offer(events, nextQuestion);
+          yield* Queue.take(pulls);
+          yield* relay.drain;
+          const newRequest = publications.findLast((p) => p.state?.threadId === childId)!.state!;
+          assert.equal(publications.filter((p) => p.url === inputs[0]?.url).length, 4);
+          assert.equal(
+            attentionTransitionRows({
+              previousAggregate: redisplayedAggregate,
+              nextAggregate: aggregate([newRequest]),
+              preferences: null,
+            }).length,
+            1,
+          );
+          const resolvedNext = {
+            ...nextQuestion,
+            id: EventId.make("next-question-resolved"),
+            payload: { ...nextQuestion.payload, status: "resolved" as const, resolvedAt: now },
+          };
+          yield* store.apply(resolvedNext);
+          yield* Queue.offer(events, resolvedNext);
+          yield* Queue.take(pulls);
+          yield* relay.drain;
+          const originalAgain = publications.findLast((p) => p.state?.threadId === childId)!.state!;
+          assert.equal(originalAgain.attentionRequestId, request.id);
+          assert.equal(
+            attentionTransitionRows({
+              previousAggregate: aggregate([newRequest]),
+              nextAggregate: aggregate([originalAgain]),
+              preferences: null,
+            }).length,
+            0,
+          );
         }
       }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
   );

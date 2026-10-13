@@ -1,3 +1,4 @@
+import { withRoutedRequestParent } from "./orchestration-v2/RoutedRequestShell.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -1027,7 +1028,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
               return yield* projectItem(stored);
             }
             const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
-            return shellStreamItemFromThreadShell({ stored, shell });
+            return yield* withRoutedRequestParent(
+              shellStreamItemFromThreadShell({ stored, shell }),
+              threadManagement.getThreadShell,
+            );
           }),
         { concurrency: 8 },
       );

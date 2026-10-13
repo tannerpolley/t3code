@@ -13,6 +13,7 @@ import ThreadIssueWork from "./ForkMigrations/003_ThreadIssueWork.ts";
 import RepositoryOrchestration from "./ForkMigrations/004_RepositoryOrchestration.ts";
 import RepositoryScheduledWork from "./ForkMigrations/005_RepositoryScheduledWork.ts";
 import IssueChanges from "./ForkMigrations/006_IssueChanges.ts";
+import PendingRoutedRequests from "./ForkMigrations/007_PendingRoutedRequests.ts";
 
 export const FORK_MIGRATIONS_TABLE = "t3_fork_migrations";
 
@@ -23,6 +24,7 @@ export const forkMigrationEntries = [
   [4, "RepositoryOrchestration", RepositoryOrchestration],
   [5, "RepositoryScheduledWork", RepositoryScheduledWork],
   [6, "IssueChanges", IssueChanges],
+  [7, "PendingRoutedRequests", PendingRoutedRequests],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.
@@ -59,7 +61,9 @@ export const moveForkMigrationsOutOfUpstreamLedger = Effect.fn(
         SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${FORK_MIGRATIONS_TABLE}
       `;
       const forkLedgerRows =
-        forkLedger.length === 0 ? [] : yield* sql`SELECT migration_id FROM ${sql(FORK_MIGRATIONS_TABLE)}`;
+        forkLedger.length === 0
+          ? []
+          : yield* sql`SELECT migration_id FROM ${sql(FORK_MIGRATIONS_TABLE)}`;
       if (!forkPrefix || forkLedgerRows.length > 0) {
         return yield* new Migrator.MigrationError({
           kind: "BadState",

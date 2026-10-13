@@ -30,6 +30,10 @@ function rowKey(row: RelayAgentActivityAggregateRow): string {
   return JSON.stringify([row.environmentId, row.threadId]);
 }
 
+function attentionKey(row: RelayAgentActivityAggregateRow): string {
+  return JSON.stringify([row.environmentId, row.threadId, row.attentionRequestId]);
+}
+
 function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }
@@ -57,12 +61,15 @@ export function alertAllowedForPhase(
 export function attentionTransitionRows(input: TransitionInput) {
   if (input.previousAggregate === null) return [];
   const previouslyAttention = new Set(
-    input.previousAggregate.activities.filter((row) => isAttentionPhase(row.phase)).map(rowKey),
+    input.previousAggregate.activities
+      .filter((row) => isAttentionPhase(row.phase))
+      .map(attentionKey),
   );
   return input.nextAggregate.activities.filter(
     (row) =>
       isAttentionPhase(row.phase) &&
-      !previouslyAttention.has(rowKey(row)) &&
+      row.suppressAttentionAlert !== true &&
+      !previouslyAttention.has(attentionKey(row)) &&
       alertAllowedForPhase(input.preferences, row.phase),
   );
 }
@@ -142,8 +149,10 @@ export function shouldAlertForActivity(input: {
   readonly updatedAt: string;
   readonly preferences: RelayAgentAwarenessPreferences | null;
   readonly nowMs: number;
+  readonly suppressAttentionAlert?: boolean | undefined;
 }): boolean {
   return (
+    (!isAttentionPhase(input.phase) || input.suppressAttentionAlert !== true) &&
     input.preferences?.notificationsEnabled === true &&
     alertAllowedForPhase(input.preferences, input.phase) &&
     ((input.phase !== "completed" && input.phase !== "failed") ||

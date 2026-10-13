@@ -1,3 +1,7 @@
+import {
+  deliverDelegatedRequestWake,
+  refreshDelegatedRequestWake,
+} from "./DelegatedRequestWake.ts";
 import { CommandId, IssueChangeError, MessageId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -71,6 +75,7 @@ export function isNonRetryableProviderTurnControlFailure(
 }
 
 export interface OrchestrationEffectExecutorV2Shape {
+  readonly settled?: (effect: EffectOutbox.OrchestrationEffectV2) => Effect.Effect<void>;
   /**
    * Runs one claimed effect. `willRetry` is true when the worker will retry a
    * failure, so a step can fail and try again instead of settling the run.
@@ -99,6 +104,7 @@ export const layerExecutor: Layer.Layer<
   | ThreadManagementService.ThreadManagementService
   | ProjectionStore.ProjectionStoreV2
   | EventSink.EventSinkV2
+  | EffectOutbox.EffectOutboxV2
   | IdAllocator.IdAllocatorV2
   | ServerSettings.ServerSettingsService
 > = Layer.effect(
@@ -118,6 +124,7 @@ export const layerExecutor: Layer.Layer<
     const issueChanges = yield* Effect.serviceOption(IssueChangeService.IssueChangeService);
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const eventSink = yield* EventSink.EventSinkV2;
+    const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const settings = yield* ServerSettings.ServerSettingsService;
     const issueWriteLocks = new Map<string, Semaphore.Semaphore>();
@@ -139,9 +146,37 @@ export const layerExecutor: Layer.Layer<
         )
         .pipe(Effect.flatMap((lock) => lock.withPermit(use)));
     return OrchestrationEffectExecutorV2.of({
+      settled: (effect) =>
+        refreshDelegatedRequestWake(
+          projections,
+          (events) => eventSink.write({ events }),
+          effect,
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to publish delegated intake settlement", { cause }),
+          ),
+        ),
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
+          case "delegated-request.wake":
+            return deliverDelegatedRequestWake(
+              projections,
+              eventSink,
+              effectOutbox,
+              threads.dispatch,
+              effect.request.childThreadId,
+              effect.request.requestId,
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "issue.change.execute":
             return (
               Option.isNone(issueChanges)
@@ -550,11 +585,14 @@ export const layerExecutor: Layer.Layer<
               );
           case "checkpoint.capture":
             return runFinalization
-              .finalize({
-                threadId: effect.threadId,
-                runId: effect.request.runId,
-                scopeId: effect.request.scopeId,
-              })
+              .finalize(
+                {
+                  threadId: effect.threadId,
+                  runId: effect.request.runId,
+                  scopeId: effect.request.scopeId,
+                },
+                { willRetry },
+              )
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -973,6 +1011,7 @@ export const layerWithOptions = (
                   cause: "The worker no longer owns the effect lease.",
                 });
               }
+              yield* executor.settled?.(effect) ?? Effect.void;
               return true;
             }).pipe(Effect.onError((cause) => recoverPostSuccessSettlement(effect, cause)));
           }
@@ -1020,6 +1059,8 @@ export const layerWithOptions = (
               cause: "The worker no longer owns the effect lease.",
             });
           }
+          if (nonRetryable || (effect.attemptCount >= maxAttempts && !retryUntilDone))
+            yield* executor.settled?.(effect) ?? Effect.void;
           return true;
         }).pipe(
           Effect.mapError((cause) =>

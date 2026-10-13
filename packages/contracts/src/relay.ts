@@ -119,7 +119,14 @@ export const RelayDeviceUnregistrationParams = Schema.Struct({
 });
 export type RelayDeviceUnregistrationParams = typeof RelayDeviceUnregistrationParams.Type;
 
+const RelayAttentionAlertFields = {
+  attentionRequestId: Schema.optional(TrimmedNonEmptyString),
+  // Redisplaying an already announced request updates cards without another alert.
+  suppressAttentionAlert: Schema.optional(Schema.Boolean),
+};
+
 export const RelayAgentActivityState = Schema.Struct({
+  ...RelayAttentionAlertFields,
   environmentId: EnvironmentId,
   threadId: ThreadId,
   projectTitle: TrimmedNonEmptyString,
@@ -134,6 +141,7 @@ export const RelayAgentActivityState = Schema.Struct({
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 
 export const RelayAgentActivityAggregateRow = Schema.Struct({
+  ...RelayAttentionAlertFields,
   environmentId: EnvironmentId,
   threadId: ThreadId,
   projectTitle: TrimmedNonEmptyString,

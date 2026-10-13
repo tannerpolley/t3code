@@ -1,3 +1,4 @@
+import { delegatedRequestWakeCommand } from "./DelegatedRequestWake.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -138,7 +139,6 @@ import {
   makeSubagentChildThread,
   subagentResultForRun,
   delegatedTaskProgress,
-  pendingUserRequests,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
@@ -149,12 +149,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
-import {
-  delegatedRequestNoticeId,
-  delegatedRequestOwner,
-  delegatedRequestDetails,
-  delegatedRequestResponseInstructions,
-} from "./DelegatedRequestRouting.ts";
+import { delegatedRequestOwner } from "./DelegatedRequestRouting.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -12351,68 +12346,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     function* (childThreadId: ThreadId, requestId: RuntimeRequestId) {
       const owner = yield* delegatedRequestOwner(projectionStore, childThreadId);
       if (owner === undefined) return;
-      const { parentThreadId, taskId } = owner;
+      const { parentThreadId } = owner;
       yield* threadDispatch.withLock(
         parentThreadId,
         Effect.gen(function* () {
-          const child = yield* projectionStore.getThreadRecords(
+          const wake = yield* delegatedRequestWakeCommand(
+            projectionStore,
             childThreadId,
-            ["runtimeRequests", "turnItems"],
-            { turnItemTypes: ["user_input_request", "approval_request"] },
+            requestId,
+            effectOutbox,
           );
-          const request = pendingUserRequests(child).find((request) => request.id === requestId);
-          const runtimeRequest = child.runtimeRequests.find((request) => request.id === requestId);
-          if (
-            request === undefined ||
-            runtimeRequest === undefined ||
-            !child.turnItems.some(
-              (item) =>
-                (item.type === "user_input_request" || item.type === "approval_request") &&
-                item.requestId === requestId,
-            )
-          )
-            return;
-          const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
-            "subagents",
-            "runs",
-          ]);
-          const task = parent.subagents.find(
-            (task) =>
-              task.id === taskId &&
-              task.origin === "app_owned" &&
-              task.childThreadId === childThreadId,
-          );
-          if (
-            task === undefined ||
-            parent.thread.archivedAt !== null ||
-            parent.thread.deletedAt !== null
-          )
-            return;
-          const ownerRun = parent.runs.find((run) => run.id === task.runId);
-          // A blocking delegate_task call returns the question itself.
-          if (
-            task.completionWake === "settled_only" &&
-            ownerRun !== undefined &&
-            isBlockingRun(ownerRun)
-          )
-            return;
-          const title = child.thread.title.trim() || "Delegated task";
-          yield* dispatchWithReceiptEffect({
-            type: "message.dispatch",
-            commandId: CommandId.make(`server:child-question:${childThreadId}:${requestId}`),
-            threadId: parentThreadId,
-            messageId: delegatedRequestNoticeId(childThreadId, requestId),
-            text: `${title} is waiting on you, its orchestrator (task ${task.id}).\n\n${delegatedRequestDetails(runtimeRequest, child.turnItems)}\n\n${delegatedRequestResponseInstructions(childThreadId, runtimeRequest)}`,
-            notification: {
-              source: { kind: "delegated_task", taskIds: [task.id] },
-              outcome: "updated",
-              summary: `${title} ${request.kind === "input" ? "has a question for you" : "needs your approval"}`,
-            },
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-            createdBy: "agent",
-            creationSource: "server",
-          });
+          if (wake.state === "ready") yield* dispatchWithReceiptEffect(wake.command);
         }),
       );
     },

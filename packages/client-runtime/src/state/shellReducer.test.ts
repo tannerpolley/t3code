@@ -1,4 +1,10 @@
-import { ProjectId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
+import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
+import {
+  ProjectId,
+  ThreadId,
+  RuntimeRequestId,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { v2Project, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
@@ -27,6 +33,59 @@ const otherIdentity = {
 };
 
 describe("applyShellStreamEvent", () => {
+  it("keeps a routed request hidden when the child delta arrives before the parent delta", () => {
+    const parentId = ThreadId.make("routing-parent");
+    const parent = {
+      ...v2ThreadShell,
+      id: parentId,
+      status: "completed" as const,
+      activeRunId: null,
+      activityRunStatus: null,
+    };
+    const child = {
+      ...v2ThreadShell,
+      id: ThreadId.make("routing-child"),
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("routing-request"),
+        kind: "user_input" as const,
+        createdAt: v2ThreadShell.updatedAt,
+        routedTo: parentId,
+      },
+    };
+    const next = applyShellStreamEvent(
+      { ...v2ShellSnapshot, threads: [parent] },
+      {
+        kind: "thread.updated",
+        sequence: 1,
+        location: "active",
+        thread: child,
+        routedRequestParent: { ...parent, status: "queued" },
+      },
+    );
+    expect(
+      runtimeRequestIsOwnerVisible(
+        next.threads.find((t) => t.id === child.id)?.pendingRuntimeRequest,
+        next.threads.find((t) => t.id === parentId),
+      ),
+    ).toBe(false);
+    // The same unchanged child can expose its request when the related parent stops or disappears.
+    for (const related of [{ ...parent, status: "interrupted" as const }, null]) {
+      const released = applyShellStreamEvent(next, {
+        kind: "thread.updated",
+        sequence: 2,
+        location: "active",
+        thread: child,
+        routedRequestParent: related,
+      });
+      expect(
+        runtimeRequestIsOwnerVisible(
+          released.threads.find((t) => t.id === child.id)?.pendingRuntimeRequest,
+          released.threads.find((t) => t.id === parentId),
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("updates a thread in place without moving its siblings", () => {
     const threads = ["a", "b", "c"].map((id) => ({ ...v2ThreadShell, id: ThreadId.make(id) }));
     const updated = { ...threads[1]!, title: "Streaming" };

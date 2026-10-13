@@ -110,7 +110,7 @@ export function ThreadNotificationCoordinator() {
 interface NotificationState {
   readonly raw: OrchestrationV2ThreadShell;
   readonly parent: OrchestrationV2ThreadShell | undefined;
-  readonly notifiedAttention: string | null;
+  readonly notifiedAttention: ReadonlySet<string> | null;
   readonly attention: string | null;
   readonly completion: number | null;
 }
@@ -139,10 +139,12 @@ function EnvironmentNotifications({
   });
   const previous = useRef(new Map<ThreadId, NotificationState>());
   const toasts = useRef(new Map<ThreadId, string>());
+  const initialized = useRef(false);
 
   useEffect(() => {
     if (threads === null) {
       previous.current.clear();
+      initialized.current = false;
       return;
     }
     const next = new Map<ThreadId, NotificationState>();
@@ -155,7 +157,6 @@ function EnvironmentNotifications({
       const child = rawThread.lineage.relationshipToParent === "subagent";
       const ownerVisible = runtimeRequestIsOwnerVisible(rawThread.pendingRuntimeRequest, parent);
       const prior = previous.current.get(rawThread.id);
-      if (child && rawThread.pendingRuntimeRequest === null && prior === undefined) continue;
       // Parent activity can change attention even when the child object is unchanged.
       if (prior?.raw === rawThread && prior.parent === parent) {
         next.set(rawThread.id, prior);
@@ -188,28 +189,30 @@ function EnvironmentNotifications({
         notifiedAttention: prior?.notifiedAttention ?? null,
       };
       next.set(thread.id, notificationState);
-      if (prior?.attention && attention !== prior.attention) {
+      if (prior?.attention && attention !== prior?.attention) {
         // Answered, decided, or replaced by a new turn: its alert would now lie.
         const toastId = toasts.current.get(thread.id);
         if (toastId !== undefined) toastManager.close(toastId);
         toasts.current.delete(thread.id);
         onRetract(`${environmentId}:${thread.id}`);
       }
-      if (child && rawThread.pendingRuntimeRequest === null) {
-        next.delete(thread.id);
-        continue;
-      }
-      if (!prior || thread.archivedAt !== null) continue;
+      if (!initialized.current || thread.archivedAt !== null) continue;
       const kind =
         attention &&
-        attention !== prior.attention &&
-        (!child || attention !== prior.notifiedAttention)
+        attention !== prior?.attention &&
+        (!child || prior?.notifiedAttention?.has(attention) !== true)
           ? "input"
-          : completion !== null && (prior.completion === null || completion > prior.completion)
+          : completion !== null &&
+              prior !== undefined &&
+              (prior.completion === null || completion > prior.completion)
             ? "completion"
             : null;
       if (!kind) continue;
-      if (child && kind === "input") notificationState.notifiedAttention = attention;
+      if (child && kind === "input" && attention !== null)
+        notificationState.notifiedAttention = new Set([
+          ...(prior?.notifiedAttention ?? []),
+          attention,
+        ]);
       const title =
         kind === "completion"
           ? "Thread completed"
@@ -289,6 +292,7 @@ function EnvironmentNotifications({
       }
     }
     previous.current = next;
+    initialized.current = true;
   }, [
     activeEnvironmentId,
     activeThreadId,

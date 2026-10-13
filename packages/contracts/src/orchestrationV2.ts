@@ -2143,6 +2143,8 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
     sequence: NonNegativeInt,
     location: Schema.Literals(["active", "archive"]),
     thread: OrchestrationV2ThreadShell,
+    // Related state travels in the child's delta so bounded client batches cannot expose it early.
+    routedRequestParent: Schema.optional(Schema.NullOr(OrchestrationV2ThreadShell)),
   }),
   Schema.Struct({
     kind: Schema.Literal("thread.removed"),

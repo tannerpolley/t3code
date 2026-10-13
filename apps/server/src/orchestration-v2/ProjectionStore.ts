@@ -1,5 +1,6 @@
 import { IssueWorkCancelled, IssueWorkRequested } from "@t3tools/contracts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+import { pendingDelegatedRequestWake, delegatedWakeShellStatus } from "./DelegatedRequestWake.ts";
 import * as Stream from "effect/Stream";
 import { makeThreadFind, findProjectedThreadItems } from "./ThreadFind.ts";
 import type {
@@ -509,6 +510,9 @@ export interface ProjectionStoreV2Shape {
     OrchestrationV2ThreadProjection["runtimeRequests"][number] | undefined,
     ProjectionStoreV2Error
   >;
+  readonly getPendingRoutedRequestThreadIds: (
+    parentThreadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getProviderControlContext: (
     threadId: ThreadId,
     target: ProjectionProviderControlTarget,
@@ -1022,6 +1026,7 @@ type ShellThreadRow = {
   readonly thread_id: string;
   readonly payload_json: string;
   readonly native_subagent_payload_json: string | null;
+  readonly pending_delegated_wake: number;
   readonly forked_from_run_source_thread_id: string | null;
   readonly latest_run_id: string | null;
   readonly latest_run_status: string | null;
@@ -1683,6 +1688,7 @@ type ShellThreadState = {
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
   readonly nativeSubagent: OrchestrationV2Subagent | null;
+  readonly pendingDelegatedWake: boolean;
 };
 
 function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2ShellThreadStatus {
@@ -1884,7 +1890,16 @@ function shellFromState(input: {
     activeRunId: input.state.activeRunId,
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
-    status: input.state.latestRunStatus,
+    status: delegatedWakeShellStatus(
+      {
+        status: input.state.latestRunStatus,
+        activeRunId: input.state.activeRunId,
+        activityRunStatus: input.state.activityRunStatus,
+        archivedAt: input.state.thread.archivedAt,
+        deletedAt: input.state.thread.deletedAt,
+      },
+      input.state.pendingDelegatedWake,
+    ),
     ...nativeSubagentShellFields(
       input.state.latestRunId,
       input.state.pendingRuntimeRequest,
@@ -3952,6 +3967,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT thread_id FROM orchestration_v2_projection_runtime_requests
                 WHERE status = 'pending'
                 UNION
+                SELECT thread_id FROM orchestration_v2_effect_outbox
+                WHERE effect_type = 'delegated-request.wake' AND status IN ('pending', 'running')
+                UNION
                 SELECT bindings.thread_id
                 FROM orchestration_v2_projection_provider_sessions AS sessions
                 CROSS JOIN orchestration_v2_projection_provider_session_bindings AS bindings
@@ -4670,6 +4688,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       `;
           return rows[0]?.pending === 1;
         }).pipe(Effect.mapError(controlReadError(threadId)));
+
+    const getPendingRoutedRequestThreadIds: ProjectionStoreV2Shape["getPendingRoutedRequestThreadIds"] =
+      (parentThreadId) =>
+        sql<{ readonly thread_id: string }>`
+        SELECT DISTINCT thread_id FROM orchestration_v2_projection_runtime_requests
+        WHERE status = 'pending' AND json_extract(payload_json, '$.routedTo') = ${parentThreadId}
+      `.pipe(
+          Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
+          Effect.mapError(controlReadError(parentThreadId)),
+        );
 
     const getRuntimeRequest: ProjectionStoreV2Shape["getRuntimeRequest"] = (threadId, requestId) =>
       sql
@@ -5473,6 +5501,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              ${pendingDelegatedRequestWake(sql, sql.literal("t.thread_id"))} AS pending_delegated_wake,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
@@ -6052,6 +6081,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ];
         return {
           thread,
+          pendingDelegatedWake: row.pending_delegated_wake === 1,
           latestRunId,
           latestRunStatus,
           latestRunRequestedAt,
@@ -6381,6 +6411,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getTurnItem,
       getThreadRecords,
       getRuntimeRequest,
+      getPendingRoutedRequestThreadIds,
       getPlan,
       getProviderControlContext,
       getLimitRecoveryCandidates,
@@ -6758,6 +6789,18 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             ...fields.map((field) => [field, selected[field]]),
           ]) as ProjectionRecords<(typeof fields)[number]>;
         }),
+      getPendingRoutedRequestThreadIds: (parentThreadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections]
+              .filter(([, projection]) =>
+                projection.runtimeRequests.some(
+                  (request) => request.status === "pending" && request.routedTo === parentThreadId,
+                ),
+              )
+              .map(([threadId]) => threadId),
+          ),
+        ),
       getRuntimeRequest: (threadId, requestId) =>
         Effect.gen(function* () {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);

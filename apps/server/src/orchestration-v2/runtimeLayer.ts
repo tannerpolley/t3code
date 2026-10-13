@@ -204,7 +204,14 @@ const layerCheckpointCaptureServiceProvided = CheckpointCaptureService.layer.pip
   ),
 );
 const layerRunFinalizationServiceProvided = RunFinalizationService.layer.pipe(
-  Layer.provide(Layer.merge(layerCheckpointCaptureServiceProvided, ProjectionStore.layer)),
+  Layer.provide(
+    Layer.mergeAll(
+      layerCheckpointCaptureServiceProvided,
+      ProjectionStore.layer,
+      layerEventSinkProvided,
+      IdAllocator.layer,
+    ),
+  ),
 );
 
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
@@ -317,6 +324,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
       ProjectionStore.layer,
+      EffectOutbox.layer,
       layerEventSinkProvided,
       IdAllocator.layer,
     ),

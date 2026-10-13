@@ -30,8 +30,10 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
+import { DelegatedRequestWake } from "./DelegatedRequestWake.ts";
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
+  DelegatedRequestWake,
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
@@ -171,6 +173,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
+  "delegated-request.wake",
   "provider-turn.start",
   "provider-turn.interrupt",
   "provider-turn.steer",

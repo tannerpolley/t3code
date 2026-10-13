@@ -1,3 +1,4 @@
+import { applyRoutedRequestParent } from "./routedRequestParent.ts";
 import {
   OrchestrationV2ThreadShell,
   ThreadPullRequestLink,
@@ -163,6 +164,12 @@ export function applyShellStreamEvent(
         snapshotSequence: event.sequence,
       };
     case "thread.updated": {
+      snapshot = applyRoutedRequestParent(snapshot, event, (threads, parent) => {
+        const existing = threads.find((thread) => thread.id === parent.id);
+        return existing !== undefined && sameThreadShell(existing, parent)
+          ? threads
+          : upsertById(threads, parent);
+      });
       // An unchanged shell keeps its object and the list, so subscribers that
       // compare by reference skip the update. Only the cursor moves.
       const existing =

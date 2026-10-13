@@ -14,6 +14,8 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
+import * as EventSink from "./EventSink.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 it.effect("refreshes workspace after checkpoint capture without reading history", () => {
   const threadId = ThreadId.make("thread_finalize");
@@ -29,6 +31,8 @@ it.effect("refreshes workspace after checkpoint capture without reading history"
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(EventSink.EventSinkV2)({}),
+        IdAllocator.layer,
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: capture }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadProjection: () =>
