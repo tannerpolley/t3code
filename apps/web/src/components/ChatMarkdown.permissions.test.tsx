@@ -200,7 +200,7 @@ it("removes host actions after revocation while keeping file preview and copying
   state.choose.mockResolvedValue("copy-full");
   await openContextMenu();
   expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
-  expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md");
+  expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md", "full path");
   await act(async () => anchor().props.onClick(menuEvent()));
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
   expect(state.openEditor).not.toHaveBeenCalled();

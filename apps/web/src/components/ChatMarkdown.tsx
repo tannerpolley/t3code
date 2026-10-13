@@ -207,7 +207,7 @@ import {
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
 import { useOpenLink } from "../browser/useOpenLink";
-import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { useCopyToClipboard, writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import {
   isBrowserPreviewFile,
@@ -367,14 +367,17 @@ const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 interface MarkdownActionFailureContext {
   readonly operation: string;
   readonly target?: string;
-  readonly format?: "markdown" | "csv";
-  readonly language?: string;
-  readonly fenceTitle?: string;
   readonly copyTarget?: string;
 }
 
 function reportMarkdownActionFailure(context: MarkdownActionFailureContext, cause: unknown): void {
   console.error("[chat-markdown] action failed", context, cause);
+}
+
+function toastCopyFailure(error: Error): void {
+  toastManager.add(
+    stackedThreadToast({ type: "error", title: "Couldn't copy", description: error.message }),
+  );
 }
 
 const highlightedCodeCache = new LRUCache<string>(
@@ -568,8 +571,11 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
-  const [copied, setCopied] = useState(false);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
+    target: "table",
+    timeout: 1200,
+    onError: toastCopyFailure,
+  });
   const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
   const copyLabel = copied ? "Copied" : "Copy table";
 
@@ -597,41 +603,15 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
     setExpanded((value) => !value);
   }
 
-  const handleCopy = useCallback((format: "markdown" | "csv") => {
+  function handleCopy(format: "markdown" | "csv") {
     const table = containerRef.current?.querySelector("table");
-    if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
-    const text =
+    if (!table) return;
+    copyToClipboard(
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table);
-    void navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch((cause) => {
-        reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
-      });
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (copiedTimerRef.current != null) {
-        clearTimeout(copiedTimerRef.current);
-        copiedTimerRef.current = null;
-      }
-    },
-    [],
-  );
+        : serializeTableElementToCsv(table),
+    );
+  }
 
   return (
     <div
@@ -871,9 +851,12 @@ function MarkdownCodeBlock({
   diagram?: boolean;
   children: ReactNode;
 }) {
-  const [copied, setCopied] = useState(false);
+  const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
+    target: "code",
+    timeout: 1200,
+    onError: toastCopyFailure,
+  });
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
   const command = code.trim();
@@ -888,44 +871,6 @@ function MarkdownCodeBlock({
     // make the rendered command differ from what the terminal would receive.
     !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
 
-  const handleCopy = useCallback(() => {
-    if (typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
-    void navigator.clipboard
-      .writeText(code)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch((cause) => {
-        reportMarkdownActionFailure(
-          {
-            operation: "copy-code-block",
-            language,
-            ...(fenceTitle ? { fenceTitle } : {}),
-          },
-          cause,
-        );
-      });
-  }, [code, fenceTitle, language]);
-
-  useEffect(
-    () => () => {
-      if (copiedTimerRef.current != null) {
-        clearTimeout(copiedTimerRef.current);
-        copiedTimerRef.current = null;
-      }
-    },
-    [],
-  );
-
   const copyButton = (
     <Tooltip>
       <TooltipTrigger
@@ -934,7 +879,7 @@ function MarkdownCodeBlock({
             type="button"
             variant="ghost-muted"
             size="icon-xs"
-            onClick={handleCopy}
+            onClick={() => copyToClipboard(code)}
             aria-label={copyLabel}
           />
         }
@@ -1011,6 +956,26 @@ function MarkdownCodeBlock({
     >
       {children}
     </MarkdownCodeBlockFrame>
+  );
+}
+
+/** Inline code copies itself on click; a click that ends a text selection leaves it alone. */
+function MarkdownInlineCode(props: React.ComponentProps<"code">) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "code",
+    timeout: 1200,
+    onError: toastCopyFailure,
+  });
+  return (
+    <code
+      {...props}
+      data-copyable=""
+      data-copied={isCopied ? "" : undefined}
+      onClick={(event) => {
+        if (window.getSelection()?.toString()) return;
+        copyToClipboard(event.currentTarget.textContent ?? "");
+      }}
+    />
   );
 }
 
@@ -2124,18 +2089,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
   const handleCopy = useCallback(
     (value: string, title: string) => {
-      if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: `Failed to copy ${title.toLowerCase()}`,
-            description: "Clipboard API unavailable.",
-          }),
-        );
-        return;
-      }
-
-      void navigator.clipboard.writeText(value).then(
+      void writeTextToClipboard(value, title.toLowerCase()).then(
         () => {
           toastManager.add({
             type: "success",
@@ -3237,6 +3191,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
       ChatMarkdownRendererContext,
     );
+    const inLink = use(MarkdownLinkContext);
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
@@ -3247,6 +3202,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
           fileLinkMeta,
           `\`${codeText}\``,
           inlineCodeFilePathCandidate(codeText) ?? codeText.trim(),
+        );
+      }
+      // Inside a link the click belongs to the link.
+      if (!inLink) {
+        return (
+          <MarkdownInlineCode {...props} className={className}>
+            {children}
+          </MarkdownInlineCode>
         );
       }
     }
@@ -3416,7 +3379,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
-      return <pre {...props}>{children}</pre>;
+      return (
+        <MarkdownCodeBlock
+          code={nodeToPlainText(children)}
+          language="text"
+          fenceTitle={null}
+          theme={resolvedTheme}
+          isStreaming={isStreaming}
+        >
+          <pre {...props}>{children}</pre>
+        </MarkdownCodeBlock>
+      );
     }
 
     const language = extractFenceLanguage(codeBlock.className);
