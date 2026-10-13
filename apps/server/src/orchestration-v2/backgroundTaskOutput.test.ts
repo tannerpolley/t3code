@@ -27,13 +27,12 @@ import { TerminalManager } from "../terminal/Manager.ts";
 import {
   aggregateBackgroundTaskProcessUsage,
   backgroundTaskOutputPath,
-  codexBackgroundTaskLogPath,
   BackgroundTasks,
   layer as backgroundTasksLayer,
   initialOutputTailState,
-  makeBackgroundTaskLogWriter,
   readOutputTail,
 } from "./backgroundTaskOutput.ts";
+import { codexBackgroundTaskLogPath, makeBackgroundTaskLogWriter } from "./backgroundTaskFiles.ts";
 
 const notice = (taskId: string, path: string) =>
   `Command running in background with ID: ${taskId}. Output is being written to: ${path}. You will be notified when it completes. To check interim output, use Read on that file path.`;

@@ -97,7 +97,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
-import { makeBackgroundTaskLogWriter } from "../backgroundTaskOutput.ts";
+import { makeBackgroundTaskLogWriter } from "../backgroundTaskFiles.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   buildCodexAdditionalContext,

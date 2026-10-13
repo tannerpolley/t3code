@@ -109,7 +109,7 @@ import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import { combineApprovalPrompt } from "../../provider/approvalPrompt.ts";
-import { claudeTaskOutputDir, reportedTaskOutputPaths } from "../backgroundTaskOutput.ts";
+import { claudeTaskOutputDir, reportedTaskOutputPaths } from "../backgroundTaskFiles.ts";
 import { classifyShellCommand } from "@t3tools/shared/shellCommand";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
