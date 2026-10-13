@@ -42,7 +42,17 @@ describe("classifyShellCommand", () => {
     ["./gradlew build", "java"],
     ["docker compose up db", "docker"],
     ["latexmk -pdf main.tex", "latex"],
-    // Watchers: commands that wait for another process, a file or a log change.
+    // Sleeping or waiting does not turn a finite command into a watcher.
+    ["for i in $(seq 1 5); do echo tick $i; sleep 1; done", "shell"],
+    ['i=0; while [ "$i" -lt 5 ]; do echo tick; i=$((i+1)); sleep 1; done', "shell"],
+    ["bash -c 'for i in 1 2 3; do sleep 1; done'", "shell"],
+    ["sleep 5", "shell"],
+    ["wait 123", "shell"],
+    ['echo "while"; sleep 1', "shell"],
+    ['echo "tsc --watch"', "shell"],
+    ["tsc --watch", "watcher"],
+    ["vitest --watch=true", "watcher"],
+    // Watchers: commands that poll another process, a file or a log change.
     [
       "while kill -0 123 2>/dev/null; do sleep 20; done; grep -E 'accepted|failed' /tmp/run.log",
       "watcher",

@@ -40,7 +40,11 @@ import {
   type OrchestrationV2StopBackgroundTaskError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { classifyShellCommand, shellCommandWaitPids } from "@t3tools/shared/shellCommand";
+import {
+  classifyShellCommand,
+  shellCommandWaitPids,
+  shellCommandWords,
+} from "@t3tools/shared/shellCommand";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
@@ -336,7 +340,14 @@ export function aggregateBackgroundTaskProcessUsage(input: {
   );
   const matchingPids = new Set(
     [...processes.values()]
-      .filter((process) => process.command.includes(command))
+      .filter(
+        (process) =>
+          process.command.includes(command) ||
+          // Claude escapes the command as an eval operand before passing it to Bash.
+          shellCommandWords(process.command).some(
+            (words) => words[0] === "eval" && words.length === 2 && words[1] === command,
+          ),
+      )
       .map((process) => process.identity.pid),
   );
   if (matchingPids.size === 0) return null;

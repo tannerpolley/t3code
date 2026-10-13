@@ -338,8 +338,6 @@ const PROGRAM_KINDS: Record<string, ShellCommandKind> = {
   biber: "latex",
   git: "git",
   gh: "git",
-  sleep: "watcher",
-  wait: "watcher",
   inotifywait: "watcher",
   inotifywatch: "watcher",
   watch: "watcher",
@@ -423,6 +421,9 @@ function programKind(
     const flag = args.findIndex((arg) => /^-[a-z]*c[a-z]*$/.test(arg));
     return flag < 0 || args[flag + 1] === undefined ? "bash" : nested(args[flag + 1]!);
   }
+  if (PROGRAM_KINDS[name] !== undefined && args.some((arg) => /^--watch(?:=|$)/.test(arg))) {
+    return "watcher";
+  }
   if (name === "python" && args[0] === "-m" && args[1] !== undefined) {
     return PROGRAM_KINDS[args[1]] === "pytest" ? "pytest" : "python";
   }
@@ -464,14 +465,22 @@ function programKind(
  * The kind of program a background shell's command mostly runs: the first command this
  * recognizes, looking through wrappers (`nohup`, `setsid`, `timeout`, `nice`, env assignments,
  * `bash -lc '…'`), paths (`.venv/bin/python`) and runners (`python -m pytest`, `uv run`). A
- * command that only sleeps, waits or polls (`while kill -0 123; do sleep 20; done`) is a watcher.
+ * command that watches a file or polls a process (`while kill -0 123; do sleep 20; done`) is a
+ * watcher. Sleeping alone, including inside a finite loop, does not imply watching.
  */
 export function classifyShellCommand(command: string): ShellCommandKind {
   const weak: Array<ShellCommandKind> = [];
-  let hasLoop = false;
+  let hasPollingLoop = false;
   const scan = (source: string): ShellCommandKind | null => {
     for (const words of shellCommandWords(source)) {
-      if (words.some((word) => word === "while" || word === "until")) hasLoop = true;
+      if (
+        (words[0] === "while" || words[0] === "until") &&
+        (["grep", "egrep", "fgrep"].includes(basename(words[1] ?? "")) ||
+          (["test", "[", "[["].includes(words[1] ?? "") &&
+            words.some((word) => ["-s", "-e", "-f", "-d"].includes(word))))
+      ) {
+        hasPollingLoop = true;
+      }
       const kind = programKind(words, scan);
       if (kind === null || kind === "shell") continue;
       if (!WEAK_KINDS.includes(kind)) return kind;
@@ -482,6 +491,6 @@ export function classifyShellCommand(command: string): ShellCommandKind {
   return (
     scan(command) ??
     WEAK_KINDS.find((kind) => weak.includes(kind)) ??
-    (hasLoop ? "watcher" : "shell")
+    (hasPollingLoop ? "watcher" : "shell")
   );
 }

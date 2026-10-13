@@ -92,6 +92,28 @@ describe("aggregateBackgroundTaskProcessUsage", () => {
     );
   });
 
+  it("attributes Claude's escaped eval command without counting sibling shells", () => {
+    const command = 'for i in $(seq 1 5); do echo "tick $i"; sleep 1; done';
+    const escaped = String.raw`for i in \$(seq 1 5); do echo \"tick \$i\"; sleep 1; done`;
+    const wrapper = `bash -c source /tmp/snapshot.sh && eval "${escaped}" < /dev/null && pwd -P > /tmp/cwd`;
+    assert.isFalse(wrapper.includes(command));
+    assert.deepEqual(
+      aggregateBackgroundTaskProcessUsage({
+        processes: taskTree(wrapper),
+        serverPid: 1,
+        command,
+      }),
+      { cpuPercent: 18.5, residentBytes: 100 },
+    );
+    assert.isNull(
+      aggregateBackgroundTaskProcessUsage({
+        processes: [...taskTree(wrapper), process(40, 10, 7, 80, wrapper)],
+        serverPid: 1,
+        command,
+      }),
+    );
+  });
+
   it("counts a wait target only when the sampled process belongs to that task tree", () => {
     assert.deepEqual(
       aggregateBackgroundTaskProcessUsage({
