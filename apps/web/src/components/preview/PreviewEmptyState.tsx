@@ -6,6 +6,7 @@ import {
 import { Globe, History, RadioTower } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useThreadShell } from "~/state/entities";
@@ -34,7 +35,11 @@ export function PreviewEmptyState({
   onRemoveRecent,
   onOpenUrl,
 }: Props) {
-  const projectId = useThreadShell(threadRef)?.projectId ?? null;
+  // A new thread is still a draft, which knows its project before the server does.
+  const draftProjectId = useComposerDraftStore(
+    (store) => store.getDraftThreadByRef(threadRef)?.projectId,
+  );
+  const projectId = useThreadShell(threadRef)?.projectId ?? draftProjectId ?? null;
   const servers = useDiscoveredLocalServers({
     environmentId,
     configuredUrls,
