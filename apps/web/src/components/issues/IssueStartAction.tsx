@@ -268,7 +268,7 @@ function IssueStartControls({
       ) : null}
       {startError ? (
         <p className="max-w-72 text-xs text-destructive" role="alert">
-          Start request failed: {startError}. Retry uses the same request.
+          Start request failed: {startError.replace(/\.$/, "")}. Retry uses the same request.
         </p>
       ) : null}
       {expanded ? (
@@ -311,7 +311,11 @@ function IssueStartControls({
           ) : null}
           <label className="flex flex-col gap-1 text-xs">
             Repository workspace
-            <Select value={project?.id ?? null} onValueChange={setSelectedProjectId}>
+            <Select
+              items={matchingProjects.map((entry) => ({ value: entry.id, label: entry.title }))}
+              value={project?.id ?? null}
+              onValueChange={setSelectedProjectId}
+            >
               <SelectTrigger size="compact" aria-label="Issue project">
                 <SelectValue />
               </SelectTrigger>
@@ -336,6 +340,10 @@ function IssueStartControls({
             <label className="flex flex-col gap-1 text-xs">
               Repository orchestrator
               <Select
+                items={[
+                  ...leads.map((lead) => ({ value: lead.id, label: lead.title })),
+                  { value: "create", label: "Create first orchestrator" },
+                ]}
                 value={createOrchestrator ? "create" : (selectedLead?.id ?? null)}
                 onValueChange={(value) =>
                   setSelectedOrchestratorId(

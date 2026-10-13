@@ -205,10 +205,11 @@ function RepositoryControls({
       {restoreExpanded && config.handoff === undefined ? (
         <div className="flex w-full max-w-md flex-col gap-2 p-2">
           <span className="text-xs text-muted-foreground">
-            The current orchestrator must be stopped, with no running workers or unclaimed start
-            requests. Existing issue workers keep their threads.
+            Pause the repository first. The current orchestrator must be stopped, with no active
+            issue workers or unclaimed start requests. Existing issue workers keep their threads.
           </span>
           <Select
+            items={restoreCandidates.map((lead) => ({ value: lead.id, label: lead.title }))}
             value={restoreTarget?.id ?? null}
             onValueChange={(value) =>
               setRestoreTargetId(restoreCandidates.find((lead) => lead.id === value)?.id ?? null)
