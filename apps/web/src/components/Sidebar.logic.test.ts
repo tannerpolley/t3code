@@ -18,6 +18,7 @@ import {
   filterSidebarV2VisibleThreads,
   formatWorkingDurationLabel,
   formatStoppedThreadDuration,
+  flattenRunningSubagents,
   groupRunningSubagentsByParent,
   withChildNeeds,
   resolveThreadStatusMark,
@@ -2518,6 +2519,27 @@ describe("groupRunningSubagentsByParent", () => {
     expect(listedUnder("parent").map((thread) => thread.id)).toEqual(["middle"]);
     expect(listedUnder("middle").map((thread) => thread.id)).toEqual(["leaf"]);
     expect(listedUnder("parent")[0]!.hasPendingUserInput).toBe(true);
+    // The flat list shows the grandchild once, right after its parent.
+    expect(
+      flattenRunningSubagents(listedUnder("parent"), grouped).map((thread) => thread.id),
+    ).toEqual(["middle", "leaf"]);
+  });
+
+  it("lists a subagent of a visible fork only under the fork's own row", () => {
+    const fork = child("fork", { fork: true, status: "idle" });
+    const leaf = {
+      ...child("leaf"),
+      lineage: {
+        ...fork.lineage,
+        relationshipToParent: "subagent" as const,
+        parentThreadId: fork.id,
+      },
+    };
+    const grouped = groupRunningSubagentsByParent([fork, leaf]);
+    const listedUnder = (id: string) =>
+      grouped.get(scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make(id)))) ?? [];
+    expect(listedUnder("fork").map((thread) => thread.id)).toEqual(["leaf"]);
+    expect(listedUnder("parent")).toEqual([]);
   });
 });
 

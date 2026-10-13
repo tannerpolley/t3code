@@ -91,6 +91,7 @@ import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore"
 import { cn } from "~/lib/utils";
 import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import {
+  flattenRunningSubagents,
   resolveSidebarThreadStatus,
   resolveThreadStatusMark,
   withChildNeeds,
@@ -1207,7 +1208,10 @@ function SidebarProjectThreadRow(props: {
   const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
   const workRows = describeSidebarBackgroundWork(
     props.thread.pendingBackgroundTasks,
-    runningSubagents,
+    // Only the Codex-style tree nests subagents; the flat list shows every descendant in order.
+    props.codexStyle
+      ? runningSubagents
+      : flattenRunningSubagents(runningSubagents, props.runningSubagentsByParentKey),
   );
   // Running work shows by default, even while the thread itself works; a collapse wins for this row.
   const [workOpen, setWorkOpen] = useState(true);

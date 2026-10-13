@@ -1090,6 +1090,12 @@ export function groupRunningSubagentsByParent<
     }
     listed.set(keyOf(thread, thread.id), thread);
   }
+  // Threads that get their own sidebar row, such as a visible fork of the root.
+  const threadRows = new Set(
+    threads
+      .filter((thread) => thread.archivedAt === null && !isSidebarSubagentThread(thread))
+      .map((thread) => keyOf(thread, thread.id)),
+  );
   // A listed parent carries the owner-facing requests of listed subagents beneath it, so they
   // reach its row and every ancestor row without listing the subagent twice.
   const nestedNeeds = new Map<string, { approvals: boolean; input: boolean }>();
@@ -1123,11 +1129,25 @@ export function groupRunningSubagentsByParent<
           };
     const parentKey = keyOf(thread, thread.lineage.parentThreadId!);
     add(parentKey, thread);
-    // A subagent whose direct parent is hidden still reaches the root row.
+    // A subagent whose direct parent has no row still reaches the root row.
     const rootKey = keyOf(thread, thread.lineage.rootThreadId);
-    if (!listed.has(parentKey) && rootKey !== parentKey) add(rootKey, thread);
+    if (!listed.has(parentKey) && !threadRows.has(parentKey) && rootKey !== parentKey)
+      add(rootKey, thread);
   }
   return byParent;
+}
+
+/** Running subagents, each followed by its own running subagents, for lists without nesting. */
+export function flattenRunningSubagents<
+  TThread extends Pick<SidebarThreadSummary, "id" | "environmentId">,
+>(children: readonly TThread[], byParent: ReadonlyMap<string, readonly TThread[]>): TThread[] {
+  return children.flatMap((child) => [
+    child,
+    ...flattenRunningSubagents(
+      byParent.get(scopedThreadKey(scopeThreadRef(child.environmentId, child.id))) ?? [],
+      byParent,
+    ),
+  ]);
 }
 
 /**
