@@ -35,6 +35,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
+import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -2500,6 +2501,69 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
   });
+
+  it.effect("refuses stuck-root recovery to a Supervised caller", () =>
+    Effect.gen(function* () {
+      const recover = () => Effect.die("A Supervised caller reached stuck-root recovery.");
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+        Effect.provide(
+          OrchestratorMcpService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeServices.layer,
+                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                ServerSettings.layerTest(),
+                Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+                Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                  list: () => Effect.succeed([]),
+                }),
+                Layer.mock(ProjectService.ProjectService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+                Layer.mock(IssueWorkService.IssueWorkService)({
+                  cancelRequest: recover,
+                  restoreRoot: recover,
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:recovery"),
+        requestNamespace: "client:recovery",
+        thread: undefined,
+        client: { sessionId: "recovery", label: "Claude Code", access: "approval-required" },
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+      const repository = {
+        host: "github.com",
+        repository: "owner/repo",
+        projectId: ProjectId.make("project:recovery"),
+        reason: "Stuck root",
+        clientRequestId: CommandId.make("command:recovery"),
+      };
+      const cancelled = yield* mcp
+        .cancelIssueRequest(scope, {
+          ...repository,
+          expectedRootThreadId: ThreadId.make("thread:stuck-root"),
+          requestId: CommandId.make("command:stuck-start"),
+        })
+        .pipe(Effect.flip);
+      const restored = yield* mcp
+        .restoreRepositoryRoot(scope, {
+          ...repository,
+          repositoryId: "repository:recovery",
+          expectedRootThreadId: ThreadId.make("thread:stuck-root"),
+          expectedRevision: 1,
+          targetThreadId: ThreadId.make("thread:replacement"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(cancelled.code, "runtime_mode_escalation_denied");
+      assert.equal(restored.code, "runtime_mode_escalation_denied");
+    }),
+  );
 
   describe("resolveRuntimeMode", () => {
     // Muse offers only these two, and runs any other mode as Supervised.

@@ -1726,6 +1726,15 @@ const make = Effect.gen(function* () {
           .assertCurrentCaller(scope.thread.threadId)
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
 
+  /** Repository-wide control needs a caller in full access and default mode. */
+  const requireRepositoryController = (scope: McpInvocationScope) =>
+    Effect.gen(function* () {
+      const { limits } = yield* loadCaller(scope);
+      yield* assertCurrentRepositoryCaller(scope);
+      yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
+      yield* resolveInteractionMode(limits.interactionMode, "default");
+    });
+
   return OrchestratorMcpService.of({
     proposeIssueChange: (scope, input) =>
       Effect.gen(function* () {
@@ -1752,13 +1761,7 @@ const make = Effect.gen(function* () {
       }),
     workMilestone: (scope, input) =>
       Effect.gen(function* () {
-        const { limits } = yield* loadCaller(scope);
-        if (scope.thread !== undefined && Option.isSome(issueWork))
-          yield* issueWork.value
-            .assertCurrentCaller(scope.thread.threadId)
-            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-        yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
-        yield* resolveInteractionMode(limits.interactionMode, "default");
+        yield* requireRepositoryController(scope);
         if (Option.isNone(issueWork))
           return yield* failure("orchestration_error", "Issue work is unavailable.");
         return yield* issueWork.value
@@ -1776,13 +1779,7 @@ const make = Effect.gen(function* () {
       }),
     setRepositoryPaused: (scope, input) =>
       Effect.gen(function* () {
-        const { limits } = yield* loadCaller(scope);
-        if (scope.thread !== undefined && Option.isSome(issueWork))
-          yield* issueWork.value
-            .assertCurrentCaller(scope.thread.threadId)
-            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-        yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
-        yield* resolveInteractionMode(limits.interactionMode, "default");
+        yield* requireRepositoryController(scope);
         if (Option.isNone(issueWork))
           return yield* failure("orchestration_error", "Issue work is unavailable.");
         return yield* issueWork.value
@@ -1791,8 +1788,7 @@ const make = Effect.gen(function* () {
       }),
     cancelIssueRequest: (scope, input) =>
       Effect.gen(function* () {
-        yield* assertCurrentRepositoryCaller(scope);
-        yield* loadCaller(scope);
+        yield* requireRepositoryController(scope);
         if (Option.isNone(issueWork))
           return yield* failure("orchestration_error", "Issue work is unavailable.");
         return yield* issueWork.value
@@ -1801,8 +1797,7 @@ const make = Effect.gen(function* () {
       }),
     restoreRepositoryRoot: (scope, input) =>
       Effect.gen(function* () {
-        yield* assertCurrentRepositoryCaller(scope);
-        yield* loadCaller(scope);
+        yield* requireRepositoryController(scope);
         if (Option.isNone(issueWork))
           return yield* failure("orchestration_error", "Issue work is unavailable.");
         return yield* issueWork.value
