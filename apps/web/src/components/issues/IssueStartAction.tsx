@@ -166,8 +166,6 @@ function IssueStartControls({
       });
       return;
     }
-    // A retried Start with the cancelled request id would only report the cancellation.
-    request.current = null;
     appAtomRegistry.refresh(statusAtom);
   };
 
@@ -181,6 +179,7 @@ function IssueStartControls({
       ...(orchestratorThreadId === undefined ? {} : { orchestratorThreadId }),
       ...(createOrchestrator ? { createOrchestrator: true } : {}),
     };
+    // Only an unanswered Start keeps its id, so retrying it cannot queue a second request.
     const key = JSON.stringify(input);
     if (request.current?.key !== key) request.current = { key, id: randomUUID() };
     setStartError(null);
@@ -192,6 +191,17 @@ function IssueStartControls({
     setStarting(false);
     if (result._tag === "Failure") {
       setStartError(formatEnvironmentQueryError(result.cause));
+      return;
+    }
+    request.current = null;
+    if (result.value.status === "cancelled") {
+      // The retried request was cancelled elsewhere; the next Start sends a new one.
+      appAtomRegistry.refresh(statusAtom);
+      toastManager.add({
+        type: "warning",
+        title: "That start request was cancelled",
+        description: "Start again to send a new request.",
+      });
       return;
     }
     setAccepted({ result: result.value, previousStatusAt: statusQuery.dataUpdatedAt });
