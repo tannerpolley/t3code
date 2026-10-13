@@ -137,6 +137,7 @@ describe("V2 preview upgrade", () => {
         [59, "McpAppModelContext"],
         [60, "ThreadSnapshotWindowIndexes"],
         [61, "PullRequestReviewGuides"],
+        [62, "ThreadFailureLookupIndex"],
       ]);
       // The preview reconciler moves the fork's 56 to 57; the fork ledger then takes it as 1.
       assert.deepStrictEqual(
