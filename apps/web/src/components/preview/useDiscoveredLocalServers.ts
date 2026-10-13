@@ -70,16 +70,19 @@ export function mergeServers(input: {
   }
 
   const activeProjectId = input.active?.projectId;
+  const activeThreadId = input.active?.threadId;
   const live: PreviewableServer[] = [];
   for (const server of input.scanner) {
     const key = canonicalKey(server.host, server.port);
     const configured = configuredByServer.get(key);
-    // Another project's server only shows in that project, unless this project's scripts name it.
+    // Another project's server only shows in that project, unless this project's scripts name
+    // it or the active thread's own terminal runs it.
     if (
       !configured &&
       activeProjectId &&
       server.projectId !== undefined &&
-      server.projectId !== activeProjectId
+      server.projectId !== activeProjectId &&
+      !(activeThreadId && server.terminal?.threadId === activeThreadId)
     )
       continue;
     live.push({
@@ -94,9 +97,8 @@ export function mergeServers(input: {
   // project's and thread's own servers, then everything else; by port within each.
   const rank = (server: PreviewableServer): number => {
     if (server.source === "configured") return 0;
-    const threadId = input.active?.threadId;
     if (activeProjectId && server.projectId === activeProjectId) return 1;
-    if (threadId && server.terminal?.threadId === threadId) return 1;
+    if (activeThreadId && server.terminal?.threadId === activeThreadId) return 1;
     return 2;
   };
   return live.toSorted((a, b) => rank(a) - rank(b) || a.port - b.port);

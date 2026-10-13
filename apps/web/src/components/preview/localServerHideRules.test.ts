@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { addLocalServerHideRule, parseLocalServerHideRule } from "./localServerHideRules";
+import { parseLocalServerHideRule } from "./localServerHideRules";
 
 describe("parseLocalServerHideRule", () => {
   it("reads ports, ranges in either order, and process names", () => {
@@ -13,10 +13,5 @@ describe("parseLocalServerHideRule", () => {
     expect(parseLocalServerHideRule("serena")).toEqual({ kind: "process", processName: "serena" });
     expect(parseLocalServerHideRule("70000")).toBeNull();
     expect(parseLocalServerHideRule("  ")).toBeNull();
-  });
-
-  it("does not add a rule twice", () => {
-    const rules = addLocalServerHideRule([], { kind: "process", processName: "serena" });
-    expect(addLocalServerHideRule(rules, { kind: "process", processName: "SERENA" })).toBe(rules);
   });
 });

@@ -18,13 +18,3 @@ export function describeLocalServerHideRule(rule: LocalServerHideRule): string {
   if (rule.kind === "process") return `Process ${rule.processName}`;
   return rule.from === rule.to ? `Port ${rule.from}` : `Ports ${rule.from}–${rule.to}`;
 }
-
-export function addLocalServerHideRule(
-  rules: ReadonlyArray<LocalServerHideRule>,
-  rule: LocalServerHideRule,
-): ReadonlyArray<LocalServerHideRule> {
-  const key = describeLocalServerHideRule(rule).toLowerCase();
-  return rules.some((existing) => describeLocalServerHideRule(existing).toLowerCase() === key)
-    ? rules
-    : [...rules, rule];
-}

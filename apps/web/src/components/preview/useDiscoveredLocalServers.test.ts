@@ -175,4 +175,20 @@ describe("mergeServers", () => {
     expect(ports(ProjectId.make("project-t3code"))).toEqual([3000]);
     expect(ports(null)).toEqual([3000, 8770]);
   });
+
+  it("keeps the active thread's own terminal server even when attributed to another project", () => {
+    const threadId = ThreadId.make("thread-1");
+    const result = mergeServers({
+      scanner: [
+        scannerServer({
+          port: 5174,
+          projectId: ProjectId.make("project-parent-folder"),
+          terminal: { threadId, terminalId: "default" },
+        }),
+      ],
+      configuredUrls: [],
+      active: { projectId: ProjectId.make("project-app"), threadId },
+    });
+    expect(result.map((server) => server.port)).toEqual([5174]);
+  });
 });

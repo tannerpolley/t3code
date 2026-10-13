@@ -220,8 +220,9 @@ export const isLocalServerHidden = (
 };
 
 /**
- * The project with the deepest workspace root containing `cwd`, a `/proc/<pid>/cwd` target.
- * Roots must be physical paths, as the kernel reports cwd; on equal roots the first project wins.
+ * The project with the deepest root (a workspace root or a thread worktree) containing `cwd`, a
+ * `/proc/<pid>/cwd` target. Roots must be physical paths, as the kernel reports cwd; on equal
+ * roots the first one wins.
  */
 export const projectIdForCwd = (
   cwd: string,
@@ -419,6 +420,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const hostPlatform = yield* HostProcess.Platform;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettingsService;
+  // ponytail: reading worktrees scans every thread's payload (~75 ms for 2,000 threads), so the
+  // list is reused for 30 s; a server in a brand-new worktree waits that long for its project.
+  const listThreadWorktrees = yield* projectStore.listThreadWorktrees().pipe(
+    Effect.orElseSucceed(() => []),
+    Effect.cachedWithTTL(Duration.seconds(30)),
+  );
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -510,10 +517,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       ...new Set(servers.flatMap((server) => (server.pid === null ? [] : [server.pid]))),
     ];
     if (hostPlatform !== "linux" || processIds.length === 0) return servers;
-    const shells = yield* projectStore.listShells().pipe(Effect.orElseSucceed(() => []));
+    // A thread's worktree belongs to its project, wherever the worktree lives.
+    const [shells, worktrees] = yield* Effect.all([
+      projectStore.listShells().pipe(Effect.orElseSucceed(() => [])),
+      listThreadWorktrees,
+    ]);
     // /proc reports physical paths, so symlinked roots are compared by their target.
     const projects = yield* Effect.forEach(
-      shells,
+      [...shells, ...worktrees],
       (project) =>
         fileSystem.realPath(project.workspaceRoot).pipe(
           Effect.orElseSucceed(() => project.workspaceRoot),

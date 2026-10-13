@@ -79,7 +79,7 @@ const layerMcpEnvironment = McpHttpServer.layerEnvironmentToolkit.pipe(
     }),
   ),
   Layer.provide(layerEnvironment),
-  Layer.provide(Settings.layerTest()),
+  Layer.provideMerge(Settings.layerTest()),
 );
 
 it.effect("updates preferences for a thread caller through the /mcp registration", () =>
@@ -92,18 +92,29 @@ it.effect("updates preferences for a thread caller through the /mcp registration
   }).pipe(Effect.provide(layerMcpEnvironment)),
 );
 
-it.effect("replaces local server hide rules and reads them back", () =>
+it.effect("edits local server hide rules against the latest list, keeping the owner's rules", () =>
   Effect.gen(function* () {
-    const rules = [
-      { kind: "process", processName: "serena" },
-      { kind: "ports", from: 24_282, to: 24_304 },
-    ];
-    const updated = yield* callTool("t3_environment_preferences_update", {
-      localServerHideRules: rules,
+    const settings = yield* Settings.ServerSettingsService;
+    const serena = { kind: "process", processName: "serena" } as const;
+    const syncthing = { kind: "process", processName: "syncthing" } as const;
+    const port = { kind: "ports", from: 3773, to: 3773 } as const;
+    yield* settings.updateSettings({ localServerHideRules: [serena] });
+    // The owner adds a rule in Settings after the agent last read the list.
+    yield* settings.updateSettings({ localServerHideRules: [serena, syncthing] });
+    const added = yield* callTool("t3_environment_preferences_update", {
+      addLocalServerHideRules: [port, { kind: "process", processName: "SERENA" }],
+      removeLocalServerHideRules: [{ kind: "process", processName: "not-hidden" }],
     });
-    expect(updated.isError).toBe(false);
+    expect(added.structuredContent).toMatchObject({
+      localServerHideRules: [serena, syncthing, port],
+    });
+    yield* callTool("t3_environment_preferences_update", {
+      removeLocalServerHideRules: [{ kind: "process", processName: "Serena" }],
+    });
     const read = yield* callTool("t3_environment_read", {});
-    expect(read.structuredContent).toMatchObject({ preferences: { localServerHideRules: rules } });
+    expect(read.structuredContent).toMatchObject({
+      preferences: { localServerHideRules: [syncthing, port] },
+    });
   }).pipe(Effect.provide(layerMcpEnvironment)),
 );
 
@@ -142,7 +153,7 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
       }),
       Layer.mock(Settings.ServerSettingsService)({
         getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-        updateSettings: () =>
+        updateSettingsWith: () =>
           Ref.update(updates, (count) => count + 1).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
       }),
     );

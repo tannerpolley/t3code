@@ -1,4 +1,8 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  editLocalServerHideRules,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { Globe, History, RadioTower } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
@@ -9,7 +13,6 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DiscoveryList } from "../ui/discovery-list";
 
-import { addLocalServerHideRule } from "./localServerHideRules";
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
@@ -99,7 +102,11 @@ export function PreviewEmptyState({
                     void updateSettings({
                       environmentId,
                       input: {
-                        patch: { localServerHideRules: addLocalServerHideRule(hideRules, rule) },
+                        patch: {
+                          localServerHideRules: editLocalServerHideRules(hideRules, {
+                            add: [rule],
+                          }),
+                        },
                       },
                     })
                   }

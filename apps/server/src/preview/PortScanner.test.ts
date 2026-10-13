@@ -37,13 +37,14 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import * as PortScanner from "./PortScanner.ts";
 
-const makeProjectStore = (
-  projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">> = [],
-) =>
+type ProjectRoots = ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>;
+
+const makeProjectStore = (projects: ProjectRoots = [], worktrees: ProjectRoots = []) =>
   Layer.succeed(
     ProjectStore.ProjectStoreV2,
     ProjectStore.ProjectStoreV2.of({
       listShells: () => Effect.succeed(projects),
+      listThreadWorktrees: () => Effect.succeed(worktrees),
     } as never),
   );
 
@@ -157,7 +158,8 @@ const makeLsofScannerWithoutSettings = (input: {
   readonly parentFailure?: boolean;
   readonly cgroups?: ReadonlyMap<number, string>;
   readonly cwds?: ReadonlyMap<number, string>;
-  readonly projects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>;
+  readonly projects?: ProjectRoots;
+  readonly worktrees?: ProjectRoots;
   readonly realPaths?: ReadonlyMap<string, string>;
 }) => {
   const parents = input.parents ?? (() => new Map([[input.pid(), process.pid]]));
@@ -191,7 +193,7 @@ const makeLsofScannerWithoutSettings = (input: {
             });
           },
         }),
-        makeProjectStore(input.projects),
+        makeProjectStore(input.projects, input.worktrees),
         Layer.succeed(
           FileSystem.FileSystem,
           FileSystem.makeNoop({
@@ -443,6 +445,37 @@ describe("listener attribution", () => {
         const servers = yield* scanner.scan();
         expect(servers.map(({ port, projectId }) => ({ port, projectId }))).toEqual([
           { port: 8770, projectId: linked },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  effectIt.effect(
+    "attributes a thread worktree to its project, not a registered parent folder",
+    () => {
+      const home = ProjectId.make("project-home");
+      const app = ProjectId.make("project-app");
+      const layer = makeLsofScannerLayer({
+        pid: () => 501,
+        fetch: (() =>
+          Promise.resolve(
+            new Response("app", { headers: { "content-type": "text/html" } }),
+          )) as typeof globalThis.fetch,
+        listeners: [{ pid: 501, port: 5173 }],
+        parents: () => new Map([[501, 1]]),
+        cwds: new Map([[501, "/home/u/.t3/worktrees/app/feature/apps/web"]]),
+        projects: [
+          { id: home, workspaceRoot: "/home/u" },
+          { id: app, workspaceRoot: "/home/u/Code/app" },
+        ],
+        worktrees: [{ id: app, workspaceRoot: "/home/u/.t3/worktrees/app/feature" }],
+      });
+
+      return Effect.gen(function* () {
+        const scanner = yield* PortScanner.PortDiscovery;
+        const servers = yield* scanner.scan();
+        expect(servers.map(({ port, projectId }) => ({ port, projectId }))).toEqual([
+          { port: 5173, projectId: app },
         ]);
       }).pipe(Effect.provide(layer));
     },

@@ -438,6 +438,33 @@ export const LocalServerHideRule = Schema.Union([
 ]);
 export type LocalServerHideRule = typeof LocalServerHideRule.Type;
 
+const sameLocalServerHideRule = (a: LocalServerHideRule, b: LocalServerHideRule): boolean =>
+  a.kind === "process"
+    ? b.kind === "process" && a.processName.toLowerCase() === b.processName.toLowerCase()
+    : b.kind === "ports" &&
+      Math.min(a.from, a.to) === Math.min(b.from, b.to) &&
+      Math.max(a.from, a.to) === Math.max(b.from, b.to);
+
+/**
+ * Drops each `remove` rule, then appends each `add` rule not already listed. Process names match
+ * case-insensitively and port ranges in either order, as the port scanner applies them.
+ */
+export const editLocalServerHideRules = (
+  rules: ReadonlyArray<LocalServerHideRule>,
+  edit: {
+    readonly add?: ReadonlyArray<LocalServerHideRule> | undefined;
+    readonly remove?: ReadonlyArray<LocalServerHideRule> | undefined;
+  },
+): ReadonlyArray<LocalServerHideRule> => {
+  const kept = rules.filter(
+    (rule) => !edit.remove?.some((removed) => sameLocalServerHideRule(rule, removed)),
+  );
+  for (const rule of edit.add ?? []) {
+    if (!kept.some((existing) => sameLocalServerHideRule(existing, rule))) kept.push(rule);
+  }
+  return kept;
+};
+
 export const DiscoveredLocalServerList = Schema.Struct({
   servers: Schema.Array(DiscoveredLocalServer),
   scannedAt: Schema.String,
