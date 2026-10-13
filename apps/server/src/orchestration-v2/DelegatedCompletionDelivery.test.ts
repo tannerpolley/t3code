@@ -2961,4 +2961,64 @@ it.layer(layerTest)("child question wake admission", (it) => {
         );
       }),
   );
+
+  it.effect("cancelling a stopped parent's queued message keeps the Stop in force", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const child = yield* seedChildWaitingOnUser({
+        name: "cancelled-queue-after-stop",
+        requestKind: "user_input",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("queued-before-stop"),
+        threadId: child.parentThreadId,
+        messageId: MessageId.make("queued-before-stop"),
+        text: "Later user work",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-with-queued-work"),
+        threadId: child.parentThreadId,
+      });
+      const stopped = yield* orchestrator.getThreadProjection(child.parentThreadId);
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        commandId: reconcileCommandId("stop-with-queued-work-settled"),
+        events: stopped.runs
+          .filter((run) => run.status !== "queued")
+          .map((run) => ({
+            id: EventId.make(`stop-with-queued-work:${run.id}`),
+            type: "run.updated",
+            threadId: child.parentThreadId,
+            occurredAt: now,
+            payload: { ...run, status: "interrupted", completedAt: now },
+          })),
+      });
+      const queued = stopped.runs.find((run) => run.status === "queued");
+      assert.isTrue(queued !== undefined);
+      if (queued === undefined) return;
+      yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make("cancel-queued-after-stop"),
+        threadId: child.parentThreadId,
+        runId: queued.id,
+      });
+      const wake = yield* delegatedRequestWakeCommand(
+        projections,
+        child.childThreadId,
+        child.requestId,
+      );
+      assert.isTrue(wake === undefined);
+      if (wake !== undefined) yield* orchestrator.dispatch(wake);
+      assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
+      assert.isTrue(yield* ownerCanSee(child));
+    }),
+  );
 });

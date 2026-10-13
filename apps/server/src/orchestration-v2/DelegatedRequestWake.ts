@@ -4,6 +4,7 @@ import {
   type RuntimeRequestId,
   type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Effect from "effect/Effect";
 import type * as ProjectionStore from "./ProjectionStore.ts";
 import {
@@ -49,7 +50,8 @@ export const delegatedRequestWakeCommand = Effect.fn("delegatedRequestWakeComman
   );
   const task = parent.subagents.find((task) => task.id === owner.taskId);
   if (task === undefined) return;
-  const latestRun = parent.runs.findLast((run) => run.status !== "queued");
+  // A cancelled queue entry never ran, so it must not hide the Stop on the run before it.
+  const latestRun = latestExecutedRun(parent.runs);
   // Stop already records this marker, including when there was no live run to interrupt.
   if (
     parent.runs.some((run) => run.status === "queued" && run.queueHeld === true) ||
