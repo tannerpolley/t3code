@@ -4361,7 +4361,7 @@ function reviewHarness(
   const claude = {
     ...adapter,
     instanceId: ProviderInstanceId.make("claude"),
-    driver: ProviderDriverKind.make("claude"),
+    driver: ProviderDriverKind.make("claudeAgent"),
   };
   const providers = [adapter, openCode, claude].map((entry): ServerProvider => ({
     instanceId: entry.instanceId,

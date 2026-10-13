@@ -1,7 +1,8 @@
 import type { IssueWorkRead, ProviderDriverKind, ThreadLinkedIssue } from "@t3tools/contracts";
 
+/** Codex and Claude drivers; IssueEligibility.test.ts ties these names to the real drivers. */
 export const supportsManagedIssueWork = (driver: ProviderDriverKind) =>
-  driver === "codex" || driver === "claude";
+  driver === "codex" || driver === "claudeAgent";
 
 export const managedIssueProviderError =
   "Managed issue work requires Codex or Claude; other adapters allow untracked native children.";
