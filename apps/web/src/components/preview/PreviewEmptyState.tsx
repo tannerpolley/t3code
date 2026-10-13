@@ -1,7 +1,12 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  editLocalServerHideRules,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { Globe, History, RadioTower } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useThreadShell } from "~/state/entities";
@@ -9,7 +14,6 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DiscoveryList } from "../ui/discovery-list";
 
-import { addLocalServerHideRule } from "./localServerHideRules";
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
@@ -31,7 +35,11 @@ export function PreviewEmptyState({
   onRemoveRecent,
   onOpenUrl,
 }: Props) {
-  const projectId = useThreadShell(threadRef)?.projectId ?? null;
+  // A new thread is still a draft, which knows its project before the server does.
+  const draftProjectId = useComposerDraftStore(
+    (store) => store.getDraftThreadByRef(threadRef)?.projectId,
+  );
+  const projectId = useThreadShell(threadRef)?.projectId ?? draftProjectId ?? null;
   const servers = useDiscoveredLocalServers({
     environmentId,
     configuredUrls,
@@ -99,7 +107,11 @@ export function PreviewEmptyState({
                     void updateSettings({
                       environmentId,
                       input: {
-                        patch: { localServerHideRules: addLocalServerHideRule(hideRules, rule) },
+                        patch: {
+                          localServerHideRules: editLocalServerHideRules(hideRules, {
+                            add: [rule],
+                          }),
+                        },
                       },
                     })
                   }

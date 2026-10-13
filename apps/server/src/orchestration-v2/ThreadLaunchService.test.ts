@@ -4361,7 +4361,7 @@ function reviewHarness(
   const claude = {
     ...adapter,
     instanceId: ProviderInstanceId.make("claude"),
-    driver: ProviderDriverKind.make("claude"),
+    driver: ProviderDriverKind.make("claudeAgent"),
   };
   const providers = [adapter, openCode, claude].map((entry): ServerProvider => ({
     instanceId: entry.instanceId,
@@ -5494,7 +5494,15 @@ describe("fresh-thread repository handoff", () => {
           });
         const blocked = yield* archive("wrong:blocked-archive").pipe(Effect.result);
         assert.equal(blocked._tag, "Failure");
-        if (blocked._tag === "Failure") assert.include(blocked.failure.message, "active work");
+        if (blocked._tag === "Failure") {
+          assert.include(blocked.failure.message, "unclaimed issue start requests");
+          assert.notInclude(blocked.failure.message, "pending handoff");
+        }
+        // The newest coalesced request; cancelling it releases the whole attempt.
+        assert.equal(
+          (yield* service.workStatus({ ...reference, number: 9 })).pendingRequestId,
+          CommandId.make("wrong-root:duplicate-start"),
+        );
         const cancelled = yield* service.cancelRequest(cancelInput);
         assert.deepEqual(
           cancelled.cancellation,
@@ -5520,7 +5528,9 @@ describe("fresh-thread repository handoff", () => {
           (yield* store.recoveryInventory(config)).map((row) => row.detail).join("\n"),
           "#9",
         );
-        assert.equal((yield* service.workStatus({ ...reference, number: 9 })).status, "cancelled");
+        const afterCancel = yield* service.workStatus({ ...reference, number: 9 });
+        assert.equal(afterCancel.status, "cancelled");
+        assert.isNull(afterCancel.pendingRequestId);
         assert.equal(
           (yield* service.start({
             ...reference,

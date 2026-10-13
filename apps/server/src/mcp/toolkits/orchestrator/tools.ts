@@ -35,6 +35,9 @@ import {
   RepositoryHandoffRequestInput,
   RepositoryWorkResult,
   IssueRepositoryRef,
+  IssueWorkCancelInput,
+  IssueWorkRequested,
+  RepositoryWorkRestoreInput,
   IssueChangeProposeInput,
   IssueChange,
 } from "@t3tools/contracts";
@@ -322,6 +325,24 @@ export const OrchestratorToolkit = Toolkit.make(
   Tool.make("set_repository_work_paused", {
     description: "Pause new worker admissions or resume after rechecking GitHub eligibility.",
     parameters: RepositoryWorkControlInput,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, true),
+  Tool.make("cancel_issue_request", {
+    description:
+      "Cancel an unclaimed issue Start request (one no worker has picked up), including duplicate requests for the same attempt. A stopped repository root with unclaimed requests cannot be archived or replaced until they are cancelled. Claimed worker work is refused.",
+    parameters: IssueWorkCancelInput,
+    success: IssueWorkRequested,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, true),
+  Tool.make("restore_repository_root", {
+    description:
+      "Make another existing top-level thread in the repository's project the repository orchestrator. Read get_repository_orchestration for the current root and revision and pass them as expectations. The current root must be idle: no unfinished runs or subagents, no unclaimed requests (see cancel_issue_request), and no handoff.",
+    parameters: RepositoryWorkRestoreInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
     failureMode: "return",

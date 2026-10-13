@@ -594,6 +594,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     getSettings: Ref.get(settings),
     getDontAskMode: Effect.succeed(false),
     updateSettings,
+    updateSettingsWith: () => Effect.die("Unexpected settings function update"),
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
     withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),
     streamChanges: Stream.fromPubSub(settingsChanges),

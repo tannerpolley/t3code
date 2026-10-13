@@ -61,6 +61,16 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:handoff",
       tag: WS_METHODS.issuesHandoff,
     }),
+    /** Withdraws one unclaimed Start request so its root can be archived or replaced. */
+    cancelRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:cancel-request",
+      tag: WS_METHODS.issuesCancelRequest,
+    }),
+    /** Moves repository ownership from a stuck root to another top-level thread. */
+    restoreRoot: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:restore-root",
+      tag: WS_METHODS.issuesRestoreRoot,
+    }),
     workStatus,
     start: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:start",

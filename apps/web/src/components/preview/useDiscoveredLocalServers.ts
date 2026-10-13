@@ -28,7 +28,8 @@ interface UseDiscoveredLocalServersInput {
 
 /**
  * Enrich the environment-level live server snapshot with matching configured
- * URLs and return a stable ranked list. The server already left out hidden servers.
+ * URLs and return a stable ranked list. The server already left out hidden servers;
+ * this leaves out other projects' servers when a project is active.
  */
 export function useDiscoveredLocalServers(
   input: UseDiscoveredLocalServersInput,
@@ -68,10 +69,22 @@ export function mergeServers(input: {
     if (!configuredByServer.has(key)) configuredByServer.set(key, parsed);
   }
 
+  const activeProjectId = input.active?.projectId;
+  const activeThreadId = input.active?.threadId;
   const live: PreviewableServer[] = [];
   for (const server of input.scanner) {
     const key = canonicalKey(server.host, server.port);
     const configured = configuredByServer.get(key);
+    // Another project's server only shows in that project, unless this project's scripts name
+    // it or the active thread's own terminal runs it.
+    if (
+      !configured &&
+      activeProjectId &&
+      server.projectId !== undefined &&
+      server.projectId !== activeProjectId &&
+      !(activeThreadId && server.terminal?.threadId === activeThreadId)
+    )
+      continue;
     live.push({
       ...server,
       requestedUrl:
@@ -84,10 +97,8 @@ export function mergeServers(input: {
   // project's and thread's own servers, then everything else; by port within each.
   const rank = (server: PreviewableServer): number => {
     if (server.source === "configured") return 0;
-    const projectId = input.active?.projectId;
-    const threadId = input.active?.threadId;
-    if (projectId && server.projectId === projectId) return 1;
-    if (threadId && server.terminal?.threadId === threadId) return 1;
+    if (activeProjectId && server.projectId === activeProjectId) return 1;
+    if (activeThreadId && server.terminal?.threadId === activeThreadId) return 1;
     return 2;
   };
   return live.toSorted((a, b) => rank(a) - rank(b) || a.port - b.port);

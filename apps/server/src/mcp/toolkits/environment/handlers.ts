@@ -1,4 +1,8 @@
-import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
+import {
+  editLocalServerHideRules,
+  OrchestratorMcpFailure,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
@@ -13,6 +17,7 @@ export function preferences(settings: ServerSettings) {
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
+    localServerHideRules,
     backgroundActivity,
     sourceControlWritingStyle,
   } = settings;
@@ -21,6 +26,7 @@ export function preferences(settings: ServerSettings) {
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
+    localServerHideRules,
     backgroundActivity: { profile: backgroundActivity.profile },
     sourceControlWritingStyle: {
       ...sourceControlWritingStyle,
@@ -54,7 +60,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
       };
     }),
   ),
-  t3_environment_preferences_update: McpToolAccess.writesEnvironment((patch, check) =>
+  t3_environment_preferences_update: McpToolAccess.writesEnvironment((input, check) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -62,9 +68,22 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         // The turn may have ended, or the thread's modes changed, while this waited for the lock.
         yield* check;
         const { settings } = yield* access;
-        return preferences(
-          yield* settings.updateSettings(patch).pipe(Effect.mapError(unavailable)),
-        );
+        const {
+          addLocalServerHideRules: add,
+          removeLocalServerHideRules: remove,
+          ...patch
+        } = input;
+        // Hide rules are edited against the latest list, so a rule the owner just added survives.
+        const updated = yield* settings
+          .updateSettingsWith((current) => ({
+            ...patch,
+            localServerHideRules: editLocalServerHideRules(current.localServerHideRules, {
+              add,
+              remove,
+            }),
+          }))
+          .pipe(Effect.mapError(unavailable));
+        return preferences(updated);
       });
       // A thread caller serializes with its own turn; a client has no thread to lock.
       return yield* scope.thread === undefined

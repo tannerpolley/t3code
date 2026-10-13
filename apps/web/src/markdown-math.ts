@@ -6,14 +6,9 @@ import type { PluggableList } from "unified";
  * A complete inline `$…$` span: no space just inside either dollar, no escaped closing
  * dollar, and no digit right after it. "$2/x$" qualifies; "$5 and $10" does not.
  */
-export const DOLLAR_MATH_SPAN = /\$[^\s$](?:[^$\n]*[^\s$\\])?\$(?!\d)/u;
+export const DOLLAR_MATH_SPAN = /\$(?=\S)[^$]*[^\s$\\]\$(?!\d)/u;
 
 const DOLLAR_MATH_SPAN_START = new RegExp(`^${DOLLAR_MATH_SPAN.source}`, "u");
-
-// Amounts such as $5, $1,200, $5.00, $5k, $5/mo or $5+ are currency, not the start of math.
-// ponytail: `$1 + 1$` also reads as currency; math starting with a digit and a space is rare.
-const CURRENCY_START =
-  /^\$(?=\d(?:[\p{L}\p{N}_-]*\p{L}|[\d,]*(?:\.\d+)?)(?=$|[\s.,!?;:)\]]|\/\p{L}|\+(?!\S)))/u;
 
 // `$name` or a plugin's `$plugin:name` skill reference, followed by a boundary. Plugin-scoped
 // references are never math even when the skill list isn't loaded (`$x:y$` still is).
@@ -27,8 +22,8 @@ function isSkillReference(text: string, knownSkills: ReadonlySet<string>): boole
 
 /**
  * Prepares chat markdown for remark-math: `\( \)` and `\[ \]` formulas become placeholders that
- * `remarkProviderMath` turns into math nodes, and dollars that open currency or skill
- * references are escaped. Code spans and fenced code stay literal.
+ * `remarkProviderMath` turns into math nodes. Single dollars outside complete Pandoc math
+ * spans and dollars that open skill references are escaped. Code stays untouched.
  */
 export function normalizeProviderMathDelimiters(
   source: string,
@@ -37,6 +32,8 @@ export function normalizeProviderMathDelimiters(
   const knownSkills = new Set(skillNames.map((name) => name.toLowerCase()));
   let fence: { marker: "`" | "~"; length: number } | null = null;
   let inlineTicks = 0;
+  let sourceOffset = 0;
+  let mathSpanEnd = 0;
   let nextPairId = 0;
   type ProviderPair = { open: string; close?: string; display: boolean };
   const pairs: ProviderPair[] = [];
@@ -46,6 +43,8 @@ export function normalizeProviderMathDelimiters(
   let normalized = source
     .split(/(\n)/)
     .map((part) => {
+      const offset = sourceOffset;
+      sourceOffset += part.length;
       if (part === "\n") return part;
       const fenceRun = part.match(/^ {0,3}(`{3,}|~{3,})/u)?.[1];
       if (fence) {
@@ -65,6 +64,10 @@ export function normalizeProviderMathDelimiters(
 
       let line = "";
       for (let index = 0; index < part.length;) {
+        if (offset + index < mathSpanEnd) {
+          line += part[index++];
+          continue;
+        }
         if (part[index] === "`") {
           let end = index + 1;
           while (part[end] === "`") end++;
@@ -76,6 +79,11 @@ export function normalizeProviderMathDelimiters(
         }
         if (inlineTicks === 0) {
           const delimiter = part.slice(index, index + 2);
+          if (delimiter === "\\$" || delimiter === "\\\\") {
+            line += delimiter;
+            index += 2;
+            continue;
+          }
           if (delimiter === "\\(" && inlinePair === null) {
             inlinePair = { open: placeholder(), display: false };
             pairs.push(inlinePair);
@@ -104,14 +112,26 @@ export function normalizeProviderMathDelimiters(
             index += 2;
             continue;
           }
-          const rest = part.slice(index);
-          if (
-            (CURRENCY_START.test(rest) && !DOLLAR_MATH_SPAN_START.test(rest)) ||
-            isSkillReference(rest, knownSkills)
-          ) {
-            line += "\\$";
-            index++;
-            continue;
+          if (part[index] === "$") {
+            const rest = source.slice(offset + index);
+            const dollarRun = /^\${2,}/u.exec(rest)?.[0];
+            const span = dollarRun
+              ? /^(\${2,})[\s\S]*?\1(?!\$)/u.exec(rest)?.[0]
+              : !isSkillReference(rest, knownSkills)
+                ? DOLLAR_MATH_SPAN_START.exec(rest)?.[0]
+                : undefined;
+            if (span) {
+              // Keep the closing delimiter (including one on a later line) with its opener.
+              mathSpanEnd = offset + index + span.length;
+            } else if (dollarRun) {
+              line += dollarRun;
+              index += dollarRun.length;
+              continue;
+            } else {
+              line += "\\$";
+              index++;
+              continue;
+            }
           }
         }
         line += part[index];

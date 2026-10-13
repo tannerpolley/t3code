@@ -159,6 +159,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryWorkControlInput,
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
+  readonly cancelIssueRequest: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").IssueWorkCancelInput,
+  ) => Effect.Effect<import("@t3tools/contracts").IssueWorkRequested, OrchestratorMcpFailure>;
+  readonly restoreRepositoryRoot: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").RepositoryWorkRestoreInput,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly capabilities: (
     scope: McpInvocationScope,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
@@ -1718,6 +1726,15 @@ const make = Effect.gen(function* () {
           .assertCurrentCaller(scope.thread.threadId)
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
 
+  /** Repository-wide control needs a caller in full access and default mode. */
+  const requireRepositoryController = (scope: McpInvocationScope) =>
+    Effect.gen(function* () {
+      const { limits } = yield* loadCaller(scope);
+      yield* assertCurrentRepositoryCaller(scope);
+      yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
+      yield* resolveInteractionMode(limits.interactionMode, "default");
+    });
+
   return OrchestratorMcpService.of({
     proposeIssueChange: (scope, input) =>
       Effect.gen(function* () {
@@ -1744,13 +1761,7 @@ const make = Effect.gen(function* () {
       }),
     workMilestone: (scope, input) =>
       Effect.gen(function* () {
-        const { limits } = yield* loadCaller(scope);
-        if (scope.thread !== undefined && Option.isSome(issueWork))
-          yield* issueWork.value
-            .assertCurrentCaller(scope.thread.threadId)
-            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-        yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
-        yield* resolveInteractionMode(limits.interactionMode, "default");
+        yield* requireRepositoryController(scope);
         if (Option.isNone(issueWork))
           return yield* failure("orchestration_error", "Issue work is unavailable.");
         return yield* issueWork.value
@@ -1768,17 +1779,29 @@ const make = Effect.gen(function* () {
       }),
     setRepositoryPaused: (scope, input) =>
       Effect.gen(function* () {
-        const { limits } = yield* loadCaller(scope);
-        if (scope.thread !== undefined && Option.isSome(issueWork))
-          yield* issueWork.value
-            .assertCurrentCaller(scope.thread.threadId)
-            .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-        yield* resolveRuntimeMode(limits.runtimeMode, "full-access");
-        yield* resolveInteractionMode(limits.interactionMode, "default");
+        yield* requireRepositoryController(scope);
         if (Option.isNone(issueWork))
           return yield* failure("orchestration_error", "Issue work is unavailable.");
         return yield* issueWork.value
           .setPaused(input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      }),
+    cancelIssueRequest: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireRepositoryController(scope);
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .cancelRequest(input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      }),
+    restoreRepositoryRoot: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireRepositoryController(scope);
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .restoreRoot(input)
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       }),
     scheduleTask: (scope, input) =>

@@ -45,6 +45,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -417,6 +418,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcess.Platform;
+  const { dirname, join, resolve } = yield* Path.Path;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettingsService;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
@@ -502,6 +504,30 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     Effect.orElseSucceed(() => null),
   );
 
+  /**
+   * A path inside a linked git worktree (T3 keeps these under ~/.t3/worktrees) mapped to the same
+   * path in its main checkout, whose project owns it. `<worktree>/.git` is then a file pointing at
+   * `<main>/.git/worktrees/<name>`; any other path comes back unchanged.
+   */
+  const mainCheckoutPath = Effect.fn("PortDiscovery.mainCheckoutPath")(function* (path: string) {
+    for (let dir = path; ; dir = dirname(dir)) {
+      const gitPath = join(dir, ".git");
+      if (yield* fileSystem.exists(gitPath).pipe(Effect.orElseSucceed(() => false))) {
+        // A main checkout's `.git` is a directory, which doesn't read as a string.
+        const pointer = yield* fileSystem
+          .readFileString(gitPath)
+          .pipe(Effect.orElseSucceed(() => ""));
+        const gitdir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+        const main =
+          gitdir === undefined
+            ? undefined
+            : /^(.+)\/\.git\/worktrees\/[^/]+$/.exec(resolve(dir, gitdir))?.[1];
+        return main === undefined ? path : main + path.slice(dir.length);
+      }
+      if (dirname(dir) === dir) return path;
+    }
+  });
+
   // Linux only: other platforms have no /proc, so their listeners carry no unit or project.
   const attributeListeners = Effect.fn("PortDiscovery.attributeListeners")(function* (
     servers: ReadonlyArray<DiscoveredLocalServer>,
@@ -530,7 +556,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             cgroup: fileSystem
               .readFileString(`/proc/${pid}/cgroup`)
               .pipe(Effect.orElseSucceed(() => "")),
-            cwd: fileSystem.readLink(`/proc/${pid}/cwd`).pipe(Effect.orElseSucceed(() => null)),
+            cwd: fileSystem.readLink(`/proc/${pid}/cwd`).pipe(
+              Effect.flatMap(mainCheckoutPath),
+              Effect.orElseSucceed(() => null),
+            ),
           }).pipe(
             Effect.map(({ cgroup, cwd }) => {
               const systemdUnit = systemdUnitFromCgroup(cgroup);

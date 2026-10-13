@@ -20,6 +20,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -37,9 +38,9 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import * as PortScanner from "./PortScanner.ts";
 
-const makeProjectStore = (
-  projects: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">> = [],
-) =>
+type ProjectRoots = ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>;
+
+const makeProjectStore = (projects: ProjectRoots = []) =>
   Layer.succeed(
     ProjectStore.ProjectStoreV2,
     ProjectStore.ProjectStoreV2.of({
@@ -80,6 +81,7 @@ const layerProbeFailure = (
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Path.layer,
         fileSystem,
         layerNoAttribution,
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
@@ -92,6 +94,7 @@ const layerProbeFailure = (
 const layerTestPortDiscovery = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      Path.layer,
       layerNoProc,
       layerNoAttribution,
       layerTestProcessRunner,
@@ -121,6 +124,7 @@ const layerLsofScanner = (input: {
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Path.layer,
         layerNoProc,
         layerNoAttribution,
         Layer.succeed(ProcessRunner.ProcessRunner, {
@@ -157,14 +161,17 @@ const makeLsofScannerWithoutSettings = (input: {
   readonly parentFailure?: boolean;
   readonly cgroups?: ReadonlyMap<number, string>;
   readonly cwds?: ReadonlyMap<number, string>;
-  readonly projects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "workspaceRoot">>;
+  readonly projects?: ProjectRoots;
   readonly realPaths?: ReadonlyMap<string, string>;
+  /** `.git` files by path, as in a linked git worktree. */
+  readonly gitFiles?: ReadonlyMap<string, string>;
 }) => {
   const parents = input.parents ?? (() => new Map([[input.pid(), process.pid]]));
   const platform = input.platform ?? "linux";
   return PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Path.layer,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (command) => {
             const parentProbe =
@@ -196,6 +203,7 @@ const makeLsofScannerWithoutSettings = (input: {
           FileSystem.FileSystem,
           FileSystem.makeNoop({
             realPath: (path) => Effect.succeed(input.realPaths?.get(path) ?? path),
+            exists: (path) => Effect.succeed(input.gitFiles?.has(path) ?? false),
             readLink: (path) => {
               const cwd = input.cwds?.get(Number(path.split("/")[2]));
               return cwd === undefined
@@ -208,6 +216,8 @@ const makeLsofScannerWithoutSettings = (input: {
                   readDirectory: () => Effect.sync(() => [...parents().keys()].map(String)),
                   readFileString: (path: string) =>
                     Effect.sync(() => {
+                      const gitFile = input.gitFiles?.get(path);
+                      if (gitFile !== undefined) return gitFile;
                       const pid = Number(path.split("/")[2]);
                       if (path.endsWith("/cgroup")) return input.cgroups?.get(pid) ?? "0::/";
                       return `${pid} (node worker) name) S ${parents().get(pid)} 0 0`;
@@ -443,6 +453,42 @@ describe("listener attribution", () => {
         const servers = yield* scanner.scan();
         expect(servers.map(({ port, projectId }) => ({ port, projectId }))).toEqual([
           { port: 8770, projectId: linked },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  effectIt.effect(
+    "attributes a linked worktree to its main checkout's project, not a registered parent folder",
+    () => {
+      const home = ProjectId.make("project-home");
+      const app = ProjectId.make("project-app");
+      const layer = makeLsofScannerLayer({
+        pid: () => 501,
+        fetch: (() =>
+          Promise.resolve(
+            new Response("app", { headers: { "content-type": "text/html" } }),
+          )) as typeof globalThis.fetch,
+        listeners: [{ pid: 501, port: 5173 }],
+        parents: () => new Map([[501, 1]]),
+        cwds: new Map([[501, "/home/u/.t3/worktrees/app/feature/apps/web"]]),
+        projects: [
+          { id: home, workspaceRoot: "/home/u" },
+          { id: app, workspaceRoot: "/home/u/Code/app/apps/web" },
+        ],
+        gitFiles: new Map([
+          [
+            "/home/u/.t3/worktrees/app/feature/.git",
+            "gitdir: /home/u/Code/app/.git/worktrees/feature\n",
+          ],
+        ]),
+      });
+
+      return Effect.gen(function* () {
+        const scanner = yield* PortScanner.PortDiscovery;
+        const servers = yield* scanner.scan();
+        expect(servers.map(({ port, projectId }) => ({ port, projectId }))).toEqual([
+          { port: 5173, projectId: app },
         ]);
       }).pipe(Effect.provide(layer));
     },

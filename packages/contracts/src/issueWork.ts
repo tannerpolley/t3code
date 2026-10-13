@@ -205,6 +205,8 @@ export const IssueWorkStatusResult = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   status: Schema.NullOr(IssueWorkStatus),
   publishing: Schema.Literals(["absent", "pending", "published", "failed"]),
+  /** The issue's unclaimed Start request on the current root, which the user may cancel. */
+  pendingRequestId: Schema.optional(Schema.NullOr(CommandId)),
 });
 export type IssueWorkStatusResult = typeof IssueWorkStatusResult.Type;
 

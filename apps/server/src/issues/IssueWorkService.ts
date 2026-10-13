@@ -214,6 +214,7 @@ export const layer = Layer.effect(
           if (supportsManagedIssueWork(adapter.driver)) capableIds.add(instanceId);
         }
         let selection: ModelSelection | undefined;
+        let rejection: string | undefined;
         for (const target of role.targets) {
           const model = checkDelegateTarget({
             providers: availableProviders,
@@ -231,12 +232,12 @@ export const layer = Layer.effect(
             };
             break;
           }
+          rejection = model.message;
         }
         if (selection === undefined)
           return yield* new IssueWorkError({
             code: "invalid-request",
-            message:
-              "Managed issue work requires an available Codex or Claude target in the selected model role; other adapters allow untracked native children.",
+            message: `Managed issue work requires an available Codex or Claude target in the selected model role${rejection === undefined ? "" : ` (${rejection})`}.`,
           });
         if (
           root === null &&
@@ -1241,6 +1242,13 @@ export const layer = Layer.effect(
               status,
               publishing:
                 root === null ? "absent" : yield* store.publishing(root.rootThreadId, issue),
+              pendingRequestId:
+                request !== null &&
+                request.cancellation === undefined &&
+                request.issueThreadId === null &&
+                request.rootThreadId === root?.rootThreadId
+                  ? request.requestId
+                  : null,
             };
           }
           return {

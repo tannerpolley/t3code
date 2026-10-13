@@ -1,11 +1,14 @@
-import type { ClientSettings, ServerProviderPlugin } from "@t3tools/contracts";
+import {
+  editLocalServerHideRules,
+  type ClientSettings,
+  type ServerProviderPlugin,
+} from "@t3tools/contracts";
 import { ChevronRightIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import {
-  addLocalServerHideRule,
   describeLocalServerHideRule,
   parseLocalServerHideRule,
 } from "../preview/localServerHideRules";
@@ -382,7 +385,7 @@ function LocalServerHideRulesRow() {
   const parsed = parseLocalServerHideRule(draft);
   const add = () => {
     if (!parsed) return;
-    updateSettings({ localServerHideRules: addLocalServerHideRule(rules, parsed) });
+    updateSettings({ localServerHideRules: editLocalServerHideRules(rules, { add: [parsed] }) });
     setDraft("");
   };
   return (
