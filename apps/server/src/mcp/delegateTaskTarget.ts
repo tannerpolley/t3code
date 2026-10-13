@@ -11,6 +11,7 @@ import {
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import { elapsedShare, paceOf, remainingPercent } from "@t3tools/shared/usageLimits";
+import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -166,8 +167,10 @@ export function modelRoleStatuses(
         options: target.options,
       });
       const provider = providerById.get(target.providerInstanceId);
-      const window =
+      const reportedWindow =
         provider === undefined ? undefined : weeklyWindowForModel(provider, target.model);
+      const window =
+        reportedWindow && !isUsageWindowStale(reportedWindow, now) ? reportedWindow : undefined;
       const weeklyUsage =
         window === undefined
           ? undefined

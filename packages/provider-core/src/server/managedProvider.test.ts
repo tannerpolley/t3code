@@ -141,6 +141,41 @@ const enrichedSnapshotSecond: ServerProvider = {
 };
 
 describe("makeManagedServerProvider", () => {
+  it.effect("bypasses the cache for explicit refreshes inside the probe lock", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls = yield* Ref.make<string[]>([]);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.update(calls, (previous) => [...previous, "cached"]).pipe(
+            Effect.andThen(Deferred.succeed(started, undefined)),
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(refreshedSnapshot),
+          ),
+          checkProviderFresh: Ref.update(calls, (previous) => [...previous, "fresh"]).pipe(
+            Effect.as(refreshedSnapshotSecond),
+          ),
+          refreshInterval: "1 minute",
+        });
+        yield* Deferred.await(started);
+        const refresh = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        assert.deepStrictEqual(yield* Ref.get(calls), ["cached"]);
+        yield* Deferred.succeed(release, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(refresh), refreshedSnapshotSecond);
+        assert.deepStrictEqual(yield* Ref.get(calls), ["cached", "fresh"]);
+        yield* TestClock.adjust("1 minute");
+        assert.deepStrictEqual(yield* Ref.get(calls), ["cached", "fresh", "cached"]);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
   it.effect(
     "runs the initial provider check in the background and streams the refreshed snapshot",
     () =>

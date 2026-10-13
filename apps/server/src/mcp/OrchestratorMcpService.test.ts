@@ -1183,6 +1183,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       resetsAt: modelRoleStatusResetAt(0.8),
       pace: "on",
     });
+    assert.equal(choices[2]!.weeklyUsage, undefined);
     assert.equal(choices[3]!.weeklyUsage, undefined);
     assert.deepEqual(choices[4]!.weeklyUsage, {
       remainingPercent: 90,

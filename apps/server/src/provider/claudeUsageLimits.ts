@@ -31,7 +31,7 @@ const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
 
 /**
- * The account-wide windows, keyed by the SDK's `rateLimitType`. Model-scoped
+ * Named windows, keyed by the SDK's `rateLimitType`. Newer model-scoped
  * weeklies are additive on top of these: the CLI reports them under
  * `rate_limits.model_scoped[]` on `get_usage` and streams the overage-included
  * model bucket (Fable today) as `seven_day_overage_included`.
@@ -41,6 +41,8 @@ const WINDOWS: Readonly<
 > = {
   five_hour: { kind: "session", label: "Session", windowDurationMins: SESSION_MINS },
   seven_day: { kind: "weekly", label: "Weekly", windowDurationMins: WEEK_MINS },
+  seven_day_opus: { kind: "weekly", label: "Weekly · Opus", windowDurationMins: WEEK_MINS },
+  seven_day_sonnet: { kind: "weekly", label: "Weekly · Sonnet", windowDurationMins: WEEK_MINS },
 };
 
 /**
@@ -167,7 +169,8 @@ export function claudeUsageResponseToLimits(input: {
   }
   const windows: ServerProviderUsageWindow[] = [];
   for (const id of Object.keys(WINDOWS)) {
-    const window = response.rate_limits[id as "five_hour" | "seven_day"];
+    const window =
+      response.rate_limits[id as "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet"];
     if (!window || typeof window.utilization !== "number") continue;
     windows.push(makeWindow(id, window.utilization, isoFromString(window.resets_at)));
   }
@@ -176,9 +179,14 @@ export function claudeUsageResponseToLimits(input: {
   let overageIncluded: string | undefined;
   for (const entry of readModelScoped(response.rate_limits)) {
     if (typeof entry.utilization !== "number") continue;
-    windows.push(
-      scopedWindow(entry.display_name, entry.utilization, isoFromString(entry.resets_at)),
+    const window = scopedWindow(
+      entry.display_name,
+      entry.utilization,
+      isoFromString(entry.resets_at),
     );
+    const existing = windows.findIndex((candidate) => candidate.id === window.id);
+    if (existing === -1) windows.push(window);
+    else windows[existing] = window;
     // Only a bucket that drew a row may receive events; naming one that was
     // skipped would let a mid-turn event open a row the probe never showed.
     overageIncluded ??= entry.display_name;

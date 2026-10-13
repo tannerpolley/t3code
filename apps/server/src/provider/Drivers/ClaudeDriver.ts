@@ -17,6 +17,7 @@ import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -203,10 +204,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
 
       // Per-instance capabilities cache: keyed on binary + resolved HOME so
       // account-specific probes never share auth metadata across instances.
-      const capabilitiesProbeCache = yield* Cache.make({
-        capacity: 1,
-        timeToLive: CAPABILITIES_PROBE_TTL,
-        lookup: () =>
+      // Failed probes and probes without a usage result are not kept, and a
+      // signed-out check clears the cache, so the first refresh after `/login`
+      // reads the account and its usage.
+      const capabilitiesProbeCache = yield* Cache.makeWith(
+        () =>
           Effect.all([
             probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
             ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
@@ -217,7 +219,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
           ),
-      });
+        {
+          capacity: 1,
+          timeToLive: (exit) =>
+            Exit.isSuccess(exit) && exit.value?.usage !== undefined
+              ? CAPABILITIES_PROBE_TTL
+              : Duration.zero,
+        },
+      );
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
         effectiveConfig,
         cwd,
@@ -245,6 +254,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   ),
               ),
             ),
+            Effect.tap((provider) =>
+              provider.auth.status === "unauthenticated"
+                ? Cache.invalidateAll(capabilitiesProbeCache)
+                : Effect.void,
+            ),
             Effect.map(stampIdentity),
           ),
         ),
@@ -265,6 +279,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             Effect.map(stampIdentity),
           ),
         checkProvider,
+        checkProviderFresh: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+          Effect.andThen(checkProvider),
+        ),
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>

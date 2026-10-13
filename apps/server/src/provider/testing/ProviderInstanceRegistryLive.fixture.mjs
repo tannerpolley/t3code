@@ -5,10 +5,27 @@ if (process.argv.includes("--version")) {
   process.stdout.write("claude 2.1.219\n");
   process.exit(0);
 }
+// With T3_CLAUDE_LOGIN_MARKER set, the CLI is signed out until that file
+// exists, answering the way a real signed-out CLI does.
+const loginMarker = process.env.T3_CLAUDE_LOGIN_MARKER;
+const signedOut = loginMarker !== undefined && !NodeFS.existsSync(loginMarker);
 const lines = NodeReadline.createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   if (message.type !== "control_request") return;
+  if (message.request?.subtype === "get_usage" && signedOut) {
+    process.stdout.write(
+      JSON.stringify({
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: message.request_id,
+          response: { session: {}, rate_limits_available: false, rate_limits: null },
+        },
+      }) + "\n",
+    );
+    return;
+  }
   if (message.request?.subtype === "get_usage") {
     const marker = process.env.T3_CLAUDE_RESET_MARKER;
     if (process.env.T3_CLAUDE_USAGE_FAILS_AFTER_CLAIM && marker && NodeFS.existsSync(marker)) {
@@ -55,7 +72,9 @@ lines.on("line", (line) => {
           models: [],
           output_style: "default",
           available_output_styles: ["default"],
-          account: { email: "test@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+          account: signedOut
+            ? { tokenSource: "none", apiProvider: "firstParty" }
+            : { email: "test@example.com", subscriptionType: "pro", tokenSource: "oauth" },
         },
       },
     }) + "\n",

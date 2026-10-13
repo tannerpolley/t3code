@@ -15,7 +15,10 @@ import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
 import { SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Button } from "../ui/button";
+import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
+import { useForkUsageRefresh } from "./useForkUsageRefresh";
 import { limitReadouts, memberWindowSpan, poolWindowSpan } from "../usage/usageLimitModels";
 import { readUsagePagePreferences, saveUsagePagePreferences } from "../usage/usagePagePreferences";
 
@@ -24,6 +27,9 @@ const READOUT_DRIVERS = ["claudeAgent", "codex"] as const;
 interface ReadoutRow {
   readonly driver: ServerProvider["driver"];
   readonly label: string;
+  readonly stale: readonly string[];
+  readonly checkedAt: string;
+  readonly scoped: readonly { label: string; left: number | null; resetsAt: string | undefined }[];
   readonly readouts: ReturnType<typeof limitReadouts>;
 }
 
@@ -45,10 +51,32 @@ function useLimitReadoutRows(enabled: {
     return READOUT_DRIVERS.flatMap((driver): ReadoutRow[] => {
       const pool = pools.find((candidate) => candidate.driver === driver);
       if (!pool) return [];
-      // The first window of a kind is the provider's general one; later ones are per model.
       // Claude's five_hour and Codex's paid-plan primary both arrive as the session kind.
-      const session = pool.windows.find((window) => window.kind === "session");
-      const weekly = pool.windows.find((window) => window.kind === "weekly");
+      const isStale = (window: (typeof pool.windows)[number]) =>
+        window.members.some((member) => isUsageWindowStale(member.window, now));
+      const sessionWindow = pool.windows.find((window) => window.kind === "session");
+      const weeklyWindow = pool.windows.find(
+        (window) =>
+          window.kind === "weekly" && (driver !== "claudeAgent" || window.id === "seven_day"),
+      );
+      const session = sessionWindow && !isStale(sessionWindow) ? sessionWindow : undefined;
+      const weekly = weeklyWindow && !isStale(weeklyWindow) ? weeklyWindow : undefined;
+      const stale = [
+        enabled.session && sessionWindow && isStale(sessionWindow) ? "5h" : null,
+        (enabled.weekly || enabled.daily) && weeklyWindow && isStale(weeklyWindow) ? "7d" : null,
+      ].filter((label): label is string => label !== null);
+      const scoped = enabled.weekly
+        ? pool.windows
+            .filter(
+              (window) =>
+                window.kind === "weekly" && driver === "claudeAgent" && window.id !== "seven_day",
+            )
+            .map((window) => ({
+              label: window.label,
+              left: isStale(window) ? null : window.remainingPercent,
+              resetsAt: window.members[0]?.window.resetsAt,
+            }))
+        : [];
       const all = limitReadouts({
         session: session
           ? {
@@ -73,10 +101,20 @@ function useLimitReadoutRows(enabled: {
         daily: enabled.daily ? all.daily : null,
         weekly: enabled.weekly ? all.weekly : null,
       };
-      if (!readouts.session && !readouts.daily && !readouts.weekly) return [];
+      if (
+        !readouts.session &&
+        !readouts.daily &&
+        !readouts.weekly &&
+        !stale.length &&
+        !scoped.length
+      )
+        return [];
       return [
         {
           driver: pool.driver,
+          stale,
+          scoped,
+          checkedAt: pool.accounts.map((account) => account.limits.checkedAt).sort()[0]!,
           label: providerClients.get(pool.driver)?.label ?? String(pool.driver),
           readouts,
         },
@@ -121,6 +159,7 @@ export function SidebarUsageItem() {
 
 function UsageReadoutItem(props: { readonly enabled: Parameters<typeof useLimitReadoutRows>[0] }) {
   const { rows, now } = useLimitReadoutRows(props.enabled);
+  const { refresh, refreshing, failed } = useForkUsageRefresh();
   const openLimits = useOpenUsageLimits();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   if (rows.length === 0) return null;
@@ -132,87 +171,140 @@ function UsageReadoutItem(props: { readonly enabled: Parameters<typeof useLimitR
   return (
     // The parent menu wraps; `order-first w-full` puts this row above its icon buttons.
     <SidebarMenuItem className="order-first flex w-full flex-wrap">
-      {rows.map(({ driver, label, readouts: { session, daily, weekly } }) => {
-        const summary = [
-          session ? `${session.leftPercent}% of 5 hours left` : null,
-          daily
-            ? daily.leftPercent === null
-              ? "day off"
-              : `${daily.leftPercent}% of today's budget left`
-            : null,
-          weekly ? `${weekly.leftPercent}% of weekly left` : null,
-        ]
-          .filter(Boolean)
-          .join(", ");
-        return (
-          <Tooltip key={driver}>
-            <TooltipTrigger
-              render={
-                <SidebarMenuButton
-                  aria-label={`${label} usage: ${summary}`}
-                  onClick={openLimits}
-                  size="sm"
-                  className="w-auto"
-                />
-              }
-            >
-              <span className="flex items-center gap-1.5 text-2xs font-medium tabular-nums">
-                <ProviderInstanceIcon
-                  driverKind={driver}
-                  displayName={label}
-                  className="size-3.5"
-                  iconClassName="size-3.5"
-                />
-                {session ? (
-                  <span className={leftClass(session.leftPercent)}>5h {session.leftPercent}%</span>
-                ) : null}
-                {daily ? (
-                  daily.leftPercent === null ? (
-                    <span className="text-sidebar-muted-foreground">1d off</span>
-                  ) : (
-                    <span className={leftClass(daily.leftPercent)}>1d {daily.leftPercent}%</span>
-                  )
-                ) : null}
-                {weekly ? (
-                  <span className={leftClass(weekly.leftPercent)}>7d {weekly.leftPercent}%</span>
-                ) : null}
-              </span>
-            </TooltipTrigger>
-            <TooltipPopup side="top" className="max-w-80">
-              <div className="flex flex-col gap-0.5 tabular-nums">
-                <span className="font-medium text-foreground">{label}</span>
-                {session ? (
+      {rows.map(
+        ({ driver, label, stale, scoped, checkedAt, readouts: { session, daily, weekly } }) => {
+          const summary = [
+            session ? `${session.leftPercent}% of 5 hours left` : null,
+            daily
+              ? daily.leftPercent === null
+                ? "day off"
+                : `${daily.leftPercent}% of today's budget left`
+              : null,
+            weekly ? `${weekly.leftPercent}% of weekly left` : null,
+            ...stale.map((kind) => `${kind} usage stale`),
+            ...scoped.map(
+              (window) =>
+                `${window.label}: ${window.left === null ? "stale" : `${window.left}% left`}`,
+            ),
+          ]
+            .filter(Boolean)
+            .join(", ");
+          return (
+            <Popover key={driver}>
+              <PopoverTrigger
+                render={
+                  <SidebarMenuButton
+                    aria-label={`${label} usage: ${summary}`}
+                    size="sm"
+                    className="w-auto"
+                  />
+                }
+              >
+                <span className="flex items-center gap-1.5 text-2xs font-medium tabular-nums">
+                  <ProviderInstanceIcon
+                    driverKind={driver}
+                    displayName={label}
+                    className="size-3.5"
+                    iconClassName="size-3.5"
+                  />
+                  {stale.map((kind) => (
+                    <span key={kind} className="text-sidebar-muted-foreground">
+                      {kind} stale
+                    </span>
+                  ))}
+                  {!weekly && !stale.length && scoped.length ? (
+                    <span>7d · model limits</span>
+                  ) : null}
+                  {session ? (
+                    <span className={leftClass(session.leftPercent)}>
+                      5h {session.leftPercent}%
+                    </span>
+                  ) : null}
+                  {daily ? (
+                    daily.leftPercent === null ? (
+                      <span className="text-sidebar-muted-foreground">1d off</span>
+                    ) : (
+                      <span className={leftClass(daily.leftPercent)}>1d {daily.leftPercent}%</span>
+                    )
+                  ) : null}
+                  {weekly ? (
+                    <span className={leftClass(weekly.leftPercent)}>7d {weekly.leftPercent}%</span>
+                  ) : null}
+                </span>
+              </PopoverTrigger>
+              <PopoverPopup side="top" width="md">
+                <div className="flex flex-col gap-0.5 tabular-nums">
+                  <span className="font-medium text-foreground">{label}</span>
                   <span className="text-muted-foreground">
-                    5 hours: {session.usedPercent}% used, {session.leftPercent}% left
-                    {resets(session.resetsAt)}
+                    Last usage reading: {formatUpcomingTimestamp(checkedAt, timestampFormat, now)}
                   </span>
-                ) : null}
-                {daily ? (
-                  <span className="text-muted-foreground">
-                    {daily.leftPercent === null
-                      ? `Today: day off, no budget · ${daily.usedPercent}% of weekly used`
-                      : `Today's budget ${daily.budgetPercent}% of weekly (rolling, Mon–Fri): ${
-                          daily.usedPercent
-                        }% used, ${
-                          daily.leftPercent >= 0
-                            ? `${daily.budgetPercent - daily.usedPercent}% left`
-                            : `${daily.usedPercent - daily.budgetPercent}% over pace`
-                        }`}
-                    {daily.nextStepAt === null ? "" : ` · budget grows ${when(daily.nextStepAt)}`}
-                    {` · usage restarts when the weekly limit resets ${when(daily.resetsAt)}`}
-                  </span>
-                ) : null}
-                {weekly ? (
-                  <span className="text-muted-foreground">
-                    Weekly: {weekly.usedPercent}% used, {weekly.leftPercent}% left
-                    {resets(weekly.resetsAt)}
-                  </span>
-                ) : null}
-              </div>
-            </TooltipPopup>
-          </Tooltip>
-        );
-      })}
+                  {stale.length ? (
+                    <span className="text-muted-foreground">
+                      {stale.join(" and ")} reset passed · usage unknown until refreshed
+                    </span>
+                  ) : null}
+                  {scoped.map((window) => (
+                    <span key={window.label} className="text-muted-foreground">
+                      {window.label}:{" "}
+                      {window.left === null
+                        ? "reset passed · usage unknown"
+                        : `${window.left}% left`}
+                      {window.left !== null && window.resetsAt
+                        ? resets(Date.parse(window.resetsAt))
+                        : ""}
+                    </span>
+                  ))}
+                  {session ? (
+                    <span className="text-muted-foreground">
+                      5 hours: {session.usedPercent}% used, {session.leftPercent}% left
+                      {resets(session.resetsAt)}
+                    </span>
+                  ) : null}
+                  {daily ? (
+                    <span className="text-muted-foreground">
+                      {daily.leftPercent === null
+                        ? `Today: day off, no budget · ${daily.usedPercent}% of weekly used`
+                        : `Today's budget ${daily.budgetPercent}% of weekly (rolling, Mon–Fri): ${
+                            daily.usedPercent
+                          }% used, ${
+                            daily.leftPercent >= 0
+                              ? `${daily.budgetPercent - daily.usedPercent}% left`
+                              : `${daily.usedPercent - daily.budgetPercent}% over pace`
+                          }`}
+                      {daily.nextStepAt === null ? "" : ` · budget grows ${when(daily.nextStepAt)}`}
+                      {` · usage restarts when the weekly limit resets ${when(daily.resetsAt)}`}
+                    </span>
+                  ) : null}
+                  {weekly ? (
+                    <span className="text-muted-foreground">
+                      Weekly: {weekly.usedPercent}% used, {weekly.leftPercent}% left
+                      {resets(weekly.resetsAt)}
+                    </span>
+                  ) : null}
+                  {failed ? (
+                    <span role="status" className="text-muted-foreground">
+                      Refresh failed · showing the last reading
+                    </span>
+                  ) : null}
+                  <div className="mt-2 flex gap-2">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={refreshing}
+                      onClick={() => void refresh()}
+                    >
+                      {refreshing ? "Refreshing…" : "Refresh usage"}
+                    </Button>
+                    <Button size="xs" variant="ghost" onClick={openLimits}>
+                      Open Usage
+                    </Button>
+                  </div>
+                </div>
+              </PopoverPopup>
+            </Popover>
+          );
+        },
+      )}
     </SidebarMenuItem>
   );
 }

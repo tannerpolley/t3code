@@ -62,6 +62,13 @@ describe("claudeUsageResponseToLimits", () => {
             windowDurationMins: 10080,
             resetsAt: "2026-07-24T08:59:00.000Z",
           },
+          {
+            id: "seven_day_opus",
+            kind: "weekly",
+            label: "Weekly · Opus",
+            usedPercent: 3,
+            windowDurationMins: 10080,
+          },
         ],
       },
     });
@@ -166,13 +173,23 @@ describe("claudeRateLimitEventToUpdate", () => {
     });
   });
 
-  it("ignores windows the page does not render and events without a utilization", () => {
+  it("maps model-specific weekly events and ignores events without a utilization", () => {
     expect(
       claudeRateLimitEventToUpdate(
         { status: "allowed", rateLimitType: "seven_day_opus", utilization: 0.1 },
         noNames,
       ),
-    ).toBeUndefined();
+    ).toEqual({
+      windows: [
+        {
+          id: "seven_day_opus",
+          kind: "weekly",
+          label: "Weekly · Opus",
+          usedPercent: 10,
+          windowDurationMins: 10080,
+        },
+      ],
+    });
     expect(
       claudeRateLimitEventToUpdate({ status: "rejected", rateLimitType: "five_hour" }, noNames),
     ).toBeUndefined();
