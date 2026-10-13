@@ -31,37 +31,6 @@ const aggregate = (states: RelayAgentActivityState[]) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
 
 describe("shared agent activity policy", () => {
-  it("redisplays an announced request silently and alerts for a different request", () => {
-    const previousAggregate = aggregate([state]);
-    const first = {
-      ...state,
-      phase: "waiting_for_input" as const,
-      attentionRequestId: "question-1",
-    };
-    const redisplayed = aggregate([{ ...first, suppressAttentionAlert: true }]);
-    expect(redisplayed.activities).toHaveLength(1);
-    expect(
-      attentionTransitionRows({
-        previousAggregate,
-        nextAggregate: aggregate([first]),
-        preferences,
-      }),
-    ).toHaveLength(1);
-    expect(
-      attentionTransitionRows({ previousAggregate, nextAggregate: redisplayed, preferences }),
-    ).toEqual([]);
-    expect(
-      shouldAlertForActivity({ ...first, suppressAttentionAlert: true, preferences, nowMs: 0 }),
-    ).toBe(false);
-    expect(
-      attentionTransitionRows({
-        previousAggregate: redisplayed,
-        nextAggregate: aggregate([{ ...first, attentionRequestId: "question-2" }]),
-        preferences,
-      }),
-    ).toHaveLength(1);
-  });
-
   it.each(["waiting_for_approval", "waiting_for_input"] as const)(
     "keeps an older %s ahead of five running rows",
     (phase) => {

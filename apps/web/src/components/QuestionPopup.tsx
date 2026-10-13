@@ -29,6 +29,7 @@ import {
 } from "./QuestionPopup.logic";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
+import { useSettledQuestions } from "./useSettledQuestions";
 
 let previousQuestions: ReadonlyArray<PendingQuestion> = [];
 // Reads the shells the sidebar already holds; only the shown question loads its thread.
@@ -59,7 +60,7 @@ export function QuestionPopup() {
 }
 
 function QuestionPopupQueue() {
-  const questions = useAtomValue(pendingQuestionsAtom);
+  const questions = useSettledQuestions(useAtomValue(pendingQuestionsAtom));
   const { environmentId, threadId } = useParams({ strict: false });
   // Later and Close put questions off for this session; a new question has a new key.
   const [deferredKeys, setDeferredKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -176,10 +177,7 @@ function QuestionPopupCard({
     >
       <ComposerBanner.Root placement="floating" density="spacious" className="shadow-xl">
         <div className="flex items-start gap-2 px-1 pb-2">
-          <MessageCircleQuestionIcon
-            aria-hidden
-            className="mt-0.5 size-4 shrink-0 text-info"
-          />
+          <MessageCircleQuestionIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-info" />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium">{thread?.title ?? "Thread"}</div>
             {project ? (

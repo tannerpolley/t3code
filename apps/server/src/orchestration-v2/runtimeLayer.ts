@@ -324,7 +324,6 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
       ProjectionStore.layer,
-      EffectOutbox.layer,
       layerEventSinkProvided,
       IdAllocator.layer,
     ),

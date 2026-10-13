@@ -147,6 +147,8 @@ async function complete() {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
   vi.clearAllMocks();
   Object.assign(state, {
     mode: "off",
@@ -182,6 +184,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(() => renderer?.unmount());
   renderer = undefined;
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -223,6 +226,12 @@ describe("thread notifications", () => {
       // The child object and request are untouched; the parent simply stops.
       state.shells = [{ ...parent, status: "interrupted" }, child];
       await render();
+      expect(state.sound).not.toHaveBeenCalled();
+      expect(state.add).not.toHaveBeenCalled();
+      expect(state.notification).not.toHaveBeenCalled();
+      await act(() => vi.advanceTimersByTime(2_999));
+      expect(state.sound).not.toHaveBeenCalled();
+      await act(() => vi.advanceTimersByTime(1));
       await render();
       expect(state.sound).toHaveBeenCalledTimes(1);
       expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(1);
@@ -250,9 +259,11 @@ describe("thread notifications", () => {
         },
       ];
       await render();
+      await act(() => vi.advanceTimersByTime(3_000));
       expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(2);
       state.shells = [{ ...parent, status: "interrupted" }, child];
       await render();
+      await act(() => vi.advanceTimersByTime(3_000));
       expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(2);
       expect(state.sound).toHaveBeenCalledTimes(2);
     },
@@ -340,21 +351,30 @@ describe("thread notifications", () => {
         sequence: 1,
         location: "active",
         thread: pendingChild,
-        routedRequestParent: { ...parent, status: "queued" },
       });
       state.shells = intake.threads;
       await render();
       expect(state.sound).not.toHaveBeenCalled();
       expect(state.add).not.toHaveBeenCalled();
       expect(state.notification).not.toHaveBeenCalled();
+      await act(() => vi.advanceTimersByTime(1_000));
       state.shells = applyShellStreamEvent(intake, {
         kind: "thread.updated",
         sequence: 2,
         location: "active",
-        thread: { ...parent, status: "interrupted" },
+        thread: { ...parent, status: "queued" },
       }).threads;
       await render();
       await render();
+      await act(() => vi.advanceTimersByTime(5_000));
+      expect(state.sound).not.toHaveBeenCalled();
+      expect(state.add).not.toHaveBeenCalled();
+      expect(state.notification).not.toHaveBeenCalled();
+      state.shells = [{ ...parent, status: "interrupted" }, pendingChild];
+      await render();
+      await act(() => vi.advanceTimersByTime(2_999));
+      expect(state.sound).not.toHaveBeenCalled();
+      await act(() => vi.advanceTimersByTime(1));
       expect(focused ? state.add : state.notification).toHaveBeenCalledTimes(1);
       expect(state.sound).toHaveBeenCalledTimes(1);
     },

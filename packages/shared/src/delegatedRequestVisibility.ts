@@ -5,6 +5,19 @@ export type RoutedRequestParent = Pick<
   "activeRunId" | "activityRunStatus" | "status" | "archivedAt" | "deletedAt"
 >;
 
+export const ROUTED_REQUEST_ALERT_SETTLE_MS = 3_000;
+
+/** Call only for owner-visible requests; hiding one resets its visibility timestamp. */
+export function runtimeRequestOwnerAlertIsSettled(
+  request: { readonly routedTo?: ThreadId | undefined },
+  ownerVisibleSince: number,
+  now: number,
+): boolean {
+  return (
+    request.routedTo === undefined || now - ownerVisibleSince >= ROUTED_REQUEST_ALERT_SETTLE_MS
+  );
+}
+
 /** Routing records who should answer first; only live work can hide it from the owner. */
 export function runtimeRequestIsOwnerVisible(
   request: { readonly routedTo?: ThreadId | undefined } | null | undefined,

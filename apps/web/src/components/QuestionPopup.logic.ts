@@ -16,6 +16,7 @@ export interface PendingQuestion {
   readonly threadId: ThreadId;
   readonly requestId: RuntimeRequestId;
   readonly createdAt: number;
+  readonly routedTo?: ThreadId | undefined;
 }
 
 /**
@@ -51,6 +52,7 @@ export function collectPendingQuestions(
         threadId: thread.id,
         requestId: request.id,
         createdAt: DateTime.toEpochMillis(request.createdAt),
+        ...(request.routedTo === undefined ? {} : { routedTo: request.routedTo }),
       });
     }
   }

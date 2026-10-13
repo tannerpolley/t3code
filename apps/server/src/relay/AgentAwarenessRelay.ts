@@ -12,10 +12,14 @@ import {
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
+import {
+  ROUTED_REQUEST_ALERT_SETTLE_MS,
+  runtimeRequestIsOwnerVisible,
+  runtimeRequestOwnerAlertIsSettled,
+} from "@t3tools/shared/delegatedRequestVisibility";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker, type DrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   normalizeRelayIssuer,
@@ -138,12 +142,6 @@ export function shouldPublishAgentAwarenessEvent(
     case "turn-item.updated":
       return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
     case "message.updated":
-      return (
-        typeof event.payload === "object" &&
-        event.payload !== null &&
-        "id" in event.payload &&
-        String(event.payload.id).startsWith("message:child-question:")
-      );
     case "plan.updated":
     case "checkpoint-scope.created":
     case "checkpoint.captured":
@@ -403,8 +401,7 @@ export const make = Effect.gen(function* () {
   // Holds at most one pending wake, so a burst of requests costs one retry.
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
-  // Request identity survives the tombstone while its parent handles the request.
-  const announcedRequestsByThread = new Map<ThreadId, Set<RuntimeRequestId>>();
+  const settlingRequests = new Map<ThreadId, { requestId: RuntimeRequestId; since: number }>();
 
   const readSecretString = (name: string) =>
     secrets
@@ -467,7 +464,7 @@ export const make = Effect.gen(function* () {
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
     yield* Ref.set(publishedStateByThreadRef, new Map());
-    announcedRequestsByThread.clear();
+    settlingRequests.clear();
   });
 
   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
@@ -557,6 +554,32 @@ export const make = Effect.gen(function* () {
         ? undefined
         : yield* threads.getThreadShell(threadShell.pendingRuntimeRequest.routedTo);
     const ownerVisible = runtimeRequestIsOwnerVisible(threadShell?.pendingRuntimeRequest, parent);
+    const request = threadShell?.pendingRuntimeRequest;
+    if (
+      request?.routedTo === undefined ||
+      !ownerVisible ||
+      threadShell?.archivedAt !== null ||
+      threadShell.deletedAt !== null
+    ) {
+      settlingRequests.delete(threadId);
+    } else {
+      const now = (yield* DateTime.now).epochMilliseconds;
+      let settling = settlingRequests.get(threadId);
+      if (settling?.requestId !== request.id) {
+        settling = { requestId: request.id, since: now };
+        settlingRequests.set(threadId, settling);
+        const pending = settling;
+        yield* Effect.sleep(ROUTED_REQUEST_ALERT_SETTLE_MS).pipe(
+          Effect.andThen(
+            Effect.suspend(() =>
+              settlingRequests.get(threadId) === pending ? worker.enqueue(threadId) : Effect.void,
+            ),
+          ),
+          Effect.forkIn(scope),
+        );
+      }
+      if (!runtimeRequestOwnerAlertIsSettled(request, settling.since, now)) return;
+    }
     const parentHandlingRequest =
       threadShell?.pendingRuntimeRequest?.routedTo !== undefined && !ownerVisible;
     if (
@@ -584,17 +607,7 @@ export const make = Effect.gen(function* () {
       project,
       parent,
     });
-    const attentionRequest =
-      threadShell?.pendingRuntimeRequest?.routedTo !== undefined &&
-      (snapshot.state?.phase === "waiting_for_input" ||
-        snapshot.state?.phase === "waiting_for_approval")
-        ? threadShell.pendingRuntimeRequest
-        : undefined;
-    const state =
-      snapshot.state === null || attentionRequest === undefined
-        ? snapshot.state
-        : { ...snapshot.state, attentionRequestId: attentionRequest.id };
-    const publishIdentity = agentAwarenessPublishIdentity(state);
+    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
@@ -678,19 +691,9 @@ export const make = Effect.gen(function* () {
 
     yield* publishState({
       projectId: snapshot.projectId,
-      state:
-        state === null ||
-        attentionRequest === undefined ||
-        announcedRequestsByThread.get(threadId)?.has(attentionRequest.id) !== true
-          ? state
-          : { ...state, suppressAttentionAlert: true },
+      state: snapshot.state,
       reason: snapshot.reason,
     });
-    if (attentionRequest !== undefined) {
-      const announced = announcedRequestsByThread.get(threadId) ?? new Set<RuntimeRequestId>();
-      announced.add(attentionRequest.id);
-      announcedRequestsByThread.set(threadId, announced);
-    }
     publishConfirmDeadlines.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
       const nextPublishedStates = new Map(publishedStates);
@@ -723,7 +726,8 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const worker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
+  const worker: DrainableWorker<ThreadId> =
+    yield* makeAgentAwarenessPublishWorker(processThreadPublish);
   const enqueueThreadPublish = (threadId: ThreadId) =>
     cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
@@ -885,11 +889,6 @@ export const make = Effect.gen(function* () {
       yield* forkParked(
         Stream.runForEach(threads.streamDomainEvents, (event) => {
           const threadId = eventThreadId(event);
-          if (event.type === "runtime-request.updated" && event.payload.status !== "pending") {
-            const announced = announcedRequestsByThread.get(threadId);
-            announced?.delete(event.payload.id);
-            if (announced?.size === 0) announcedRequestsByThread.delete(threadId);
-          }
           if (!shouldPublishAgentAwarenessEvent(event)) {
             return Effect.void;
           }
@@ -902,10 +901,6 @@ export const make = Effect.gen(function* () {
                 yield* enqueueThreadPublish(threadId);
                 // Parent activity changes visibility without a child event.
                 if (
-                  !(
-                    event.type === "message.updated" &&
-                    String(event.payload.id).startsWith("message:child-question:")
-                  ) &&
                   event.type !== "run.created" &&
                   event.type !== "run.updated" &&
                   event.type !== "thread.archived" &&

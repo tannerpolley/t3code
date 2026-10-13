@@ -12354,9 +12354,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             projectionStore,
             childThreadId,
             requestId,
-            effectOutbox,
           );
-          if (wake.state === "ready") yield* dispatchWithReceiptEffect(wake.command);
+          if (wake !== undefined) yield* dispatchWithReceiptEffect(wake);
         }),
       );
     },

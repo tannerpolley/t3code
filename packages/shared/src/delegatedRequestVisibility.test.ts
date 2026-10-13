@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   runtimeRequestIsOwnerVisible,
+  runtimeRequestOwnerAlertIsSettled,
   type RoutedRequestParent,
 } from "./delegatedRequestVisibility.ts";
 
@@ -62,5 +63,14 @@ describe("delegated request visibility", () => {
     expect(runtimeRequestIsOwnerVisible({}, { ...idle, status: "running" })).toBe(true);
     expect(runtimeRequestIsOwnerVisible(null, idle)).toBe(false);
     expect(runtimeRequestIsOwnerVisible(undefined, idle)).toBe(false);
+  });
+});
+
+describe("owner alert settlement", () => {
+  it("delays routed alerts from visibility time, while unrouted alerts remain immediate", () => {
+    const request = { routedTo: ThreadId.make("parent") };
+    expect(runtimeRequestOwnerAlertIsSettled(request, 1_000, 3_999)).toBe(false);
+    expect(runtimeRequestOwnerAlertIsSettled(request, 1_000, 4_000)).toBe(true);
+    expect(runtimeRequestOwnerAlertIsSettled({}, 1_000, 1_000)).toBe(true);
   });
 });

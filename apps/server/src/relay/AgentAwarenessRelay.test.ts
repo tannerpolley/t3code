@@ -42,8 +42,6 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
-import { attentionTransitionRows } from "../../../../infra/relay/src/agentActivity/agentActivityAlerts.ts";
-import { makeAggregateState } from "../../../../infra/relay/src/agentActivity/agentActivityAggregate.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -508,6 +506,74 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect.each([false, true])(
+    "settles a routed relay request, hidden within the window=%s",
+    (hide) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const parentId = ThreadId.make("settling-parent");
+        const parent = yield* Ref.make(
+          shell({
+            id: parentId,
+            status: "interrupted",
+            activeRunId: null,
+            activityRunStatus: null,
+          }),
+        );
+        const child = shell({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("settling-request"),
+            kind: "user_input",
+            createdAt: now,
+            routedTo: parentId,
+          },
+          lineage: {
+            rootThreadId: parentId,
+            parentThreadId: parentId,
+            relationshipToParent: "subagent",
+          },
+        });
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: (id) => (id === parentId ? Ref.get(parent) : Effect.succeed(child)),
+        });
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 0);
+        yield* TestClock.adjust("2999 millis");
+        yield* relay.drain;
+        assert.equal(publications.length, 0);
+        if (hide) {
+          yield* Ref.update(parent, (current) => ({ ...current, status: "running" as const }));
+          yield* relay.publishThread(THREAD_ID);
+        }
+        yield* TestClock.adjust("1 milli");
+        yield* relay.drain;
+        assert.equal(publications.length, hide ? 0 : 1);
+        if (!hide) assert.equal(publications[0]?.state?.phase, "waiting_for_input");
+        yield* TestClock.adjust("10 seconds");
+        yield* relay.drain;
+        assert.equal(publications.length, hide ? 0 : 1);
+      }),
+  );
+
+  it.effect("publishes an unrouted input immediately", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* Ref.set(
+        currentShell,
+        shell({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("unrouted"),
+            kind: "user_input",
+            createdAt: yield* DateTime.now,
+          },
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_input");
+    }),
+  );
+
   it.effect.each([
     { answered: false, queuedResume: false },
     { answered: false, queuedResume: true },
@@ -654,6 +720,8 @@ describe("AgentAwarenessRelay", () => {
           yield* Queue.offer(events, event);
           yield* Queue.take(pulls);
           yield* relay.drain;
+          yield* TestClock.adjust("3 seconds");
+          yield* relay.drain;
         }
         const inputs = publications.filter(
           (publication) => publication.state?.threadId === childId,
@@ -687,93 +755,6 @@ describe("AgentAwarenessRelay", () => {
           );
           assert.equal(childPublications.length, 2);
           assert.isNull(childPublications[1]?.state);
-
-          const aggregate = (states: RelayAgentActivityState[]) =>
-            makeAggregateState({
-              activeStates: states,
-              terminalState: null,
-              nowMs: now.epochMilliseconds,
-            })!;
-          const withoutChild = aggregate([
-            { ...inputs[0]!.state!, threadId: parentId, phase: "running" },
-          ]);
-          assert.equal(
-            attentionTransitionRows({
-              previousAggregate: withoutChild,
-              nextAggregate: aggregate([inputs[0]!.state!]),
-              preferences: null,
-            }).length,
-            1,
-          );
-
-          const stopped: OrchestrationV2DomainEvent = {
-            id: EventId.make("parent-stopped-after-resume"),
-            type: "run.updated",
-            threadId: parentId,
-            occurredAt: now,
-            payload: { ...resumed.payload, status: "interrupted", completedAt: now },
-          };
-          yield* store.apply(stopped);
-          yield* Queue.offer(events, stopped);
-          yield* Queue.take(pulls);
-          yield* relay.drain;
-          const redisplayed = publications.findLast((p) => p.state?.threadId === childId)!.state!;
-          assert.equal(publications.filter((p) => p.url === inputs[0]?.url).length, 3);
-          assert.equal(redisplayed.phase, "waiting_for_input");
-          const redisplayedAggregate = aggregate([redisplayed]);
-          assert.equal(
-            attentionTransitionRows({
-              previousAggregate: withoutChild,
-              nextAggregate: redisplayedAggregate,
-              preferences: null,
-            }).length,
-            0,
-          );
-
-          const nextQuestion = {
-            id: EventId.make("next-question"),
-            type: "runtime-request.updated",
-            threadId: childId,
-            occurredAt: now,
-            payload: {
-              ...request,
-              id: RuntimeRequestId.make("next-child-question"),
-              createdAt: DateTime.makeUnsafe(now.epochMilliseconds + 1),
-            },
-          } satisfies OrchestrationV2DomainEvent;
-          yield* store.apply(nextQuestion);
-          yield* Queue.offer(events, nextQuestion);
-          yield* Queue.take(pulls);
-          yield* relay.drain;
-          const newRequest = publications.findLast((p) => p.state?.threadId === childId)!.state!;
-          assert.equal(publications.filter((p) => p.url === inputs[0]?.url).length, 4);
-          assert.equal(
-            attentionTransitionRows({
-              previousAggregate: redisplayedAggregate,
-              nextAggregate: aggregate([newRequest]),
-              preferences: null,
-            }).length,
-            1,
-          );
-          const resolvedNext = {
-            ...nextQuestion,
-            id: EventId.make("next-question-resolved"),
-            payload: { ...nextQuestion.payload, status: "resolved" as const, resolvedAt: now },
-          };
-          yield* store.apply(resolvedNext);
-          yield* Queue.offer(events, resolvedNext);
-          yield* Queue.take(pulls);
-          yield* relay.drain;
-          const originalAgain = publications.findLast((p) => p.state?.threadId === childId)!.state!;
-          assert.equal(originalAgain.attentionRequestId, request.id);
-          assert.equal(
-            attentionTransitionRows({
-              previousAggregate: aggregate([newRequest]),
-              nextAggregate: aggregate([originalAgain]),
-              preferences: null,
-            }).length,
-            0,
-          );
         }
       }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
   );

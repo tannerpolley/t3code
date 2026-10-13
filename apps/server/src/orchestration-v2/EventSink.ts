@@ -34,7 +34,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { routeDelegatedRequests } from "./DelegatedRequestRouting.ts";
-import { prepareDelegatedRequestWakes, delegatedWakeCancellation } from "./DelegatedRequestWake.ts";
 
 /**
  * ERRORS
@@ -238,13 +237,11 @@ const layerBase: Layer.Layer<
     const publishStoredEvents = (
       events: ReadonlyArray<OrchestrationV2StoredEvent>,
       statusEffectCount = 0,
-      cancelledWakeIds: ReadonlyArray<string> = [],
     ) =>
       eventStore
         .publishCommitted(events)
         .pipe(
           Effect.andThen(publishLiveEvents(events)),
-          Effect.andThen(effectOutbox.signalCancellations(cancelledWakeIds)),
           Effect.andThen(
             statusEffectCount > 0 ? effectOutbox.notifyAvailable(statusEffectCount) : Effect.void,
           ),
@@ -349,20 +346,8 @@ const layerBase: Layer.Layer<
         { concurrency: 1 },
       );
     };
-    const normalizeEvents = (
-      events: ReadonlyArray<OrchestrationV2DomainEvent>,
-      commandId?: CommandId,
-    ) =>
-      routeDelegatedRequests(projectionStore, events).pipe(
-        Effect.flatMap((routed) =>
-          prepareDelegatedRequestWakes(sql, projectionStore, effectOutbox, routed, commandId),
-        ),
-        Effect.flatMap((prepared) =>
-          normalizeTurnItems(prepared.events).pipe(
-            Effect.map((events) => ({ ...prepared, events })),
-          ),
-        ),
-      );
+    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      routeDelegatedRequests(projectionStore, events).pipe(Effect.flatMap(normalizeTurnItems));
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>
       Effect.gen(function* () {
@@ -415,30 +400,21 @@ const layerBase: Layer.Layer<
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(input.events)
               : input.events,
-            input.commandId,
           );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-            events: normalized.events,
+            events: normalized,
           });
-          const statusEffectCount = (yield* applyStoredEvents(committed)) + normalized.wakeCount;
+          const statusEffectCount = yield* applyStoredEvents(committed);
           yield* effectOutbox.enqueue(input.effects);
-          return {
-            storedEvents: committed,
-            statusEffectCount,
-            cancelledWakeIds: normalized.cancelledWakeIds,
-          };
+          return { storedEvents: committed, statusEffectCount };
         }),
         (result) =>
           Effect.gen(function* () {
             if (input.effects.length > 0) {
               yield* effectOutbox.notifyAvailable(input.effects.length);
             }
-            yield* publishStoredEvents(
-              result.storedEvents,
-              result.statusEffectCount,
-              "cancelledWakeIds" in result ? result.cancelledWakeIds : [],
-            );
+            yield* publishStoredEvents(result.storedEvents, result.statusEffectCount);
           }),
       );
       return result.storedEvents;
@@ -484,21 +460,14 @@ const layerBase: Layer.Layer<
               input.guardPendingUserInputCancellations === true
                 ? yield* guardUserInputCancellations(input.events)
                 : input.events,
-              input.commandId,
             );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-              events: normalized.events,
+              events: normalized,
             });
-            const statusEffectCount =
-              (yield* applyStoredEvents(storedEvents)) + normalized.wakeCount;
+            const statusEffectCount = yield* applyStoredEvents(storedEvents);
             yield* effectOutbox.enqueue(input.effects ?? []);
-            return {
-              committed: true as const,
-              storedEvents,
-              statusEffectCount,
-              cancelledWakeIds: normalized.cancelledWakeIds,
-            };
+            return { committed: true as const, storedEvents, statusEffectCount };
           }),
           (result) =>
             Effect.gen(function* () {
@@ -506,11 +475,7 @@ const layerBase: Layer.Layer<
               if (input.effects !== undefined && input.effects.length > 0) {
                 yield* effectOutbox.notifyAvailable(input.effects.length);
               }
-              yield* publishStoredEvents(
-                result.storedEvents,
-                result.statusEffectCount,
-                "cancelledWakeIds" in result ? result.cancelledWakeIds : [],
-              );
+              yield* publishStoredEvents(result.storedEvents, result.statusEffectCount);
             }),
         );
         return { committed: result.committed, storedEvents: result.storedEvents };
@@ -562,27 +527,17 @@ const layerBase: Layer.Layer<
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(input.events)
               : input.events,
-            input.commandId,
           );
           const storedEvents = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-            events: normalized.events,
+            events: normalized,
           });
-          const statusEffectCount = (yield* applyStoredEvents(storedEvents)) + normalized.wakeCount;
-          return {
-            committed: true as const,
-            storedEvents,
-            statusEffectCount,
-            cancelledWakeIds: normalized.cancelledWakeIds,
-          };
+          const statusEffectCount = yield* applyStoredEvents(storedEvents);
+          return { committed: true as const, storedEvents, statusEffectCount };
         }),
         (result) =>
           result.committed
-            ? publishStoredEvents(
-                result.storedEvents,
-                result.statusEffectCount,
-                "cancelledWakeIds" in result ? result.cancelledWakeIds : [],
-              )
+            ? publishStoredEvents(result.storedEvents, result.statusEffectCount)
             : Effect.void,
       );
       return { committed: result.committed, storedEvents: result.storedEvents };
@@ -627,10 +582,10 @@ const layerBase: Layer.Layer<
             };
           }
 
-          const normalized = yield* normalizeEvents(input.events, input.commandId);
+          const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
-            events: normalized.events,
+            events: normalized,
           });
           const sequence = storedEvents.at(-1)?.sequence;
           if (sequence === undefined) {
@@ -638,7 +593,7 @@ const layerBase: Layer.Layer<
               new Error(`Command ${input.commandId} produced no orchestration events.`),
             );
           }
-          const statusEffectCount = (yield* applyStoredEvents(storedEvents)) + normalized.wakeCount;
+          const statusEffectCount = yield* applyStoredEvents(storedEvents);
           yield* effectOutbox.enqueue(input.effects);
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
@@ -650,22 +605,18 @@ const layerBase: Layer.Layer<
             error: null,
           };
           yield* commandReceipts.upsert(receipt);
-          const cancellation = delegatedWakeCancellation(
-            input.commandType,
-            input.cancelUnsettledEffects,
-          );
           const cancelledEffectIds =
-            cancellation === undefined
+            input.cancelUnsettledEffects === undefined
               ? []
               : yield* effectOutbox.cancelUnsettled({
                   threadId: input.threadId,
-                  ...cancellation,
+                  ...input.cancelUnsettledEffects,
                 });
           return {
             receipt,
             storedEvents,
             committed: true as const,
-            cancelledEffectIds: [...cancelledEffectIds, ...normalized.cancelledWakeIds],
+            cancelledEffectIds,
             statusEffectCount,
           };
         }),

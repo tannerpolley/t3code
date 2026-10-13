@@ -1,7 +1,4 @@
-import { withRoutedRequestParent } from "./RoutedRequestShell.ts";
-import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { delegatedRequestWakeCommand } from "./DelegatedRequestWake.ts";
-import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -2780,268 +2777,188 @@ it.layer(
   );
 });
 
-it.layer(
-  Layer.mergeAll(layerTest, ThreadCommandExecutor.layer, EffectOutbox.layer).pipe(
-    Layer.provide(SqlitePersistence.layerMemory),
-  ),
-)("durable delegated request intake", (it) => {
-  it.effect.each(["user_input", "command"] as const)(
-    "commits %s wake intent while the parent lock is held",
-    (requestKind) =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-        const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const child = yield* seedChildWaitingOnUser({ name: `atomic-${requestKind}`, requestKind });
-        yield* endParentRuns(child.parentThreadId, "completed");
-        const projection = yield* orchestrator.getThreadProjection(child.childThreadId);
-        const prior = projection.runtimeRequests[0]!;
-        const originalItem = projection.turnItems.find(
-          (item) => item.type === "user_input_request" || item.type === "approval_request",
-        )!;
-        if (originalItem.type !== "user_input_request" && originalItem.type !== "approval_request")
-          throw new Error("Missing fixture prompt");
-        const requestId = RuntimeRequestId.make(`new-atomic-${requestKind}`);
-        const now = yield* DateTime.now;
-        yield* sink.write({
-          commandId: reconcileCommandId(`resolve-atomic-${requestKind}`),
-          events: [
-            {
-              id: EventId.make(`resolve-atomic-${requestKind}`),
-              type: "runtime-request.updated",
-              threadId: child.childThreadId,
-              occurredAt: now,
-              payload: { ...prior, status: "resolved", resolvedAt: now },
-            },
-          ],
-        });
-        const afterSequence = yield* sink.latestSequence();
-        yield* locks.withLock(
-          child.parentThreadId,
-          Effect.gen(function* () {
-            const committed = yield* sink.write({
-              events: [
-                {
-                  id: EventId.make(`new-atomic-request-${requestKind}`),
-                  type: "runtime-request.updated",
-                  threadId: child.childThreadId,
-                  occurredAt: now,
-                  payload: { ...prior, id: requestId, status: "pending", resolvedAt: null },
-                },
-                {
-                  id: EventId.make(`new-atomic-prompt-${requestKind}`),
-                  type: "turn-item.updated",
-                  threadId: child.childThreadId,
-                  occurredAt: now,
-                  payload: {
-                    ...originalItem,
-                    id: TurnItemId.make(`new-atomic-prompt-${requestKind}`),
-                    requestId,
-                  },
-                },
-              ],
-            });
-            assert.isFalse(yield* ownerCanSee(child));
-            const parentShell = yield* orchestrator.getThreadShell(child.parentThreadId);
-            assert.equal(parentShell?.status, "queued");
-            assert.equal(committed[0]?.event.threadId, child.parentThreadId);
-            const childEvent = committed.find(
-              (stored) => stored.event.type === "runtime-request.updated",
-            );
-            assert.isDefined(childEvent);
-            const wire = yield* withRoutedRequestParent(
-              shellStreamItemFromThreadShell({
-                stored: {
-                  sequence: childEvent!.sequence,
-                  event: { threadId: child.childThreadId },
-                },
-                shell: yield* orchestrator.getThreadShell(child.childThreadId),
-              }),
-              orchestrator.getThreadShell,
-            );
-            if (wire.kind !== "thread.updated") throw new Error("Expected a child shell delta");
-            assert.isFalse(
-              runtimeRequestIsOwnerVisible(
-                wire.thread.pendingRuntimeRequest,
-                wire.routedRequestParent,
-              ),
-            );
-            const intent = Option.getOrThrow(
-              yield* outbox.get(`effect:child-question:${child.childThreadId}:${requestId}`),
-            );
-            assert.equal(intent.status, "pending");
-            assert.lengthOf(yield* childQuestionNotices(child.parentThreadId), 0);
-            const snapshot = yield* orchestrator.getShellSnapshot();
-            assert.isFalse(
-              runtimeRequestIsOwnerVisible(
-                snapshot.threads.find((t) => t.id === child.childThreadId)?.pendingRuntimeRequest,
-                snapshot.threads.find((t) => t.id === child.parentThreadId),
-              ),
-            );
-          }),
-        );
-        yield* sink.stream({ afterSequence, eventType: "message.updated" }).pipe(
-          Stream.filter(
-            ({ event }) =>
-              event.type === "message.updated" &&
-              event.payload.id ===
-                MessageId.make(`message:child-question:${child.childThreadId}:${requestId}`) &&
-              event.payload.runId !== null,
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-        );
-        assert.isFalse(yield* ownerCanSee(child));
-        assert.equal(
-          Option.getOrThrow(
-            yield* outbox.get(`effect:child-question:${child.childThreadId}:${requestId}`),
-          ).status,
-          "succeeded",
-        );
-      }),
-  );
-  it.effect.each(["thread.stop", "failed", "restart"] as const)(
-    "exposes intake when the parent is %s before delivery",
-    (ending) =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-        const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const child = yield* seedChildWaitingOnUser({
-          name: `intake-${ending}`,
-          requestKind: "user_input",
-          answeredByMessage: true,
-        });
-        yield* endParentRuns(child.parentThreadId, "completed");
-        const request = (yield* orchestrator.getThreadProjection(child.childThreadId))
-          .runtimeRequests[0]!;
-        yield* locks.withLock(
-          child.parentThreadId,
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make(`intake-${ending}`),
-                  type: "runtime-request.updated",
-                  threadId: child.childThreadId,
-                  occurredAt: now,
-                  payload: request,
-                },
-              ],
-            });
-            assert.isFalse(yield* ownerCanSee(child));
-            if (ending === "restart") {
-              yield* (yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService).recover;
-            } else {
-              const parent = yield* orchestrator.getThreadProjection(child.parentThreadId);
-              const run = parent.runs[0]!;
-              yield* sink.commitCommand({
-                commandId: CommandId.make(`end-intake-${ending}`),
-                threadId: child.parentThreadId,
-                commandType: ending === "thread.stop" ? "thread.stop" : "checkpoint.capture",
-                acceptedAt: now,
-                effects: [],
-                events: [
-                  {
-                    id: EventId.make(`end-intake-${ending}`),
-                    type: "run.updated",
-                    threadId: child.parentThreadId,
-                    occurredAt: now,
-                    payload: {
-                      ...run,
-                      status: ending === "failed" ? "failed" : "completed",
-                      completedAt: now,
-                    },
-                  },
-                ],
-              });
-            }
-            assert.equal(
-              Option.getOrThrow(
-                yield* outbox.get(
-                  `effect:child-question:${child.childThreadId}:${child.requestId}`,
-                ),
-              ).status,
-              "cancelled",
-            );
-            assert.isTrue(yield* ownerCanSee(child));
-            const wake = yield* delegatedRequestWakeCommand(
-              projections,
-              child.childThreadId,
-              child.requestId,
-              outbox,
-            );
-            assert.equal(wake.state, "gone");
-          }),
-        );
-      }),
-  );
-
-  it.effect("an exhausted wake exposes the request through the real worker", () =>
+it.layer(layerTest)("child question wake admission", (it) => {
+  it.effect("a held parent queue admits no fresh child wake and stays owner-visible", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sink = yield* EventSink.EventSinkV2;
-      const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const child = yield* seedChildWaitingOnUser({
-        name: "intake-rejected",
+        name: "already-held-question",
+        requestKind: "user_input",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("held-later-work"),
+        threadId: child.parentThreadId,
+        messageId: MessageId.make("held-later-work"),
+        text: "Later user work",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parent = yield* orchestrator.getThreadProjection(child.parentThreadId);
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        commandId: reconcileCommandId("held-question"),
+        events: parent.runs.map((run) => ({
+          id: EventId.make(`held-question:${run.id}`),
+          type: "run.updated",
+          threadId: child.parentThreadId,
+          occurredAt: now,
+          payload:
+            run.status === "queued"
+              ? { ...run, queueHeld: true }
+              : { ...run, status: "interrupted", completedAt: now },
+        })),
+      });
+      assert.isTrue(yield* ownerCanSee(child));
+      const wake = yield* delegatedRequestWakeCommand(
+        projections,
+        child.childThreadId,
+        child.requestId,
+      );
+      if (wake !== undefined) yield* orchestrator.dispatch(wake);
+      const after = yield* orchestrator.getThreadProjection(child.parentThreadId);
+      assert.isFalse(
+        after.runs.some((run) => ["preparing", "starting", "running"].includes(run.status)),
+      );
+      assert.isTrue(yield* ownerCanSee(child));
+      assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
+      // Releasing the hold resumes existing queued work; no replayed child wake is needed.
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("release-held-question"),
+        threadId: child.parentThreadId,
+      });
+      const resumed = yield* orchestrator.getThreadProjection(child.parentThreadId);
+      assert.equal(resumed.runs.length, parent.runs.length);
+      assert.isTrue(
+        resumed.runs.some((run) => ["preparing", "starting", "running"].includes(run.status)),
+      );
+      assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
+    }),
+  );
+
+  it.effect("a rejected child wake leaves the request owner-visible without queued intake", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const child = yield* seedChildWaitingOnUser({
+        name: "rejected-question",
         requestKind: "user_input",
       });
       yield* endParentRuns(child.parentThreadId, "completed");
       const parent = yield* orchestrator.getThreadProjection(child.parentThreadId);
-      const missingInstance = ProviderInstanceId.make("missing-intake-provider");
-      const now = yield* DateTime.now;
+      const missing = ProviderInstanceId.make("missing-question-provider");
       yield* sink.write({
-        commandId: reconcileCommandId("unavailable-intake-provider"),
+        commandId: reconcileCommandId("missing-question-provider"),
         events: [
           {
-            id: EventId.make("unavailable-intake-provider"),
+            id: EventId.make("missing-question-provider"),
             type: "thread.metadata-updated",
             threadId: child.parentThreadId,
-            occurredAt: now,
+            occurredAt: yield* DateTime.now,
             payload: {
               ...parent.thread,
-              providerInstanceId: missingInstance,
-              modelSelection: { ...parent.thread.modelSelection, instanceId: missingInstance },
+              providerInstanceId: missing,
+              modelSelection: { ...parent.thread.modelSelection, instanceId: missing },
             },
           },
         ],
       });
-      const request = (yield* orchestrator.getThreadProjection(child.childThreadId))
-        .runtimeRequests[0]!;
-      yield* locks.withLock(
-        child.parentThreadId,
-        Effect.gen(function* () {
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("rejected-intake"),
-                type: "runtime-request.updated",
-                threadId: child.childThreadId,
-                occurredAt: now,
-                payload: request,
-              },
-            ],
-          });
-          assert.isFalse(yield* ownerCanSee(child));
-        }),
+      const wake = yield* delegatedRequestWakeCommand(
+        projections,
+        child.childThreadId,
+        child.requestId,
       );
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      for (const delay of [0, 100, 200, 400, 800]) {
-        yield* TestClock.adjust(delay);
-        yield* worker.drain();
-      }
-      assert.equal(
-        Option.getOrThrow(
-          yield* outbox.get(`effect:child-question:${child.childThreadId}:${child.requestId}`),
-        ).status,
-        "failed",
-      );
+      assert.isTrue(wake !== undefined);
+      if (wake === undefined) return;
+      const rejected = yield* Effect.exit(orchestrator.dispatch(wake));
+      assert.equal(rejected._tag, "Failure");
       assert.isTrue(yield* ownerCanSee(child));
+      assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
     }),
+  );
+
+  it.effect(
+    "Stop prevents a delayed child prompt from starting a stray parent run, including a repeated no-op Stop",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const child = yield* seedChildWaitingOnUser({
+          name: "stop-delayed-question",
+          requestKind: "user_input",
+          answeredByMessage: true,
+        });
+        yield* endParentRuns(child.parentThreadId, "completed");
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("delayed-first-stop"),
+          threadId: child.parentThreadId,
+        });
+        const before = yield* orchestrator.getThreadProjection(child.childThreadId);
+        const prior = before.runtimeRequests[0]!;
+        const requestId = RuntimeRequestId.make("question-with-delayed-prompt");
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("delayed-question"),
+              type: "runtime-request.updated",
+              threadId: child.childThreadId,
+              occurredAt: now,
+              payload: { ...prior, id: requestId, createdAt: now },
+            },
+          ],
+        });
+        const stopped = yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("delayed-second-stop"),
+          threadId: child.parentThreadId,
+        });
+        assert.equal(stopped.storedEvents.length, 0);
+        const prompt = before.turnItems.find((item) => item.type === "user_input_request")!;
+        if (prompt.type !== "user_input_request") throw new Error("missing prompt");
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("delayed-prompt"),
+              type: "turn-item.updated",
+              threadId: child.childThreadId,
+              occurredAt: now,
+              payload: { ...prompt, id: TurnItemId.make("delayed-prompt"), requestId },
+            },
+          ],
+        });
+        const wake = yield* delegatedRequestWakeCommand(
+          projections,
+          child.childThreadId,
+          requestId,
+        );
+        if (wake !== undefined) yield* orchestrator.dispatch(wake);
+        assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
+        assert.isFalse(
+          (yield* orchestrator.getThreadProjection(child.parentThreadId)).runs.some((run) =>
+            ["preparing", "starting", "running"].includes(run.status),
+          ),
+        );
+        const shell = yield* orchestrator.getThreadShell(child.childThreadId);
+        assert.isTrue(
+          runtimeRequestIsOwnerVisible(
+            { routedTo: child.parentThreadId },
+            yield* orchestrator.getThreadShell(child.parentThreadId),
+          ),
+        );
+        assert.isTrue(shell !== null && shell.pendingRuntimeRequest !== null);
+        assert.equal(
+          (yield* projections.getRuntimeRequest(child.childThreadId, requestId))?.status,
+          "pending",
+        );
+      }),
   );
 });

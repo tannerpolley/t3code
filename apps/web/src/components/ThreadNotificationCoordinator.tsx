@@ -1,4 +1,8 @@
-import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
+import {
+  ROUTED_REQUEST_ALERT_SETTLE_MS,
+  runtimeRequestIsOwnerVisible,
+  runtimeRequestOwnerAlertIsSettled,
+} from "@t3tools/shared/delegatedRequestVisibility";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -10,7 +14,7 @@ import {
   MessageCircleQuestionIcon,
   ShieldQuestionIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironmentIds } from "../state/environments";
@@ -113,6 +117,7 @@ interface NotificationState {
   readonly notifiedAttention: ReadonlySet<string> | null;
   readonly attention: string | null;
   readonly completion: number | null;
+  readonly ownerVisibleSince: number | null;
 }
 
 function EnvironmentNotifications({
@@ -140,6 +145,7 @@ function EnvironmentNotifications({
   const previous = useRef(new Map<ThreadId, NotificationState>());
   const toasts = useRef(new Map<ThreadId, string>());
   const initialized = useRef(false);
+  const [alertTime, setAlertTime] = useState(0);
 
   useEffect(() => {
     if (threads === null) {
@@ -148,6 +154,8 @@ function EnvironmentNotifications({
       return;
     }
     const next = new Map<ThreadId, NotificationState>();
+    const now = Math.max(Date.now(), alertTime);
+    let nextAlertDelay = Infinity;
     const index = new Map(threads.map((thread) => [thread.id, thread]));
     for (const rawThread of threads) {
       const parent =
@@ -157,8 +165,34 @@ function EnvironmentNotifications({
       const child = rawThread.lineage.relationshipToParent === "subagent";
       const ownerVisible = runtimeRequestIsOwnerVisible(rawThread.pendingRuntimeRequest, parent);
       const prior = previous.current.get(rawThread.id);
+      const request = rawThread.pendingRuntimeRequest;
+      const ownerVisibleSince =
+        ownerVisible && rawThread.archivedAt === null
+          ? prior !== undefined &&
+            prior.raw.pendingRuntimeRequest?.id === request?.id &&
+            prior.ownerVisibleSince !== null
+            ? prior.ownerVisibleSince
+            : now
+          : null;
+      const unsettled =
+        request !== null &&
+        ownerVisibleSince !== null &&
+        !runtimeRequestOwnerAlertIsSettled(request, ownerVisibleSince, now);
+      if (unsettled)
+        nextAlertDelay = Math.min(
+          nextAlertDelay,
+          ROUTED_REQUEST_ALERT_SETTLE_MS - (now - ownerVisibleSince),
+        );
       // Parent activity can change attention even when the child object is unchanged.
-      if (prior?.raw === rawThread && prior.parent === parent) {
+      if (
+        prior?.raw === rawThread &&
+        prior.parent === parent &&
+        (ownerVisibleSince === null ||
+          request === null ||
+          request.routedTo === undefined ||
+          prior.attention !== null ||
+          unsettled)
+      ) {
         next.set(rawThread.id, prior);
         continue;
       }
@@ -166,6 +200,7 @@ function EnvironmentNotifications({
       let status = resolveSidebarThreadStatus(thread);
       if (!child && status === "ready" && thread.latestRun?.status === "failed") status = "failed";
       const attention =
+        !unsettled &&
         (!child || ownerVisible) &&
         (status === "input" ||
           status === "approval" ||
@@ -186,7 +221,12 @@ function EnvironmentNotifications({
         parent,
         attention,
         completion,
-        notifiedAttention: prior?.notifiedAttention ?? null,
+        ownerVisibleSince,
+        notifiedAttention:
+          prior?.notifiedAttention ??
+          (!initialized.current && child && unsettled && request !== null
+            ? new Set([`${request.id}:${status}`])
+            : null),
       };
       next.set(thread.id, notificationState);
       if (prior?.attention && attention !== prior?.attention) {
@@ -293,6 +333,10 @@ function EnvironmentNotifications({
     }
     previous.current = next;
     initialized.current = true;
+    if (nextAlertDelay !== Infinity) {
+      const timer = setTimeout(() => setAlertTime(Date.now()), nextAlertDelay);
+      return () => clearTimeout(timer);
+    }
   }, [
     activeEnvironmentId,
     activeThreadId,
@@ -303,6 +347,7 @@ function EnvironmentNotifications({
     onNotification,
     onRetract,
     threads,
+    alertTime,
   ]);
 
   return null;
