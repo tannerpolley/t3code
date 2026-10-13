@@ -139,6 +139,8 @@ export interface GitHubGraphQlInput {
   readonly variables?: Readonly<Record<string, unknown>>;
   readonly allowReserve?: boolean;
   readonly maxResponseBytes?: number;
+  /** Optional metadata readers may keep partial data, except for missing scopes or rate limits. */
+  readonly acceptPartialData?: boolean;
 }
 
 export class GitHubApi extends Context.Service<
@@ -225,6 +227,7 @@ function retryAtFrom(
 const decodeGraphQlErrors = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
+      data: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown))),
       errors: Schema.NonEmptyArray(
         Schema.Struct({
           type: Schema.optional(Schema.String),
@@ -296,11 +299,11 @@ function classify(input: {
   readonly body: string;
   readonly graphql: boolean;
   readonly acceptNotModified: boolean;
+  readonly acceptPartialData?: boolean;
 }): Answer {
   const { status, headers, body } = input;
-  const errors = input.graphql
-    ? Option.getOrUndefined(decodeGraphQlErrors(body))?.errors
-    : undefined;
+  const decoded = input.graphql ? Option.getOrUndefined(decodeGraphQlErrors(body)) : undefined;
+  const errors = decoded?.errors;
   const types = errors?.flatMap((error) => (error.type === undefined ? [] : [error.type])) ?? [];
   const messages = errors?.flatMap((error) => (error.message === undefined ? [] : [error.message]));
   if (
@@ -320,6 +323,16 @@ function classify(input: {
     return Answer.RateLimited();
   }
   if (status === 401) return Answer.Unauthorized();
+  if (
+    input.acceptPartialData === true &&
+    status >= 200 &&
+    status < 300 &&
+    decoded?.data !== undefined &&
+    decoded.data !== null &&
+    !types.includes("INSUFFICIENT_SCOPES")
+  ) {
+    return Answer.Ok();
+  }
   if (
     status === 404 ||
     (errors !== undefined && errors.every((error) => error.type === "NOT_FOUND"))
@@ -374,6 +387,7 @@ export const make = Effect.gen(function* () {
     readonly acceptNotModified: boolean;
     /** Reads the body for GraphQL `errors`, which GitHub sends with HTTP 200. */
     readonly graphql?: boolean;
+    readonly acceptPartialData?: boolean;
   }) {
     const host = normalizeHost(input.host);
     // Only the path: a query string can carry a SHA or a branch, and never needs to be in a trace.
@@ -455,6 +469,7 @@ export const make = Effect.gen(function* () {
           body: collected.text,
           graphql: input.graphql === true,
           acceptNotModified: input.acceptNotModified,
+          acceptPartialData: input.acceptPartialData ?? false,
         }),
         {
           Ok: () =>
@@ -558,6 +573,7 @@ export const make = Effect.gen(function* () {
         allowReserve,
         acceptNotModified: false,
         graphql: true,
+        acceptPartialData: input.acceptPartialData ?? false,
       });
       // A body cut at the byte cap hides any `errors` past the cut and cannot be decoded.
       if (response.truncated) {

@@ -221,7 +221,10 @@ describe("GitHubApi", () => {
 
   it.effect("fails a GraphQL answer that carries errors, naming GitHub's reason", () => {
     const { layer } = harness(() =>
-      json({ data: null, errors: [{ type: "FORBIDDEN", message: "Resource not accessible" }] }),
+      json({
+        data: { viewer: { login: "julius" } },
+        errors: [{ type: "FORBIDDEN", message: "Resource not accessible" }],
+      }),
     );
     return Effect.gen(function* () {
       const api = yield* GitHubApi.GitHubApi;
@@ -232,6 +235,38 @@ describe("GitHubApi", () => {
       expect(error.message).toContain("Resource not accessible");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "accepts partial data only when opted in, retaining scope and rate-limit failures",
+    () => {
+      return Effect.gen(function* () {
+        for (const type of ["NOT_FOUND", "INSUFFICIENT_SCOPES", "RATE_LIMITED"]) {
+          const payload = { data: { viewer: { login: "julius" } }, errors: [{ type }] };
+          const { layer } = harness(() => json(payload));
+          const result = yield* Effect.gen(function* () {
+            const api = yield* GitHubApi.GitHubApi;
+            return yield* api
+              .graphql({
+                host: "github.com",
+                operation: "projects",
+                query: "query { viewer { login } }",
+                acceptPartialData: true,
+              })
+              .pipe(Effect.result);
+          }).pipe(Effect.provide(layer));
+          if (type === "NOT_FOUND") {
+            expect(result._tag).toBe("Success");
+          } else {
+            expect(result._tag).toBe("Failure");
+            if (result._tag === "Failure")
+              expect(result.failure._tag).toBe(
+                type === "RATE_LIMITED" ? "GitHubApiRateLimitError" : "GitHubApiResponseError",
+              );
+          }
+        }
+      });
+    },
+  );
 
   it.effect(
     "reads a NOT_FOUND answer with another error as a failure, not a missing resource",

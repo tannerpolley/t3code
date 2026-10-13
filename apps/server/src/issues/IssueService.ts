@@ -1286,14 +1286,18 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               issuePage === null
                 ? { items: [], nextPage: null }
                 : yield* listIssuePage(scope, state, issuePage);
-            const milestoneResult =
-              milestonePage === null
-                ? { items: [], nextPage: null }
-                : yield* listMilestonePage(scope, state, milestonePage);
-            const projects = yield* readIssueProjects(
-              scope,
-              issueResult.items.map((issue) => issue.number),
-            ).pipe(Effect.provideService(GitHubApi.GitHubApi, api));
+            const [milestoneResult, projects] = yield* Effect.all(
+              [
+                milestonePage === null
+                  ? Effect.succeed({ items: [], nextPage: null })
+                  : listMilestonePage(scope, state, milestonePage),
+                readIssueProjects(
+                  scope,
+                  issueResult.items.map((issue) => issue.number),
+                ).pipe(Effect.provideService(GitHubApi.GitHubApi, api)),
+              ],
+              { concurrency: "unbounded" },
+            );
             const nextCursor =
               issueResult.nextPage === null && milestoneResult.nextPage === null
                 ? null

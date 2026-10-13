@@ -1,5 +1,4 @@
 import type { IssueMilestone, IssueSummary } from "@t3tools/contracts";
-import { sortIssues } from "./issueWorkspace.logic";
 
 export interface IssueGroup {
   id: string;
@@ -24,7 +23,9 @@ export function groupIssuesByMilestone(
     });
   }
   const unassigned: IssueGroup = { id: "none", title: "No Milestone", milestone: null, issues: [] };
-  const ordered = sortIssues(issues, "updated");
+  const ordered = [...issues].sort(
+    (left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.number - left.number,
+  );
   for (const issue of ordered) {
     const milestone = issue.milestone;
     if (milestone === null) {

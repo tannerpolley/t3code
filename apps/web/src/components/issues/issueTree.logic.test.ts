@@ -95,43 +95,4 @@ describe("milestone navigation", () => {
       groupIssuesByMilestone([milestone(1, "Future")], []).map((group) => group.title),
     ).toEqual(["Future"]);
   });
-
-  it("sorts within each section by Project option order, then the existing issue order", () => {
-    const release = milestone(1, "Release");
-    const later = milestone(2, "Later");
-    const priorityIssue = (number: number, rank: number | null, name = "Custom") => ({
-      ...issue(number, release),
-      projects: [{ id: "one", title: "Planning", status: null, priority: { name, rank } }],
-    });
-    const high = priorityIssue(1, 0, "Low");
-    const updated = { ...priorityIssue(2, 0), updatedAt: "2026-09-22T00:00:00Z" };
-    const multiProject = {
-      ...priorityIssue(3, 2),
-      projects: [
-        ...priorityIssue(3, 2).projects,
-        { id: "two", title: "Delivery", status: null, priority: { name: "First", rank: 0 } },
-      ],
-    };
-    const input = [
-      priorityIssue(4, 1, "High"),
-      priorityIssue(5, null),
-      issue(6, release),
-      high,
-      updated,
-      multiProject,
-      { ...priorityIssue(7, 0), milestone: later },
-      issue(8, null),
-    ];
-    expect(
-      groupIssuesByMilestone([release, later], input).map((group) => [
-        group.id,
-        group.issues.map((row) => row.number),
-      ]),
-    ).toEqual([
-      ["milestone:2", [7]],
-      ["milestone:1", [2, 3, 1, 4, 6, 5]],
-      ["none", [8]],
-    ]);
-    expect(input.map((row) => row.number)).toEqual([4, 5, 6, 1, 2, 3, 7, 8]);
-  });
 });

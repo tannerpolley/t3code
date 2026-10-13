@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -90,6 +91,7 @@ function httpResponse(
  */
 function makeHarness(input: {
   readonly responses: ReadonlyArray<MockResponse>;
+  readonly onRequest?: (call: ApiCall) => Effect.Effect<void>;
   readonly accountId?: string;
   readonly verificationError?: GitHubPullRequestApi.GitHubPullRequestApiError;
 }) {
@@ -99,14 +101,15 @@ function makeHarness(input: {
   const http = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
-      calls.push({
+      const call = {
         method: request.method,
         url: request.url,
         body:
           request.body._tag === "Uint8Array"
             ? new TextDecoder().decode(request.body.body)
             : undefined,
-      });
+      };
+      calls.push(call);
       const response = responses.shift();
       return response === undefined
         ? Effect.die("unexpected GitHub API call")
@@ -118,7 +121,7 @@ function makeHarness(input: {
                 headers: response.headers ?? {},
               }),
             ),
-          );
+          ).pipe(Effect.tap(() => input.onRequest?.(call) ?? Effect.void));
     }),
   );
   const credentials = Layer.succeed(
@@ -594,24 +597,25 @@ function projectConnection(nodes: unknown[], endCursor: string | null = null) {
   return { nodes, pageInfo: { hasNextPage: endCursor !== null, endCursor } };
 }
 
-function projectField(field: string, name: string, optionId = "first") {
+function projectField(name: string, optionId = "first") {
   return {
     __typename: "ProjectV2ItemFieldSingleSelectValue",
     name,
     optionId,
-    field: { name: field, options: [{ id: "first" }, { id: "second" }] },
+    field: {
+      options: [
+        { id: "first", name: "High" },
+        { id: "second", name: "Urgent" },
+      ],
+    },
   };
 }
 
-function projectItem(id: string, title: string, values: unknown[], cursor: string | null = null) {
-  return {
-    id: `item:${id}`,
-    project: { id, title },
-    fieldValues: projectConnection(values, cursor),
-  };
+function projectItem(id: string, title: string, status: unknown = null, priority: unknown = null) {
+  return { project: { id, title }, status, priority };
 }
 
-it.effect("batches Project fields for the list and normalizes only Status and Priority", () =>
+it.effect("batches named Project fields, skips archived items and retains option order", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
       responses: [
@@ -623,14 +627,19 @@ it.effect("batches Project fields for the list and normalizes only Status and Pr
               issue: {
                 projectItems: projectConnection([
                   null,
-                  { ...projectItem("hidden", "Hidden", []), project: null },
-                  projectItem("one", "Planning", [
+                  { ...projectItem("hidden", "Hidden"), project: null },
+                  projectItem(
+                    "one",
+                    "Planning",
+                    projectField("In Progress"),
+                    projectField("Urgent", "second"),
+                  ),
+                  projectItem(
+                    "two",
+                    "Delivery",
                     { __typename: "ProjectV2ItemFieldTextValue" },
-                    projectField("sTaTuS", "In Progress"),
-                    projectField("PRIORITY", "Urgent", "second"),
-                    projectField("Severity", "Critical"),
-                  ]),
-                  projectItem("two", "Delivery", [projectField("Priority", "High")]),
+                    projectField("High"),
+                  ),
                 ]),
               },
             },
@@ -654,11 +663,15 @@ it.effect("batches Project fields for the list and normalizes only Status and Pr
     const request = yield* decodeProjectRequest(harness.calls[2]!.body!);
     assert.deepEqual([request.variables.number0, request.variables.number1], [7, 8]);
     assert.include(request.query, "ProjectV2ItemFieldSingleSelectValue");
-    assert.include(request.query, "options { id }");
+    assert.include(request.query, 'status: fieldValueByName(name: "Status")');
+    assert.include(request.query, 'priority: fieldValueByName(name: "Priority")');
+    assert.include(request.query, "options { id name }");
+    assert.include(request.query, "includeArchived: false");
+    assert.notInclude(request.query, "fieldValues(");
   }),
 );
 
-it.effect("paginates Project items and field values in batched follow-up reads", () =>
+it.effect("paginates Project items without field-value follow-up reads", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
       responses: [
@@ -669,7 +682,14 @@ it.effect("paginates Project items and field values in batched follow-up reads",
             p0: {
               issue: {
                 projectItems: projectConnection(
-                  [projectItem("one", "Planning", [projectField("Status", "Todo")], "fields-1")],
+                  [
+                    projectItem(
+                      "one",
+                      "Planning",
+                      projectField("Todo"),
+                      projectField("Custom", "unknown"),
+                    ),
+                  ],
                   "projects-1",
                 ),
               },
@@ -678,10 +698,7 @@ it.effect("paginates Project items and field values in batched follow-up reads",
         }),
         httpResponse({
           data: {
-            p0: {
-              issue: { projectItems: projectConnection([projectItem("two", "Delivery", [])]) },
-            },
-            p1: projectItem("one", "Planning", [projectField("Priority", "Custom", "unknown")]),
+            p0: { issue: { projectItems: projectConnection([projectItem("two", "Delivery")]) } },
           },
         }),
       ],
@@ -694,9 +711,76 @@ it.effect("paginates Project items and field values in batched follow-up reads",
     assert.equal(harness.calls.length, 4);
     const request = yield* decodeProjectRequest(harness.calls[3]!.body!);
     assert.equal(request.variables.cursor0, "projects-1");
-    assert.equal(request.variables.cursor1, "fields-1");
-    assert.equal(request.variables.id1, "item:one");
-    assert.include(request.query, "... on ProjectV2Item");
+    assert.notInclude(request.query, "node(id:");
+  }),
+);
+
+it.effect("keeps other issues' Project chips when an aliased issue fails", () =>
+  Effect.gen(function* () {
+    for (const type of ["NOT_FOUND", "FORBIDDEN"]) {
+      const harness = makeHarness({
+        responses: [
+          httpResponse([rawIssue(7), rawIssue(8)]),
+          httpResponse([]),
+          httpResponse({
+            data: {
+              p0:
+                type === "NOT_FOUND"
+                  ? { issue: null }
+                  : {
+                      issue: {
+                        projectItems: projectConnection([
+                          projectItem("partial", "Partial", projectField("Todo")),
+                        ]),
+                      },
+                    },
+              p1: {
+                issue: {
+                  projectItems: projectConnection([
+                    projectItem(
+                      "one",
+                      "Planning",
+                      projectField("In Progress"),
+                      projectField("High"),
+                    ),
+                  ]),
+                },
+              },
+            },
+            errors: [{ type, message: "Issue or Project unavailable", path: ["p0", "issue"] }],
+          }),
+        ],
+      });
+      const result = yield* (yield* service(harness)).list(listInput);
+      assert.deepEqual(result.issues[0]?.projects, []);
+      assert.deepEqual(result.issues[1]?.projects, [
+        {
+          id: "one",
+          title: "Planning",
+          status: "In Progress",
+          priority: { name: "High", rank: 0 },
+        },
+      ]);
+      assert.isTrue(result.issuesComplete);
+    }
+  }),
+);
+
+it.effect("reads Projects while the milestone page is still in flight", () =>
+  Effect.gen(function* () {
+    const projectRequested = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      responses: [httpResponse([rawIssue(7)]), httpResponse([]), httpResponse({ data: {} })],
+      onRequest: (call) =>
+        call.url.endsWith("/graphql")
+          ? Deferred.succeed(projectRequested, undefined).pipe(Effect.asVoid)
+          : call.url.includes("/milestones?")
+            ? Deferred.await(projectRequested)
+            : Effect.void,
+    });
+    const result = yield* (yield* service(harness)).list(listInput);
+    assert.equal(result.issues[0]?.number, 7);
+    assert.equal(harness.calls.length, 3);
   }),
 );
 
@@ -706,6 +790,19 @@ it.effect("keeps the issue list usable without Project scope or access", () =>
       httpResponse({
         errors: [{ type: "INSUFFICIENT_SCOPES", message: "Requires read:project scope" }],
       }),
+      httpResponse({
+        data: {
+          p0: {
+            issue: {
+              projectItems: projectConnection([
+                projectItem("one", "Planning", projectField("Todo")),
+              ]),
+            },
+          },
+        },
+        errors: [{ type: "INSUFFICIENT_SCOPES", message: "Requires read:project scope" }],
+      }),
+      httpResponse({ data: null, errors: [{ type: "NOT_FOUND" }] }),
       httpResponse({ message: "Forbidden" }, {}, 403),
       httpResponse({ data: { p0: null } }),
     ]) {
