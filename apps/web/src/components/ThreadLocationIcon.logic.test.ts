@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { threadLocation } from "./ThreadLocationIcon.logic";
 
 describe("threadLocation", () => {
-  it("names the main checkout or the worktree, then the branch", () => {
+  it("names the main checkout or the worktree folder, then the branch", () => {
     expect(
       threadLocation({
         remote: false,
@@ -10,7 +10,13 @@ describe("threadLocation", () => {
         worktreePath: null,
         branch: "main",
       }),
-    ).toEqual({ kind: "checkout", label: "Local · main" });
+    ).toEqual({
+      kind: "local",
+      environment: null,
+      checkout: "Local",
+      branch: "main",
+      label: "Local · main",
+    });
     expect(
       threadLocation({
         remote: false,
@@ -18,13 +24,19 @@ describe("threadLocation", () => {
         worktreePath: "C:\\work\\feature\\",
         branch: "t3/feature",
       }),
-    ).toEqual({ kind: "worktree", label: "Worktree feature · t3/feature" });
+    ).toEqual({
+      kind: "worktree",
+      environment: null,
+      checkout: "feature",
+      branch: "t3/feature",
+      label: "Worktree feature · t3/feature",
+    });
     // An unknown branch leaves the location alone.
     expect(
       threadLocation({ remote: false, environmentName: "Desktop", worktreePath: "/work/feature" }),
-    ).toEqual({ kind: "worktree", label: "Worktree feature" });
+    ).toMatchObject({ kind: "worktree", branch: null, label: "Worktree feature" });
   });
-  it("leads with the environment elsewhere, including cloud in the primary environment", () => {
+  it("keeps the checkout kind elsewhere and names the environment, including cloud", () => {
     expect(
       threadLocation({
         remote: true,
@@ -32,7 +44,12 @@ describe("threadLocation", () => {
         worktreePath: "/work/feature",
         branch: "t3/feature",
       }),
-    ).toEqual({ kind: "environment", label: "Laptop · Worktree feature · t3/feature" });
+    ).toMatchObject({
+      kind: "worktree",
+      environment: "Laptop",
+      checkout: "feature",
+      label: "Laptop · Worktree feature · t3/feature",
+    });
     expect(
       threadLocation({
         remote: false,
@@ -41,7 +58,7 @@ describe("threadLocation", () => {
         worktreePath: null,
         branch: "main",
       }),
-    ).toEqual({ kind: "environment", label: "Cloud · Local · main" });
+    ).toMatchObject({ kind: "local", environment: "Cloud", label: "Cloud · Local · main" });
   });
   it("marks a worktree while preparation has not bound its path", () => {
     expect(
@@ -52,6 +69,6 @@ describe("threadLocation", () => {
         worktreePath: null,
         branch: "t3/feature",
       }),
-    ).toEqual({ kind: "worktree", label: "Preparing worktree" });
+    ).toMatchObject({ kind: "preparing", checkout: "Preparing worktree", branch: "t3/feature" });
   });
 });

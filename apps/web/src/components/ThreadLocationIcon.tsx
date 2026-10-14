@@ -1,4 +1,4 @@
-import { FolderGit2Icon, FolderIcon } from "lucide-react";
+import { FolderGit2Icon, FolderGitIcon, FolderRootIcon, GitBranchIcon } from "lucide-react";
 import {
   useEnvironmentIdentities,
   useEnvironmentMachines,
@@ -13,27 +13,46 @@ type LocatedThread = Pick<SidebarThreadSummary, "environmentId" | "worktreePath"
   readonly source?: SidebarThreadSummary["source"];
 };
 
+// Checkout icons, matching the composer's workspace control: an existing worktree is
+// FolderGit and a worktree still being made is FolderGit2. The main checkout takes FolderRoot,
+// because the plain folder means the project and the computer means the environment.
+const CHECKOUT_ICON = {
+  local: FolderRootIcon,
+  worktree: FolderGitIcon,
+  preparing: FolderGit2Icon,
+};
+
 /** A Projects header naming one location and its branch, for the threads listed under it. */
 export function ThreadLocationHeader({ thread }: { readonly thread: LocatedThread }) {
-  const { location } = useThreadLocation(thread);
+  const { location, machine } = useThreadLocation(thread);
+  const CheckoutIcon = CHECKOUT_ICON[location.kind];
   return (
-    <li className="flex h-5 list-none items-center px-2 text-2xs text-sidebar-muted-foreground/70">
-      <span className="min-w-0 truncate">{location.label}</span>
+    <li
+      aria-label={location.label}
+      className="flex h-5 min-w-0 list-none items-center gap-1 px-2 text-2xs text-sidebar-muted-foreground/70"
+    >
+      {location.environment ? (
+        <>
+          <EnvironmentMachineIcon aria-hidden kind={machine} className="size-3 shrink-0" />
+          <span className="min-w-0 shrink-1000 truncate">{location.environment}</span>
+        </>
+      ) : null}
+      <CheckoutIcon aria-hidden className="size-3 shrink-0" />
+      <span className="min-w-0 shrink-100 truncate">{location.checkout}</span>
+      {location.branch ? (
+        <>
+          <GitBranchIcon aria-hidden className="ms-1 size-3 shrink-0" />
+          <span className="min-w-0 truncate">{location.branch}</span>
+        </>
+      ) : null}
     </li>
   );
 }
 
 /** The location mark is independent of the row's caret, provider and role. */
 export function ThreadLocationIcon({ thread }: { readonly thread: LocatedThread }) {
-  const { location, machine } = useThreadLocation(thread);
-  const icon =
-    location.kind === "environment" ? (
-      <EnvironmentMachineIcon aria-hidden kind={machine} className="size-3 shrink-0" />
-    ) : location.kind === "worktree" ? (
-      <FolderGit2Icon aria-hidden className="size-3 shrink-0" />
-    ) : (
-      <FolderIcon aria-hidden className="size-3 shrink-0" />
-    );
+  const { location } = useThreadLocation(thread);
+  const CheckoutIcon = CHECKOUT_ICON[location.kind];
   return (
     <Tooltip>
       <TooltipTrigger
@@ -45,7 +64,7 @@ export function ThreadLocationIcon({ thread }: { readonly thread: LocatedThread 
           />
         }
       >
-        {icon}
+        <CheckoutIcon aria-hidden className="size-3 shrink-0" />
       </TooltipTrigger>
       <TooltipPopup side="right">{location.label}</TooltipPopup>
     </Tooltip>
