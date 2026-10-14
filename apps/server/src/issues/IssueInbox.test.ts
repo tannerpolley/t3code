@@ -395,9 +395,11 @@ it.effect(
     Effect.gen(function* () {
       const { inbox, github } = yield* setup();
       // Opened by Amine's agent before B's orchestrator was watching; the owner comments now.
+      // It already has two of its three receiver labels, but not `from:amine`.
       const marked = issue(3, `Please add Y.\n${amineMarker}`, {
         created_at: at(-60),
         updated_at: at(1),
+        labels: [{ name: "external" }, { name: "priority: high" }],
       });
       github.data.issues = [marked];
       github.data.comments = [comment(1, 3, "On it.")];
@@ -419,6 +421,68 @@ it.effect(
       yield* nextPoll(inbox);
       assert.equal(labelWrites().length, 1);
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "tags log events on an older issue whose body mentions @orchestrator or another project's marker",
+  () =>
+    Effect.gen(function* () {
+      const { inbox, github } = yield* setup();
+      const before = { created_at: at(-60), updated_at: at(3) };
+      github.data.issues = [
+        issue(20, "Ping @orchestrator when this lands.", before),
+        issue(21, `Please add Y.\n${amineMarker}`, before),
+        issue(22, "Plain issue", before),
+      ];
+      github.data.events = [20, 21, 22].map((number) => event(number, "closed", number));
+      yield* nextPoll(inbox);
+      assert.deepEqual(
+        (yield* inbox.list(repo)).events
+          .map((entry) => [entry.issueNumber, entry.tagged])
+          .toSorted(([left], [right]) => Number(left) - Number(right)),
+        [
+          [20, true],
+          [21, true],
+          [22, false],
+        ],
+      );
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an overflow inside the overlap window is reported once and never walked again", () =>
+  Effect.gen(function* () {
+    const { inbox, github } = yield* setup();
+    // A bulk change: 120 comments in the same minute, more than fifty pages of two.
+    github.data.comments = Array.from({ length: 120 }, (_, index) =>
+      comment(1000 + index, 7, `Bulk ${index}`),
+    );
+    yield* nextPoll(inbox);
+    const missed = () =>
+      inbox
+        .list(repo)
+        .pipe(
+          Effect.map(
+            ({ events }) => events.filter((entry) => entry.kind === "missed_activity").length,
+          ),
+        );
+    assert.equal(yield* missed(), 1);
+    github.data.comments.push(
+      comment(2000, 7, "New after the bulk", { created_at: at(3), updated_at: at(3) }),
+    );
+    const before = github.requests.length;
+    yield* nextPoll(inbox);
+    assert.equal(yield* missed(), 1);
+    assert.equal(
+      github.requests.slice(before).filter((request) => request.path.startsWith("issues/comments"))
+        .length,
+      1,
+    );
+    const sql = yield* SqlClient.SqlClient;
+    assert.deepEqual(
+      yield* sql`SELECT COUNT(*) AS count FROM issue_inbox_events WHERE event_key = 'comment:2000'`,
+      [{ count: 1 }],
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect(

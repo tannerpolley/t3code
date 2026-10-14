@@ -153,6 +153,13 @@ interface ReceiptRow {
   readonly finished_at: number;
 }
 
+/** The labels an external issue gets; `source` is empty when no project is named. */
+const receiverLabels = (source: string) => [
+  EXTERNAL_LABEL,
+  HIGH_PRIORITY_LABEL,
+  ...(source === "" ? [] : [fromLabel(source)]),
+];
+
 // GitHub's own timestamp shape, so cursors compare as strings with GitHub's.
 export const isoSeconds = (millis: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\.\d{3}Z$/u, "Z");
@@ -331,7 +338,7 @@ export const make = Effect.gen(function* () {
             previous?.external_source != null
               ? previous.labeled
               : source !== null &&
-                  !(hasLabel(labels, EXTERNAL_LABEL) && hasLabel(labels, HIGH_PRIORITY_LABEL))
+                  !receiverLabels(source).every((label) => hasLabel(labels, label.toLowerCase()))
                 ? 0
                 : 1,
         });
@@ -436,7 +443,8 @@ export const make = Effect.gen(function* () {
         )
           continue;
         const labels = issue.labels?.map((label) => label.name) ?? [];
-        noteIssue(issue, labels, null);
+        const body = listed.get(issue.number)?.body ?? issue.body ?? "";
+        noteIssue({ ...issue, body }, labels, null);
         const at = Date.parse(event.created_at);
         const candidates = receipts.filter(
           (receipt) =>
@@ -470,7 +478,7 @@ export const make = Effect.gen(function* () {
           author: event.actor?.login ?? null,
           sourceProject: externalSource(issue.number) || null,
           tagged:
-            hasLabel(labels, CROSS_PROJECT_LABEL) ||
+            isTagged({ body, labels, marked: foreignMarker(body, repositoryKey) !== null }) ||
             event.label?.name.toLowerCase() === CROSS_PROJECT_LABEL,
           highPriority: highPriority(issue.number, labels),
           needsTriage: false,
@@ -506,10 +514,15 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      /** The newest timestamp read, less the overlap; never earlier than the current cursor. */
-      const advance = (cursor: string, stamps: ReadonlyArray<string>) => {
+      /**
+       * The newest timestamp read, less the overlap; never earlier than the current cursor. After
+       * an overflow the cursor stops at the newest read itself, so the abandoned backlog, even one
+       * inside the overlap, is never walked or reported again.
+       */
+      const advance = (cursor: string, stamps: ReadonlyArray<string>, complete: boolean) => {
         const newest = stamps.reduce((max, stamp) => (stamp > max ? stamp : max), "");
-        const next = newest === "" ? cursor : isoSeconds(Date.parse(newest) - CURSOR_OVERLAP_MS);
+        const next =
+          newest === "" || !complete ? newest : isoSeconds(Date.parse(newest) - CURSOR_OVERLAP_MS);
         return next > cursor ? next : cursor;
       };
       return yield* sql.withTransaction(
@@ -548,10 +561,12 @@ export const make = Effect.gen(function* () {
               issues_since = ${advance(
                 state.issues_since,
                 issuesRead.items.map((issue) => issue.updated_at),
+                issuesRead.complete,
               )},
               comments_since = ${advance(
                 state.comments_since,
                 commentsRead.items.map((comment) => comment.updated_at),
+                commentsRead.complete,
               )},
               events_after = ${Math.max(eventsAfter, ...eventsRead.items.map((event) => event.id))},
               issues_etag = ${issuesRead.etag},
@@ -573,11 +588,7 @@ export const make = Effect.gen(function* () {
           AND external_source IS NOT NULL AND labeled = 0
       `;
       for (const row of pending) {
-        const labels = [
-          EXTERNAL_LABEL,
-          HIGH_PRIORITY_LABEL,
-          ...(row.external_source === "" ? [] : [fromLabel(row.external_source)]),
-        ];
+        const labels = receiverLabels(row.external_source);
         yield* ensureLabels(repo, labels);
         yield* rest(repo, `issues/${row.issue_number}/labels`, { body: { labels } });
         yield* sql`

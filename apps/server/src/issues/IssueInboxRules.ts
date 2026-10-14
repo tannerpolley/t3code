@@ -136,6 +136,11 @@ export const milestoneTransitions = (
  * Runs one T3 GitHub issue write and records the transitions it made with the request's time
  * span, so the inbox watcher reads the events GitHub logs for it as T3's own. `made` names the
  * issue and transitions from the write's result.
+ *
+ * Known limits, both after a lost GitHub response: a write GitHub applied but answered with an
+ * error records no receipt, so its event reads as external; and a create recovered by its marker
+ * records a `milestoned` receipt spanning the retry, which can claim the owner's same-milestone
+ * change made in that span.
  */
 export const withWriteReceipts = <A, E, R>(
   sql: SqlClient.SqlClient,
