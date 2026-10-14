@@ -634,9 +634,18 @@ it.each([
     state.projection = { ...projection, subagents: [{ ...agent, startedAt: null }] };
     await act(async () => renderer.update(cloneElement(panel)));
     expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);
+    // A Codex native subagent with a run can be stopped only while its turn is running.
     state.projection = {
       ...projection,
       subagents: [{ ...agent, origin: "provider_native", driver: "codex" }],
+    };
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" }).length > 0).toBe(
+      runId !== null,
+    );
+    state.projection = {
+      ...projection,
+      subagents: [{ ...agent, origin: "provider_native", driver: "codex", status: "waiting" }],
     };
     await act(async () => renderer.update(cloneElement(panel)));
     expect(renderer.root.findAllByProps({ "aria-label": "Stop subagent Worker" })).toHaveLength(0);
