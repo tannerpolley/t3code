@@ -197,8 +197,12 @@ const make = Effect.gen(function* () {
       ...list,
       issues: list.issues.map((issue) => {
         // PR references are a server-side lookup, not another copy of the issue timeline on the wire.
-        const { pullRequestRefs: _pullRequestRefs, ...summary } = issue;
-        return { ...summary, liveWork: work.get(issue.number) ?? [] };
+        const { pullRequestRefs, ...summary } = issue;
+        return {
+          ...summary,
+          ...(pullRequestRefs === undefined ? {} : { pullRequestCount: pullRequestRefs.length }),
+          liveWork: work.get(issue.number) ?? [],
+        };
       }),
     };
   });

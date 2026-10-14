@@ -82,6 +82,9 @@ const RawIssueSchema = Schema.Struct({
   comments: NonNegativeInt,
   body: Schema.optional(Schema.NullOr(Schema.String)),
   pull_request: Schema.optional(Schema.Unknown),
+  sub_issues_summary: Schema.optional(
+    Schema.NullOr(Schema.Struct({ total: NonNegativeInt, completed: NonNegativeInt })),
+  ),
 });
 
 const RawRepositorySchema = Schema.Struct({
@@ -443,6 +446,14 @@ function normalizeIssue(host: string, repository: string, issue: RawIssue): Issu
     createdAt: issue.created_at,
     updatedAt: issue.updated_at,
     commentCount: issue.comments,
+    ...(issue.sub_issues_summary && issue.sub_issues_summary.total > 0
+      ? {
+          subIssues: {
+            total: issue.sub_issues_summary.total,
+            completed: issue.sub_issues_summary.completed,
+          },
+        }
+      : {}),
   };
 }
 

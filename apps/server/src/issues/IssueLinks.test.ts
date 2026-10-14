@@ -300,6 +300,7 @@ it.effect(
         pr.id,
       ]);
       assert.notProperty(first.issues[0]!, "pullRequestRefs");
+      assert.equal(first.issues[0]!.pullRequestCount, 2);
       const work = first.issues[0]!.liveWork!;
       assert.deepEqual(
         work.map((item) => [item.threadId, item.status]),

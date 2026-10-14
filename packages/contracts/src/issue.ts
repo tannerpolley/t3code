@@ -87,6 +87,10 @@ export const IssueSummary = Schema.Struct({
   relationshipsComplete: Schema.optional(Schema.Boolean),
   /** Closing and timeline PR references, read with the list's metadata batch. */
   pullRequestRefs: Schema.optional(Schema.Array(IssueRef)),
+  /** How many of those references there are, kept when the server drops the references. */
+  pullRequestCount: Schema.optional(NonNegativeInt),
+  /** GitHub's sub-issue tally; absent on older servers and hosts without sub-issues. */
+  subIssues: Schema.optional(Schema.Struct({ total: NonNegativeInt, completed: NonNegativeInt })),
   liveWork: Schema.optional(
     Schema.Array(
       Schema.Struct({

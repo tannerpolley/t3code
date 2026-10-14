@@ -565,15 +565,27 @@ it.effect("reads closed issues only when asked and keeps cursors bound to their 
   Effect.gen(function* () {
     const harness = makeHarness({
       responses: [
-        httpResponse([rawIssue(7), rawIssue(8, { state: "closed" })], {
-          link: `<https://${HOST}/repositories/123/issues?page=2>; rel="next"`,
-        }),
+        httpResponse(
+          [
+            rawIssue(7, { sub_issues_summary: { total: 5, completed: 2, percent_completed: 40 } }),
+            rawIssue(8, {
+              state: "closed",
+              sub_issues_summary: { total: 0, completed: 0, percent_completed: 0 },
+            }),
+          ],
+          {
+            link: `<https://${HOST}/repositories/123/issues?page=2>; rel="next"`,
+          },
+        ),
         httpResponse([]),
         httpResponse({ data: {} }),
       ],
     });
     const issues = yield* service(harness);
     const all = yield* issues.list({ ...listInput, state: "all" });
+    // Sub-issue progress rides on the list page; an issue without sub-issues carries none.
+    assert.deepEqual(all.issues[0]!.subIssues, { total: 5, completed: 2 });
+    assert.notProperty(all.issues[1]!, "subIssues");
 
     assert.deepEqual(
       all.issues.map((issue) => [issue.number, issue.state]),
