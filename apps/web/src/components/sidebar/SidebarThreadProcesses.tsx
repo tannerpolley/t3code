@@ -1,11 +1,13 @@
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import type { ThreadProcessGroup } from "@t3tools/contracts";
 import { shellProgramName } from "@t3tools/shared/shellCommand";
-import { CpuIcon } from "lucide-react";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { ChevronRightIcon, CpuIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { useUiStateStore } from "../../uiStateStore";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import type { SidebarThreadSummary } from "../../types";
@@ -16,6 +18,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROJECTS_WORK_ROW_HEIGHT, SidebarThreadColumns } from "./SidebarColumns";
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
+import { summarizeProcessWork } from "./SidebarThreadProcesses.logic";
 
 const NO_COMMAND_ROWS: ReadonlyArray<BackgroundWorkTaskRow> = [];
 const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
@@ -38,38 +41,55 @@ export function useSidebarThreadProcesses(thread: SidebarThreadSummary, working:
       : null,
   );
   const data = enabled ? query.data : undefined;
+  // Open state lives in the sidebar's keyed expand record, like Lineage's details.
+  const openKey = `processes:${scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))}`;
+  const open = useUiStateStore((state) => state.lineageDetailsExpandedById[openKey] === true);
+  const setExpanded = useUiStateStore((state) => state.setLineageDetailsExpanded);
+  const allCommandRows =
+    data?.commands.map((command): BackgroundWorkTaskRow => ({
+      taskId: command.taskId,
+      label: shellProgramName(command.command) ?? commandDisplayText(command.command),
+      kind: "command",
+      startedAt: command.startedAt,
+      commandKind: command.commandKind,
+      command: command.command,
+      followable: command.followable,
+      ownerThreadId: thread.id,
+    })) ?? NO_COMMAND_ROWS;
+  const processGroups = data?.processGroups ?? NO_GROUPS;
+  const hiddenProcessGroups = data?.hiddenProcessGroupCount ?? 0;
   return {
     // Only rows that would poll watch their visibility.
     watchRow: wanted ? listRef : undefined,
-    commandRows:
-      data?.commands.map((command): BackgroundWorkTaskRow => ({
-        taskId: command.taskId,
-        label: shellProgramName(command.command) ?? commandDisplayText(command.command),
-        kind: "command",
-        startedAt: command.startedAt,
-        commandKind: command.commandKind,
-        command: command.command,
-        followable: command.followable,
-        ownerThreadId: thread.id,
-      })) ?? NO_COMMAND_ROWS,
-    processGroups: data?.processGroups ?? NO_GROUPS,
-    hiddenProcessGroups: data?.hiddenProcessGroupCount ?? 0,
+    // Collapsed, the commands fold into the summary row so starting and stopping them moves nothing.
+    commandRows: open ? allCommandRows : NO_COMMAND_ROWS,
+    processRows: {
+      groups: processGroups,
+      hiddenGroupCount: hiddenProcessGroups,
+      summary: summarizeProcessWork(allCommandRows.length, processGroups, hiddenProcessGroups),
+      open,
+      onToggle: () => setExpanded([openKey], !open),
+    },
   };
 }
 
 /**
- * List items for a work list's `afterTasks`: one row per group of same-shaped spawned processes,
- * then how many groups are not shown.
+ * List items for a work list's `afterTasks`: one summary row (commands and processes, with their
+ * combined usage) that opens into one row per program kind of spawned process, then how many
+ * groups are not shown. The commands themselves are the work list's rows.
  */
 export function SidebarProcessGroupRows(props: {
   readonly groups: ReadonlyArray<ThreadProcessGroup>;
   readonly hiddenGroupCount: number;
+  readonly summary: ReturnType<typeof summarizeProcessWork>;
+  readonly open: boolean;
+  readonly onToggle: () => void;
   /** The Projects tree's aligned columns; otherwise the compact list. */
   readonly columns: boolean;
   /** Nesting level below the top-level thread, for the columns' tint. */
   readonly depth?: number | undefined;
 }) {
-  if (props.groups.length === 0) return null;
+  if (props.summary === null) return null;
   const rowClass = cn(
     "flex min-w-0 items-center gap-2 text-muted-foreground",
     PROJECTS_WORK_ROW_HEIGHT,
@@ -78,9 +98,38 @@ export function SidebarProcessGroupRows(props: {
   const depth = props.columns
     ? ({ "--sidebar-thread-depth": props.depth ?? 1 } as CSSProperties)
     : undefined;
+  const chevron = (
+    <ChevronRightIcon
+      aria-hidden
+      className={cn("size-3.5 shrink-0 transition-transform", props.open && "rotate-90")}
+    />
+  );
+  const summaryName = (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="min-w-0 flex-1 truncate">{props.summary.text}</span>
+      <BackgroundTaskResourceUsageLabel usage={props.summary} />
+    </span>
+  );
   return (
     <>
-      {props.groups.map((group) => {
+      <li style={depth}>
+        <button
+          type="button"
+          aria-expanded={props.open}
+          className={cn(rowClass, "w-full cursor-pointer text-left hover:bg-accent")}
+          onClick={props.onToggle}
+        >
+          {props.columns ? (
+            <SidebarThreadColumns provider={chevron} name={summaryName} />
+          ) : (
+            <>
+              {chevron}
+              {summaryName}
+            </>
+          )}
+        </button>
+      </li>
+      {(props.open ? props.groups : []).map((group) => {
         const name = (
           <span className="flex min-w-0 items-center gap-2">
             <Tooltip>
@@ -113,7 +162,7 @@ export function SidebarProcessGroupRows(props: {
           </li>
         );
       })}
-      {props.hiddenGroupCount > 0 ? (
+      {props.open && props.hiddenGroupCount > 0 ? (
         <li style={depth}>
           <div className={rowClass}>
             {props.columns ? (

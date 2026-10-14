@@ -1272,7 +1272,7 @@ const SidebarProjectThreadRow = memo(
     );
     // Finished while you were away and not opened since: a green dot where the spinner was.
     const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
-    const { watchRow, commandRows, processGroups, hiddenProcessGroups } = useSidebarThreadProcesses(
+    const { watchRow, commandRows, processRows } = useSidebarThreadProcesses(
       props.thread,
       status === "working" || props.thread.pendingBackgroundTasks.length > 0,
     );
@@ -1288,7 +1288,7 @@ const SidebarProjectThreadRow = memo(
       commandRows,
     );
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
-    const hasWork = workRows.length > 0 || processGroups.length > 0;
+    const hasWork = workRows.length > 0 || processRows.summary !== null;
     // Running work shows by default, even while the thread itself works; a collapse wins for this row.
     const [workOpen, setWorkOpen] = useState(true);
     const contextDrag = useThreadContextPointerDrag(() => ({
@@ -1419,13 +1419,7 @@ const SidebarProjectThreadRow = memo(
               environmentId={props.thread.environmentId}
               threadId={props.thread.id}
               rows={workRows}
-              afterTasks={
-                <SidebarProcessGroupRows
-                  columns
-                  groups={processGroups}
-                  hiddenGroupCount={hiddenProcessGroups}
-                />
-              }
+              afterTasks={<SidebarProcessGroupRows columns {...processRows} />}
               parentTasks={props.thread.pendingBackgroundTasks}
               runningChildren={runningSubagents}
               onChildClick={props.onClick}
@@ -1442,13 +1436,7 @@ const SidebarProjectThreadRow = memo(
               environmentId={props.thread.environmentId}
               threadId={props.thread.id}
               rows={workRows}
-              afterTasks={
-                <SidebarProcessGroupRows
-                  columns={false}
-                  groups={processGroups}
-                  hiddenGroupCount={hiddenProcessGroups}
-                />
-              }
+              afterTasks={<SidebarProcessGroupRows columns={false} {...processRows} />}
               onChildClick={props.onClick}
               onChildContextMenu={props.onContextMenu}
             />
@@ -1578,25 +1566,18 @@ function SidebarSubagentWork(
   },
 ) {
   const { thread, rows, ...tree } = props;
-  const { watchRow, commandRows, processGroups, hiddenProcessGroups } = useSidebarThreadProcesses(
+  const { watchRow, commandRows, processRows } = useSidebarThreadProcesses(
     thread,
     resolveSidebarThreadStatus(thread) === "working" || thread.pendingBackgroundTasks.length > 0,
   );
   const workRows = withRunningCommandRows(rows, commandRows);
   return (
     <div ref={watchRow}>
-      {workRows.length > 0 || processGroups.length > 0 ? (
+      {workRows.length > 0 || processRows.summary !== null ? (
         <SidebarSubagentTree
           {...tree}
           rows={workRows}
-          afterTasks={
-            <SidebarProcessGroupRows
-              columns
-              depth={tree.depth}
-              groups={processGroups}
-              hiddenGroupCount={hiddenProcessGroups}
-            />
-          }
+          afterTasks={<SidebarProcessGroupRows columns depth={tree.depth} {...processRows} />}
         />
       ) : null}
     </div>

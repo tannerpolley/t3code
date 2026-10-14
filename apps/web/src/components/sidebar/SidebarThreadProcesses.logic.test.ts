@@ -2,7 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
-import { withRunningCommandRows } from "./SidebarThreadProcesses.logic";
+import { summarizeProcessWork, withRunningCommandRows } from "./SidebarThreadProcesses.logic";
 
 const task = (taskId: string): BackgroundWorkTaskRow => ({
   taskId,
@@ -25,4 +25,21 @@ it("lists each running command once, after the thread's tasks and before its age
     [task("dev-server"), task("pytest")],
   );
   expect(rows.map((row) => row.taskId)).toEqual(["dev-server", "pytest", "agent"]);
+});
+
+it("summarizes commands and process groups, and is empty with neither", () => {
+  const group = (count: number, cpuPercent: number, residentBytes: number) => ({
+    label: "python",
+    commandLine: "python x.py",
+    count,
+    cpuPercent,
+    residentBytes,
+  });
+  expect(summarizeProcessWork(0, [], 0)).toBeNull();
+  expect(summarizeProcessWork(1, [], 0)?.text).toBe("1 command");
+  expect(summarizeProcessWork(3, [group(4, 10, 100), group(1, 5, 50)], 2)).toEqual({
+    text: "3 commands · 5+ processes",
+    cpuPercent: 15,
+    residentBytes: 150,
+  });
 });
