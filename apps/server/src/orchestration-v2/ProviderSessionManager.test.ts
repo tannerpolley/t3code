@@ -18,12 +18,14 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   type Project,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -3276,6 +3278,70 @@ it.effect(
         ),
       );
     }),
+);
+
+it.effect("ProviderSessionManagerV2 ends the open tool calls of a session a detach releases", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const { threadId, providerSessionId, providerThreads } =
+        yield* openSessionWithBackgroundCommand("provider-session-manager-detach-items");
+      // A workspace handoff detaches mid-call: one tool call on the released
+      // session's provider thread, one on another session's.
+      const toolCall = (name: string, providerThread: OrchestrationV2ProviderThread) =>
+        ({
+          id: TurnItemId.make(`turn-item:${name}`),
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: providerThread.id,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "running",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "dynamic_tool",
+          toolName: "mcp__t3-code__t3_worktree_return_to_root",
+          input: null,
+          output: null,
+        }) satisfies OrchestrationV2TurnItem;
+      const items = [
+        toolCall("released", providerThreads[0]!),
+        toolCall("other", providerThreads[1]!),
+      ];
+      yield* eventSink.write({
+        events: items.map((payload) => ({
+          id: EventId.make(`event:${payload.id}`),
+          type: "turn-item.updated" as const,
+          threadId,
+          occurredAt: now,
+          payload,
+        })),
+      });
+
+      yield* manager.detach({ providerSessionId, threadId, detail: "Workspace changed." });
+
+      const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"]);
+      assert.deepStrictEqual(
+        items.map((item) => turnItems.find((stored) => stored.id === item.id)?.status),
+        ["interrupted", "running"],
+      );
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
+      ),
+    );
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 clears the background roster of an idle-released session", () =>

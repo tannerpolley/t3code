@@ -1,4 +1,7 @@
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  pendingBackgroundTurnItems,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -849,7 +852,8 @@ export const layerWithOptions = (
             ]);
             for (const providerThread of projection.providerThreads) {
               const tasks = providerThread.pendingBackgroundTasks ?? [];
-              if (providerThread.providerSessionId !== providerSessionId || tasks.length === 0) {
+              // An empty roster still names the thread whose open turn items end.
+              if (providerThread.providerSessionId !== providerSessionId) {
                 continue;
               }
               released.push({
@@ -883,7 +887,7 @@ export const layerWithOptions = (
         released: ReadonlyArray<ReleasedBackgroundTasks>,
       ) =>
         Effect.forEach(
-          released,
+          released.filter(({ taskIds }) => taskIds.size > 0),
           ({ threadId, providerSessionId, providerThreadId, taskIds }) =>
             Effect.gen(function* () {
               for (let attempt = 0; attempt < 3; attempt++) {
@@ -928,8 +932,58 @@ export const layerWithOptions = (
           { discard: true },
         );
 
+      // The same process loss ends the background turn items still open on those
+      // provider threads, such as a tool call a workspace handoff cut off:
+      // nothing will report their end either. A delegate_task child is a thread
+      // of its own and ends on its own. Items started after the release belong
+      // to a replacement session.
+      const writeReleasedBackgroundItemEvents = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
+        readonly releasedAt: DateTime.Utc;
+      }) =>
+        Effect.gen(function* () {
+          const providerThreadIdsByThread = new Map<ThreadId, Set<ProviderThreadId>>();
+          for (const { threadId, providerThreadId } of input.releasedBackgroundTasks) {
+            const ids = providerThreadIdsByThread.get(threadId) ?? new Set();
+            providerThreadIdsByThread.set(threadId, ids.add(providerThreadId));
+          }
+          for (const [threadId, providerThreadIds] of providerThreadIdsByThread) {
+            const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+              turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            });
+            const now = yield* DateTime.now;
+            const events: Array<OrchestrationV2DomainEvent> = [];
+            for (const item of pendingBackgroundTurnItems({ turnItems })) {
+              if (
+                item.providerThreadId == null ||
+                !providerThreadIds.has(item.providerThreadId) ||
+                (item.type === "subagent" && item.origin === "app_owned") ||
+                DateTime.isGreaterThan(item.startedAt ?? item.updatedAt, input.releasedAt)
+              ) {
+                continue;
+              }
+              events.push({
+                id: yield* idAllocator.allocate.event({
+                  threadId,
+                  providerSessionId: input.entry.runtime.providerSessionId,
+                }),
+                type: "turn-item.updated",
+                threadId,
+                ...(item.runId === null ? {} : { runId: item.runId }),
+                ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+                driver: input.entry.runtime.driver,
+                occurredAt: now,
+                payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
+              });
+            }
+            if (events.length > 0) yield* eventSink.write({ events });
+          }
+        });
+
       // Records a released session as stopped and resolves the live runtime
-      // requests and background-task rosters it left. Each write runs even if
+      // requests and background work (rosters, turn items) it left. Each write runs even if
       // another fails. Once a replacement session opens with the same id, it
       // owns the session status, so only the requests are settled.
       const writeReleaseRecords = (input: {
@@ -951,6 +1005,7 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            Effect.exit(writeReleasedBackgroundItemEvents(input)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
