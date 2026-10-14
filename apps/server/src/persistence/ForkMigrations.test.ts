@@ -108,6 +108,30 @@ describe("fork migration ledger", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("applies usage migration 11 after inline shell migration 10 is already recorded", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toForkMigrationInclusive: 10 });
+      const before =
+        yield* sql`SELECT migration_id, name, created_at FROM ${sql(FORK_MIGRATIONS_TABLE)} ORDER BY migration_id`;
+      assert.equal(before.at(-1)?.migration_id, 10);
+      assert.equal(before.at(-1)?.name, "InlineShellRuns");
+      assert.ok((yield* tableNames).has("inline_shell_runs"));
+      assert.ok(!(yield* tableNames).has("orchestration_v2_projection_thread_usage"));
+      yield* runMigrations();
+      assert.deepStrictEqual(
+        yield* sql`SELECT migration_id, name, created_at FROM ${sql(FORK_MIGRATIONS_TABLE)} WHERE migration_id <= 10 ORDER BY migration_id`,
+        before,
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT migration_id, name FROM ${sql(FORK_MIGRATIONS_TABLE)} WHERE migration_id > 10 ORDER BY migration_id`,
+        [{ migration_id: 11, name: "ThreadUsageSummary" }],
+      );
+      assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));
+      assert.deepStrictEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect.each([
     ["an unknown migration next to fork ones", [57, 58], "UnknownFork"],
     ["a gap in the fork ids", [57, 59], undefined],

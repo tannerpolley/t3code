@@ -17,7 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
-import ThreadUsageMigration from "../persistence/ForkMigrations/010_ThreadUsageSummary.ts";
+import ThreadUsageMigration from "../persistence/ForkMigrations/011_ThreadUsageSummary.ts";
 import {
   DeferThreadUsageSummary,
   refreshAllThreadUsageSummaries,

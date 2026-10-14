@@ -14,7 +14,7 @@ import RepositoryOrchestration from "./ForkMigrations/004_RepositoryOrchestratio
 import RepositoryScheduledWork from "./ForkMigrations/005_RepositoryScheduledWork.ts";
 import IssueChanges from "./ForkMigrations/006_IssueChanges.ts";
 import InlineShellRuns from "./ForkMigrations/010_InlineShellRuns.ts";
-import ThreadUsageSummary from "./ForkMigrations/010_ThreadUsageSummary.ts";
+import ThreadUsageSummary from "./ForkMigrations/011_ThreadUsageSummary.ts";
 import PendingRoutedRequests from "./ForkMigrations/007_PendingRoutedRequests.ts";
 
 import IssueThreadLinks from "../issues/IssueLinksMigration.ts";

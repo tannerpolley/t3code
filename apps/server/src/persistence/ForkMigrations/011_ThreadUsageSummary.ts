@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-/** Frozen v10 backfill: only the JSON fields this migration consumes are validated. */
+/** Frozen v11 backfill: only the JSON fields this migration consumes are validated. */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE TABLE orchestration_v2_projection_thread_usage (
@@ -44,7 +44,7 @@ export default Effect.gen(function* () {
     `${source} SELECT COUNT(*) AS count FROM source WHERE NOT COALESCE((${valid}), 0)`,
   );
   if ((invalid[0]?.count ?? 0) > 0)
-    yield* Effect.logWarning("Migration 10 skipped invalid usage records", {
+    yield* Effect.logWarning("Migration 11 skipped invalid usage records", {
       count: invalid[0]?.count,
     });
   yield* sql.unsafe(`
