@@ -260,6 +260,8 @@ export const refreshThreadUsageSummary = (threadId: ThreadId) =>
     ),
   );
 
+// Untraced like the write body it serves: streamed writes would otherwise
+// fill the trace file with rate and secret lookups.
 const resolveThreadUsagePricer = Effect.gen(function* () {
   const usage = yield* Effect.serviceOption(UsageService);
   if (Option.isNone(usage)) return undefined;
@@ -268,7 +270,7 @@ const resolveThreadUsagePricer = Effect.gen(function* () {
       Effect.logWarning("Thread usage stays unpriced", { cause }).pipe(Effect.as(undefined)),
     ),
   );
-});
+}).pipe(Effect.withTracerEnabled(false));
 
 /** The projection cases in ProjectionStore that refresh a thread's usage summary. */
 const refreshesThreadUsage = (event: OrchestrationV2DomainEvent) =>
@@ -304,6 +306,8 @@ export const backfillThreadUsageCosts = Effect.gen(function* () {
   `;
   if (threads.length === 0) return;
   const pricer = yield* resolveThreadUsagePricer;
+  // An unpriced pass would erase costs that summaries from before costVersion still carry.
+  if (pricer === undefined) return;
   for (const thread of threads)
     yield* refreshThreadUsageSummary(thread.thread_id).pipe(
       Effect.provideService(ThreadUsagePricer, pricer),

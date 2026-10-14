@@ -593,13 +593,10 @@ const usageServiceWith = (tokenPricer: UsageService["Service"]["tokenPricer"]) =
     refreshRates: Effect.die("unused"),
     readSummary: () => Effect.die("unused"),
   });
-const withPricer =
-  (pricer: TokenPricer) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(
-      Effect.provideService(ThreadUsagePricer, pricer),
-      Effect.provideService(UsageService, usageServiceWith(Effect.succeed(pricer))),
-    );
+// Direct refreshes get the pricer an event write resolves; the backfill resolves its own from UsageService.
+const withPricer = (pricer: TokenPricer) => Effect.provideService(ThreadUsagePricer, pricer);
+const withUsageService = (pricer: TokenPricer) =>
+  Effect.provideService(UsageService, usageServiceWith(Effect.succeed(pricer)));
 
 const sinkLayer = EventSink.layer.pipe(
   Layer.provideMerge(
@@ -645,7 +642,7 @@ it.layer(layer)("thread cost estimates", (it) => {
         calls++;
         return totals.outputTokens / 1000;
       };
-      yield* backfillThreadUsageCosts.pipe(withPricer(price));
+      yield* backfillThreadUsageCosts.pipe(withUsageService(price));
       assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 8);
       assert.isUndefined((yield* store.getThreadShell(threadId))?.usageSummary?.weeklyLimitPercent);
       const stored = (yield* sql<{
@@ -654,7 +651,7 @@ it.layer(layer)("thread cost estimates", (it) => {
         .payload_json;
       assert.notInclude(stored, "weeklyLimitPercent");
       const before = calls;
-      yield* backfillThreadUsageCosts.pipe(withPricer(price));
+      yield* backfillThreadUsageCosts.pipe(withUsageService(price));
       assert.equal(calls, before, "already priced threads are not rescanned on restart");
     }),
   );
@@ -668,10 +665,10 @@ it.layer(layer)("thread cost estimates", (it) => {
         calls++;
         return null;
       };
-      yield* backfillThreadUsageCosts.pipe(withPricer(unpriced));
+      yield* backfillThreadUsageCosts.pipe(withUsageService(unpriced));
       assert.equal(calls, 1);
       assert.isUndefined((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd);
-      yield* backfillThreadUsageCosts.pipe(withPricer(unpriced));
+      yield* backfillThreadUsageCosts.pipe(withUsageService(unpriced));
       assert.equal(calls, 1);
     }),
   );
