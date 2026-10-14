@@ -366,3 +366,19 @@ export function formatElapsedSeconds(totalSeconds: number): string {
     ? minutesAndSeconds
     : `${String(hours).padStart(2, "0")}h ${minutesAndSeconds}`;
 }
+
+/** Short form for tight rows; at most four characters, rounded down. */
+export function formatCompactElapsedSeconds(totalSeconds: number): string {
+  const seconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 10) return `${Math.floor(minutes / 6) / 10}h`;
+  if (hours < 1000) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 1000) return `${days}d`;
+  const years = days / 365;
+  if (years < 10) return `${Math.floor(years * 10) / 10}y`;
+  return years < 1000 ? `${Math.floor(years)}y` : ">99y";
+}

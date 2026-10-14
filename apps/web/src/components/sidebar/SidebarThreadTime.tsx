@@ -1,6 +1,10 @@
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import type { SidebarThreadSummary } from "../../types";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
+import {
+  formatCompactElapsedSeconds,
+  formatElapsedSeconds,
+  formatRelativeTimeLabel,
+} from "../../timestampFormat";
 import {
   formatStoppedThreadDuration,
   resolveSidebarThreadStatus,
@@ -13,6 +17,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export function SidebarThreadTime(props: {
   readonly thread: SidebarThreadSummary;
   readonly status?: SidebarThreadStatus;
+  readonly compact?: boolean;
   readonly snoozeWakeLabel?: string | null;
 }) {
   const status = props.status ?? resolveSidebarThreadStatus(props.thread);
@@ -21,9 +26,15 @@ export function SidebarThreadTime(props: {
       ? resolveThreadWorkingStartedAt({ ...props.thread, waiting: status === "waiting" })
       : null;
   const duration = startedAt ? (
-    <AgentElapsed agent={{ status: "running", startedAt, completedAt: null }} />
+    <AgentElapsed
+      compact={props.compact ?? false}
+      agent={{ status: "running", startedAt, completedAt: null }}
+    />
   ) : (
-    formatStoppedThreadDuration(props.thread)
+    formatStoppedThreadDuration(
+      props.thread,
+      props.compact ? formatCompactElapsedSeconds : formatElapsedSeconds,
+    )
   );
   if (duration === null) return null;
   const age = formatRelativeTimeLabel(

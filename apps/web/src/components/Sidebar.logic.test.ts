@@ -1,3 +1,4 @@
+import { formatCompactElapsedSeconds } from "../timestampFormat";
 import { RuntimeRequestId } from "@t3tools/contracts";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
@@ -2400,6 +2401,14 @@ describe("formatStoppedThreadDuration", () => {
     expect(formatStoppedThreadDuration(presentThreadShell(localEnvironmentId, base))).toBe(
       "01m 05s",
     );
+  });
+
+  it("uses the compact formatter for a stopped column row", () => {
+    const thread = presentThreadShell(localEnvironmentId, {
+      ...base,
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-09-21T13:30:00.000Z"),
+    });
+    expect(formatStoppedThreadDuration(thread, formatCompactElapsedSeconds)).toBe("1.5h");
   });
 
   it.each([

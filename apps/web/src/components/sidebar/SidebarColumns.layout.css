@@ -13,7 +13,7 @@
   --sidebar-usage-width: 2rem;
   container: sidebar-columns / inline-size;
   min-width: 0;
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
 }
 @utility sidebar-thread-columns {
   grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(

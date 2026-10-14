@@ -3,17 +3,9 @@ import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
 import { useEffect, useRef } from "react";
 
-import { formatElapsedSeconds } from "../../timestampFormat";
+import { formatCompactElapsedSeconds, formatElapsedSeconds } from "../../timestampFormat";
 
-/** Short form for tight rows: "45s", "12m", "1.5h", "14h". Rounds down. */
-export function formatCompactElapsedSeconds(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.floor(totalSeconds));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  if (minutes >= 600) return `${Math.floor(minutes / 60)}h`;
-  return `${Math.floor(minutes / 6) / 10}h`;
-}
+export { formatCompactElapsedSeconds } from "../../timestampFormat";
 
 /**
  * Elapsed time for the current activation. Live agents self-tick via DOM

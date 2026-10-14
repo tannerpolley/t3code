@@ -1139,7 +1139,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
       {props.isProjectExpanded ? (
         <ul
           className={cn(
-            "sidebar-columns-container",
+            codexStyle && "sidebar-columns-container",
             codexStyle ? "ps-6" : "ms-5 border-sidebar-border/60 border-s ps-2",
           )}
         >
@@ -1245,8 +1245,9 @@ const SidebarProjectThreadRow = memo(
           aria-current={active ? "page" : undefined}
           aria-label={`${props.thread.title}, ${status}`}
           className={cn(
-            "group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors",
+            "group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
             PROJECTS_WORK_ROW_HEIGHT,
+            props.codexStyle ? "text-xs" : "text-sm",
             active
               ? "bg-sidebar-row-active text-sidebar-foreground"
               : selected
@@ -1283,7 +1284,7 @@ const SidebarProjectThreadRow = memo(
               )}
               name={props.thread.title}
               count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
-              time={<SidebarThreadTime thread={props.thread} status={status} />}
+              time={<SidebarThreadTime compact thread={props.thread} status={status} />}
               status={<ThreadStatusMark status={statusMark} />}
               usage={<SidebarTokenUsage summary={props.thread.source.usageSummary} />}
             />

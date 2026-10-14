@@ -17,10 +17,11 @@ export const sidebarColumnLayout = {
   rowPaddingRem: 1,
   indentRem: 0.75,
   titleCh: 10,
+  titleFontRem: 0.75,
 } as const;
 
 export function generateSidebarColumnLayoutCss() {
-  const { tracks, gapPx, indentRem } = sidebarColumnLayout;
+  const { tracks, gapPx, indentRem, titleFontRem } = sidebarColumnLayout;
   const entries = Object.entries(tracks);
   const template = (hidden: ReadonlySet<string>) =>
     entries
@@ -37,7 +38,7 @@ export function generateSidebarColumnLayoutCss() {
     .map(([name, width]) => `  --sidebar-${name}-width: ${width}rem;`)
     .join(
       "\n",
-    )}\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: 0.6875rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template(full)};\n  column-gap: ${gapPx}px;\n}\n`;
+    )}\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template(full)};\n  column-gap: ${gapPx}px;\n}\n`;
   const hidden = new Set<string>();
   for (const column of ["usage", "effort", "model"]) {
     const boundary = threshold(hidden);

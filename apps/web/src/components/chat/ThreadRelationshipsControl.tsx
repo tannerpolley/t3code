@@ -1,3 +1,4 @@
+import { cn } from "../../lib/utils";
 import {
   SidebarCaretToggle,
   SidebarThreadColumns,
@@ -917,7 +918,10 @@ export function ThreadRelationshipsPanel(props: {
                       />
                     );
                   return (
-                    <li key={threadId} className="sidebar-columns-container group rounded-lg">
+                    <li
+                      key={threadId}
+                      className={cn(redesign && "sidebar-columns-container", "group rounded-lg")}
+                    >
                       <div className="relative flex h-8 items-center">
                         <div className="relative flex min-w-0 flex-1 items-center">
                           {isMergeTarget ? (

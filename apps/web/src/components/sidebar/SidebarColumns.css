@@ -6,7 +6,7 @@
   align-items: center;
   box-sizing: border-box;
   padding-inline-start: calc(var(--sidebar-thread-depth) * var(--sidebar-thread-step, 1rem));
-  font-size: 0.6875rem;
+  font-size: inherit;
   font-weight: normal;
 }
 @utility sidebar-caret-toggle {
@@ -24,9 +24,11 @@
   min-width: 0;
 }
 @utility sidebar-thread-model {
+  font-size: 0.6875rem;
   @apply min-w-0 truncate;
 }
 @utility sidebar-thread-effort {
+  font-size: 0.6875rem;
   @apply min-w-0 truncate;
 }
 @utility sidebar-thread-name {
@@ -34,12 +36,14 @@
   font-size: inherit;
 }
 @utility sidebar-thread-time {
+  font-size: 0.6875rem;
   white-space: nowrap;
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
 @utility sidebar-thread-usage {
+  font-size: 0.6875rem;
   white-space: nowrap;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -47,6 +51,7 @@
 }
 
 @utility sidebar-thread-count {
+  font-size: 0.6875rem;
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
