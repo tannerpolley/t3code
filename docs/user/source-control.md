@@ -327,6 +327,25 @@ that section, pick **Issues** (shortcut `I`) from the empty right panel or its *
 same grouping and filters, and an issue you select opens in a tab next to it. **Show all
 repositories** widens it to every repository you can read.
 
+### Cross-project issue inbox
+
+A repository with a repository orchestrator gets an inbox of outside issue activity. About every
+two minutes T3 records new issues, comments, edits, closes, labels and milestone changes written
+by another project's agents or by you on GitHub. Its own agents' writes and bots are left out.
+New external issues get the `external` and `priority: high` labels, plus `from:<project>` when
+another project opened them. T3 labels each issue once, so a label you remove stays removed.
+
+The orchestrator reads unread events in one line at the start of its next turn. Untagged events
+wait for that turn and never start one. Tagged events also wake an idle orchestrator with a short
+digest, at most once every 15 minutes, queued behind a running turn. An event is tagged when the
+issue has the `cross-project` label, the text mentions `@orchestrator`, or another project's agent
+wrote it.
+
+The orchestrator's sidebar row shows its unread count. Open the repository on the **Issues** page
+for its **Inbox**, high-priority events first, with links and **Mark read**. Agents read the inbox
+with the `t3_issue_inbox` tool, and write to another project's issues with `t3_issue_post`, which
+marks and labels the write so that repository's orchestrator is notified.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
