@@ -11,6 +11,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { fileBasename } from "@t3tools/shared/path";
 import {
   ChevronDownIcon,
   FolderGit2Icon,
@@ -55,6 +56,7 @@ import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LABEL_CLASS,
   THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
 } from "./chat/threadDetailsPanelStyles";
 import { ComposerControl } from "./chat/ComposerControl";
@@ -265,12 +267,27 @@ const RunContextSelector = memo(function RunContextSelector({
   ) : (
     workspaceIcon
   );
+  const label =
+    autoEnvironmentLabel ??
+    (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel);
+  // The panel also names the folder the thread works in; the label before it truncates first.
+  const folderName = isPanel && workspacePath ? fileBasename(workspacePath) : null;
   const triggerContent = (
     <>
       {icon}
       <ComposerContextLabel displayMode={displayMode}>
-        {autoEnvironmentLabel ??
-          (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
+        {folderName === null ? (
+          label
+        ) : (
+          <span className="flex min-w-0">
+            <span className={cn("min-w-0 shrink-1000 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+              {label}
+            </span>
+            <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+              {`\u00a0· ${folderName}`}
+            </span>
+          </span>
+        )}
       </ComposerContextLabel>
     </>
   );

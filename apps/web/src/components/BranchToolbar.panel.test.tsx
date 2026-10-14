@@ -72,7 +72,8 @@ it("keeps machine choices usable when the combined row's workspace is locked", a
       );
     });
     const trigger = container.querySelector("button")!;
-    expect(trigger.textContent).toBe("local");
+    // The machine name, then the folder the thread works in.
+    expect(trigger.textContent).toBe("local\u00a0· worktree");
     expect(container.querySelectorAll("button")).toHaveLength(1);
     await act(async () => {
       trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, ctrlKey: true }));
