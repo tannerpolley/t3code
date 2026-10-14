@@ -812,9 +812,7 @@ export function ThreadRelationshipsPanel(props: {
                       }
                       trailingClassName={trailingVisibilityClass}
                       time={
-                        elapsedAgent && !failed ? (
-                          <AgentElapsed agent={elapsedAgent} compact />
-                        ) : undefined
+                        elapsedAgent && !failed ? <AgentElapsed agent={elapsedAgent} /> : undefined
                       }
                       status={<ThreadStatusMark status={lineageStatusMark(rowStatus)} />}
                       usage={<SidebarTokenUsage summary={node?.thread?.usageSummary} />}

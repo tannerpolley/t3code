@@ -1362,12 +1362,11 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
 
 export function formatStoppedThreadDuration(
   thread: Pick<SidebarThreadSummary, "latestRun" | "source">,
-  format = formatElapsedSeconds,
 ): string | null {
   // Older shells synthesize completedAt from updatedAt; that is age, not a known finish.
   if (!thread.latestRun || thread.source.latestRunCompletedAt == null) return null;
   const elapsedMs = deriveSubagentElapsedMs({ ...thread.latestRun, status: "completed" }, 0);
-  return elapsedMs === null ? null : format(elapsedMs / 1000);
+  return elapsedMs === null ? null : formatElapsedSeconds(elapsedMs / 1000);
 }
 
 export function resolveThreadStatusPill(input: {

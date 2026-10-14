@@ -10,7 +10,7 @@
   --sidebar-model-width: 3rem;
   --sidebar-effort-width: 2.5rem;
   --sidebar-count-width: 1rem;
-  --sidebar-time-width: 2rem;
+  --sidebar-time-width: 4.875rem;
   --sidebar-work-width: 0.875rem;
   container: sidebar-columns / inline-size;
   min-width: 0;
@@ -27,7 +27,7 @@
     ) var(--sidebar-work-width);
   column-gap: 3px;
 }
-@container sidebar-columns (width < calc(15.8125rem + 33px + 10ch)) {
+@container sidebar-columns (width < calc(18.6875rem + 33px + 10ch)) {
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-bar-width) calc(
         var(--sidebar-caret-width) +
@@ -46,7 +46,7 @@
     --sidebar-thread-lead: calc(var(--sidebar-bar-width) + 3px);
   }
 }
-@container sidebar-columns (width < calc(13.8125rem + 30px + 10ch)) {
+@container sidebar-columns (width < calc(16.6875rem + 30px + 10ch)) {
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-bar-width) calc(
         var(--sidebar-caret-width) +
@@ -61,7 +61,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(11.3125rem + 27px + 10ch)) {
+@container sidebar-columns (width < calc(14.1875rem + 27px + 10ch)) {
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-bar-width) calc(
         var(--sidebar-caret-width) +

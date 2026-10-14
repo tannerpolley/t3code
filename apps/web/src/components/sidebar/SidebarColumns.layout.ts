@@ -11,7 +11,7 @@ export const sidebarColumnLayout = {
     effort: 2.5,
     name: 0,
     count: 1,
-    time: 2,
+    time: 4.875,
     work: 0.875,
   },
   gapPx: 3,

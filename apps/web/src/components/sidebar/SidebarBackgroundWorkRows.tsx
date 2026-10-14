@@ -176,19 +176,16 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
         const time =
           row.kind === "subagent" && row.child ? (
             <SidebarThreadTime
-              compact={props.columns ?? false}
               thread={row.child}
               {...(row.status === undefined ? {} : { status: row.status })}
             />
           ) : row.startedAt ? (
             row.kind === "subagent" ? (
-              elapsed(row.startedAt, props.columns)
-            ) : (
-              <BackgroundShellElapsed
-                compact={props.columns ?? false}
-                startedAt={row.startedAt}
-                commandKind={row.commandKind}
+              <AgentElapsed
+                agent={{ status: "running", startedAt: row.startedAt, completedAt: null }}
               />
+            ) : (
+              <BackgroundShellElapsed startedAt={row.startedAt} commandKind={row.commandKind} />
             )
           ) : null;
         const content = props.columns ? (
@@ -367,15 +364,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
         );
       })}
     </ul>
-  );
-}
-
-function elapsed(startedAt: string, compact: boolean | undefined) {
-  return (
-    <AgentElapsed
-      compact={compact ?? false}
-      agent={{ status: "running", startedAt, completedAt: null }}
-    />
   );
 }
 

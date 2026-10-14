@@ -104,7 +104,8 @@ branch, such as **aurora-web · main**. A branch icon marks a worktree, such as
 environment's name and the folder. A child's question or approval also appears on
 the parent.
 An amber spinner means the thread is waiting on its background work. Times show
-how long the work has run, rather than time since the last message.
+how long the work has run, such as **05m 09s** or **01h 05m 09s**, rather than time
+since the last message.
 
 ## Pin and reorder threads
 

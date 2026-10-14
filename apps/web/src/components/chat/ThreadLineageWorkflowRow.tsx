@@ -128,7 +128,7 @@ function WorkflowMemberRow({
                 </span>
               </span>
             }
-            time={member.startedAt ? <AgentElapsed compact agent={member} /> : undefined}
+            time={member.startedAt ? <AgentElapsed agent={member} /> : undefined}
             status={<ThreadStatusMark status={lineageStatusMark(member.status)} />}
           />
         </TooltipTrigger>

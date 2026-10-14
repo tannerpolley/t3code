@@ -160,7 +160,6 @@ export function BackgroundProcessOutputView(props: BackgroundProcessTarget) {
  */
 export function BackgroundShellElapsed(props: {
   readonly startedAt: string;
-  readonly compact?: boolean;
   readonly commandKind?: string | undefined;
 }) {
   // Rows are keyed by task, so a shell's start never changes under this state.
@@ -171,10 +170,7 @@ export function BackgroundShellElapsed(props: {
     return () => clearTimeout(id);
   }, [props.startedAt, props.commandKind, stuck]);
   const elapsed = (
-    <AgentElapsed
-      compact={props.compact ?? false}
-      agent={{ status: "running", startedAt: props.startedAt, completedAt: null }}
-    />
+    <AgentElapsed agent={{ status: "running", startedAt: props.startedAt, completedAt: null }} />
   );
   if (!stuck || props.commandKind === "server") return elapsed;
   return (

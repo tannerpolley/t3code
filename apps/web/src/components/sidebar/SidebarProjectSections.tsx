@@ -1277,7 +1277,7 @@ const SidebarProjectThreadRow = memo(
               )}
               name={sidebarThreadName(props.thread.title, props.thread.source.role, roleLabels)}
               count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
-              time={<SidebarThreadTime compact thread={props.thread} status={status} />}
+              time={<SidebarThreadTime thread={props.thread} status={status} />}
               status={<ThreadStatusMark status={statusMark} />}
               usage={<SidebarTokenUsage summary={props.thread.source.usageSummary} />}
             />
