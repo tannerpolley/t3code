@@ -332,9 +332,10 @@ defaults; this replaces your customizations.
 Threads that start in a worktree, or move into one, are Implementors. Other
 threads you create have no role until they delegate work, when they become
 Orchestrators. Forks keep their source's role. A native provider subagent takes
-its role from its agent type: worker or builder types are Implementors, reviewer
-types Reviewers, explorer or researcher types Investigators, and tester or
-checker types Checkers. Role icons appear in thread rows and the chat header.
+its role from its agent type: Codex's manager is an Orchestrator; the default
+agents and worker or builder types are Implementors; reviewer types are
+Reviewers; explorer or researcher types are Investigators; and tester or checker
+types are Checkers. Role icons appear in thread rows and the chat header.
 
 Native provider subagents have a bot icon and run on their own. They cannot take
 messages; use **Open parent** to direct them. App-owned child threads accept
