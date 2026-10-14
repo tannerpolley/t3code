@@ -13,11 +13,9 @@ const ch = (1337 / 2048) * sidebarColumnLayout.titleFontRem * 16;
 const optionalColumns = (sidebarRem: number) => {
   const container = sidebarRem * 16 - 40;
   const hidden = new Set<string>();
-  for (const columns of sidebarColumnLayout.dropOrder) {
+  for (const column of sidebarColumnLayout.dropOrder) {
     const budget = sidebarColumnBudget(hidden);
-    if (container < budget.rem * 16 + budget.px + budget.ch * ch) {
-      for (const column of columns) hidden.add(column);
-    }
+    if (container < budget.rem * 16 + budget.px + budget.ch * ch) hidden.add(column);
   }
   return ["model", "effort", "usage"].filter((column) => !hidden.has(column));
 };
@@ -77,25 +75,25 @@ const ADVANCES = new Map(
     x: 1512,
   }),
 );
-/** A label's width at the 11px size of the model, effort and time columns. */
-const widthPx = (label: string) =>
+/** A label's width at a font size in px. */
+const widthPx = (label: string, sizePx: number) =>
   ([...label].reduce((total, char) => total + (/\d/.test(char) ? 1391 : ADVANCES.get(char)!), 0) /
     2048) *
-  11;
-const fits = (labels: readonly string[], track: keyof typeof sidebarColumnLayout.tracks) => {
-  for (const label of labels) {
-    expect(widthPx(label), label).toBeLessThanOrEqual(sidebarColumnLayout.tracks[track] * 16);
-  }
+  sizePx;
+const fits = (labels: readonly string[], sizePx: number, trackPx: number) => {
+  for (const label of labels) expect(widthPx(label, sizePx), label).toBeLessThanOrEqual(trackPx);
 };
+const { tracks, modelPartsCh } = sidebarColumnLayout;
 
 it("fits every elapsed label up to 99h 59m 59s inside the time track", () => {
   // Hours past 99 grow a digit and may spill; that is over four days on one turn.
   const samples = [0, 9, 59, 60, 309, 59 * 60 + 59, 3600, 3909, 10 * 3600, 99 * 3600 + 3599];
-  fits(samples.map(formatElapsedSeconds), "time");
+  fits(samples.map(formatElapsedSeconds), 10, tracks.time * 16);
 });
 
 it("fits six-character model names, their versions and every effort label", () => {
-  fits(["Opus", "Sonnet", "Haiku", "Sol", "Luna", "Astra", "GPT"], "model");
-  fits(["5.5", "6.1", "8.8"], "version");
-  fits(["Low", "Med", "High", "XHigh", "Max"], "effort");
+  expect(modelPartsCh.name + modelPartsCh.version).toBe(tracks.model.ch);
+  fits(["Opus", "Sonnet", "Haiku", "Sol", "Luna", "Astra", "GPT"], 11, modelPartsCh.name * ch);
+  fits(["5.5", "6.1", "8.8"], 11, modelPartsCh.version * ch);
+  fits(["Low", "Med", "High", "XHigh", "Max"], 11, tracks.effort * 16);
 });
