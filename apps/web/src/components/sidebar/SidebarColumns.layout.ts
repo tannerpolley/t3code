@@ -13,7 +13,7 @@ export const sidebarColumnLayout = {
     time: 2,
     work: 0.875,
   },
-  gapPx: 4,
+  gapPx: 2,
   rowPaddingRem: 1,
   indentRem: 0.75,
   titleCh: 10,
