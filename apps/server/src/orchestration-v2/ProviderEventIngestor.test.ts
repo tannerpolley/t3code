@@ -1945,18 +1945,32 @@ layer("ProviderEventIngestorV2", (it) => {
           assert.deepEqual(thread, { ...saved, ...metadata, updatedAt: thread.updatedAt });
         }
         const latest = {
-          ...offered,
           title: "Review checkout",
-          modelSelection: { ...modelSelection, model: "gpt-6.1-sol" },
+          modelSelection: {
+            ...modelSelection,
+            model: "gpt-6.1-sol",
+            options: [{ id: "reasoningEffort", value: "low" }],
+          },
         };
-        assert.deepEqual(yield* ingest(latest), []);
-        // A role the provider reports later fills the missing role and never replaces it.
         assert.deepEqual(
-          (yield* ingest({ ...latest, role: "implementor" })).map((stored) => stored.event.type),
+          (yield* ingest({ ...offered, ...latest })).map((stored) => stored.event.type),
           ["thread.metadata-updated"],
         );
-        assert.deepEqual(yield* ingest({ ...latest, role: "reviewer" }), []);
-        assert.equal((yield* projectionStore.getThread(childThreadId)).role, "implementor");
+        // A role the provider reports later arrives on its original snapshot. It
+        // fills the missing role, keeps the newer title and model, and never
+        // replaces a role.
+        assert.deepEqual(
+          (yield* ingest({ ...offered, role: "implementor" })).map((stored) => stored.event.type),
+          ["thread.metadata-updated"],
+        );
+        assert.deepEqual(yield* ingest({ ...offered, ...latest, role: "reviewer" }), []);
+        const thread = yield* projectionStore.getThread(childThreadId);
+        assert.deepEqual(thread, {
+          ...saved,
+          ...latest,
+          role: "implementor",
+          updatedAt: thread.updatedAt,
+        });
       }),
   );
 

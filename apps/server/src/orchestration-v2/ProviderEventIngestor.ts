@@ -546,13 +546,14 @@ export const layer: Layer.Layer<
               }),
             );
             // A provider may learn a native subagent's role after creating its
-            // thread. It fills a missing role and never replaces one.
-            const role = existing?.role ?? offered.role;
+            // thread. That late offer only fills the missing role: its snapshot
+            // can predate newer title or model updates. A role is never replaced.
+            const lateRole = existing?.role === undefined ? offered.role : undefined;
             if (
               existing !== null &&
+              lateRole === undefined &&
               existing.title === offered.title &&
-              modelSelectionsEqual(existing.modelSelection, offered.modelSelection) &&
-              existing.role === role
+              modelSelectionsEqual(existing.modelSelection, offered.modelSelection)
             )
               return [];
             const now = yield* DateTime.now;
@@ -563,13 +564,14 @@ export const layer: Layer.Layer<
                 payload:
                   existing === null
                     ? offered
-                    : {
-                        ...existing,
-                        title: offered.title,
-                        modelSelection: offered.modelSelection,
-                        ...(role === undefined ? {} : { role }),
-                        updatedAt: now,
-                      },
+                    : lateRole !== undefined
+                      ? { ...existing, role: lateRole, updatedAt: now }
+                      : {
+                          ...existing,
+                          title: offered.title,
+                          modelSelection: offered.modelSelection,
+                          updatedAt: now,
+                        },
                 occurredAt: now,
               }),
             ];
