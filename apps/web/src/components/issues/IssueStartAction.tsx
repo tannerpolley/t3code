@@ -11,7 +11,7 @@ import {
 import { issueWorkPresentation } from "@t3tools/client-runtime/state/issue-work";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { BotIcon } from "lucide-react";
+import { PlayIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useEnvironmentSettings } from "~/hooks/useSettings";
@@ -249,7 +249,7 @@ function IssueStartControls({
           variant="outline"
           aria-expanded={expanded}
         >
-          <BotIcon aria-hidden />
+          <PlayIcon aria-hidden />
           Start agent
         </Button>
       </div>
