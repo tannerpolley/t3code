@@ -2347,6 +2347,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               )}
             />
           ) : null}
+          <ThreadLocationIcon thread={thread} />
+          <ThreadRoleIcon thread={thread.source} />
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="flex min-w-0 items-center gap-2.5">
               <span

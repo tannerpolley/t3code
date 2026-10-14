@@ -221,7 +221,7 @@ type DelegateTaskInput = {
     model?: string;
   };
   title?: string;
-  role?: "implementation" | "research" | "review" | "design" | "test" | "general";
+  role?: "orchestrator" | "implementor" | "reviewer" | "investigator" | "checker";
   mode?: "async" | "wait";
   timeoutMs?: number;
   clientRequestId?: string;
@@ -258,8 +258,14 @@ own worktree, for children that edit code in parallel: its first run starts in
 `preparing`, and the same preparation `t3_thread_launch` uses creates a branch
 from the parent's branch (or, for a thread in the project root, the branch its
 checkout is on; local commits only), binds the child, runs the project's setup
-script, and releases the run. `implementation` and `test` roles default to
-`worktree`; the rest default to `inherit`. Without a branch, a defaulted
+script, and releases the run. Only `implementor` defaults to `worktree`;
+Orchestrator, Reviewer, Investigator and Checker inherit the caller's checkout.
+Checker reviews the builder's existing checkout. Explicit `workspace` overrides
+the role default. Legacy role names remain accepted: `implementation` maps to
+Implementor, `research`/`design` to Investigator, `review` to Reviewer, and `test`
+to Checker. Legacy `general` maps to Implementor but keeps its inherited
+workspace default. Implementor has Fast and Thorough model profiles; pass a
+profile's Target JSON as `target` and `implementor` as `role`. Without a branch, a defaulted
 worktree falls back to `inherit` with a `workspaceNote`, and an explicit one
 fails. The branch name derives from the title and the delegate command id, so a
 retry with the same `clientRequestId` keeps the accepted decision. A preparation

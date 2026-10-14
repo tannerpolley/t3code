@@ -1,6 +1,9 @@
-import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { FolderGit2Icon, FolderIcon } from "lucide-react";
-import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  useEnvironmentIdentities,
+  useEnvironmentMachines,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import type { SidebarThreadSummary } from "../types";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { threadLocation } from "./ThreadLocationIcon.logic";
@@ -10,16 +13,28 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 export function ThreadLocationIcon({
   thread,
 }: {
-  readonly thread: Pick<SidebarThreadSummary, "environmentId" | "worktreePath">;
+  readonly thread: Pick<SidebarThreadSummary, "environmentId" | "worktreePath"> & {
+    readonly source?: SidebarThreadSummary["source"];
+  };
 }) {
-  const environment = useEnvironment(thread.environmentId);
+  const identities = useEnvironmentIdentities();
+  const machines = useEnvironmentMachines();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const machine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
+  const machine = machines.get(thread.environmentId) ?? "desktop";
+  const environmentName = identities.find(
+    (entry) => entry.environmentId === thread.environmentId,
+  )?.label;
   const remote = thread.environmentId !== primaryEnvironmentId || machine === "cloud";
   const location = threadLocation({
     remote,
-    environmentName: environment?.label ?? (remote ? "Remote environment" : "Local checkout"),
+    machine,
+    environmentName: environmentName ?? (remote ? "Remote environment" : "Local checkout"),
     worktreePath: thread.worktreePath,
+    // App-owned worktree children prepare before their path can be bound.
+    preparingWorktree:
+      thread.source?.status === "preparing" &&
+      thread.source.lineage.relationshipToParent === "subagent" &&
+      thread.source.branch !== null,
   });
   const icon =
     location.kind === "environment" ? (

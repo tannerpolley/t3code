@@ -1167,9 +1167,10 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
-export const MAX_MODEL_ROLES = 26;
+const MAX_LEGACY_CUSTOM_MODEL_ROLES = 26;
+export const MAX_MODEL_ROLES = MAX_LEGACY_CUSTOM_MODEL_ROLES + 6;
 // Legacy lists can converge on one profile without discarding any saved choices.
-export const MAX_MODEL_ROLE_TARGETS = 80;
+export const MAX_MODEL_ROLE_TARGETS = 12;
 export const MAX_MODEL_ROLE_NAME_LENGTH = 60;
 export const MAX_MODEL_ROLE_DESCRIPTION_LENGTH = 200;
 export const MAX_MODEL_ROLE_MODEL_LENGTH = 100;
@@ -1228,7 +1229,15 @@ const LegacyModelRole = Schema.Struct({
 );
 // Try the current shape first so encoding never writes the legacy `target` key.
 const ModelRoleSetting = Schema.Union([ModelRole, LegacyModelRole]);
-const SavedModelRoles = Schema.Array(ModelRoleSetting).check(Schema.isMaxLength(MAX_MODEL_ROLES));
+const SavedModelRoles = Schema.Array(ModelRoleSetting).check(
+  Schema.isMaxLength(MAX_MODEL_ROLES),
+  Schema.makeFilter(
+    (roles) =>
+      roles.filter((entry) => entry.role === undefined && resolveThreadRole(entry.id) === undefined)
+        .length <= MAX_LEGACY_CUSTOM_MODEL_ROLES,
+    { expected: "at most 26 legacy custom roles, leaving room for the standard profiles" },
+  ),
+);
 export const ModelRoles = SavedModelRoles.pipe(
   Schema.decodeTo(
     Schema.Array(Schema.toType(ModelRole)),
@@ -1347,12 +1356,26 @@ function migrateModelRoles(saved: ReadonlyArray<ModelRole>): ReadonlyArray<Model
           }),
       ...(profile === undefined ? {} : { profile }),
     };
-    if (previous === -1) migrated.push(normalized);
-    else
-      migrated[previous] = {
-        ...migrated[previous]!,
-        targets: [...migrated[previous]!.targets, ...entry.targets],
-      };
+    if (previous === -1) {
+      migrated.push(normalized);
+      continue;
+    }
+    const choices = [...migrated[previous]!.targets, ...entry.targets];
+    const targets = choices.filter(
+      (target, index) =>
+        choices.findIndex(
+          (candidate) =>
+            candidate.providerInstanceId === target.providerInstanceId &&
+            candidate.model === target.model &&
+            (candidate.options?.length ?? 0) === (target.options?.length ?? 0) &&
+            (candidate.options ?? []).every((option) =>
+              (target.options ?? []).some(
+                (other) => other.id === option.id && other.value === option.value,
+              ),
+            ),
+        ) === index,
+    );
+    migrated[previous] = { ...migrated[previous]!, targets: [targets[0]!, ...targets.slice(1)] };
   }
   for (const entry of DEFAULT_MODEL_ROLES) {
     if (!migrated.some((candidate) => candidate.id === entry.id)) migrated.push(entry);

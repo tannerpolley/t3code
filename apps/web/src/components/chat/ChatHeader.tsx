@@ -1,4 +1,5 @@
-import { useThreadShell } from "../../state/entities";
+import { useAtomValue } from "@effect/atom-react";
+import { environmentThreadShells } from "../../state/threads";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import {
   AuthOrchestrationOperateScope,
@@ -94,7 +95,6 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
 }: ChatHeaderProps) {
-  const thread = useThreadShell(scopeThreadRef(activeThreadEnvironmentId, activeThreadId));
   const activeProjectName = activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -431,7 +431,10 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 }
               >
-                {thread ? <ThreadRoleIcon thread={thread.source} /> : null}
+                <HeaderThreadRoleIcon
+                  environmentId={activeThreadEnvironmentId}
+                  threadId={activeThreadId}
+                />
                 <h2 className="min-w-0">
                   <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
                 </h2>
@@ -453,7 +456,6 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 }
               >
-                {thread ? <ThreadRoleIcon thread={thread.source} /> : null}
                 <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
               </TooltipTrigger>
               <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
@@ -464,3 +466,29 @@ export const ChatHeader = memo(function ChatHeader({
     </div>
   );
 });
+
+/** Turn/status updates leave the title and the role mark unsubscribed from full thread records. */
+function HeaderThreadRoleIcon({
+  environmentId,
+  threadId,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+}) {
+  const atom = environmentThreadShells.threadShellAtom(scopeThreadRef(environmentId, threadId));
+  const role = useAtomValue(atom, (thread) => thread?.source.role);
+  const creationSource = useAtomValue(atom, (thread) => thread?.source.creationSource);
+  const relationshipToParent = useAtomValue(
+    atom,
+    (thread) => thread?.source.lineage.relationshipToParent,
+  );
+  return creationSource === undefined ? null : (
+    <ThreadRoleIcon
+      thread={{
+        role,
+        creationSource,
+        lineage: { relationshipToParent: relationshipToParent ?? null },
+      }}
+    />
+  );
+}

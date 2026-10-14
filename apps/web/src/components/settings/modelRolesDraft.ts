@@ -3,7 +3,7 @@ import * as Arr from "effect/Array";
 import * as Equal from "effect/Equal";
 
 export type ModelRoleEdit =
-  | { readonly type: "update"; readonly id: string; readonly patch: Partial<Omit<ModelRole, "id">> }
+  | { readonly type: "update"; readonly id: string; readonly patch: Pick<ModelRole, "description"> }
   | {
       readonly type: "options";
       readonly id: string;
@@ -23,7 +23,6 @@ export type ModelRoleEdit =
       readonly index: number;
     }
   | { readonly type: "move"; readonly id: string; readonly offset: -1 | 1 }
-  | { readonly type: "add"; readonly role: ModelRole }
   | { readonly type: "remove"; readonly id: string }
   | { readonly type: "replace"; readonly roles: ReadonlyArray<ModelRole> };
 
@@ -81,10 +80,8 @@ function applyModelRoleEdit(
       next.splice(to, 0, ...next.splice(from, 1));
       return next;
     }
-    case "add":
-      return [...roles, edit.role];
     case "remove":
-      return roles.filter((role) => role.id !== edit.id);
+      return roles.filter((role) => role.id !== edit.id || role.role !== undefined);
     case "replace":
       return edit.roles;
   }

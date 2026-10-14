@@ -36,6 +36,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { threadDispatchLockKey } from "./IssueWorkDispatch.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
@@ -576,7 +577,7 @@ export const layer: Layer.Layer<
                   ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
                 }),
               );
-              if (parent !== null && parent.role !== "orchestrator") {
+              if (parent !== null && parent.role === undefined) {
                 events.push(
                   yield* makeDomainEvent(input, {
                     type: "thread.metadata-updated",
@@ -846,11 +847,19 @@ export const layer: Layer.Layer<
             const thread = input.event.appThread;
             const childLocked = threadCommands.withLock(thread.id, effect);
             const parentId = thread.lineage.parentThreadId;
-            return isProviderNativeSubagentThread(thread) &&
-              parentId !== null &&
-              parentId !== thread.id
-              ? threadCommands.withLock(parentId, childLocked)
-              : childLocked;
+            if (
+              !isProviderNativeSubagentThread(thread) ||
+              parentId === null ||
+              parentId === thread.id
+            )
+              return childLocked;
+            return Effect.gen(function* () {
+              const parent = yield* projections.getThreadShell(parentId).pipe(Effect.orDie);
+              const key = threadDispatchLockKey(parentId, parent);
+              return yield* key === thread.id
+                ? childLocked
+                : threadCommands.withLock(key, childLocked);
+            });
           },
         ),
     });

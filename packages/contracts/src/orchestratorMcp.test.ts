@@ -1,4 +1,4 @@
-import { LEGACY_THREAD_ROLES, THREAD_ROLES, resolveThreadRole } from "./threadRole.ts";
+import { resolveThreadRole } from "./threadRole.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
@@ -175,8 +175,25 @@ describe("delegation roles", () => {
       options: [{ id: "reasoningEffort", value: "high" }],
     };
     for (const [input, expected] of [
-      ...THREAD_ROLES.map((role) => [role, role]),
-      ...Object.entries(LEGACY_THREAD_ROLES),
+      ["orchestrator", "orchestrator"],
+      ["implementor", "implementor"],
+      ["reviewer", "reviewer"],
+      ["investigator", "investigator"],
+      ["checker", "checker"],
+      ["implementation", "implementor"],
+      ["research", "investigator"],
+      ["review", "reviewer"],
+      ["design", "investigator"],
+      ["test", "checker"],
+      ["general", "implementor"],
+      ["fast-builder", "implementor"],
+      ["thorough-builder", "implementor"],
+      ["bounded-worker", "implementor"],
+      ["quick-claude", "implementor"],
+      ["evidence-gatherer", "investigator"],
+      ["strong-reviewer", "reviewer"],
+      ["implementor-fast", "implementor"],
+      ["implementor-thorough", "implementor"],
     ]) {
       const decoded = decode({ task: "Do the work", role: input, target });
       expect(resolveThreadRole(decoded.role!)).toBe(expected);

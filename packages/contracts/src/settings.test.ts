@@ -180,6 +180,54 @@ describe("model roles", () => {
     expect(decodeServerSettings({ modelRoles: single }).modelRoles).toEqual(roles);
   });
 
+  it("deduplicates merged choices while preserving distinct efforts and first-choice order", () => {
+    const target = {
+      providerInstanceId: "codex",
+      model: "gpt-6.1-sol",
+      options: [
+        { id: "reasoningEffort", value: "medium" },
+        { id: "serviceTier", value: "default" },
+      ],
+    };
+    const high = { ...target, options: [{ id: "reasoningEffort", value: "high" }] };
+    const saved = [
+      { id: "fast-builder", name: "Fast", description: "First description", targets: [target] },
+      {
+        id: "bounded-worker",
+        name: "Worker",
+        description: "Other description",
+        targets: [{ ...target, options: target.options.toReversed() }, high],
+      },
+      { id: "quick-claude", name: "Quick", description: "Third description", targets: [target] },
+    ];
+    const decoded = decodeServerSettings({ modelRoles: saved });
+    const fast = decoded.modelRoles.find((entry) => entry.id === "implementor-fast")!;
+    expect(fast.targets).toEqual([target, high]);
+    expect(fast.description).toBe("First description");
+    expect(decodeServerSettings(encodeServerSettings(decoded)).modelRoles).toEqual(
+      decoded.modelRoles,
+    );
+  });
+
+  it("round-trips twelve distinct choices merged into the Fast profile", () => {
+    const saved = ["fast-builder", "bounded-worker", "quick-claude"].map((id, roleIndex) => ({
+      id,
+      name: id,
+      description: "Owner configured",
+      targets: Array.from({ length: 4 }, (_, choiceIndex) => ({
+        providerInstanceId: "codex",
+        model: `owner-${roleIndex}-${choiceIndex}`,
+      })),
+    }));
+    const decoded = decodeServerSettings({ modelRoles: saved });
+    expect(decoded.modelRoles.find((entry) => entry.id === "implementor-fast")!.targets).toEqual(
+      saved.flatMap((entry) => entry.targets),
+    );
+    expect(decodeServerSettings(encodeServerSettings(decoded)).modelRoles).toEqual(
+      decoded.modelRoles,
+    );
+  });
+
   it("keeps saved issue-work profile references usable after the settings migration", () => {
     const decode = Schema.decodeUnknownSync(RepositoryMilestonePlan);
     const mappings = {
@@ -205,18 +253,21 @@ describe("model roles", () => {
     }
   });
 
-  it("preserves a full legacy custom list when filling standard defaults", () => {
-    const custom = Array.from({ length: 20 }, (_, index) => ({
-      ...role,
-      role: undefined,
-      id: `custom-${index}`,
-    }));
-    const decoded = decodeServerSettings({ modelRoles: custom });
-    expect(decoded.modelRoles.slice(0, 20)).toEqual(custom);
-    expect(decodeServerSettings(encodeServerSettings(decoded)).modelRoles).toEqual(
-      decoded.modelRoles,
-    );
-  });
+  it.each([20, 21, 26])(
+    "preserves %i legacy custom roles when filling standard defaults",
+    (count) => {
+      const custom = Array.from({ length: count }, (_, index) => ({
+        ...role,
+        role: undefined,
+        id: `custom-${index}`,
+      }));
+      const decoded = decodeServerSettings({ modelRoles: custom });
+      expect(decoded.modelRoles.slice(0, count)).toEqual(custom);
+      expect(decodeServerSettings(encodeServerSettings(decoded)).modelRoles).toEqual(
+        decoded.modelRoles,
+      );
+    },
+  );
 
   it("bounds the role count and description length", () => {
     const many = Array.from({ length: MAX_MODEL_ROLES + 1 }, (_, index) => ({
@@ -233,7 +284,15 @@ describe("model roles", () => {
 
   it("bounds choices per role while allowing merged legacy lists", () => {
     const withCount = (count: number) => ({
-      modelRoles: [{ ...role, targets: Array.from({ length: count }, () => role.targets[0]) }],
+      modelRoles: [
+        {
+          ...role,
+          targets: Array.from({ length: count }, (_, index) => ({
+            ...role.targets[0],
+            model: `choice-${index}`,
+          })),
+        },
+      ],
     });
     expect(
       decodeServerSettingsPatch(withCount(MAX_MODEL_ROLE_TARGETS)).modelRoles?.[0]?.targets,

@@ -473,7 +473,9 @@ export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
  * take messages; T3 delegate_task children (`creationSource: "mcp"`) can.
  */
 export function isProviderNativeSubagentThread(
-  thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
+  thread: Pick<OrchestrationV2AppThread, "creationSource"> & {
+    readonly lineage: Pick<OrchestrationV2AppThread["lineage"], "relationshipToParent">;
+  },
 ): boolean {
   return thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider";
 }

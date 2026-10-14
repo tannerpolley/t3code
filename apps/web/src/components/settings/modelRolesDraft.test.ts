@@ -7,17 +7,20 @@ const [first, second] = DEFAULT_MODEL_ROLES;
 const server = [first!, second!];
 
 describe("model roles draft", () => {
-  it("keeps a rename when the list is reordered before the server answers", () => {
-    const renamed = editModelRolesDraft(modelRolesDraft(server), {
+  it("keeps a description edit when the list is reordered before the server answers", () => {
+    const described = editModelRolesDraft(modelRolesDraft(server), {
       type: "update",
       id: first!.id,
-      patch: { name: "Planner" },
+      patch: { description: "Plan the work" },
     });
-    const moved = editModelRolesDraft(renamed, { type: "move", id: first!.id, offset: 1 });
-    expect(moved.roles.map((role) => role.name)).toEqual([second!.name, "Planner"]);
+    const moved = editModelRolesDraft(described, { type: "move", id: first!.id, offset: 1 });
+    expect(moved.roles.map((role) => role.description)).toEqual([
+      second!.description,
+      "Plan the work",
+    ]);
 
     // The first save's echo must not roll back the second, still in flight.
-    const echoed = receiveServerModelRoles(moved, renamed.roles);
+    const echoed = receiveServerModelRoles(moved, described.roles);
     expect(echoed.roles).toEqual(moved.roles);
     const settled = receiveServerModelRoles(echoed, moved.roles);
     expect(settled).toEqual(modelRolesDraft(moved.roles));
@@ -95,6 +98,15 @@ describe("model roles draft", () => {
     });
     expect(updated.roles[0]!.targets[1]).not.toHaveProperty("options");
     expect(updated.roles[0]!.targets[0]).toEqual(second!.targets[0]);
+  });
+
+  it("removes legacy custom roles while retaining standard roles", () => {
+    const custom = { ...first!, id: "owner-custom", role: undefined };
+    const draft = modelRolesDraft([first!, custom]);
+    expect(editModelRolesDraft(draft, { type: "remove", id: first!.id }).roles).toEqual(
+      draft.roles,
+    );
+    expect(editModelRolesDraft(draft, { type: "remove", id: custom.id }).roles).toEqual([first!]);
   });
 
   it("takes a list changed elsewhere", () => {

@@ -2710,7 +2710,8 @@ describe("delegate_task workspace", () => {
   it.effect.each([
     { workspace: "worktree" },
     { role: "implementation" },
-    { role: "test" },
+    { role: "implementor" },
+    { role: "checker", workspace: "worktree" },
   ] as const)("prepares an isolated child before its first turn (%j)", (workspaceChoice) =>
     Effect.gen(function* () {
       const setupEntered = yield* Deferred.make<string>();
@@ -2773,6 +2774,11 @@ describe("delegate_task workspace", () => {
     { role: "research" },
     { role: "review" },
     { role: "design" },
+    { role: "test" },
+    { role: "checker" },
+    { role: "reviewer" },
+    { role: "investigator" },
+    { role: "orchestrator" },
     { role: "implementation", workspace: "inherit" },
     { role: "test", workspace: "inherit" },
   ] as const)("keeps a child in the parent's checkout (%j)", (workspaceChoice) => {
@@ -2825,33 +2831,36 @@ describe("delegate_task workspace", () => {
     };
   };
 
-  it.effect("cuts a root thread's implementation child from the branch its checkout is on", () => {
-    const harness = makeHarness({
-      providers: [codexProvider],
-      localStatus: rootCheckoutStatus("main"),
-    });
-    return withDelegatingParent(
-      harness,
-      (service) =>
-        Effect.gen(function* () {
-          const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-          const task = yield* service.delegateTask(scope, {
-            task: "Implement the parser",
-            role: "implementation",
-          });
-          assert.isUndefined(task.workspaceNote);
-          yield* tracker.stream(task.childThreadId).pipe(
-            Stream.filter((snapshot) => snapshot?.phase === "done"),
-            Stream.runHead,
-          );
-          assert.equal(harness.localStatus.mock.calls[0]?.[0]?.cwd, "/repo");
-          const worktree = harness.createWorktree.mock.calls[0]![0];
-          assert.equal(worktree.cwd, "/repo");
-          assert.equal(worktree.refName, "main");
-        }),
-      rootParent,
-    );
-  });
+  it.effect.each(["implementation", "implementor"] as const)(
+    "cuts a root thread's %s child from the branch its checkout is on",
+    (role) => {
+      const harness = makeHarness({
+        providers: [codexProvider],
+        localStatus: rootCheckoutStatus("main"),
+      });
+      return withDelegatingParent(
+        harness,
+        (service) =>
+          Effect.gen(function* () {
+            const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+            const task = yield* service.delegateTask(scope, {
+              task: "Implement the parser",
+              role,
+            });
+            assert.isUndefined(task.workspaceNote);
+            yield* tracker.stream(task.childThreadId).pipe(
+              Stream.filter((snapshot) => snapshot?.phase === "done"),
+              Stream.runHead,
+            );
+            assert.equal(harness.localStatus.mock.calls[0]?.[0]?.cwd, "/repo");
+            const worktree = harness.createWorktree.mock.calls[0]![0];
+            assert.equal(worktree.cwd, "/repo");
+            assert.equal(worktree.refName, "main");
+          }),
+        rootParent,
+      );
+    },
+  );
 
   it.effect("keeps a defaulted child in a detached checkout and says so", () => {
     const harness = makeHarness({

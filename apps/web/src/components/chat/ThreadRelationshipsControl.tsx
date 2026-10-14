@@ -772,7 +772,11 @@ export function ThreadRelationshipsPanel(props: {
                     <>
                       {node?.thread ? (
                         <ThreadLocationIcon
-                          thread={{ ...node.thread, environmentId: props.environmentId }}
+                          thread={{
+                            ...node.thread,
+                            source: node.thread,
+                            environmentId: props.environmentId,
+                          }}
                         />
                       ) : null}
                       {node?.thread ? <ThreadRoleIcon thread={node.thread} /> : null}

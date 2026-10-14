@@ -1,4 +1,9 @@
-import type { IssueWorkRead, ThreadId, ThreadLinkedIssue } from "@t3tools/contracts";
+import type {
+  IssueWorkRead,
+  ThreadId,
+  ThreadLinkedIssue,
+  OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -25,6 +30,14 @@ class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
   },
 ) {}
 
+/** Whole-thread writes to managed descendants serialize with their root's commands. */
+export function threadDispatchLockKey(
+  threadId: ThreadId,
+  shell: OrchestrationV2ThreadShell | null,
+) {
+  return shell?.linkedIssue === undefined ? threadId : shell.lineage.rootThreadId;
+}
+
 /**
  * The orchestrator's thread lock and the issue reads that precede it. Managed
  * issue threads plan under their root thread's lock.
@@ -41,8 +54,8 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
       Effect.gen(function* () {
         const shell = yield* projectionStore.getThreadShell(threadId).pipe(Effect.orDie);
         // Run starts across every managed descendant share the root's planning lock.
-        // Provider updates do not create admissions, and retain their ordinary thread lock.
-        const key = shell?.linkedIssue === undefined ? threadId : shell.lineage.rootThreadId;
+        // Whole-thread provider writes use the same key; ordinary provider updates do not plan admissions.
+        const key = threadDispatchLockKey(threadId, shell);
         // A child's dispatch can nest inside its parent's lock, and both may resolve to
         // the root. The lock is not reentrant, so a held key is not taken again.
         const held = yield* HeldDispatchLocks;

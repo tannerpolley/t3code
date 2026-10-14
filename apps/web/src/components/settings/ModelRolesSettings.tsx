@@ -193,6 +193,16 @@ export function ModelRolesSection() {
                   );
                 })}
                 <div className="flex flex-wrap items-center justify-end gap-1.5">
+                  {role.role === undefined ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => edit({ type: "remove", id: role.id })}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                      Remove role
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="outline"

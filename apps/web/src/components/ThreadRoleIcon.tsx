@@ -26,7 +26,9 @@ const ROLE_ICONS = {
 export function ThreadRoleIcon({
   thread,
 }: {
-  readonly thread: Pick<OrchestrationV2AppThread, "role" | "lineage" | "creationSource">;
+  readonly thread: Pick<OrchestrationV2AppThread, "role" | "creationSource"> & {
+    readonly lineage: Pick<OrchestrationV2AppThread["lineage"], "relationshipToParent">;
+  };
 }) {
   const native = isProviderNativeSubagentThread(thread);
   const child = thread.lineage.relationshipToParent === "subagent" && !native;

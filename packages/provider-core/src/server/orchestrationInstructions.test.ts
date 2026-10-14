@@ -122,13 +122,46 @@ describe("T3 orchestration provider instructions", () => {
     );
   });
 
+  it("shortens an oversized role without cutting its exact target JSON", () => {
+    const role = DEFAULT_MODEL_ROLES[1]!;
+    const first = {
+      ...role.targets[0],
+      options: Array.from({ length: MAX_MODEL_ROLE_OPTIONS }, (_, index) => ({
+        id: `option-${index}`,
+        value: "x".repeat(MAX_MODEL_ROLE_OPTION_LENGTH),
+      })),
+      unavailableReason: null,
+    };
+    const rendered = t3ModelRolesInstructions([
+      {
+        ...role,
+        targets: [
+          first,
+          ...Array.from({ length: 11 }, (_, index) => ({
+            ...first,
+            model: `alternative-${index}`,
+          })),
+        ],
+      },
+    ]);
+    const targets = [...rendered.matchAll(/Target JSON: `([^`]+)`/g)];
+    assert.isAbove(targets.length, 0);
+    assert.isBelow(targets.length, 12);
+    for (const match of targets) {
+      assert.equal(Object.keys(JSON.parse(match[1]!).options).length, MAX_MODEL_ROLE_OPTIONS);
+    }
+    assert.include(rendered, `- ${role.name}`);
+    assert.include(rendered, "More choices: call `orchestrator_capabilities`");
+    assert.isAtMost(rendered.length, MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH);
+  });
+
   it.each([
     ["plain", "x"],
     ["escaped", "\u0001"],
   ])("stays within its cap at the largest %s roles settings accept", (_, char) => {
     const text = (length: number) => char.repeat(length);
     const largest = decodeModelRoles(
-      Array.from({ length: MAX_MODEL_ROLES }, (__, index) => ({
+      Array.from({ length: MAX_MODEL_ROLES - 6 }, (__, index) => ({
         id: `role-${index}`,
         name: text(MAX_MODEL_ROLE_NAME_LENGTH),
         description: text(MAX_MODEL_ROLE_DESCRIPTION_LENGTH),
@@ -147,7 +180,14 @@ describe("T3 orchestration provider instructions", () => {
     }));
     const rendered = t3ModelRolesInstructions(largest);
     assert.isAtMost(rendered.length, MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH);
-    assert.match(rendered, /- \d+ more roles not shown; call `orchestrator_capabilities`/);
+    assert.equal(
+      rendered.split("\n").filter((line) => line.startsWith("- ")).length,
+      largest.length,
+    );
+    for (const role of largest) assert.include(rendered, `- ${role.name}`);
+    assert.include(rendered, "More choices: call `orchestrator_capabilities`");
+    for (const match of rendered.matchAll(/Target JSON: `([^`]+)`/g))
+      assert.doesNotThrow(() => JSON.parse(match[1]!));
   });
 
   it("injects prompt fallback only for an MCP-enabled first run", () => {

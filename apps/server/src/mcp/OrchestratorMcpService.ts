@@ -1333,7 +1333,7 @@ const make = Effect.gen(function* () {
       const requested =
         input.input.workspace ??
         (input.input.role !== "general" &&
-        ["implementor", "checker"].includes(resolveThreadRole(input.input.role ?? "") ?? "")
+        resolveThreadRole(input.input.role ?? "") === "implementor"
           ? "worktree"
           : "inherit");
       // A retry replays the accepted command, whose decision stands.

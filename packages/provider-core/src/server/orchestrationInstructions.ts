@@ -50,15 +50,13 @@ const MODEL_ROLES_HEADER = `
 The user's choices for delegated work are equal alternatives, ordered by current weekly headroom, with more quota left relative to time remaining first. You may override this order for task fit; explicit user instructions win. Unknown usage keeps the configured order after known choices, and unavailable targets go last. Weekly usage shows quota left, reset time, and pace against elapsed window time when reported. Pass a choice's Target JSON as \`delegate_task\`'s \`target\` (not its \`role\` field); \`orchestrator_capabilities\` lists all choices and their availability again.
 
 `;
-// Room for the closing "more roles" line, so the block never passes the cap.
-const OMITTED_ROLES_RESERVE = 120;
 
 const oneLine = (text: string, maxLength: number) => {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > maxLength ? `${flat.slice(0, maxLength - 1)}…` : flat;
 };
 
-function modelRoleLine(role: OrchestratorMcpModelRole): string {
+function modelRoleLine(role: OrchestratorMcpModelRole, maxLength: number): string {
   const description = oneLine(role.description, 200);
   const head = `- ${oneLine(role.name, 60)}${role.role ? ` (role: ${role.role})` : ""}${description.length > 0 ? `: ${description}` : ""}.`;
   const choices = role.targets.map(
@@ -81,33 +79,31 @@ function modelRoleLine(role: OrchestratorMcpModelRole): string {
       return `${label}.${usage} Target JSON: \`${JSON.stringify(target)}\``;
     },
   );
-  return `${head} ${choices.join(" or ")}`;
+  const full = `${head} ${choices.join(" or ")}`;
+  if (full.length <= maxLength) return full;
+  const suffix = " More choices: call `orchestrator_capabilities`.";
+  let line = oneLine(head, maxLength - suffix.length);
+  for (const choice of choices) {
+    const next = `${line} ${choice}`;
+    if (next.length + suffix.length > maxLength) break;
+    line = next;
+  }
+  return line + suffix;
 }
 
 /**
  * The user's model roles as one line each: name, when to use it, and
- * each exact `delegate_task` target, or why that choice is unavailable. Roles that
- * would push the block past its cap are counted instead of listed.
+ * exact `delegate_task` targets, or why choices are unavailable. Each role gets
+ * a share of the budget; long descriptions and choices are shortened without
+ * cutting a Target JSON value or dropping a role entirely.
  */
 export function t3ModelRolesInstructions(roles: ReadonlyArray<OrchestratorMcpModelRole>): string {
   if (roles.length === 0) return "";
-  const lines: Array<string> = [];
-  let length = MODEL_ROLES_HEADER.length + 1;
-  let omitted = 0;
-  for (const role of roles) {
-    const line = modelRoleLine(role);
-    if (length + line.length + 1 > MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH - OMITTED_ROLES_RESERVE) {
-      omitted += 1;
-      continue;
-    }
-    lines.push(line);
-    length += line.length + 1;
-  }
-  if (omitted > 0) {
-    lines.push(
-      `- ${omitted} more ${omitted === 1 ? "role" : "roles"} not shown; call \`orchestrator_capabilities\` to see them.`,
-    );
-  }
+  const perRole = Math.floor(
+    (MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH - MODEL_ROLES_HEADER.length - roles.length - 1) /
+      roles.length,
+  );
+  const lines = roles.map((role) => modelRoleLine(role, perRole));
   return `${MODEL_ROLES_HEADER}${lines.join("\n")}\n`;
 }
 
