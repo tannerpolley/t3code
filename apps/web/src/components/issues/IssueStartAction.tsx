@@ -372,7 +372,7 @@ function IssueStartControls({
           ) : null}
           <p className="text-xs text-muted-foreground">
             Each worker gets a new issue-named worktree from the default branch. The repository
-            orchestrator stays on local main in the main checkout.
+            orchestrator stays on the default branch in the main checkout.
           </p>
           <p className="text-xs text-muted-foreground">
             Starting authorizes one updated T3 status comment and one closeout comment per finished

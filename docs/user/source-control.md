@@ -282,7 +282,7 @@ matching repository project. Use a model role with an available Codex or Claude 
 repository’s issues beside the thread, or the Issues page when there is no current repository.
 If no repository orchestrator is registered, choose an existing lead in the matching project or
 explicitly choose **Create first orchestrator**. When you open issues beside a thread, its lead
-is selected for you. The repository orchestrator stays on local `main` in the main checkout.
+is selected for you. The repository orchestrator stays on the default branch in the main checkout.
 Start agent registers the selected lead and starts or queues an issue worker, following the issue
 parent tree. Later starts use that orchestrator's project. Every worker gets a new worktree and
 branch named after the issue, created from the default branch; there is no checkout choice.

@@ -343,7 +343,7 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Destructive, true),
   Tool.make("restore_repository_root", {
     description:
-      "Make another existing top-level thread in the repository's project the repository orchestrator. Read get_repository_orchestration for the current root and revision and pass them as expectations. Pause repository work first. Restore keeps it paused; use set_repository_work_paused to resume. The target must use the main checkout on local main. The current root must be idle: no unfinished runs or subagents, no unclaimed requests (see cancel_issue_request), and no handoff.",
+      "Make another existing top-level thread in the repository's project the repository orchestrator. Read get_repository_orchestration for the current root and revision and pass them as expectations. Pause repository work first. Restore keeps it paused; use set_repository_work_paused to resume. The target must use the main checkout on the repository default branch. The current root must be idle: no unfinished runs or subagents, no unclaimed requests (see cancel_issue_request), and no handoff.",
     parameters: RepositoryWorkRestoreInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

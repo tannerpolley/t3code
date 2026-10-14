@@ -38,7 +38,7 @@ export default Effect.gen(function* () {
       json_extract(payload_json, '$.repositoryOrchestration.repository'),
       thread_id,
       json_extract(payload_json, '$.repositoryOrchestration.projectId'),
-      'worktree',
+      json_extract(payload_json, '$.repositoryOrchestration.workspace'),
       json_extract(payload_json, '$.repositoryOrchestration.launchCommandId'),
       json_extract(payload_json, '$.repositoryOrchestration.revision'),
       json_extract(payload_json, '$.repositoryOrchestration.paused'),

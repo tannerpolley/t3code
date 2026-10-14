@@ -2269,13 +2269,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const cohort = completionCohort(input.projection, input.parentRunId);
       const tasks = input.projection.subagents.filter(
-        (candidate) => candidate.origin === "app_owned" && candidate.runId === input.parentRunId,
+        (candidate) =>
+          candidate.origin === "app_owned" &&
+          candidate.runId === input.parentRunId &&
+          // A thread mailbox spans independent admissions. Stop owns only results
+          // already pending; workers still running keep their future notification.
+          (input.parentRunId !== null ||
+            input.disposition === "disposed" ||
+            isTerminalDelegatedTaskStatus(candidate.status) ||
+            candidate.completionDelivery?.state === "claimed" ||
+            candidate.completionDelivery?.state === "pending"),
       );
       if (cohort === undefined && tasks.length === 0) {
         return;
       }
       const emitEvent = emit(input.events, input.command);
-      const nextDisposition = cohort?.disposition === "disposed" ? "disposed" : input.disposition;
+      const nextDisposition =
+        cohort?.disposition === "disposed"
+          ? "disposed"
+          : input.parentRunId === null && input.disposition === "stopped"
+            ? "open"
+            : input.disposition;
       const nextCohort = {
         disposition: nextDisposition,
         nextGeneration: cohort?.nextGeneration ?? 1,
@@ -10798,7 +10812,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         offer: false,
       };
     }
-    const cohort = completionCohort(input.parentProjection, input.task.runId);
+    const recordedCohort = completionCohort(input.parentProjection, input.task.runId);
+    // Older versions stopped the entire thread mailbox. A new result may open
+    // it again; already disposed task deliveries remain disposed.
+    const cohort =
+      input.task.runId === null && recordedCohort?.disposition === "stopped"
+        ? { ...recordedCohort, disposition: "open" as const, delivery: null }
+        : recordedCohort;
     if (
       (input.task.runId !== null && input.parentRun === undefined) ||
       input.parentProjection.thread.archivedAt !== null ||

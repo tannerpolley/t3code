@@ -142,8 +142,6 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         target.deletedAt !== null ||
         target.archivedAt !== null ||
         target.linkedIssue !== undefined ||
-        target.worktreePath !== null ||
-        (target.branch !== null && target.branch !== "main") ||
         isProviderNativeSubagentThread(target) ||
         (targetConfig !== undefined &&
           (targetConfig.host !== command.host ||
@@ -249,7 +247,6 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         occurredAt,
         payload: {
           ...target,
-          branch: "main",
           repositoryOrchestration: config,
           updatedAt: occurredAt,
         },

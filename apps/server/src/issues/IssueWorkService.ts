@@ -137,7 +137,8 @@ export const layer = Layer.effect(
             code:
               isCommandRejectedError(cause) ||
               isPreviouslyRejectedError(cause) ||
-              isDispatchError(cause)
+              (isDispatchError(cause) &&
+                (cause.detail !== undefined || typeof cause.cause === "string"))
                 ? "invalid-request"
                 : "orchestration-error",
             message: cause instanceof Error ? cause.message : String(cause),
@@ -148,14 +149,19 @@ export const layer = Layer.effect(
       worktreePath: string | null;
     }) =>
       Effect.gen(function* () {
+        const expectedBranch = yield* launch
+          .readDefaultBranch(input)
+          .pipe(Effect.mapError(mapError));
         if (
           input.worktreePath !== null ||
-          (yield* launch.readCheckoutBranch(input).pipe(Effect.mapError(mapError))) !== "main"
+          (yield* launch.readCheckoutBranch(input).pipe(Effect.mapError(mapError))) !==
+            expectedBranch
         )
           return yield* new IssueWorkError({
             code: "invalid-request",
-            message: "The repository orchestrator requires the main checkout on local main.",
+            message: `The repository orchestrator requires the main checkout on the default branch (${expectedBranch}).`,
           });
+        return expectedBranch;
       });
     const progressFor = (threadId: Parameters<typeof threads.getThreadShell>[0], paused: boolean) =>
       Effect.gen(function* () {
@@ -330,7 +336,7 @@ export const layer = Layer.effect(
         let createdRoot = false;
         if (root === null) {
           yield* assertProjectRepository(input.projectId, issue);
-          yield* assertRootCheckout({
+          const rootBranch = yield* assertRootCheckout({
             projectId: input.projectId,
             commandId: input.clientRequestId,
             worktreePath: null,
@@ -367,7 +373,7 @@ export const layer = Layer.effect(
               modelSelection: rootSelection,
               runtimeMode: "full-access",
               interactionMode: "default",
-              workspaceStrategy: { type: "root", branch: "main" },
+              workspaceStrategy: { type: "root", branch: rootBranch },
               repositoryOrchestration: {
                 host: issue.host,
                 repository: issue.repository,
@@ -426,14 +432,6 @@ export const layer = Layer.effect(
           code: "invalid-request",
           message: "The repository orchestrator is unavailable.",
         });
-      const rootThread = yield* threads
-        .getThreadRecords(owner.rootThreadId, [])
-        .pipe(Effect.mapError(mapError));
-      yield* assertRootCheckout({
-        projectId: config.projectId,
-        commandId: command.commandId,
-        worktreePath: rootThread.thread.worktreePath,
-      });
       let worktree: { baseRef: string; branch: string } | undefined;
       if (!(yield* threads.hasReceipt(command.commandId))) {
         const baseRef = yield* launch
@@ -1246,11 +1244,15 @@ export const layer = Layer.effect(
     const restoreRoot: IssueWorkService["Service"]["restoreRoot"] = (input) =>
       Effect.gen(function* () {
         yield* assertProjectRepository(input.projectId, input);
-        yield* assertRootCheckout({
-          projectId: input.projectId,
-          commandId: input.clientRequestId,
-          worktreePath: null,
-        });
+        const target = yield* threads
+          .getThreadShell(input.targetThreadId)
+          .pipe(Effect.mapError(mapError));
+        if (target !== null && target.lineage.parentThreadId === null)
+          yield* assertRootCheckout({
+            projectId: input.projectId,
+            commandId: input.clientRequestId,
+            worktreePath: target.worktreePath,
+          });
         if (input.expectedRootThreadId === null) {
           const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
           if (

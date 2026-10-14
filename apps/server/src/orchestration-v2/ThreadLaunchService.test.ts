@@ -1,3 +1,7 @@
+import * as Context from "effect/Context";
+import * as Queue from "effect/Queue";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
@@ -141,6 +145,9 @@ interface HarnessOptions {
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
   readonly issueServiceLayer?: Layer.Layer<IssueService.IssueService>;
   readonly runContinuationWorker?: boolean;
+  readonly continuationRequests?: Context.Service.Shape<
+    typeof ProviderContinuationRequests.ProviderContinuationRequests
+  >;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -157,6 +164,15 @@ function makeHarness(options: HarnessOptions = {}) {
         ? {}
         : { issueServiceLayer: options.issueServiceLayer }),
     },
+  ).pipe(
+    Layer.provide(
+      options.continuationRequests === undefined
+        ? Layer.empty
+        : Layer.succeed(
+            ProviderContinuationRequests.ProviderContinuationRequests,
+            options.continuationRequests,
+          ),
+    ),
   );
   const layerServerSettings = ServerSettings.layerTest({
     ...options.serverSettings,
@@ -4960,6 +4976,12 @@ describe("fresh-thread repository handoff", () => {
       inventoryComplete?: () => boolean;
       providerAvailable?: () => boolean;
       continuation?: boolean;
+      continuationRequests?: Context.Service.Shape<
+        typeof ProviderContinuationRequests.ProviderContinuationRequests
+      >;
+      wrapThreads?: (
+        threads: ThreadManagement.ThreadManagementService["Service"],
+      ) => ThreadManagement.ThreadManagementService["Service"];
       inventoryIssues?: () => number[];
       /** Runs first in the provider check, which the handoff command makes under the root's lock. */
       beforeCapabilities?: () => Effect.Effect<
@@ -5050,6 +5072,9 @@ describe("fresh-thread repository handoff", () => {
       adapters: [handoffAdapter],
       issueServiceLayer: reads,
       runContinuationWorker: options.continuation ?? false,
+      ...(options.continuationRequests === undefined
+        ? {}
+        : { continuationRequests: options.continuationRequests }),
     });
     const store = IssueWorkStore.layer.pipe(Layer.provide(harness.layer));
     const dependencies = Layer.mergeAll(
@@ -5066,6 +5091,14 @@ describe("fresh-thread repository handoff", () => {
     );
     const { wrapStore } = options;
     const service = IssueWorkService.layer.pipe(
+      Layer.provide(
+        options.wrapThreads === undefined
+          ? Layer.empty
+          : Layer.effect(
+              ThreadManagement.ThreadManagementService,
+              Effect.map(ThreadManagement.ThreadManagementService, options.wrapThreads),
+            ).pipe(Layer.provide(harness.layer)),
+      ),
       Layer.provide(
         wrapStore === undefined
           ? Layer.empty
@@ -5648,13 +5681,19 @@ describe("fresh-thread repository handoff", () => {
   it.effect(
     "keeps invalid-request on rejected start replay so milestone reconciliation awaits the owner",
     () => {
-      let rejectNext = false;
       return Effect.gen(function* () {
         const service = yield* IssueWorkService.IssueWorkService;
         const store = yield* IssueWorkStore.IssueWorkStore;
+        const threads = yield* ThreadManagement.ThreadManagementService;
         yield* createRoot;
         const requestId = CommandId.make(`milestone-issue:${rootId}:1:issue:9:first`);
-        rejectNext = true;
+        yield* threads.dispatch({
+          type: "repository.work.update",
+          threadId: rootId,
+          commandId: CommandId.make("reject-replay:pause"),
+          expectedRevision: 1,
+          orchestration: { ...config, paused: true },
+        });
         const initial = yield* service
           .startWorker({
             type: "issue.work.start",
@@ -5672,6 +5711,13 @@ describe("fresh-thread repository handoff", () => {
             initial.failure._tag === "IssueWorkError" ? initial.failure.code : undefined,
             "invalid-request",
           );
+        yield* threads.dispatch({
+          type: "repository.work.update",
+          threadId: rootId,
+          commandId: CommandId.make("reject-replay:resume"),
+          expectedRevision: 2,
+          orchestration: { ...config, revision: 2, paused: false },
+        });
         const replay = yield* service
           .start({
             ...reference,
@@ -5693,24 +5739,250 @@ describe("fresh-thread repository handoff", () => {
           fixture({
             recovery: true,
             inventoryIssues: () => [9],
-            beforeCapabilities: () =>
-              rejectNext
-                ? Effect.sync(() => {
-                    rejectNext = false;
-                  }).pipe(
-                    Effect.andThen(
-                      Effect.fail(
-                        new ProviderAdapter.ProviderAdapterCapabilitiesError({
-                          driver: adapter.driver,
-                        }),
-                      ),
-                    ),
-                  )
-                : Effect.void,
           }),
         ),
       );
     },
+  );
+
+  it.effect(
+    "recovers a committed runless completion after restart before its wake was sent",
+    () => {
+      let receiver:
+        | Context.Service.Shape<typeof ProviderContinuationRequests.ProviderContinuationRequests>
+        | undefined;
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        yield* createRoot;
+        const childId = (yield* service.start({
+          ...reference,
+          number: 9,
+          projectId,
+          modelRoleId: "worker",
+          clientRequestId: CommandId.make("runless-recovery:start"),
+        })).issueThreadId!;
+        yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(childId).pipe(
+          Stream.filter((snapshot) => snapshot?.phase === "done"),
+          Stream.runHead,
+        );
+        const childRun = (yield* threads.getThreadRecords(childId, ["runs"])).runs[0]!;
+        yield* finish(childId, "runless-recovery:finished");
+        yield* orchestrator.recoverDelegatedTask(childId, childRun.id);
+        const committed = yield* threads.getThreadRecords(rootId, ["runs", "messages"]);
+        assert.lengthOf(committed.runs, 0);
+        assert.isNotNull(committed.thread.delegatedCompletion!.delivery);
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        yield* maintenance.compactEventStore;
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        // A fresh continuation consumer represents the process after restart.
+        const queue =
+          yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+        receiver = {
+          offer: (request) => Queue.offer(queue, request).pipe(Effect.asVoid),
+          take: Queue.take(queue),
+        };
+        yield* Layer.build(
+          ProviderContinuationService.layer.pipe(
+            Layer.provide(
+              Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, receiver),
+            ),
+          ),
+        );
+        const before = yield* sink.latestSequence();
+        yield* orchestrator.recoverDelegatedTasks;
+        yield* awaitFollowup(rootId, before);
+        const recovered = yield* threads.getThreadRecords(rootId, ["messages"]);
+        assert.lengthOf(recovered.messages, 1);
+        assert.deepEqual(
+          recovered.messages[0]!.delegatedCompletion!.taskIds,
+          committed.thread.delegatedCompletion!.delivery!.taskIds,
+        );
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            continuationRequests: {
+              offer: (request) => receiver?.offer(request) ?? Effect.void,
+              take: Effect.never,
+            },
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect.each(["root-stop", "wake-interrupt"] as const)(
+    "%s drops current results without silencing a worker that finishes later",
+    (stop) =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        yield* createRoot;
+        const start = (number: number) =>
+          service.start({
+            ...reference,
+            number,
+            projectId,
+            modelRoleId: "worker",
+            clientRequestId: CommandId.make(`stop-mailbox:${number}`),
+          });
+        const first = (yield* start(9)).issueThreadId!;
+        const later = (yield* start(10)).issueThreadId!;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        for (const childId of [first, later])
+          yield* tracker.stream(childId).pipe(
+            Stream.filter((snapshot) => snapshot?.phase === "done"),
+            Stream.runHead,
+          );
+        const beforeFirst = yield* sink.latestSequence();
+        yield* finish(first, "stop-mailbox:first-finished");
+        yield* orchestrator.recoverDelegatedTask(
+          first,
+          (yield* threads.getThreadRecords(first, ["runs"])).runs[0]!.id,
+        );
+        yield* awaitFollowup(rootId, beforeFirst);
+        const wake = (yield* threads.getThreadRecords(rootId, ["runs"])).runs[0]!;
+        if (stop === "root-stop")
+          yield* threads.dispatch({
+            type: "thread.stop",
+            threadId: rootId,
+            commandId: CommandId.make("stop-mailbox:stop"),
+          });
+        else
+          yield* threads.dispatch({
+            type: "run.interrupt",
+            threadId: rootId,
+            runId: wake.id,
+            commandId: CommandId.make("stop-mailbox:interrupt"),
+          });
+        const stopped = yield* threads.getThreadRecords(rootId, ["subagents"]);
+        assert.equal(
+          stopped.subagents.find((task) => task.childThreadId === first)!.completionDelivery!.state,
+          "disposed",
+        );
+        assert.isUndefined(
+          stopped.subagents.find((task) => task.childThreadId === later)!.completionDelivery,
+        );
+        const beforeLater = yield* sink.latestSequence();
+        yield* finish(later, "stop-mailbox:later-finished");
+        yield* orchestrator.recoverDelegatedTask(
+          later,
+          (yield* threads.getThreadRecords(later, ["runs"])).runs[0]!.id,
+        );
+        yield* awaitFollowup(rootId, beforeLater);
+        const notified = yield* threads.getThreadRecords(rootId, ["messages", "subagents"]);
+        assert.lengthOf(notified.messages, 2);
+        assert.equal(
+          notified.subagents.find((task) => task.childThreadId === later)!.completionDelivery!
+            .state,
+          "claimed",
+        );
+      }).pipe(Effect.provide(fixture({ recovery: true, continuation: true }))),
+  );
+
+  it.effect(
+    "uses the default branch for explicit roots and never gates worker admission on the root checkout",
+    () => {
+      let currentBranch = "master";
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const created = yield* service.start({
+          ...reference,
+          number: 9,
+          projectId,
+          modelRoleId: "worker",
+          createOrchestrator: true,
+          clientRequestId: CommandId.make("master-root:create"),
+        });
+        assert.equal(
+          (yield* threads.getThreadRecords(created.rootThreadId, [])).thread.branch,
+          "master",
+        );
+        currentBranch = "feature/owner-checkout";
+        const worker = yield* service.start({
+          ...reference,
+          number: 10,
+          projectId,
+          modelRoleId: "worker",
+          clientRequestId: CommandId.make("master-root:worker"),
+        });
+        assert.isNotNull(worker.issueThreadId);
+        const rejected = yield* service
+          .restoreRoot({
+            ...reference,
+            repositoryId: config.repositoryId,
+            projectId,
+            expectedRootThreadId: created.rootThreadId,
+            expectedRevision: 1,
+            targetThreadId: created.rootThreadId,
+            reason: "Explicit restore",
+            clientRequestId: CommandId.make("master-root:restore"),
+          })
+          .pipe(Effect.result);
+        assert.equal(rejected._tag, "Failure");
+        if (rejected._tag === "Failure")
+          assert.include(rejected.failure.message, "default branch (master)");
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            git: {
+              resolveDefaultBranchRef: () => Effect.succeed("master"),
+              localStatus: () => Effect.succeed({ isRepo: true, refName: currentBranch } as never),
+            },
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("keeps internal dispatch failures unreadable during milestone reconciliation", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      yield* createRoot;
+      const failed = yield* service
+        .start({
+          ...reference,
+          number: 9,
+          projectId,
+          modelRoleId: "worker",
+          clientRequestId: CommandId.make("store-failure:start"),
+        })
+        .pipe(Effect.result);
+      assert.equal(failed._tag, "Failure");
+      if (failed._tag === "Failure") assert.equal(failed.failure.code, "orchestration-error");
+      yield* service.reconcile(rootId);
+      assert.equal(
+        (yield* service.repositoryStatus(reference)).orchestration!.milestones[0]!.status,
+        "unreadable",
+      );
+    }).pipe(
+      Effect.provide(
+        fixture({
+          recovery: true,
+          inventoryIssues: () => [9],
+          wrapThreads: (threads) => ({
+            ...threads,
+            dispatch: (command) =>
+              command.type === "issue.work.start"
+                ? Effect.fail(
+                    new Orchestrator.OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause: new Error("Issue work store is unavailable"),
+                    }),
+                  )
+                : threads.dispatch(command),
+          }),
+        }),
+      ),
+    ),
   );
 
   const createOriginalLead = Effect.gen(function* () {
@@ -7143,11 +7415,8 @@ describe("fresh-thread repository handoff", () => {
           (yield* threads.getThreadRecords(newLeaf, [])).thread.lineage.parentThreadId,
           newParent,
         );
-        assert.isFalse(
-          (yield* texts(newParent)).some((text) =>
-            text.startsWith("Start your authorized sub-issue"),
-          ),
-        );
+        assert.lengthOf(yield* texts(newParent), 1);
+        assert.equal((yield* threads.getThreadRecords(newParent, ["runs"])).runs.length, 1);
         assert.lengthOf(yield* texts(oldParent), oldParentMessages);
         assert.equal(
           (yield* threads.getThreadRecords(oldParent, [])).thread.lineage.rootThreadId,

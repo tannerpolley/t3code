@@ -707,3 +707,31 @@ it.effect("marks fork descendants unreadable when their source is missing or cor
     );
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect.each([
+  { name: "SQLite", layer: layerTest },
+  { name: "memory", layer: ProjectionStore.layerMemory },
+])("finds a runless completion mailbox with $name projections", ({ layer }) =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createThread("runless-mailbox", {
+      delegatedCompletion: {
+        disposition: "open",
+        nextGeneration: 2,
+        delivery: {
+          generation: 1,
+          messageId: MessageId.make("runless-mailbox:wake"),
+          taskIds: [NodeId.make("runless-mailbox:task")],
+        },
+      },
+    });
+    yield* createThread("runless-mailbox:empty", {
+      delegatedCompletion: {
+        disposition: "open",
+        nextGeneration: 1,
+        delivery: null,
+      },
+    });
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("delegated-completions"), [threadId]);
+  }).pipe(Effect.provide(layer)),
+);
