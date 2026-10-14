@@ -5,13 +5,13 @@
   min-width: 0;
   align-items: center;
   box-sizing: border-box;
-  padding-inline-start: calc(var(--sidebar-thread-depth) * var(--sidebar-thread-step, 1rem));
   font-size: inherit;
   font-weight: normal;
 }
 @utility sidebar-caret-toggle {
   inset-inline-start: calc(
-    0.125rem + var(--sidebar-thread-depth, 0) * var(--sidebar-thread-step, 1rem)
+    0.125rem + var(--sidebar-thread-lead, 0px) + var(--sidebar-thread-depth, 0) *
+      var(--sidebar-thread-step, 1rem)
   );
 }
 @utility sidebar-thread-caret {
@@ -65,8 +65,8 @@
   position: absolute;
   pointer-events: none;
   inset-inline-start: calc(
-    0.5rem + (var(--sidebar-thread-depth) - 1) * var(--sidebar-thread-step) +
-      var(--sidebar-caret-width) / 2
+    0.5rem + var(--sidebar-thread-lead) + (var(--sidebar-thread-depth) - 1) *
+      var(--sidebar-thread-step) + var(--sidebar-caret-width) / 2
   );
   border-color: var(--sidebar-border);
 }

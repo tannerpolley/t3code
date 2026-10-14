@@ -100,7 +100,10 @@ export function SidebarTrailingColumns(props: {
   );
 }
 
-/** All thread surfaces share these fixed tracks; only the name gets spare width. */
+/**
+ * All thread surfaces share these fixed tracks; only the name gets spare width. Usage leads every
+ * row unindented, so token counts line up at all depths; the tree indents from the caret on.
+ */
 export function SidebarThreadColumns(props: {
   readonly depth?: number | undefined;
   readonly caret?: ReactNode;
@@ -121,6 +124,7 @@ export function SidebarThreadColumns(props: {
       className="sidebar-thread-columns"
       style={{ "--sidebar-thread-depth": props.depth ?? 0 } as CSSProperties}
     >
+      <span className="sidebar-thread-usage">{props.usage}</span>
       <span className="sidebar-thread-caret">{props.caret ?? <SidebarCaretSlot />}</span>
       <span className="sidebar-thread-icon">{props.location}</span>
       <span className="sidebar-thread-icon">{props.role}</span>
@@ -131,7 +135,6 @@ export function SidebarThreadColumns(props: {
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       <span className={cn("sidebar-thread-time", props.trailingClassName)}>{props.time}</span>
       <span className={cn("sidebar-thread-icon", props.trailingClassName)}>{props.status}</span>
-      <span className={cn("sidebar-thread-usage", props.trailingClassName)}>{props.usage}</span>
     </span>
   );
 }

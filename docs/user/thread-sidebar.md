@@ -360,13 +360,13 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 
 ## Compare threads in Projects
 
-With **Codex-style sidebar** enabled on web and desktop, the Projects view aligns each thread's location, role, provider,
-model, effort, name, time, work status, and token usage. Expand a thread to follow
-its child agents; each level indents while time, status, and usage stay aligned.
+With **Codex-style sidebar** enabled on web and desktop, the Projects view aligns each thread's token usage, location,
+role, provider, model, effort, name, time, and work status. Expand a thread to follow
+its child agents; each level indents while usage, time, and status stay aligned.
 Turn it off in **Settings → Customizations** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 
-For Codex and Claude, the number beside the work status shows tokens used by the
+For Codex and Claude, the number at the start of each row shows tokens used by the
 latest turn, such as **48k**. Hover it for input, cached input, output, context
 fill, and the thread's reported total. Cached input is included in input, rather
 than added twice. Partial usage is marked in the tooltip; unavailable usage shows
