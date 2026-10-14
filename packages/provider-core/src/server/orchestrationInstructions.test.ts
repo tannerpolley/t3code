@@ -122,6 +122,26 @@ describe("T3 orchestration provider instructions", () => {
     );
   });
 
+  it("keeps every choice of a long role while the whole list fits", () => {
+    const roles = DEFAULT_MODEL_ROLES.map((role) => ({
+      ...role,
+      targets: Arr.map(role.targets, (target) => ({ ...target, unavailableReason: null })),
+    }));
+    const [first, ...rest] = roles;
+    const choice = (index: number) => ({
+      ...first!.targets[0],
+      model: `long-role-choice-${index}`,
+    });
+    const long = {
+      ...first!,
+      targets: [choice(0), ...Array.from({ length: 8 }, (_, index) => choice(index + 1))] as const,
+    };
+    const rendered = t3ModelRolesInstructions([long, ...rest]);
+    for (let index = 0; index < 9; index++) assert.include(rendered, `long-role-choice-${index}`);
+    assert.notInclude(rendered, "More choices: call `orchestrator_capabilities`");
+    assert.isAtMost(rendered.length, MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH);
+  });
+
   it("shortens an oversized role without cutting its exact target JSON", () => {
     const role = DEFAULT_MODEL_ROLES[1]!;
     const first = {
