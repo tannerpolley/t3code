@@ -3280,7 +3280,7 @@ it.effect(
     }),
 );
 
-it.effect("ProviderSessionManagerV2 ends the open tool calls of a session a detach releases", () =>
+it.effect("ProviderSessionManagerV2 ends only the released session's own open tool calls", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
@@ -3290,32 +3290,54 @@ it.effect("ProviderSessionManagerV2 ends the open tool calls of a session a deta
       const now = yield* DateTime.now;
       const { threadId, providerSessionId, providerThreads } =
         yield* openSessionWithBackgroundCommand("provider-session-manager-detach-items");
-      // A workspace handoff detaches mid-call: one tool call on the released
-      // session's provider thread, one on another session's.
+      // A workspace handoff detaches mid-call. The released session's provider
+      // thread also holds a native subagent and a call a replacement session
+      // started after the release; another session's provider thread holds a
+      // call of its own.
+      const base = (name: string, providerThread: OrchestrationV2ProviderThread) => ({
+        id: TurnItemId.make(`turn-item:${name}`),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: providerThread.id,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running" as const,
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      });
       const toolCall = (name: string, providerThread: OrchestrationV2ProviderThread) =>
         ({
-          id: TurnItemId.make(`turn-item:${name}`),
-          threadId,
-          runId: null,
-          nodeId: null,
-          providerThreadId: providerThread.id,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: 1,
-          status: "running",
-          title: null,
-          startedAt: now,
-          completedAt: null,
-          updatedAt: now,
+          ...base(name, providerThread),
           type: "dynamic_tool",
           toolName: "mcp__t3-code__t3_worktree_return_to_root",
           input: null,
           output: null,
         }) satisfies OrchestrationV2TurnItem;
-      const items = [
-        toolCall("released", providerThreads[0]!),
-        toolCall("other", providerThreads[1]!),
+      const released = providerThreads[0]!;
+      const items: ReadonlyArray<OrchestrationV2TurnItem> = [
+        toolCall("tool", released),
+        { ...base("command", released), type: "command_execution", input: "sleep 60" },
+        {
+          ...base("subagent", released),
+          type: "subagent",
+          subagentId: NodeId.make("node-released-subagent"),
+          origin: "provider_native",
+          driver: CODEX_DRIVER,
+          providerInstanceId: modelSelection.instanceId,
+          childThreadId: null,
+          prompt: "Review the diff",
+          result: null,
+        },
+        {
+          ...toolCall("replacement", released),
+          startedAt: DateTime.add(now, { minutes: 1 }),
+        },
+        toolCall("other-session", providerThreads[1]!),
       ];
       yield* eventSink.write({
         events: items.map((payload) => ({
@@ -3332,7 +3354,7 @@ it.effect("ProviderSessionManagerV2 ends the open tool calls of a session a deta
       const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"]);
       assert.deepStrictEqual(
         items.map((item) => turnItems.find((stored) => stored.id === item.id)?.status),
-        ["interrupted", "running"],
+        ["interrupted", "interrupted", "running", "running", "running"],
       );
     });
 

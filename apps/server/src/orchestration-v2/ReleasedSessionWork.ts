@@ -1,9 +1,10 @@
 /**
- * Background work a released session's process left running. Release clears the
+ * Tool calls a released session's process left running. Release clears the
  * session's background roster; nothing will report the end of its open
- * commands, dynamic tools and subagents either, such as a tool call a workspace
- * handoff cut off. A delegate_task child is a thread of its own and ends on
- * its own. Items started after the release belong to a replacement session.
+ * commands and dynamic tools either, such as a tool call a workspace handoff
+ * cut off. Subagents are left to Stop and startup recovery, which also end
+ * their records and the work on their own threads. Items started after the
+ * release belong to a replacement session.
  */
 import type {
   EventId,
@@ -37,14 +38,13 @@ export const endReleasedSessionWork = <E>(input: {
       Effect.gen(function* () {
         const providerThreadIds = new Set(providerThreads.map((entry) => entry.providerThreadId));
         const { turnItems } = yield* input.projections.getThreadRecords(threadId, ["turnItems"], {
-          turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+          turnItemTypes: ["command_execution", "dynamic_tool"],
           turnItemStatuses: ["pending", "running", "waiting"],
         });
         const released = pendingBackgroundTurnItems({ turnItems }).filter(
           (item) =>
             item.providerThreadId != null &&
             providerThreadIds.has(item.providerThreadId) &&
-            !(item.type === "subagent" && item.origin === "app_owned") &&
             !DateTime.isGreaterThan(item.startedAt ?? item.updatedAt, input.releasedAt),
         );
         if (released.length === 0) return;
