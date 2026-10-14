@@ -16,7 +16,8 @@ export default Effect.gen(function* () {
     events_etag TEXT,
     PRIMARY KEY (host, repository_id)
   ) WITHOUT ROWID`;
-  // Last seen title and body per issue, for edit detection and once-only receiver labels.
+  // Last seen title and body per issue, for edit detection and once-only receiver labels. Open
+  // issues are snapshotted when watching starts.
   yield* sql`CREATE TABLE issue_inbox_issues (
     host TEXT NOT NULL,
     repository_id TEXT NOT NULL,
@@ -60,11 +61,19 @@ export default Effect.gen(function* () {
     delivered_at TEXT
   )`;
   yield* sql`CREATE INDEX issue_inbox_digests_repository ON issue_inbox_digests(host, repository_id, created_at)`;
-  // Same-project t3_issue_post writes carry no marker; these receipts mark them as the repository's own.
+  // Same-project t3_issue_post writes carry no marker; these receipts mark them as the repository's
+  // own: an opened issue, or one exact comment version.
   yield* sql`CREATE TABLE issue_inbox_own_writes (
     host TEXT NOT NULL,
     repository TEXT NOT NULL,
     item TEXT NOT NULL,
     PRIMARY KEY (host, repository, item)
+  ) WITHOUT ROWID`;
+  // Each recorded T3 issue-change write explains at most one GitHub event.
+  yield* sql`CREATE TABLE issue_inbox_matched_writes (
+    change_id TEXT NOT NULL,
+    issue_number INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    PRIMARY KEY (change_id, issue_number, kind)
   ) WITHOUT ROWID`;
 });

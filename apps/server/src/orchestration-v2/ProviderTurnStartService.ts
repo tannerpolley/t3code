@@ -1106,6 +1106,7 @@ export const layer: Layer.Layer<
                 messageId: message.id,
                 text: turnInput.message.text,
                 compact: message.text.trim().toLowerCase() === "/compact",
+                turnStart: true,
               },
               (text) =>
                 session.startTurn({ ...turnInput, message: { ...turnInput.message, text } }),

@@ -24,6 +24,7 @@ const encodeRecord = (record: InlineShellRunRecord) =>
 const decodeRecord = Schema.decodeEffect(Schema.fromJsonString(InlineShellRunRecord));
 const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 type Row = { sequence: number; thread_id: string; record_json: string };
+const NO_INBOX_NOTE = { ids: [] as ReadonlyArray<number>, text: "" };
 export interface InlineShellDelivery {
   threadId: ThreadId;
   deliveryId: string;
@@ -33,6 +34,8 @@ export interface InlineShellDelivery {
   messageId: MessageId;
   text: string;
   compact: boolean;
+  /** A new turn, not a steer: only a turn start carries the issue inbox line. */
+  turnStart: boolean;
 }
 
 export class InlineShellStore extends Context.Service<
@@ -154,13 +157,15 @@ export const layer = Layer.effect(
           );
           const selected = selectInlineShellContext(records, counts[0]?.count ?? 0);
           // A repository orchestrator's next turn also carries one line about unread inbox events.
-          const inbox = yield* pendingInboxNote(sql, input.threadId).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Issue inbox note unavailable", { cause }).pipe(
-                Effect.as({ ids: [] as ReadonlyArray<number>, text: "" }),
-              ),
-            ),
-          );
+          const inbox = input.turnStart
+            ? yield* pendingInboxNote(sql, input.threadId).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Issue inbox note unavailable", { cause }).pipe(
+                    Effect.as(NO_INBOX_NOTE),
+                  ),
+                ),
+              )
+            : NO_INBOX_NOTE;
           const result = yield* send(
             [inbox.text, selected.text, input.text].filter((part) => part !== "").join("\n\n"),
           );

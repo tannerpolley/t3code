@@ -39,7 +39,6 @@ import { ProjectService } from "../project/ProjectService.ts";
 import * as Layer from "effect/Layer";
 import { IssueService } from "./IssueService.ts";
 import { IssueWorkStore } from "./IssueWorkStore.ts";
-import { IssueInbox } from "./IssueInbox.ts";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
 import {
@@ -1374,14 +1373,11 @@ export const layer = Layer.effect(
       reconcile,
     });
     const scheduler = yield* Effect.serviceOption(Scheduler.Scheduler);
-    const inbox = yield* Effect.serviceOption(IssueInbox);
     if (Option.isSome(scheduler)) {
       let nextReadAt = 0;
       yield* scheduler.value.register(
         "repository-issue-work",
         Effect.gen(function* () {
-          // The cross-project inbox keeps its own two-minute cadence and never fails this source.
-          if (Option.isSome(inbox)) yield* inbox.value.pollDue;
           const now = yield* Clock.currentTimeMillis;
           if (now < nextReadAt) return;
           nextReadAt = now + 60_000;

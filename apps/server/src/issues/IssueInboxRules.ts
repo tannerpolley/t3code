@@ -3,8 +3,11 @@
  * one-line notes that tell it. Every agent writes with the owner's own `gh` login, so authorship
  * comes from markers and T3's own records, never from the GitHub author.
  */
-import type { IssueInboxEventKind } from "@t3tools/contracts";
+import { IssueChangeOperation, type IssueInboxEventKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Hash from "effect/Hash";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 export const CROSS_PROJECT_LABEL = "cross-project";
@@ -78,6 +81,15 @@ export type WriteOrigin =
       readonly marked: boolean;
     };
 
+// T3's managed status, closeout and issue-change writes, as IssueCommentEffects and IssueService write them.
+const T3_WRITE_MARKER = /<!-- t3-issue-(?:status|closeout|change):\S+ -->/u;
+
+/** The source marker of another project's write; null for unmarked or this repository's own. */
+export function foreignMarker(body: string, repositoryKey: string): SourceMarker | null {
+  const marker = parseSourceMarker(body);
+  return marker === null || marker.repository?.toLowerCase() === repositoryKey ? null : marker;
+}
+
 /**
  * Classifies an issue body or comment in the watched repository (`repositoryKey` is
  * `host/owner/name`, lowercase). `ownRecord` is a match in T3's own write records.
@@ -89,11 +101,80 @@ export function classifyWrite(input: {
   readonly ownRecord: boolean;
 }): WriteOrigin {
   if (isBot(input.author)) return { origin: "bot" };
-  // T3's managed status, closeout and issue-change writes all carry a `t3-issue-` marker.
-  if (input.ownRecord || input.body.includes("<!-- t3-issue-")) return { origin: "own" };
+  if (input.ownRecord || T3_WRITE_MARKER.test(input.body)) return { origin: "own" };
   const marker = parseSourceMarker(input.body);
-  if (marker?.repository?.toLowerCase() === input.repositoryKey) return { origin: "own" };
-  return { origin: "external", sourceProject: marker?.project ?? null, marked: marker !== null };
+  if (marker === null) return { origin: "external", sourceProject: null, marked: false };
+  return marker.repository?.toLowerCase() === input.repositoryKey
+    ? { origin: "own" }
+    : { origin: "external", sourceProject: marker.project, marked: true };
+}
+
+// Change detection only: a 32-bit collision hides one edit.
+export const contentHash = (title: string, body: string) =>
+  String(Hash.string(`${title}\u0000${body}`));
+
+/** One version of a comment: a receipt for it does not cover later edits. */
+export const commentVersion = (id: number, updatedAt: string, body: string) =>
+  `comment:${id}:${updatedAt}:${contentHash("", body)}`;
+
+export interface RecordedWrite {
+  readonly changeId: string;
+  readonly issueNumber: number;
+  readonly kind: "closed" | "reopened" | "milestoned";
+  readonly milestoneNumber: number | null;
+  /** When the issue change's effect last ran. */
+  readonly at: string;
+}
+
+const decodeChangeOperation = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ operation: IssueChangeOperation })),
+);
+const decodeChangeSteps = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ issue: Schema.optional(Schema.Struct({ number: Schema.Number })) }),
+    ),
+  ),
+);
+
+/** The state and milestone events one recorded T3 issue change wrote, with their results. */
+export function recordedWrites(row: {
+  readonly change_id: string;
+  readonly proposal_json: string;
+  readonly steps_json: string;
+  readonly written_at: string;
+}): ReadonlyArray<RecordedWrite> {
+  const operation = Option.getOrNull(decodeChangeOperation(row.proposal_json))?.operation;
+  const steps = Option.getOrNull(decodeChangeSteps(row.steps_json)) ?? {};
+  const write = (
+    issueNumber: number | undefined,
+    kind: RecordedWrite["kind"],
+    milestoneNumber: number | null = null,
+  ): ReadonlyArray<RecordedWrite> =>
+    issueNumber === undefined
+      ? []
+      : [{ changeId: row.change_id, issueNumber, kind, milestoneNumber, at: row.written_at }];
+  switch (operation?.type) {
+    case "state":
+      return write(operation.number, operation.state === "closed" ? "closed" : "reopened");
+    case "milestone":
+      return operation.milestoneNumber === null
+        ? []
+        : write(operation.number, "milestoned", operation.milestoneNumber);
+    case "create":
+      return operation.milestoneNumber === null
+        ? []
+        : write(steps["create:0"]?.issue?.number, "milestoned", operation.milestoneNumber);
+    case "split":
+      return operation.issues.flatMap((draft, index) =>
+        draft.milestoneNumber === null
+          ? []
+          : write(steps[`create:${index}`]?.issue?.number, "milestoned", draft.milestoneNumber),
+      );
+    default:
+      return [];
+  }
 }
 
 const ORCHESTRATOR_MENTION = /(?<![\w@./-])@orchestrator\b/iu;

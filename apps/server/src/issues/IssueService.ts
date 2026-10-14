@@ -747,7 +747,8 @@ export class IssueService extends Context.Service<
     }) => Effect.Effect<{ readonly commentId: string }, IssueReadError>;
     /**
      * One verified REST call below `repos/{owner}/{name}/`, for the issue inbox. With
-     * `ifNoneMatch`, an unchanged answer is a free 304 with an empty body.
+     * `ifNoneMatch`, an unchanged answer is a free 304 with an empty body. `nextPage` comes from
+     * the Link header.
      */
     readonly repositoryRest: (input: {
       readonly host: string;
@@ -757,7 +758,12 @@ export class IssueService extends Context.Service<
       readonly body?: unknown;
       readonly ifNoneMatch?: string;
     }) => Effect.Effect<
-      { readonly status: number; readonly body: string; readonly etag: string | null },
+      {
+        readonly status: number;
+        readonly body: string;
+        readonly etag: string | null;
+        readonly nextPage: number | null;
+      },
       IssueReadError
     >;
   }
@@ -1788,7 +1794,19 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         "invalid-response",
         "GitHub returned a truncated response.",
       );
-    return { status: response.status, body: response.body, etag: response.headers["etag"] ?? null };
+    const nextPage = nextPageFromHeaders(response.headers, 0);
+    if (nextPage === undefined)
+      return yield* readError(
+        "detail",
+        "invalid-response",
+        "GitHub returned an invalid next page.",
+      );
+    return {
+      status: response.status,
+      body: response.body,
+      etag: response.headers["etag"] ?? null,
+      nextPage,
+    };
   });
   return IssueService.of({
     repositoryRest,

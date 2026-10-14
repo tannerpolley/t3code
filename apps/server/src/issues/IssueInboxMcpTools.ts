@@ -21,7 +21,7 @@ const dependencies = [
 
 export const IssuePostTool = Tool.make("t3_issue_post", {
   description:
-    "Create a GitHub issue (title and body) or comment on one (issueNumber and body) in any repository. Use it instead of raw `gh` for issues in another project's repository: T3 adds a hidden source marker naming this project and thread, and a new issue there gets the labels external, from:<project> and priority: high, so that repository's orchestrator is notified. Writes to this thread's own repository get neither.",
+    "Create a GitHub issue (title and body) or comment on one (issueNumber and body) in any repository. Use it instead of raw `gh` for issues in another project's repository: T3 adds a hidden source marker naming this project and thread, and labels the issue external, from:<project> and priority: high, so that repository's orchestrator is notified. Writes to this thread's own repository get neither.",
   parameters: IssuePostInput,
   success: IssuePostResult,
   failure: OrchestratorMcpFailure,

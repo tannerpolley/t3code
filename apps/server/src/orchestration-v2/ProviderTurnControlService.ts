@@ -373,6 +373,7 @@ export const layer: Layer.Layer<
                   records: message.context?.records ?? [],
                 }),
                 compact: message.text.trim().toLowerCase() === "/compact",
+                turnStart: false,
               },
               (text) =>
                 session.steerTurn({
