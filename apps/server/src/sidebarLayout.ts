@@ -196,8 +196,13 @@ export const make = Effect.gen(function* () {
                 !next.layout.sidebarProjectSections.some(
                   (section) => section.id === mutation.sectionId,
                 )
-              )
-                return yield* new SidebarLayoutError({ message: "Section not found." });
+              ) {
+                yield* Effect.logWarning("Skipping sidebar move: section no longer exists.", {
+                  sectionId: mutation.sectionId,
+                  projectKeys: mutation.projectKeys,
+                });
+                continue;
+              }
               next = { ...next, layout: applySidebarLayoutMutation(next.layout, mutation)! };
             }
           }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   EMPTY_SIDEBAR_LAYOUT,
   EnvironmentId,
@@ -13,6 +13,10 @@ import {
   projectSidebarLayout,
   sidebarSectionKey,
 } from "./sidebarLayoutProjection";
+import { createLegacySidebarRetirement } from "./sidebarLayoutMigration";
+import { createSidebarLayoutClient, readLocalSidebarLayout } from "./sidebarLayoutClient";
+import { clearLegacySidebarLayout, PERSISTED_STATE_KEY, parsePersistedState } from "./uiStateStore";
+afterEach(() => vi.unstubAllGlobals());
 const local = EnvironmentId.make("local");
 const remote = EnvironmentId.make("remote");
 const project = (
@@ -53,6 +57,62 @@ const layout = {
 };
 
 describe("shared sidebar projection", () => {
+  it("keeps an unavailable environment's legacy sections across reload and saves fallback before any edit", () => {
+    const storage = new Map<string, string>();
+    const localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    };
+    const readLegacy = () =>
+      parsePersistedState(JSON.parse(localStorage.getItem(PERSISTED_STATE_KEY) ?? "{}"));
+    vi.stubGlobal("localStorage", localStorage);
+    vi.stubGlobal("window", { localStorage });
+    const legacy = {
+      ...EMPTY_SIDEBAR_LAYOUT,
+      sidebarProjectSections: [
+        { id: "work", name: "Work", collapsed: true, projectKeys: ["clone", "remote-project"] },
+      ],
+      projectExpandedById: { "remote-project": false },
+    };
+    localStorage.setItem(PERSISTED_STATE_KEY, JSON.stringify(legacy));
+    const retire = createLegacySidebarRetirement(clearLegacySidebarLayout);
+    // Only the local environment imported; the remote server has no config or shell yet.
+    retire(local, [local, remote]);
+    expect(readLegacy().sidebarProjectSections).toEqual(legacy.sidebarProjectSections);
+    const candidate = migrateSidebarLayout(
+      readLegacy(),
+      groups([project("remote-project", remote)]),
+      remote,
+    );
+    const send = vi.fn();
+    const client = createSidebarLayoutClient(send, vi.fn());
+    client.configure(remote, false, EMPTY_SIDEBAR_LAYOUT, false);
+    expect(storage.has("t3code:sidebar-local:" + remote)).toBe(false);
+    client.configure(remote, false, candidate);
+    retire(remote, [local, remote]);
+    expect(readLegacy().sidebarProjectSections).toEqual([]);
+    client.dispose();
+    const reloaded = createSidebarLayoutClient(send, vi.fn());
+    reloaded.configure(remote, false, EMPTY_SIDEBAR_LAYOUT);
+    expect(reloaded.layouts([remote]).get(remote)?.sidebarProjectSections).toEqual([
+      { ...legacy.sidebarProjectSections[0]!, projectKeys: ["remote-project"] },
+    ]);
+    expect(reloaded.layouts([remote]).get(remote)?.projectExpandedById).toEqual({
+      "remote-project": false,
+    });
+    expect(send).not.toHaveBeenCalled();
+    // A later capability/permission upgrade can import the persisted fallback
+    // even after the shared legacy source has been retired.
+    expect(
+      migrateSidebarLayout(
+        readLocalSidebarLayout(remote, readLegacy()),
+        groups([project("remote-project", remote)]),
+        remote,
+      ),
+    ).toEqual(candidate);
+    reloaded.dispose();
+  });
   it("imports only each environment's projects and necessary section ancestors", () => {
     const snapshot = groups([project("clone"), project("remote-project", remote)]);
     const legacy = {

@@ -16,6 +16,25 @@ const candidate = {
   projectExpandedById: { clone: true },
 };
 describe("pending legacy sidebar aliases", () => {
+  it("writes pending imports only when their serialized contents change", () => {
+    const storage = new Map<string, string>();
+    const setItem = vi.fn((key: string, value: string) => storage.set(key, value));
+    const removeItem = vi.fn((key: string) => storage.delete(key));
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem,
+      removeItem,
+    });
+    const pending = { importId: "winner", legacy: candidate, memberships: ["clone"] };
+    for (let i = 0; i < 20; i++)
+      savePendingSidebarImport(env, { ...pending, memberships: [...pending.memberships] });
+    expect(setItem).toHaveBeenCalledTimes(1);
+    savePendingSidebarImport(env, { ...pending, memberships: ["clone", "second"] });
+    expect(setItem).toHaveBeenCalledTimes(2);
+    savePendingSidebarImport(env, null);
+    savePendingSidebarImport(env, null);
+    expect(removeItem).toHaveBeenCalledTimes(1);
+  });
   it("survives a reload, resolves membership despite already imported expansion, and stays environment scoped", () => {
     const storage = new Map<string, string>();
     vi.stubGlobal("localStorage", {

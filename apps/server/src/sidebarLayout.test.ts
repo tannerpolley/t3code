@@ -245,3 +245,39 @@ it.effect("a malformed section is dropped without losing valid entries", () =>
     ),
   ),
 );
+
+it.effect("a move to a concurrently deleted section does not discard other batched edits", () =>
+  run(
+    Effect.gen(function* () {
+      const service = yield* Sidebar.SidebarLayoutService;
+      const before = yield* service.update({
+        revision: 0,
+        operations: [
+          { type: "add", section: { id: "work", name: "Work" } },
+          { type: "add", section: { id: "deleted", name: "Deleted" } },
+          { type: "delete", sectionId: "deleted" },
+        ],
+      });
+      const invalid: SidebarLayoutMutation = {
+        type: "move",
+        sectionId: "deleted",
+        projectKeys: ["a"],
+      };
+      const after = yield* service.update({
+        revision: 0,
+        operations: [
+          { type: "projectExpanded", projectKeys: ["a"], expanded: false },
+          invalid,
+          { type: "rename", sectionId: "work", name: "Renamed" },
+          { type: "move", sectionId: "work", projectKeys: ["b"] },
+        ],
+      });
+      assert.equal(after.revision, before.revision + 1);
+      assert.deepEqual(after.layout.projectExpandedById, { a: false });
+      assert.equal(after.layout.sidebarProjectSections[0]!.name, "Renamed");
+      assert.deepEqual(after.layout.sidebarProjectSections[0]!.projectKeys, ["b"]);
+      // A rejected operation by itself remains a no-op.
+      assert.deepEqual(yield* service.update({ revision: 0, operations: [invalid] }), after);
+    }),
+  ),
+);

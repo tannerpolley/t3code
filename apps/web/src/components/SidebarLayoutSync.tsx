@@ -1,4 +1,5 @@
 import {
+  createLegacySidebarRetirement,
   readPendingSidebarImport,
   savePendingSidebarImport,
   sidebarImportMemberships,
@@ -16,7 +17,7 @@ import {
   type SidebarLayout,
 } from "@t3tools/contracts";
 import { useProjects, useServerConfigs } from "../state/entities";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
 import { useClientSettings } from "../hooks/useSettings";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import {
@@ -37,7 +38,11 @@ import {
 } from "../uiStateStore";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
-import { createSidebarLayoutClient, usesServerSidebar } from "../sidebarLayoutClient";
+import {
+  createSidebarLayoutClient,
+  readLocalSidebarLayout,
+  usesServerSidebar,
+} from "../sidebarLayoutClient";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { toastManager } from "./ui/toast";
@@ -46,6 +51,7 @@ import { toastManager } from "./ui/toast";
 export function SidebarLayoutSync() {
   const projects = useProjects();
   const configs = useServerConfigs();
+  const environmentIds = useEnvironmentIds();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const grouping = useClientSettings(selectProjectGroupingSettings);
   const groups = useMemo(
@@ -61,6 +67,7 @@ export function SidebarLayoutSync() {
   );
   const update = useAtomCommand(serverEnvironment.updateSidebarLayout);
   const [source] = useState(() => legacySidebarLayout);
+  const retireLegacy = useMemo(() => createLegacySidebarRetirement(clearLegacySidebarLayout), []);
   const [importEnvironments, setImportEnvironments] = useState<Set<EnvironmentId> | null>(null);
   const controller = useMemo(
     () =>
@@ -261,9 +268,9 @@ export function SidebarLayoutSync() {
           controller={controller}
           legacy={source}
           allowImport={importEnvironments === null || importEnvironments.has(environmentId)}
-          onImported={() => {
-            setImportEnvironments((current) => current ?? new Set(configs.keys()));
-            clearLegacySidebarLayout();
+          onLegacyStored={() => {
+            setImportEnvironments((current) => current ?? new Set(environmentIds));
+            retireLegacy(environmentId, environmentIds);
           }}
         />
       ))}
@@ -278,7 +285,7 @@ function SidebarLayoutEnvironment(props: {
   controller: ReturnType<typeof createSidebarLayoutClient>;
   legacy: SidebarLayout;
   allowImport: boolean;
-  onImported: () => void;
+  onLegacyStored: () => void;
 }) {
   const canWrite = useAtomValue(
     serverEnvironment.updateSidebarLayout.permissionAtom(props.environmentId),
@@ -290,14 +297,27 @@ function SidebarLayoutEnvironment(props: {
     () => readPendingSidebarImport(props.environmentId),
     [props.environmentId],
   );
-  const legacy = pendingImport?.legacy ?? props.legacy;
+  const legacy = useMemo(
+    () =>
+      pendingImport?.legacy ??
+      (server ? readLocalSidebarLayout(props.environmentId, props.legacy) : props.legacy),
+    [pendingImport, server, props.environmentId, props.legacy],
+  );
   const candidate = useMemo(
     () => migrateSidebarLayout(legacy, props.groups, props.environmentId),
     [legacy, props.groups, props.environmentId],
   );
+  const fallbackReady =
+    shellReady &&
+    props.groups
+      .flatMap((group) => group.memberProjects)
+      .filter((project) => project.environmentId === props.environmentId)
+      .every((project) => project.repositoryIdentityResolved !== false);
+  const { controller, environmentId, onLegacyStored } = props;
   useEffect(() => {
-    props.controller.configure(props.environmentId, server, candidate);
-  }, [props.controller, props.environmentId, server, candidate]);
+    controller.configure(environmentId, server, candidate, fallbackReady);
+    if (!server && fallbackReady) onLegacyStored();
+  }, [controller, environmentId, server, candidate, fallbackReady, onLegacyStored]);
   return server ? (
     <SidebarLayoutSubscription
       {...props}
@@ -318,7 +338,7 @@ function SidebarLayoutSubscription(props: {
   pendingImport: PendingSidebarImport | null;
   shellReady: boolean;
   allowImport: boolean;
-  onImported: () => void;
+  onLegacyStored: () => void;
 }) {
   const result = useAtomValue(
     serverEnvironment.sidebarLayout({ environmentId: props.environmentId, input: {} }),
@@ -343,7 +363,20 @@ function SidebarLayoutSubscription(props: {
       ...candidate.projectOrder,
     ]);
     if (current.legacyImportedAt === null) {
-      if (sent.current || ids.size === 0) return;
+      if (sent.current) return;
+      if (ids.size === 0) {
+        if (
+          props.groups
+            .flatMap((group) => group.memberProjects)
+            .filter((project) => project.environmentId === props.environmentId)
+            .every((project) => project.repositoryIdentityResolved === true) &&
+          !cleared.current
+        ) {
+          cleared.current = true;
+          props.onLegacyStored();
+        }
+        return;
+      }
       sent.current = true;
       importedProjects.current = new Set(sidebarImportMemberships(candidate));
       committedProjects.current = new Set(importedProjects.current);
@@ -357,11 +390,12 @@ function SidebarLayoutSubscription(props: {
         layout: candidate,
         importId: importId.current,
       });
-    } else if (sent.current || props.pendingImport !== null) {
+    } else {
       if (!cleared.current) {
         cleared.current = true;
-        props.onImported();
+        props.onLegacyStored();
       }
+      if (!sent.current && props.pendingImport === null) return;
       if (current.legacyImportId !== importId.current) {
         savePendingSidebarImport(props.environmentId, null);
         return;

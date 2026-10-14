@@ -24,12 +24,21 @@ interface ClientEnvironment {
 }
 const decodeLocal = Schema.decodeUnknownOption(Schema.fromJsonString(SidebarLayout));
 const localKey = (id: EnvironmentId) => "t3code:sidebar-local:" + id;
-function readLocal(id: EnvironmentId, fallback: SidebarLayout): SidebarLayout {
+export function readLocalSidebarLayout(id: EnvironmentId, fallback: SidebarLayout): SidebarLayout {
   try {
     const saved = localStorage.getItem(localKey(id));
     return saved ? Option.getOrElse(decodeLocal(saved), () => fallback) : fallback;
   } catch {
     return fallback;
+  }
+}
+function saveLocal(id: EnvironmentId, layout: SidebarLayout) {
+  try {
+    const serialized = JSON.stringify(layout);
+    if (localStorage.getItem(localKey(id)) !== serialized)
+      localStorage.setItem(localKey(id), serialized);
+  } catch {
+    /* Storage may be unavailable. */
   }
 }
 /** One independent write lane per environment. The subscription never discards unacknowledged edits. */
@@ -115,11 +124,12 @@ export function createSidebarLayoutClient(
       };
     },
     getSnapshot: () => version,
-    configure(id: EnvironmentId, server: boolean, fallback: SidebarLayout) {
+    configure(id: EnvironmentId, server: boolean, fallback: SidebarLayout, fallbackReady = true) {
       const previous = environments.get(id);
       if (previous && previous.server === server) {
         if (!server) {
-          const local = readLocal(id, fallback);
+          const local = readLocalSidebarLayout(id, fallback);
+          if (fallbackReady) saveLocal(id, local);
           if (JSON.stringify(local) !== JSON.stringify(previous.local)) {
             previous.local = local;
             notify();
@@ -128,10 +138,12 @@ export function createSidebarLayoutClient(
         return;
       }
       if (previous?.timer) clearTimeout(previous.timer);
+      const local = readLocalSidebarLayout(id, previous ? layout(previous) : fallback);
+      if (!server && fallbackReady) saveLocal(id, local);
       environments.set(id, {
         server,
         base: null,
-        local: readLocal(id, previous ? layout(previous) : fallback),
+        local,
         pending: [],
         flight: [],
         timer: null,
@@ -160,11 +172,7 @@ export function createSidebarLayoutClient(
         schedule(id, entry);
       } else {
         entry.local = apply(entry.local, [operation]);
-        try {
-          localStorage.setItem(localKey(id), JSON.stringify(entry.local));
-        } catch {
-          /* Storage may be unavailable. */
-        }
+        saveLocal(id, entry.local);
       }
       notify();
       return true;

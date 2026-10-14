@@ -23,11 +23,26 @@ export function savePendingSidebarImport(
   pending: PendingSidebarImport | null,
 ) {
   try {
-    if (pending === null) localStorage.removeItem(key(environmentId));
-    else localStorage.setItem(key(environmentId), JSON.stringify(pending));
+    const storageKey = key(environmentId);
+    const serialized = pending === null ? null : JSON.stringify(pending);
+    if (localStorage.getItem(storageKey) === serialized) return;
+    if (serialized === null) localStorage.removeItem(storageKey);
+    else localStorage.setItem(storageKey, serialized);
   } catch {
     /* The in-memory candidate remains usable if storage is unavailable. */
   }
+}
+/** Keep the shared legacy source until disconnected environments can consume it too. */
+export function createLegacySidebarRetirement(clear: () => void) {
+  const ready = new Set<EnvironmentId>();
+  let cleared = false;
+  return (environmentId: EnvironmentId, configured: Iterable<EnvironmentId>) => {
+    ready.add(environmentId);
+    if (!cleared && [...configured].every((id) => ready.has(id))) {
+      cleared = true;
+      clear();
+    }
+  };
 }
 export function sidebarImportMemberships(candidate: SidebarLayout) {
   return candidate.sidebarProjectSections.flatMap((section) =>
