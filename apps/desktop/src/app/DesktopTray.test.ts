@@ -3,23 +3,22 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import { afterEach, expect, vi } from "vite-plus/test";
 
 import type * as Electron from "electron";
 
-const fake = vi.hoisted(() => {
-  const busListeners = new Map<string, Array<(...args: Array<unknown>) => void>>();
-  return {
-    hostRegistered: true,
-    busAddresses: [] as Array<unknown>,
-    trays: [] as Array<{ destroyed: boolean }>,
-    trayCreated: Promise.withResolvers<void>(),
-    busListeners,
-    emit: (event: string, ...args: Array<unknown>) => {
-      for (const listener of busListeners.get(event) ?? []) listener(...args);
-    },
-  };
-});
+/** How the fake session bus answers one host check. */
+type BusReply = "present" | "absent" | "slow" | "error" | Promise<unknown>;
+
+const fake = vi.hoisted(() => ({
+  replies: [] as Array<BusReply>,
+  busAddresses: [] as Array<string>,
+  disconnects: 0,
+  trays: [] as Array<{ destroyed: boolean }>,
+  trayCreated: Promise.withResolvers<void>(),
+}));
 
 vi.mock("electron", () => ({
   nativeImage: { createFromPath: () => ({ resize: () => ({}) }) },
@@ -33,6 +32,9 @@ vi.mock("electron", () => ({
     setToolTip() {}
     setContextMenu() {}
     on() {}
+    isDestroyed() {
+      return this.destroyed;
+    }
     destroy() {
       this.destroyed = true;
     }
@@ -40,22 +42,33 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("dbus-next", () => ({
-  MessageType: { SIGNAL: 4 },
   Message: function (fields: object) {
     return fields;
   },
+  // A fresh fake connection per check, answering with the next queued reply.
   sessionBus: (options: { busAddress: string }) => {
     fake.busAddresses.push(options.busAddress);
+    const reply = fake.replies.shift() ?? "present";
+    const errorListeners: Array<(error: unknown) => void> = [];
     return {
-      on: (event: string, listener: (...args: Array<unknown>) => void) => {
-        fake.busListeners.set(event, [...(fake.busListeners.get(event) ?? []), listener]);
+      on: (event: string, listener: (error: unknown) => void) => {
+        if (event === "error") errorListeners.push(listener);
       },
-      call: async (message: { member: string }) => {
-        if (message.member !== "Get") return null;
-        if (!fake.hostRegistered) throw new Error("org.freedesktop.DBus.Error.ServiceUnknown");
-        return { body: [{ value: true }] };
+      call: () => {
+        if (reply === "present") return Promise.resolve({ body: [{ value: true }] });
+        if (reply === "absent") {
+          return Promise.reject(new Error("org.freedesktop.DBus.Error.ServiceUnknown"));
+        }
+        if (reply === "error") {
+          queueMicrotask(() => {
+            for (const listener of errorListeners) listener(new Error("ECONNRESET"));
+          });
+        }
+        return reply === "slow" || reply === "error" ? new Promise(() => {}) : reply;
       },
-      disconnect: () => undefined,
+      disconnect: () => {
+        fake.disconnects += 1;
+      },
     };
   },
 }));
@@ -69,37 +82,21 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopTray from "./DesktopTray.ts";
 
-/** A main window whose close button can be pressed; reports whether the close was held. */
-function makeMainWindow() {
-  const listeners = new Map<string, (event: { preventDefault: () => void }) => void>();
-  const hidden = Promise.withResolvers<void>();
+/** The tray against fakes, with one main window whose close button can be pressed. */
+function makeHarness() {
+  const appListeners = new Map<string, (...args: Array<unknown>) => void>();
+  const closeListeners: Array<(event: { preventDefault: () => void }) => unknown> = [];
+  const hide = vi.fn();
+  const quit = vi.fn();
+  const logs: Array<string> = [];
   const window = {
-    on: (name: string, listener: (event: { preventDefault: () => void }) => void) => {
-      listeners.set(name, listener);
+    on: (name: string, listener: (event: { preventDefault: () => void }) => unknown) => {
+      if (name === "close") closeListeners.push(listener);
     },
-    hide: () => hidden.resolve(),
-    close: () => undefined,
-    isVisible: () => false,
+    hide,
     isDestroyed: () => false,
   } as unknown as Electron.BrowserWindow;
-  const pressClose = () => {
-    let held = false;
-    listeners.get("close")?.({ preventDefault: () => (held = true) });
-    return held;
-  };
-  return { window, pressClose, hidden: hidden.promise };
-}
-
-/** Starts the tray against fakes, then opens `window` as the main window. */
-function startTray(
-  window: Electron.BrowserWindow,
-  hooks: { readonly revealed?: () => void; readonly logged?: (message: string) => void },
-) {
-  const appListeners = new Map<string, (...args: Array<unknown>) => void>();
-  const logger = Logger.make(({ message }) => {
-    hooks.logged?.(String(Array.isArray(message) ? message[0] : message));
-  });
-  const services = Layer.mergeAll(
+  const layer = Layer.mergeAll(
     Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
       platform: "linux",
       displayName: "T3 Code",
@@ -107,11 +104,10 @@ function startTray(
     Layer.succeed(ElectronApp.ElectronApp, {
       on: (name: string, listener: (...args: Array<unknown>) => void) =>
         Effect.sync(() => void appListeners.set(name, listener)),
-      quit: Effect.void,
+      quit: Effect.sync(quit),
     } as unknown as ElectronApp.ElectronApp["Service"]),
     Layer.succeed(ElectronWindow.ElectronWindow, {
       main: Effect.succeed(Option.some(window)),
-      reveal: () => Effect.sync(() => hooks.revealed?.()),
     } as unknown as ElectronWindow.ElectronWindow["Service"]),
     Layer.succeed(DesktopWindow.DesktopWindow, {
       activate: Effect.void,
@@ -129,60 +125,105 @@ function startTray(
       resolveResourcePath: () => Effect.succeed(Option.none()),
     }),
     DesktopState.layer,
-    Logger.layer([logger], { mergeWithExisting: false }),
+    Logger.layer(
+      [
+        Logger.make(({ message }) =>
+          logs.push(String(Array.isArray(message) ? message[0] : message)),
+        ),
+      ],
+      { mergeWithExisting: false },
+    ),
   );
-  return DesktopTray.start.pipe(
-    Effect.provide(services),
-    Effect.andThen(Effect.sync(() => appListeners.get("browser-window-created")?.({}, window))),
-  );
+  /** Starts the tray, waits for its icon, and opens the main window. */
+  const startWithTray = Effect.gen(function* () {
+    yield* DesktopTray.start;
+    yield* Effect.promise(() => fake.trayCreated.promise);
+    appListeners.get("browser-window-created")?.({}, window);
+  });
+  /** Presses close: whether the close was held open, and the decision that follows. */
+  const pressClose = () => {
+    let held = false;
+    const decision = closeListeners[0]?.({ preventDefault: () => (held = true) });
+    return { held, decision: Promise.resolve(decision) };
+  };
+  return { layer, appListeners, window, startWithTray, pressClose, hide, quit, logs };
 }
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  fake.hostRegistered = true;
+  fake.replies.length = 0;
   fake.busAddresses.length = 0;
+  fake.disconnects = 0;
   fake.trays.length = 0;
-  fake.busListeners.clear();
   fake.trayCreated = Promise.withResolvers<void>();
 });
 
 describe("DesktopTray", () => {
-  it.effect("stops hiding and shows the window when the tray host goes away", () =>
-    Effect.gen(function* () {
+  it.effect("hides the window on close while the tray host is still there", () => {
+    vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus");
+    const tray = makeHarness();
+    return Effect.gen(function* () {
+      yield* tray.startWithTray;
+      const close = tray.pressClose();
+      assert.isTrue(close.held);
+      yield* Effect.promise(() => close.decision);
+      expect(tray.hide).toHaveBeenCalledOnce();
+      expect(tray.quit).not.toHaveBeenCalled();
+      // Startup and close each opened a connection and closed it again.
+      assert.equal(fake.busAddresses.length, 2);
+      assert.equal(fake.disconnects, 2);
+    }).pipe(Effect.provide(tray.layer), Effect.scoped);
+  });
+
+  it.effect.each(["absent", "slow", "error"] as const)(
+    "quits on close when the tray host check finds nothing: %s",
+    (reply) => {
       vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus");
-      const main = makeMainWindow();
-      const revealed = Promise.withResolvers<void>();
-      yield* startTray(main.window, { revealed: revealed.resolve });
-      yield* Effect.promise(() => fake.trayCreated.promise);
-
-      assert.isTrue(main.pressClose());
-      yield* Effect.promise(() => main.hidden);
-
-      fake.hostRegistered = false;
-      fake.emit("message", {
-        type: 4,
-        member: "NameOwnerChanged",
-        body: ["org.kde.StatusNotifierWatcher", ":1.42", ""],
-      });
-      yield* Effect.promise(() => revealed.promise);
-      assert.isTrue(fake.trays[0]?.destroyed);
-      assert.isFalse(main.pressClose());
-    }).pipe(Effect.scoped),
+      const tray = makeHarness();
+      return Effect.gen(function* () {
+        yield* tray.startWithTray;
+        fake.replies.push(reply);
+        const close = tray.pressClose();
+        assert.isTrue(close.held);
+        if (reply === "slow") yield* TestClock.adjust("1 second");
+        yield* Effect.promise(() => close.decision);
+        expect(tray.quit).toHaveBeenCalledOnce();
+        expect(tray.hide).not.toHaveBeenCalled();
+        assert.isTrue(fake.trays[0]?.destroyed);
+      }).pipe(Effect.provide(tray.layer), Effect.scoped);
+    },
   );
 
-  it.effect("never connects to a session bus that is not a plain socket", () =>
-    Effect.gen(function* () {
-      vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unixexec:path=/bin/sh,argv1=-c");
-      const main = makeMainWindow();
-      // The first decision logged must be the fallback, before any bus is opened.
-      const firstLog = Promise.withResolvers<string>();
-      yield* startTray(main.window, { logged: firstLog.resolve });
+  it.effect("leaves a quit that starts during the close check alone", () => {
+    vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus");
+    const tray = makeHarness();
+    return Effect.gen(function* () {
+      yield* tray.startWithTray;
+      const reply = Promise.withResolvers<unknown>();
+      fake.replies.push(reply.promise);
+      const close = tray.pressClose();
+      assert.isTrue(close.held);
+      const state = yield* DesktopState.DesktopState;
+      yield* Ref.set(state.quitting, true);
+      reply.resolve({ body: [{ value: true }] });
+      yield* Effect.promise(() => close.decision);
+      expect(tray.hide).not.toHaveBeenCalled();
+      expect(tray.quit).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(tray.layer), Effect.scoped);
+  });
 
-      expect(yield* Effect.promise(() => firstLog.promise)).toContain("closing the window quits");
-      assert.isFalse(main.pressClose());
+  it.effect("never connects to a session bus that is not a plain socket", () => {
+    vi.stubEnv("DBUS_SESSION_BUS_ADDRESS", "unixexec:path=/bin/sh,argv1=-c");
+    const tray = makeHarness();
+    return Effect.gen(function* () {
+      yield* DesktopTray.start;
+      // The fallback is decided and logged before anything could open a bus.
+      expect(tray.logs[0]).toContain("closing the window quits");
+      tray.appListeners.get("browser-window-created")?.({}, tray.window);
+      assert.isFalse(tray.pressClose().held);
       assert.deepEqual(fake.busAddresses, []);
-    }).pipe(Effect.scoped),
-  );
+    }).pipe(Effect.provide(tray.layer), Effect.scoped);
+  });
 
   it.each([
     ["unix:path=/run/user/1000/bus", true],
@@ -192,33 +233,5 @@ describe("DesktopTray", () => {
     ["tcp:host=localhost,port=4000", false],
   ] as const)("accepts only a socket bus address: %s", (address, accepted) => {
     expect(DesktopTray.isSocketBusAddress(address)).toBe(accepted);
-  });
-});
-
-const keepRunning = {
-  platform: "linux",
-  quitting: false,
-  trayShown: true,
-  keepRunningInBackground: true,
-} as const;
-
-describe("mainWindowCloseAction", () => {
-  it.each([
-    ["hides on Linux while the tray is shown", keepRunning, "hide"],
-    ["hides on Windows while the tray is shown", { ...keepRunning, platform: "win32" }, "hide"],
-    ["closes when the setting is off", { ...keepRunning, keepRunningInBackground: false }, "close"],
-    [
-      "closes without a tray, so the app is never unreachable",
-      { ...keepRunning, trayShown: false },
-      "close",
-    ],
-    [
-      "closes during a quit, so it never blocks quitting",
-      { ...keepRunning, quitting: true },
-      "close",
-    ],
-    ["leaves macOS unchanged", { ...keepRunning, platform: "darwin" }, "close"],
-  ] as const)("%s", (_name, input, expected) => {
-    expect(DesktopTray.mainWindowCloseAction(input)).toBe(expected);
   });
 });

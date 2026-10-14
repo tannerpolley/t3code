@@ -1,8 +1,8 @@
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
@@ -18,26 +18,6 @@ import * as DesktopState from "./DesktopState.ts";
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-tray");
 
-/**
- * What closing the main window does. It hides into the tray only while a tray
- * icon offers the way back; otherwise it closes and the app quits as before.
- * macOS already keeps the app running with no windows, and a quit in progress
- * must always be able to close it.
- */
-export function mainWindowCloseAction(input: {
-  readonly platform: NodeJS.Platform;
-  readonly quitting: boolean;
-  readonly trayShown: boolean;
-  readonly keepRunningInBackground: boolean;
-}): "hide" | "close" {
-  return input.platform !== "darwin" &&
-    !input.quitting &&
-    input.trayShown &&
-    input.keepRunningInBackground
-    ? "hide"
-    : "close";
-}
-
 const STATUS_NOTIFIER_WATCHER = "org.kde.StatusNotifierWatcher";
 
 /**
@@ -49,80 +29,41 @@ export function isSocketBusAddress(address: string | undefined): address is stri
   return address !== undefined && /^unix:(?:[^;,]*,)*(?:path|abstract)=[^;]*$/.test(address);
 }
 
-interface StatusNotifierHost {
-  readonly registered: () => Promise<boolean>;
-  readonly close: () => void;
-}
-
 // Electron's Linux tray is a StatusNotifierItem. With no host to show it (GNOME
-// without the AppIndicator extension, for one) the icon silently never appears.
-// The host is asked directly, and `onChange` runs whenever it may have come or gone.
-async function connectStatusNotifierHost(
+// without the AppIndicator extension, for one) the icon silently never appears,
+// so ask over a fresh connection, closed again whatever the answer.
+async function isStatusNotifierHostRegistered(
   address: string,
   signal: AbortSignal,
-  onChange: () => void,
-): Promise<StatusNotifierHost> {
-  const { Message, MessageType, sessionBus } = await import("dbus-next");
+): Promise<boolean> {
+  const { Message, sessionBus } = await import("dbus-next");
   const bus = sessionBus({ busAddress: address });
-  let closed = false;
-  const close = () => {
-    closed = true;
-    bus.disconnect();
-  };
-  signal.addEventListener("abort", close);
-  const disconnected = new Promise<never>((_, reject) => {
-    bus.on("error", (error) => {
-      reject(error);
-      if (!closed) onChange();
-    });
-  });
-  disconnected.catch(() => undefined);
-  const call = (message: ConstructorParameters<typeof Message>[0]) =>
-    Promise.race([bus.call(new Message(message)), disconnected]);
-  bus.on("message", (message) => {
-    if (closed || message.type !== MessageType.SIGNAL) return;
-    if (
-      (message.member === "NameOwnerChanged" && message.body[0] === STATUS_NOTIFIER_WATCHER) ||
-      (message.interface === STATUS_NOTIFIER_WATCHER &&
-        message.member.startsWith("StatusNotifierHost"))
-    ) {
-      onChange();
-    }
-  });
+  signal.addEventListener("abort", () => bus.disconnect());
   try {
-    for (const rule of [
-      `type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',arg0='${STATUS_NOTIFIER_WATCHER}'`,
-      `type='signal',interface='${STATUS_NOTIFIER_WATCHER}'`,
-    ]) {
-      await call({
-        destination: "org.freedesktop.DBus",
-        path: "/org/freedesktop/DBus",
-        interface: "org.freedesktop.DBus",
-        member: "AddMatch",
-        signature: "s",
-        body: [rule],
-      });
-    }
-  } catch (error) {
-    close();
-    throw error;
-  }
-  return {
-    registered: () =>
-      call({
-        destination: STATUS_NOTIFIER_WATCHER,
-        path: "/StatusNotifierWatcher",
-        interface: "org.freedesktop.DBus.Properties",
-        member: "Get",
-        signature: "ss",
-        body: [STATUS_NOTIFIER_WATCHER, "IsStatusNotifierHostRegistered"],
-      }).then(
-        (reply) => reply?.body[0]?.value === true,
-        () => false,
+    const reply = await Promise.race([
+      bus.call(
+        new Message({
+          destination: STATUS_NOTIFIER_WATCHER,
+          path: "/StatusNotifierWatcher",
+          interface: "org.freedesktop.DBus.Properties",
+          member: "Get",
+          signature: "ss",
+          body: [STATUS_NOTIFIER_WATCHER, "IsStatusNotifierHostRegistered"],
+        }),
       ),
-    close,
-  };
+      new Promise<never>((_, reject) => bus.on("error", reject)),
+    ]);
+    return reply?.body[0]?.value === true;
+  } finally {
+    bus.disconnect();
+  }
 }
+
+/** False on no host, an error, or no answer within `timeout`. */
+const statusNotifierHostPresent = (address: string, timeout: Duration.Input) =>
+  Effect.promise((signal) =>
+    isStatusNotifierHostRegistered(address, signal).catch(() => false),
+  ).pipe(Effect.timeoutOption(timeout), Effect.map(Option.getOrElse(() => false)));
 
 /**
  * Shows the main window, creating it if needed, unless a quit has started. The
@@ -136,11 +77,14 @@ export const showMainWindow = Effect.gen(function* () {
 }).pipe(Effect.withSpan("desktop.tray.showMainWindow"));
 
 /**
- * Shows a tray icon on Linux and Windows and, while it is shown, hides the main
- * window on close instead of quitting, so the built-in server, agents, and
+ * Shows a tray icon on Linux and Windows. While it is shown, closing the main
+ * window hides it instead of quitting, so the built-in server, agents, and
  * remote connections keep running. Reopening goes through the tray, a second
- * launch (`second-instance` reveals the hidden window), or `t3 app`. If the
- * Linux tray host goes away, the icon goes with it and a hidden window comes back.
+ * launch (`second-instance` reveals the hidden window), or `t3 app`.
+ *
+ * On Linux the tray host is checked at startup and again on each close; a
+ * missing host quits as before. Nothing watches the host while the window is
+ * hidden: if it vanishes then, launching T3 Code again brings the window back.
  */
 export const start: Effect.Effect<
   void,
@@ -155,6 +99,7 @@ export const start: Effect.Effect<
   | ElectronWindow.ElectronWindow
 > = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  // macOS already keeps the app running with no windows.
   if (environment.platform === "darwin") return;
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -165,8 +110,24 @@ export const start: Effect.Effect<
   const runPromise = Effect.runPromiseWith(context);
   const runSync = Effect.runSyncWith(context);
 
+  const iconPath = (yield* assets.iconPaths)[environment.platform === "win32" ? "ico" : "png"];
+  if (Option.isNone(iconPath)) {
+    return yield* logWarning("no tray icon available; closing the window quits");
+  }
+  // Only Linux needs the session bus; on Windows the tray is always available.
+  const busAddress =
+    environment.platform === "linux" ? process.env.DBUS_SESSION_BUS_ADDRESS : undefined;
+  if (environment.platform === "linux" && !isSocketBusAddress(busAddress)) {
+    return yield* logInfo("no usable session bus for a tray icon; closing the window quits");
+  }
+
   let tray: Electron.Tray | undefined;
-  const allowedToClose = new WeakSet<Electron.BrowserWindow>();
+  const destroyTray = Effect.sync(() => {
+    tray?.destroy();
+    tray = undefined;
+  });
+  yield* Effect.addFinalizer(() => destroyTray);
+
   const keepRunningInBackground = clientSettings.get.pipe(
     Effect.map(
       Option.match({
@@ -176,51 +137,34 @@ export const start: Effect.Effect<
     ),
     Effect.orElseSucceed(() => DEFAULT_CLIENT_SETTINGS.keepRunningInBackground),
   );
-  const closeAction = (keepRunning: boolean) =>
-    mainWindowCloseAction({
-      platform: environment.platform,
-      quitting: runSync(Ref.get(state.quitting)),
-      trayShown: tray !== undefined,
-      keepRunningInBackground: keepRunning,
-    });
+  const closeToTray = (window: Electron.BrowserWindow) =>
+    Effect.gen(function* () {
+      const hide =
+        (yield* keepRunningInBackground) &&
+        (busAddress === undefined || (yield* statusNotifierHostPresent(busAddress, "1 second")));
+      // A quit that started during the check owns the window from here.
+      if (window.isDestroyed() || (yield* Ref.get(state.quitting))) return;
+      if (hide) return window.hide();
+      yield* destroyTray;
+      yield* electronApp.quit;
+    }).pipe(
+      Effect.catchCause((cause) => logWarning("failed to handle the window close", { cause })),
+    );
 
-  // The close event cannot wait for the settings file, so hold the window open,
-  // read the setting, then hide it or let the close go through as before.
+  // Electron needs the close cancelled synchronously, so hold the window open
+  // while the setting and the tray host are checked, then hide it or quit.
   yield* electronApp.on(
     "browser-window-created",
     (_event: unknown, window: Electron.BrowserWindow) => {
       window.on("close", (event) => {
-        if (allowedToClose.has(window) || closeAction(true) === "close") return;
+        if (tray === undefined || tray.isDestroyed() || runSync(Ref.get(state.quitting))) return;
         const main = runSync(electronWindow.main);
         if (Option.isNone(main) || main.value !== window) return;
         event.preventDefault();
-        void runPromise(
-          keepRunningInBackground.pipe(
-            Effect.map((keepRunning) => {
-              if (window.isDestroyed()) return;
-              if (closeAction(keepRunning) === "hide") {
-                window.hide();
-                return;
-              }
-              allowedToClose.add(window);
-              window.close();
-            }),
-          ),
-        );
+        return runPromise(closeToTray(window));
       });
     },
   );
-
-  const iconPath = (yield* assets.iconPaths)[environment.platform === "win32" ? "ico" : "png"];
-  if (Option.isNone(iconPath)) {
-    return yield* logWarning("no tray icon available; closing the window quits");
-  }
-  // Only Linux needs the session bus; elsewhere the tray is always available.
-  const busAddress =
-    environment.platform === "linux" ? process.env.DBUS_SESSION_BUS_ADDRESS : undefined;
-  if (environment.platform === "linux" && !isSocketBusAddress(busAddress)) {
-    return yield* logInfo("no usable session bus for a tray icon; closing the window quits");
-  }
 
   const open = () =>
     void runPromise(
@@ -231,20 +175,9 @@ export const start: Effect.Effect<
       ),
     );
   const quit = () => void runPromise(electronApp.quit);
-  const destroyTray = Effect.sync(() => {
-    tray?.destroy();
-    tray = undefined;
-  });
-  yield* Effect.addFinalizer(() => destroyTray);
-
-  const setTrayShown = Effect.fn("desktop.tray.setShown")(function* (shown: boolean) {
-    if (shown === (tray !== undefined) || (yield* Ref.get(state.quitting))) return;
-    if (!shown) {
-      yield* destroyTray;
-      // With the icon gone there is no way back to a hidden window, so show it.
-      const main = yield* electronWindow.main;
-      if (Option.isSome(main) && !main.value.isVisible()) yield* electronWindow.reveal(main.value);
-      return yield* logInfo("system tray host is gone; closing the window quits");
+  const showTray = Effect.gen(function* () {
+    if (busAddress !== undefined && !(yield* statusNotifierHostPresent(busAddress, "3 seconds"))) {
+      return yield* logInfo("no system tray host found; closing the window quits");
     }
     let image = Electron.nativeImage.createFromPath(iconPath.value);
     // The Linux icon is the 1024px app icon; panels draw it at about 24px.
@@ -262,39 +195,7 @@ export const start: Effect.Effect<
     tray = created;
     yield* logInfo("tray icon shown; closing the window keeps the app running");
   });
-
-  const showTray = Effect.gen(function* () {
-    if (busAddress === undefined) return yield* setTrayShown(true);
-    const gate = yield* Semaphore.make(1);
-    let host: StatusNotifierHost | undefined;
-    // Serialized so a burst of bus signals cannot create two icons.
-    const sync = gate
-      .withPermits(1)(
-        Effect.suspend(() =>
-          host === undefined
-            ? Effect.void
-            : Effect.promise(host.registered).pipe(
-                Effect.timeoutOption("3 seconds"),
-                Effect.map(Option.getOrElse(() => false)),
-                Effect.flatMap(setTrayShown),
-              ),
-        ),
-      )
-      .pipe(Effect.catchCause((cause) => logWarning("could not update the tray icon", { cause })));
-    const connected = yield* Effect.promise((signal) =>
-      connectStatusNotifierHost(busAddress, signal, () => void runPromise(sync)).catch(
-        () => undefined,
-      ),
-    ).pipe(Effect.timeoutOption("3 seconds"), Effect.map(Option.getOrUndefined));
-    if (connected === undefined) {
-      return yield* logInfo("no system tray host found; closing the window quits");
-    }
-    host = connected;
-    yield* Effect.addFinalizer(() => Effect.sync(connected.close));
-    yield* sync;
-    if (tray === undefined) yield* logInfo("no system tray host found; closing the window quits");
-  });
-  // The bus probe can take a moment; startup does not wait for it.
+  // The host check can take a moment; startup does not wait for it.
   yield* Effect.forkScoped(
     showTray.pipe(
       Effect.catchCause((cause) =>
