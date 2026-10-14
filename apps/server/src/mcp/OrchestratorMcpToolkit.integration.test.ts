@@ -13,7 +13,6 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2UserInputQuestion,
-  NodeId,
   type OrchestrationV2DelegatedCompletionDelivery,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -60,6 +59,8 @@ import { McpSchema, McpServer } from "effect/ai";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
+import * as DontAskModeWorker from "../orchestration-v2/DontAskModeWorker.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { threadShellFromProjection } from "../orchestration-v2/ProjectionStore.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -710,7 +711,10 @@ describe("orchestrator MCP toolkit", () => {
             Layer.provideMerge(layerOrchestration),
             Layer.provide(layerRegistry),
             Layer.provide(layerProviderRegistry),
-            Layer.provide(ServerSettings.layerTest()),
+            Layer.provideMerge(ServerSettings.layerTest()),
+            Layer.provideMerge(
+              ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+            ),
             Layer.provide(layerScheduledTaskStub),
             Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
             Layer.provide(
@@ -899,7 +903,7 @@ describe("orchestrator MCP toolkit", () => {
                 expect(
                   projection.turnItems.find((candidate) => candidate.id === item.id),
                 ).toMatchObject({ status: "waiting", questions });
-                return { call, requestId: item.requestId };
+                return { call, requestId: item.requestId, event };
               });
             const answerQuestion = (
               callScope: McpInvocationContext.McpInvocationScope,
@@ -1002,6 +1006,26 @@ describe("orchestrator MCP toolkit", () => {
               platform: "Web",
             };
             yield* answerQuestion(scopeForCaller, multiSelectQuestions, multipleAnswers);
+
+            // Owner-visible MCP questions still get the recorded away-policy answer.
+            const settings = yield* ServerSettings.ServerSettingsService;
+            const dontAsk = yield* DontAskModeWorker.make;
+            yield* settings.updateSettings({ dontAskMode: true });
+            const awayQuestion = yield* startQuestion(scopeForCaller, [areasQuestion]);
+            yield* dontAsk.sweep;
+            expect((yield* Fiber.join(awayQuestion.call)).structuredContent).toEqual(
+              DontAskModeWorker.dontAskAnswers([areasQuestion]),
+            );
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).turnItems.find(
+                (item) =>
+                  item.type === "user_input_request" && item.requestId === awayQuestion.requestId,
+              ),
+            ).toMatchObject({
+              respondedBy: "dont_ask_mode",
+              questionAnswer: { answers: DontAskModeWorker.dontAskAnswers([areasQuestion]) },
+            });
+            yield* settings.updateSettings({ dontAskMode: false });
 
             const supersededScope = scopeForCaller;
             scopeForCaller = yield* scopeForThread(
@@ -3201,71 +3225,56 @@ describe("orchestrator MCP toolkit", () => {
                 ),
             )).subagents.find((task) => !tasksBeforeQuestion.has(task.id))!;
             const questionChildThreadId = questionTask.childThreadId!;
-            yield* waitForProjection(orchestrator, questionChildThreadId, (projection) =>
-              projection.runs.some((run) => run.status === "running"),
+            yield* waitForProjection(
+              orchestrator,
+              questionChildThreadId,
+              (projection) =>
+                projection.runs.some((run) => run.status === "running") &&
+                projection.providerTurns.some((turn) => turn.status === "running"),
             );
             const questionChild = yield* orchestrator.getThreadProjection(questionChildThreadId);
+            // An active orchestrator, including a blocking delegation wait, owns its child's answer.
+            yield* settings.updateSettings({ dontAskMode: true });
+            const childScope = yield* scopeForThread(questionChild);
+            const routedQuestion = yield* startQuestion(childScope, [areasQuestion]);
+            const waitingQuestion = yield* Fiber.join(questionWait);
+            const routedProjection = yield* orchestrator.getThreadProjection(questionChildThreadId);
+            expect(
+              routedProjection.runtimeRequests.find(
+                (request) => request.id === routedQuestion.requestId,
+              ),
+            ).toMatchObject({ status: "pending", routedTo: parentThreadId });
+            yield* dontAsk.handle(routedQuestion.event);
+            yield* dontAsk.sweep;
+            const pendingList = yield* invoke("t3_pending_request_list", {
+              threadId: questionChildThreadId,
+            });
+            const parentAnswer = { areas: "Web" };
+            const routedResponse = yield* invoke("t3_pending_request_respond", {
+              threadId: questionChildThreadId,
+              requestId: routedQuestion.requestId,
+              answers: parentAnswer,
+            });
+            expect(declaredFailure(routedResponse)).toBeUndefined();
+            expect(routedResponse.isError).toBe(false);
+            expect(pendingList.structuredContent).toEqual({
+              requestIds: [routedQuestion.requestId],
+            });
+            expect((yield* Fiber.join(routedQuestion.call)).structuredContent).toEqual(
+              parentAnswer,
+            );
+            yield* settings.updateSettings({ dontAskMode: false });
+
             const questionProviderThread = questionChild.providerThreads.find(
               (thread) => thread.id === questionChild.thread.activeProviderThreadId,
             )!;
-            const questionRequestId = RuntimeRequestId.make("request:question-wait");
-            const questionNodeId = NodeId.make("node:question-wait");
+            const questionRequestId = routedQuestion.requestId;
+            const questionNodeId = routedProjection.runtimeRequests.find(
+              (request) => request.id === questionRequestId,
+            )!.nodeId;
             const questionAt = yield* DateTime.now;
-            yield* (yield* EventSink.EventSinkV2).write({
-              events: [
-                {
-                  id: EventId.make("event:question-wait-request"),
-                  type: "runtime-request.updated",
-                  threadId: questionChildThreadId,
-                  nodeId: questionNodeId,
-                  occurredAt: questionAt,
-                  payload: {
-                    id: questionRequestId,
-                    nodeId: questionNodeId,
-                    providerTurnId: null,
-                    nativeRequestRef: null,
-                    kind: "user_input",
-                    status: "pending",
-                    responseCapability: {
-                      type: "app_owned",
-                      providerSessionId: questionProviderThread.providerSessionId!,
-                    },
-                    createdAt: questionAt,
-                    resolvedAt: null,
-                  },
-                },
-                {
-                  id: EventId.make("event:question-wait-item"),
-                  type: "turn-item.updated",
-                  threadId: questionChildThreadId,
-                  nodeId: questionNodeId,
-                  occurredAt: questionAt,
-                  payload: {
-                    id: TurnItemId.make("item:question-wait"),
-                    threadId: questionChildThreadId,
-                    runId: null,
-                    nodeId: questionNodeId,
-                    providerThreadId: null,
-                    providerTurnId: null,
-                    nativeItemRef: null,
-                    parentItemId: null,
-                    ordinal: 1,
-                    status: "waiting",
-                    title: null,
-                    startedAt: questionAt,
-                    completedAt: null,
-                    updatedAt: questionAt,
-                    type: "user_input_request",
-                    requestId: questionRequestId,
-                    questions: [
-                      { id: "q1", header: "Scope", question: "Fix the lexer too?", options: [] },
-                    ],
-                  },
-                },
-              ],
-            });
             const questionResult = yield* decodeDelegateTaskResult(
-              (yield* Fiber.join(questionWait)).structuredContent,
+              waitingQuestion.structuredContent,
             ).pipe(Effect.orDie);
             expect(questionResult).toMatchObject({
               taskId: questionTask.id,
@@ -3273,9 +3282,9 @@ describe("orchestrator MCP toolkit", () => {
               waitTimedOut: false,
               waitingOnUser: {
                 kind: "input",
-                requestIds: [questionRequestId],
+                requestIds: [routedQuestion.requestId],
                 waitingOn: "orchestrator",
-                preview: expect.stringContaining("Fix the lexer too?"),
+                preview: expect.stringContaining(areasQuestion.question),
               },
             });
             expect(
@@ -3283,12 +3292,6 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id === questionTask.id,
               )?.completionWake,
             ).toBe("always");
-            const questionResponse = yield* invoke("t3_pending_request_respond", {
-              threadId: questionChildThreadId,
-              requestId: questionRequestId,
-              answers: { q1: "No" },
-            });
-            expect(questionResponse.isError).toBe(false);
             const answeredQuestionChild =
               yield* orchestrator.getThreadProjection(questionChildThreadId);
             const answeredQuestionItem = answeredQuestionChild.turnItems.find(
@@ -3365,12 +3368,15 @@ describe("orchestrator MCP toolkit", () => {
               requestKind: "command",
               prompt: "cat /tmp/requested-file",
             });
+            yield* settings.updateSettings({ dontAskMode: true });
+            yield* dontAsk.sweep;
             const approveChild = yield* invoke("t3_pending_request_respond", {
               threadId: questionChildThreadId,
               requestId: approvalRequestId,
               decision: "accept",
             });
             expect(approveChild.isError).toBe(false);
+            yield* settings.updateSettings({ dontAskMode: false });
             expect(yield* Deferred.await(approvalResponse)).toEqual({
               requestId: approvalRequestId,
               decision: "accept",

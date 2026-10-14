@@ -6,6 +6,7 @@ import {
   type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -77,12 +78,19 @@ export const make = Effect.gen(function* () {
   const isOn = settings.getDontAskMode.pipe(Effect.orElseSucceed(() => false));
   const respond = (threadId: ThreadId, requestId: RuntimeRequestId) =>
     projections.getRuntimeResponseContext(threadId, requestId).pipe(
-      Effect.flatMap((context) => {
-        const command = dontAskResponse(threadId, context);
-        // Re-read the setting right before each answer, so switching off stops
-        // a running sweep and a sweep left over from an earlier switch-on.
-        return command === null ? Effect.void : Effect.when(orchestrator.dispatch(command), isOn);
-      }),
+      Effect.flatMap((context) =>
+        Effect.gen(function* () {
+          const parent =
+            context.request?.routedTo === undefined
+              ? undefined
+              : yield* projections.getThreadShell(context.request.routedTo);
+          if (!runtimeRequestIsOwnerVisible(context.request, parent)) return;
+          const command = dontAskResponse(threadId, context);
+          // Re-read the setting right before each answer, so switching off stops
+          // a running sweep and a sweep left over from an earlier switch-on.
+          if (command !== null) yield* Effect.when(orchestrator.dispatch(command), isOn);
+        }),
+      ),
       Effect.catchCause((cause) =>
         Effect.logWarning("Don't ask mode could not answer a request", {
           threadId,
