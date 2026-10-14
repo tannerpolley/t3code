@@ -77,13 +77,19 @@ type SampledProcess = Pick<
   "identity" | "ppid" | "command" | "cpuPercent" | "residentBytes"
 >;
 
+const SHELL_PROGRAM = /(^|\/)(ba|z|da|k)?sh$/;
+const SHELL_SCRIPT_FLAG = /^-[a-z]*c[a-z]*$/;
+
+/** Text with every whitespace run made one space, the way a sampled command line reads. */
+const oneLine = (text: string) => text.trim().split(/\s+/).join(" ");
+
 /** The script of `<shell> -c '<script>'`, the way Codex runs every command; otherwise null. */
 function shellScript(command: string): string | null {
   const commands = shellCommandWords(command);
   if (commands.length !== 1) return null;
   const [shell = "", flag = "", script = "", ...rest] = commands[0]!;
-  return /(^|\/)(ba|z|da|k)?sh$/.test(shell) &&
-    /^-[a-z]*c[a-z]*$/.test(flag) &&
+  return SHELL_PROGRAM.test(shell) &&
+    SHELL_SCRIPT_FLAG.test(flag) &&
     script.trim().length > 0 &&
     rest.length === 0
     ? script.trim()
@@ -91,10 +97,32 @@ function shellScript(command: string): string | null {
 }
 
 /**
- * The one sampled process tree running `command`: the processes whose command line holds it
- * (`matched`, the shell wrappers and the command itself) and every descendant (`tree`). Null when
- * nothing matches or identical commands run in separate trees, since then no tree is provably
- * this command's.
+ * Whether a sampled command line runs exactly `command`: it is the command (or the script of a
+ * `<shell> -c` command), a `<shell> -c` wrapper whose script is one of those, or Claude's
+ * `eval '<command>'`. Sampled lines are argv joined by spaces, so a wrapper's quoting is gone.
+ */
+function runsCommand(processCommand: string, command: string, script: string | null): boolean {
+  const line = oneLine(processCommand);
+  const exact = [oneLine(command), ...(script === null ? [] : [oneLine(script)])];
+  if (exact.includes(line)) return true;
+  const [shell = "", flag = "", ...rest] = line.split(" ");
+  if (SHELL_PROGRAM.test(shell) && SHELL_SCRIPT_FLAG.test(flag) && exact.includes(rest.join(" "))) {
+    return true;
+  }
+  // Claude escapes the command as an eval operand before passing it to Bash.
+  return (
+    line.includes("eval") &&
+    shellCommandWords(processCommand).some(
+      (words) => words[0] === "eval" && words.length === 2 && words[1]?.trim() === command,
+    )
+  );
+}
+
+/**
+ * The one sampled process tree running `command`: the processes whose command line runs exactly
+ * it (`matched`, the shell wrappers and the command itself; see `runsCommand`) and every
+ * descendant (`tree`). Null when nothing matches or identical commands run in separate trees,
+ * since then no tree is provably this command's.
  */
 export function attributeCommandProcesses(input: {
   readonly processes: ReadonlyArray<SampledProcess>;
@@ -110,19 +138,12 @@ export function attributeCommandProcesses(input: {
       .filter((process) => process.identity.pid !== input.serverPid)
       .map((process) => [process.identity.pid, process]),
   );
+  // ponytail: the server does not know provider process ids, so an item still marked running
+  // after its process exited claims an identical command another thread runs; track provider
+  // PIDs if that shows up in practice.
   const matched = new Set(
     [...processes.values()]
-      .filter(
-        (process) =>
-          process.command.includes(command) ||
-          // Codex quotes the script it hands `bash -lc`; the process line holds it unquoted.
-          (script !== null && process.command.includes(script)) ||
-          // Claude escapes the command as an eval operand before passing it to Bash.
-          (process.command.includes("eval") &&
-            shellCommandWords(process.command).some(
-              (words) => words[0] === "eval" && words.length === 2 && words[1]?.trim() === command,
-            )),
-      )
+      .filter((process) => runsCommand(process.command, command, script))
       .map((process) => process.identity.pid),
   );
   if (matched.size === 0) return null;
@@ -168,17 +189,14 @@ export const VISIBLE_PROCESS_GROUPS = 5;
 // Wait loops start one of these every few seconds; listing them would only add churn.
 const UNLISTED_PROGRAMS = new Set(["sleep"]);
 
-/** A process's command line as words, with the program and absolute paths cut to file names. */
-function processWords(command: string): Array<string> {
-  return command
-    .trim()
-    .split(/\s+/)
-    .map((word) => (word.startsWith("/") ? word.slice(word.lastIndexOf("/") + 1) || word : word));
-}
+/** An absolute path cut to its file name, for display. */
+const fileName = (word: string) =>
+  word.startsWith("/") ? word.slice(word.lastIndexOf("/") + 1) || word : word;
 
 /**
  * The processes the given commands spawned, beyond the command lines themselves, grouped by shape:
  * the same words once every number is ignored, so ten `python worker.py --shard N` are one group.
+ * Paths stay whole in the shape and are cut to file names only in the label.
  * Largest groups first, `limit` of them.
  */
 export function groupSpawnedProcesses(input: {
@@ -211,8 +229,8 @@ export function groupSpawnedProcesses(input: {
   for (const pid of spawned) {
     const process = byPid.get(pid);
     if (process === undefined || commandPids.has(pid)) continue;
-    const words = processWords(process.command);
-    if (words[0] === "" || UNLISTED_PROGRAMS.has(words[0]!)) continue;
+    const words = process.command.trim().split(/\s+/);
+    if (words[0] === "" || UNLISTED_PROGRAMS.has(fileName(words[0]!))) continue;
     const key = words.map((word) => word.replace(/\d+/g, "#")).join(" ");
     const group = groups.get(key) ?? { members: [], cpuPercent: 0, residentBytes: 0 };
     group.members.push(words);
@@ -226,7 +244,7 @@ export function groupSpawnedProcesses(input: {
     return {
       label: first
         .map((word, index) =>
-          group.members.every((member) => member[index] === word) ? word : shape[index]!,
+          fileName(group.members.every((member) => member[index] === word) ? word : shape[index]!),
         )
         .join(" "),
       count: group.members.length,

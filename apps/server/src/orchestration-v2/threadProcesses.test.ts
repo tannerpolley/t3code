@@ -8,7 +8,11 @@ import {
 import * as DateTime from "effect/DateTime";
 import { assert, describe, it } from "vite-plus/test";
 
-import { groupSpawnedProcesses, runningThreadWork } from "./threadProcesses.ts";
+import {
+  attributeCommandProcesses,
+  groupSpawnedProcesses,
+  runningThreadWork,
+} from "./threadProcesses.ts";
 
 const threadId = ThreadId.make("thread-a");
 const startedAt = DateTime.makeUnsafe("2026-10-14T10:00:00.000Z");
@@ -84,15 +88,43 @@ describe("runningThreadWork", () => {
   });
 });
 
-describe("groupSpawnedProcesses", () => {
-  const process = (pid: number, ppid: number, command: string, cpuPercent = 10) => ({
-    identity: { pid, startTimeMs: 1 },
-    ppid,
-    command,
-    cpuPercent,
-    residentBytes: 100,
-  });
+const process = (pid: number, ppid: number, command: string, cpuPercent = 10) => ({
+  identity: { pid, startTimeMs: 1 },
+  ppid,
+  command,
+  cpuPercent,
+  residentBytes: 100,
+});
 
+describe("attributeCommandProcesses", () => {
+  it("does not claim another thread's command that merely starts with this one", () => {
+    // Thread A's `python train.py` has exited; thread B runs `python train.py --resume`.
+    const processes = [
+      process(10, 1, "codex app-server"),
+      process(20, 10, "/bin/bash -lc python train.py --resume"),
+      process(21, 20, "python train.py --resume"),
+    ];
+    assert.isNull(
+      attributeCommandProcesses({
+        processes,
+        serverPid: 1,
+        command: "/bin/bash -lc 'python train.py'",
+      }),
+    );
+    assert.deepEqual(
+      [
+        ...(attributeCommandProcesses({
+          processes,
+          serverPid: 1,
+          command: "/bin/bash -lc 'python train.py --resume'",
+        })?.tree ?? []),
+      ].sort(),
+      [20, 21],
+    );
+  });
+});
+
+describe("groupSpawnedProcesses", () => {
   it("groups same-shaped workers under a Codex command into one row with their total usage", () => {
     const { groups, hiddenCount } = groupSpawnedProcesses({
       processes: [
@@ -135,5 +167,24 @@ describe("groupSpawnedProcesses", () => {
       ],
     );
     assert.equal(hiddenCount, 3);
+  });
+
+  it("keeps same-named workers from different paths apart", () => {
+    const { groups } = groupSpawnedProcesses({
+      processes: [
+        process(20, 1, "make all"),
+        process(21, 20, "/usr/bin/python3 /one/worker.py --config /one/config.json"),
+        process(22, 20, "/usr/bin/python3 /two/worker.py --config /two/config.json"),
+      ],
+      serverPid: 1,
+      commands: [{ command: "make all" }],
+    });
+    assert.deepEqual(
+      groups.map((group) => [group.label, group.count]),
+      [
+        ["python3 worker.py --config config.json", 1],
+        ["python3 worker.py --config config.json", 1],
+      ],
+    );
   });
 });
