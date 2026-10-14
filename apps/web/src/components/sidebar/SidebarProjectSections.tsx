@@ -66,7 +66,7 @@ import {
 } from "./SidebarColumns";
 import { useServerConfigs } from "../../state/entities";
 import { ThreadLocationHeader, ThreadLocationIcon } from "../ThreadLocationIcon";
-import { ThreadRoleIcon } from "../ThreadRoleIcon";
+import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import {
   describeSidebarBackgroundWork,
@@ -1345,12 +1345,13 @@ const SidebarProjectThreadRow = memo(
         >
           {props.codexStyle ? (
             <SidebarThreadColumns
-              location={
+              location={threadLocationCell(
+                props.thread.source,
                 props.locationLeadKeys?.has(activeThreadKey) === false ? undefined : (
                   <ThreadLocationIcon thread={props.thread} />
-                )
-              }
-              role={<ThreadRoleIcon thread={props.thread.source} />}
+                ),
+              )}
+              role={<ThreadRoleIcon thread={props.thread.source} nativeMark={false} />}
               provider={
                 <ThreadRelationshipIcon
                   driver={provider?.driver}

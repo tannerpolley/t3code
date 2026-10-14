@@ -1,7 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell } from "../../state/entities";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
-import { ThreadRoleIcon } from "../ThreadRoleIcon";
+import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
 import {
   SidebarThreadColumns,
   sidebarThreadName,
@@ -112,8 +112,12 @@ function WorkflowMemberRow({
           }
         >
           <SidebarThreadColumns
-            location={thread ? <ThreadLocationIcon thread={thread} /> : undefined}
-            role={thread ? <ThreadRoleIcon thread={thread.source} /> : undefined}
+            location={
+              thread
+                ? threadLocationCell(thread.source, <ThreadLocationIcon thread={thread} />)
+                : undefined
+            }
+            role={thread ? <ThreadRoleIcon thread={thread.source} nativeMark={false} /> : undefined}
             usage={<SidebarTokenUsage summary={thread?.source.usageSummary} driver={driver} />}
             provider={<ThreadRelationshipIcon driver={driver} provider={provider} />}
             model={shortModelName(member.model ?? thread?.modelSelection.model ?? "")}

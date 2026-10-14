@@ -9,7 +9,7 @@ import { shortModelSelectionEffort } from "@t3tools/client-runtime/state/thread-
 import { useAtomValue } from "@effect/atom-react";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
-import { ThreadRoleIcon } from "../ThreadRoleIcon";
+import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
 import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
 import {
   childWorktreeLabel,
@@ -770,17 +770,24 @@ export function ThreadRelationshipsPanel(props: {
                   const relationshipContent = redesign ? (
                     <SidebarThreadColumns
                       location={
+                        node?.thread
+                          ? threadLocationCell(
+                              node.thread,
+                              <ThreadLocationIcon
+                                thread={{
+                                  ...node.thread,
+                                  source: node.thread,
+                                  environmentId: props.environmentId,
+                                }}
+                              />,
+                            )
+                          : undefined
+                      }
+                      role={
                         node?.thread ? (
-                          <ThreadLocationIcon
-                            thread={{
-                              ...node.thread,
-                              source: node.thread,
-                              environmentId: props.environmentId,
-                            }}
-                          />
+                          <ThreadRoleIcon thread={node.thread} nativeMark={false} />
                         ) : undefined
                       }
-                      role={node?.thread ? <ThreadRoleIcon thread={node.thread} /> : undefined}
                       provider={
                         <ThreadRelationshipIcon
                           driver={isSubagent && !isParent ? providerDriver : undefined}

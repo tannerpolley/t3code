@@ -2567,6 +2567,7 @@ describe("thread locations", () => {
     worktreePath: string | null,
     role?: "orchestrator" | "implementor" | "reviewer",
     relationshipToParent: "subagent" | null = null,
+    creationSource: "web" | "provider" = "web",
   ) => ({
     id: ThreadId.make(id),
     environmentId: localEnvironmentId,
@@ -2575,6 +2576,7 @@ describe("thread locations", () => {
       role,
       branch: worktreePath === null ? null : `t3/${id}`,
       worktreePath,
+      creationSource,
       lineage: { parentThreadId: null, relationshipToParent, rootThreadId: ThreadId.make(id) },
     },
   });
@@ -2616,7 +2618,9 @@ describe("thread locations", () => {
       { thread: at("helper", null, undefined, "subagent"), topLevel: false },
       { thread: at("main", null), topLevel: true },
       { thread: at("orchestrator", null, "orchestrator"), topLevel: true },
-      // A role-less agent in a worktree counts as its implementor; a reviewer there does not lead.
+      // A role-less agent in a worktree counts as its implementor; a reviewer there does not lead,
+      // nor does a native subagent, whose location cell holds its robot mark.
+      { thread: at("native", "/wt/x", "implementor", "subagent", "provider"), topLevel: false },
       { thread: at("reviewer", "/wt/x", "reviewer"), topLevel: true },
       { thread: at("worker", "/wt/x"), topLevel: false },
       { thread: at("implementor", "/wt/x", "implementor"), topLevel: false },

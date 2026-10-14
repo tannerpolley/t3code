@@ -61,7 +61,7 @@ import {
 } from "./SidebarBackgroundWork.logic";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
-import { ThreadRoleIcon } from "../ThreadRoleIcon";
+import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /** A row's label; a command's full command line shows on hover. */
@@ -191,16 +191,19 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
         // In Projects only each location's lead carries the icon; other cells stay empty.
         const locationIcon =
-          row.kind === "subagent" &&
-          row.child &&
-          props.locationLeadKeys?.has(
-            scopedThreadKey(scopeThreadRef(props.environmentId, row.child.id)),
-          ) !== false ? (
-            <ThreadLocationIcon thread={row.child} />
-          ) : null;
+          row.kind === "subagent" && row.child
+            ? threadLocationCell(
+                row.child.source,
+                props.locationLeadKeys?.has(
+                  scopedThreadKey(scopeThreadRef(props.environmentId, row.child.id)),
+                ) !== false ? (
+                  <ThreadLocationIcon thread={row.child} />
+                ) : null,
+              )
+            : null;
         const roleIcon =
           row.kind === "subagent" && row.child ? (
-            <ThreadRoleIcon thread={row.child.source} />
+            <ThreadRoleIcon thread={row.child.source} nativeMark={false} />
           ) : null;
         const modelLabel =
           row.kind === "subagent" && row.child

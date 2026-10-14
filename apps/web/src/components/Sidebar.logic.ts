@@ -1186,14 +1186,15 @@ export function groupThreadsByLocation<
 /**
  * The one thread per location that carries its location icon. A worktree is led by its
  * implementor; the main checkout by its orchestrator, else its implementor. Without either, the
- * top-level thread leads, else the first. Ties go to the earliest row. `rows` lists every shown
- * thread in display order, each thread before its children.
+ * top-level thread leads, else the first. Ties go to the earliest row. A native subagent never
+ * leads: its location cell holds its robot mark. `rows` lists every shown thread in display order,
+ * each thread before its children.
  */
 export function resolveLocationLeads<
   TThread extends Pick<SidebarThreadSummary, "environmentId" | "worktreePath"> & {
     readonly source: Pick<
       SidebarThreadSummary["source"],
-      "role" | "branch" | "worktreePath" | "lineage"
+      "role" | "branch" | "worktreePath" | "lineage" | "creationSource"
     >;
   },
 >(
@@ -1201,6 +1202,7 @@ export function resolveLocationLeads<
 ): ReadonlyMap<string, TThread> {
   const leads = new Map<string, { readonly thread: TThread; readonly rank: number }>();
   for (const { thread, topLevel } of rows) {
+    if (isProviderNativeSubagentThread(thread.source)) continue;
     const role = effectiveThreadRole(thread.source);
     const leadRole = thread.worktreePath ? "implementor" : "orchestrator";
     const rank = role === leadRole ? 0 : role === "implementor" ? 1 : topLevel ? 2 : 3;
