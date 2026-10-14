@@ -3,10 +3,11 @@ import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { fileBasename } from "@t3tools/shared/path";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
-import type {
-  OrchestrationV2PendingBackgroundTask,
-  ServerProvider,
-  ThreadId,
+import {
+  isProviderNativeSubagentThread,
+  type OrchestrationV2PendingBackgroundTask,
+  type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
@@ -164,7 +165,18 @@ export function describeSidebarBackgroundWork(
       };
     });
 
-  return [...childRows, ...unmatchedSubagentRows, ...backgroundTaskRows];
+  // Native children come first (see groupRunningSubagentsByParent). Roster-only subagents are the
+  // provider's own, so they join the natives, ahead of app-owned children.
+  const firstAppOwned = runningChildren.findIndex(
+    (child) => !isProviderNativeSubagentThread(child.source),
+  );
+  const split = firstAppOwned === -1 ? childRows.length : firstAppOwned;
+  return [
+    ...childRows.slice(0, split),
+    ...unmatchedSubagentRows,
+    ...childRows.slice(split),
+    ...backgroundTaskRows,
+  ];
 }
 
 /** Warn after two hours, while long-lived servers keep their normal age display. */

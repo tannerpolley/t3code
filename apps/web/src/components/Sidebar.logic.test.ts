@@ -2432,10 +2432,12 @@ describe("groupRunningSubagentsByParent", () => {
       asking?: boolean;
       backgroundWork?: boolean;
       pendingTaskFor?: string;
+      native?: boolean;
     } = {},
   ) => ({
     id: ThreadId.make(id),
     environmentId: localEnvironmentId,
+    source: { creationSource: overrides.native ? ("provider" as const) : ("mcp" as const) },
     pendingBackgroundTasks: [
       ...(overrides.backgroundWork ? [{ taskId: "bash-1", kind: "monitor" as const }] : []),
       ...(overrides.pendingTaskFor
@@ -2532,6 +2534,19 @@ describe("groupRunningSubagentsByParent", () => {
     expect(
       flattenRunningSubagents(listedUnder("parent"), grouped).map((thread) => thread.id),
     ).toEqual(["middle", "leaf"]);
+  });
+
+  it("lists a parent's native subagents before its app-owned children", () => {
+    const grouped = groupRunningSubagentsByParent([
+      child("native-early", { native: true }),
+      child("implementor"),
+      child("native-late", { native: true }),
+    ]);
+    expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual([
+      "native-early",
+      "native-late",
+      "implementor",
+    ]);
   });
 
   it("lists a subagent of a visible fork only under the fork's own row", () => {

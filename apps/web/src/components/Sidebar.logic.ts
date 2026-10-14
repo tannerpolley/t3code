@@ -14,7 +14,12 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  isProviderNativeSubagentThread,
+  type ContextMenuItem,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -1050,7 +1055,7 @@ export function groupRunningSubagentsByParent<
     | "hasPendingUserInput"
     | "hasPendingApprovals"
     | "pendingBackgroundTasks"
-  >,
+  > & { readonly source: Pick<SidebarThreadSummary["source"], "creationSource"> },
 >(threads: readonly TThread[]): ReadonlyMap<string, TThread[]> {
   const pendingTaskChildIds = new Set(
     threads.flatMap((thread) =>
@@ -1133,6 +1138,18 @@ export function groupRunningSubagentsByParent<
     const rootKey = keyOf(thread, thread.lineage.rootThreadId);
     if (!listed.has(parentKey) && !threadRows.has(parentKey) && rootKey !== parentKey)
       add(rootKey, thread);
+  }
+  // A parent's native subagents sit directly under it; app-owned children follow, never between.
+  const native = (thread: TThread) =>
+    isProviderNativeSubagentThread({
+      creationSource: thread.source.creationSource,
+      lineage: thread.lineage,
+    });
+  for (const [key, siblings] of byParent) {
+    byParent.set(key, [
+      ...siblings.filter(native),
+      ...siblings.filter((thread) => !native(thread)),
+    ]);
   }
   return byParent;
 }

@@ -35,7 +35,7 @@ const runningChild = makeThreadFixture({
 });
 
 describe("describeSidebarBackgroundWork", () => {
-  it("deduplicates linked children and retains unmatched task kinds", () => {
+  it("deduplicates linked children and lists roster-only subagents ahead of app-owned children", () => {
     const rows = describeSidebarBackgroundWork(
       [
         {
@@ -53,20 +53,20 @@ describe("describeSidebarBackgroundWork", () => {
     );
 
     expect(rows.map(({ taskId, kind }) => [taskId, kind])).toEqual([
-      [runningChild.id, "subagent"],
       ["roster-agent", "subagent"],
+      [runningChild.id, "subagent"],
       ["command", "command"],
       ["monitor", "monitor"],
       ["unknown", "background_task"],
     ]);
-    expect(rows[0]).toMatchObject({
+    expect(rows[1]).toMatchObject({
       label: "Review the diff",
       childThreadId: runningChild.id,
       startedAt: "2026-09-23T10:00:00.000Z",
       status: "working",
       child: runningChild,
     });
-    expect(rows[1]).toMatchObject({ childThreadId: null, startedAt: null });
+    expect(rows[0]).toMatchObject({ childThreadId: null, startedAt: null });
     expect(rows[2]).not.toHaveProperty("childThreadId");
   });
 
