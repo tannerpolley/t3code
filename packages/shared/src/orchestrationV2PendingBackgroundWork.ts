@@ -175,7 +175,7 @@ function pendingTaskFromTurnItem(
         ...named,
         kind: "command",
         ...(typeof item.input === "string"
-          ? { commandKind: classifyShellCommand(item.input) }
+          ? { commandKind: classifyShellCommand(item.input), command: item.input.trim() }
           : {}),
       };
     default:

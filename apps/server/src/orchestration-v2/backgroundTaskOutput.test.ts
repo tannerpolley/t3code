@@ -5,6 +5,14 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import {
+  EventId,
+  MessageId,
+  NodeId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  TurnItemId,
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
@@ -13,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 import { shellCommandWords } from "@t3tools/shared/shellCommand";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -23,6 +32,7 @@ import { afterAll, assert, describe, it } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
@@ -324,58 +334,184 @@ describe("followBackgroundTaskInTerminal", () => {
       }),
     );
 
-  effectIt.effect("samples a Claude roster command without a launching turn item", () =>
-    Effect.gen(function* () {
-      const tasks = yield* BackgroundTasks;
-      assert.deepEqual(yield* tasks.resourceUsage({ threadIds: [ThreadId.make("thread-usage")] }), [
-        {
-          threadId: ThreadId.make("thread-usage"),
-          taskId: "byzb0gnxc",
-          cpuPercent: 1.5,
-          residentBytes: 200,
-        },
-      ]);
-    }).pipe(
-      Effect.provide(
-        backgroundTasksLayer.pipe(
-          Layer.provideMerge(
-            Layer.mergeAll(
-              dependencies,
-              Layer.mock(ThreadManagement.ThreadManagementService)({
-                getThreadShell: () =>
-                  Effect.succeed({
-                    lineage: { parentThreadId: null },
-                    pendingBackgroundTasks: [
-                      { taskId: "byzb0gnxc", kind: "command", command: CLAUDE_BACKGROUND_COMMAND },
+  effectIt.effect(
+    "samples Claude roster and turn-item commands through the real thread shell",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const tasks = yield* BackgroundTasks;
+        const now = yield* DateTime.now;
+        const providerInstanceId = ProviderInstanceId.make("claudeAgent");
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const modelSelection = { instanceId: providerInstanceId, model: "claude-sonnet" };
+        for (const source of ["roster", "turn-item"] as const) {
+          const threadId = ThreadId.make(`thread-usage-${source}`);
+          const providerThreadId = ProviderThreadId.make(`provider-thread-usage-${source}`);
+          const runId = RunId.make(`run-usage-${source}`);
+          const taskId = `task-usage-${source}`;
+          const common = { threadId, occurredAt: now };
+          yield* store.apply({
+            ...common,
+            id: EventId.make(`usage-${source}-thread`),
+            type: "thread.created",
+            payload: {
+              id: threadId,
+              projectId: ProjectId.make("project-usage"),
+              title: "Claude background shell",
+              providerInstanceId,
+              modelSelection,
+              createdBy: "user",
+              creationSource: "web",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: providerThreadId,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          });
+          yield* store.apply({
+            ...common,
+            id: EventId.make(`usage-${source}-run`),
+            type: "run.created",
+            payload: {
+              id: runId,
+              threadId,
+              ordinal: 1,
+              providerInstanceId,
+              modelSelection,
+              providerThreadId,
+              userMessageId: MessageId.make(`message-usage-${source}`),
+              rootNodeId: NodeId.make(`node-usage-${source}`),
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+          yield* store.apply({
+            ...common,
+            id: EventId.make(`usage-${source}-provider-thread`),
+            type: "provider-thread.updated",
+            payload: {
+              id: providerThreadId,
+              driver,
+              providerInstanceId,
+              providerSessionId: null,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              pendingBackgroundTasks:
+                source === "roster"
+                  ? [
+                      {
+                        taskId,
+                        kind: "command",
+                        commandKind: "shell",
+                        command: CLAUDE_BACKGROUND_COMMAND,
+                      },
+                    ]
+                  : [],
+            },
+          });
+          if (source === "turn-item") {
+            // No native task link or launch result: attribution must use the shell's command.
+            yield* store.apply({
+              ...common,
+              id: EventId.make(`usage-${source}-item`),
+              type: "turn-item.updated",
+              payload: {
+                id: TurnItemId.make(taskId),
+                threadId,
+                runId,
+                nodeId: null,
+                providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                type: "command_execution",
+                status: "running",
+                title: "Print 40 ticks, 3 seconds apart",
+                input: `  ${CLAUDE_BACKGROUND_COMMAND}  `,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+              },
+            });
+          }
+          const usage = yield* tasks.resourceUsage({ threadIds: [threadId] });
+          assert.deepEqual(
+            usage,
+            [{ threadId, taskId, cpuPercent: 1.5, residentBytes: 200 }],
+            source,
+          );
+          assert.equal(
+            (yield* store.getThreadShell(threadId))?.pendingBackgroundTasks?.[0]?.command,
+            CLAUDE_BACKGROUND_COMMAND,
+            source,
+          );
+        }
+      }).pipe(
+        Effect.provide(
+          backgroundTasksLayer.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                Layer.unwrap(
+                  Effect.map(ProjectionStore.ProjectionStoreV2, (store) =>
+                    Layer.mock(ThreadManagement.ThreadManagementService)({
+                      getThreadShell: (threadId) =>
+                        store.getThreadShell(threadId).pipe(Effect.orDie),
+                    }),
+                  ),
+                ),
+                Layer.mock(ResourceTelemetry.ResourceTelemetry)({
+                  refresh: Effect.succeed({
+                    health: { native: { status: "healthy" } },
+                    processes: [
+                      {
+                        identity: { pid: 20, startTimeMs: 1 },
+                        ppid: 10,
+                        command: CLAUDE_BACKGROUND_ARGV,
+                        cpuPercent: 1,
+                        residentBytes: 100,
+                      },
+                      {
+                        identity: { pid: 21, startTimeMs: 1 },
+                        ppid: 20,
+                        command: "sleep 3",
+                        cpuPercent: 0.5,
+                        residentBytes: 100,
+                      },
                     ],
                   } as never),
-              }),
-              Layer.mock(ResourceTelemetry.ResourceTelemetry)({
-                refresh: Effect.succeed({
-                  health: { native: { status: "healthy" } },
-                  processes: [
-                    {
-                      identity: { pid: 20, startTimeMs: 1 },
-                      ppid: 10,
-                      command: CLAUDE_BACKGROUND_ARGV,
-                      cpuPercent: 1,
-                      residentBytes: 100,
-                    },
-                    {
-                      identity: { pid: 21, startTimeMs: 1 },
-                      ppid: 20,
-                      command: "sleep 3",
-                      cpuPercent: 0.5,
-                      residentBytes: 100,
-                    },
-                  ],
-                } as never),
-              }),
+                }),
+              ).pipe(
+                Layer.provideMerge(ProjectionStore.layer.pipe(Layer.provideMerge(dependencies))),
+              ),
             ),
           ),
         ),
       ),
-    ),
   );
 
   effectIt.effect(

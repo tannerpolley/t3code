@@ -93,7 +93,13 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([
-      { taskId: "cmd-1", description: "npm test", kind: "command", commandKind: "node" },
+      {
+        taskId: "cmd-1",
+        description: "npm test",
+        kind: "command",
+        commandKind: "node",
+        command: "npm test",
+      },
     ]);
   });
 
@@ -155,6 +161,7 @@ describe("derivePendingBackgroundWork", () => {
         description: "still pending",
         kind: "command",
         commandKind: "node",
+        command: "npm test",
       },
     ]);
   });
@@ -200,7 +207,13 @@ describe("derivePendingBackgroundWork", () => {
       ],
     });
     expect(tasks).toEqual([
-      { taskId: "cmd-1", description: "npm test", kind: "command", commandKind: "node" },
+      {
+        taskId: "cmd-1",
+        description: "npm test",
+        kind: "command",
+        commandKind: "node",
+        command: "npm test",
+      },
     ]);
   });
 
@@ -420,6 +433,7 @@ describe("derivePendingBackgroundWork", () => {
         description: "still pending",
         kind: "command",
         commandKind: "node",
+        command: "npm test",
       },
     ]);
   });
@@ -476,6 +490,7 @@ describe("derivePendingBackgroundWork", () => {
         description: "orphan item",
         kind: "command",
         commandKind: "shell",
+        command: "echo orphan",
       },
     ]);
   });
@@ -524,7 +539,13 @@ describe("derivePendingBackgroundWork kinds", () => {
         kind: "subagent",
         childThreadId: "thread:child",
       },
-      { taskId: "cmd", description: "npm test", kind: "command", commandKind: "node" },
+      {
+        taskId: "cmd",
+        description: "npm test",
+        kind: "command",
+        commandKind: "node",
+        command: "npm test",
+      },
     ]);
   });
 
@@ -611,7 +632,7 @@ describe("background task metadata and ownership", () => {
             type: "command_execution",
             status: "running",
             title: null,
-            input: "python fit.py",
+            input: "  python fit.py  ",
             startedAt,
           },
         ],
@@ -623,6 +644,7 @@ describe("background task metadata and ownership", () => {
         description: "python fit.py",
         startedAt,
         commandKind: "python",
+        command: "python fit.py",
       },
     ]);
   });
