@@ -1,7 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
-import { issueProgress } from "./IssueStateIcon";
+import { issueProgress, issueStatePresentation } from "./IssueStateIcon";
 
 const blocker = (state: "open" | "closed") => ({
   host: "github.com",
@@ -30,7 +30,7 @@ const project = (status: string | null) => ({
 });
 
 it("orders closed, then an open blocker, then work in progress, then open", () => {
-  expect(issueProgress({ state: "closed", blockedBy: [blocker("open")] })).toBe("closed");
+  expect(issueProgress({ state: "closed", blockedBy: [blocker("open")] })).toBe("completed");
   expect(
     issueProgress({ state: "open", blockedBy: [blocker("open")], liveWork: [work("working")] }),
   ).toBe("blocked");
@@ -39,4 +39,15 @@ it("orders closed, then an open blocker, then work in progress, then open", () =
   expect(issueProgress({ state: "open", liveWork: [work("idle")] })).toBe("open");
   expect(issueProgress({ state: "open", projects: [project("In Progress")] })).toBe("in_progress");
   expect(issueProgress({ state: "open", projects: [project("Todo")] })).toBe("open");
+});
+
+it("splits closed issues the way GitHub closes them", () => {
+  expect(issueProgress({ state: "closed", stateReason: "completed" })).toBe("completed");
+  expect(issueProgress({ state: "closed", stateReason: null })).toBe("completed");
+  expect(issueProgress({ state: "closed", stateReason: "not_planned" })).toBe("not_planned");
+  expect(issueStatePresentation({ state: "closed", stateReason: "duplicate" }).label).toBe(
+    "Closed as duplicate",
+  );
+  // A reopened issue is open again whatever its old reason said.
+  expect(issueProgress({ state: "open", stateReason: "reopened" })).toBe("open");
 });
