@@ -294,6 +294,7 @@ import { ProjectSectionDialog, SidebarProjectSections } from "./sidebar/SidebarP
 import { collectVisibleProjectThreadOrder } from "./sidebar/SidebarProjectSections.logic";
 import { resolveSidebarReveal } from "./sidebar/SidebarReveal.logic";
 import { SidebarThreadTime } from "./sidebar/SidebarThreadTime";
+import { IssueInboxBadge } from "./issues/IssueInbox";
 import { useSidebarProjectsView } from "./sidebar/useSidebarProjectsView";
 import { ThreadStatusMark } from "./ThreadStatusMark";
 import {
@@ -1841,6 +1842,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
             {prBadge}
+            <IssueInboxBadge threadRef={threadRef} />
             {sortable?.isDragging ? (
               dragDestination
             ) : (
@@ -2177,6 +2179,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               )}
               {terminalStatusIcon}
               {prBadge}
+              <IssueInboxBadge threadRef={threadRef} />
               {diff ? (
                 <span className="shrink-0 font-mono">
                   <span className="text-diff-addition-foreground">

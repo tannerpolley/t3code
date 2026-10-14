@@ -31,7 +31,23 @@ export function createIssueEnvironmentAtoms<R, E>(
     label: "environment-data:issues:change-refreshes",
     tag: WS_METHODS.issueChangesSubscribe,
   });
+  /** Unread inbox counts per repository orchestrator, re-sent on every inbox change. */
+  const inboxUnread = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:issues:inbox-unread",
+    tag: WS_METHODS.issuesInboxSubscribeUnread,
+  });
   return {
+    inboxUnread,
+    inbox: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:issues:inbox",
+      tag: WS_METHODS.issuesInboxList,
+      staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => inboxUnread({ environmentId, input: {} }),
+    }),
+    markInboxRead: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:inbox-mark-read",
+      tag: WS_METHODS.issuesInboxMarkRead,
+    }),
     changes: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:changes",
       tag: WS_METHODS.issueChangesList,
