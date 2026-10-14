@@ -611,6 +611,23 @@ it.layer(layer)("thread cost estimates", (it) => {
     }),
   );
 
+  it.effect("does not rescan a thread whose model has no price on every restart", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      yield* seedUsage(thread, provider, { ...turn, status: "completed", completedAt: now });
+      let calls = 0;
+      const unpriced: TokenPricer = () => {
+        calls++;
+        return null;
+      };
+      yield* backfillThreadUsageCosts.pipe(withPricer(unpriced));
+      assert.equal(calls, 1);
+      assert.isUndefined((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd);
+      yield* backfillThreadUsageCosts.pipe(withPricer(unpriced));
+      assert.equal(calls, 1);
+    }),
+  );
+
   it.effect("prices native Codex child turns with no run attempt using their own metadata", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;

@@ -96,7 +96,7 @@ export function deriveThreadUsageSummary(
     ...(threadTokens === undefined ? {} : { threadTokens }),
     ...(context?.usedTokens === undefined ? {} : { contextTokens: context.usedTokens }),
     ...(context?.maxTokens == null ? {} : { contextWindow: context.maxTokens }),
-    ...(cost === undefined ? {} : { ...cost, costVersion: 1 }),
+    ...cost,
   };
 }
 
@@ -233,7 +233,10 @@ const refresh = Effect.fnUntraced(function* (threadId: ThreadId) {
   if (summary === undefined) {
     yield* sql`DELETE FROM orchestration_v2_projection_thread_usage WHERE thread_id = ${threadId}`;
   } else {
-    const payload = yield* encodeSummary(summary);
+    // Marked once priced, whatever the result, so the startup backfill visits each summary once.
+    const payload = yield* encodeSummary(
+      priceTokens === undefined ? summary : { ...summary, costVersion: 1 },
+    );
     yield* sql`INSERT INTO orchestration_v2_projection_thread_usage (thread_id, payload_json)
       VALUES (${threadId}, ${payload}) ON CONFLICT(thread_id) DO UPDATE SET payload_json = excluded.payload_json`;
   }
@@ -257,10 +260,10 @@ export const refreshAllThreadUsageSummaries = Effect.gen(function* () {
 /** Upgrade old/missing costs once, without waiting for another provider turn. */
 export const backfillThreadUsageCosts = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  // Threads without a summary have no usage to price; their first turn writes a priced one.
   const threads = yield* sql<{ readonly thread_id: ThreadId }>`
-    SELECT t.thread_id FROM orchestration_v2_projection_threads t
-    LEFT JOIN orchestration_v2_projection_thread_usage u ON u.thread_id = t.thread_id
-    WHERE CASE WHEN json_valid(u.payload_json) THEN json_extract(u.payload_json, '$.costVersion') END IS NULL
+    SELECT thread_id FROM orchestration_v2_projection_thread_usage
+    WHERE CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.costVersion') END IS NULL
   `;
   for (const thread of threads) yield* refreshThreadUsageSummary(thread.thread_id);
 });
