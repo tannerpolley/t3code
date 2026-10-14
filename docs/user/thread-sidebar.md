@@ -99,11 +99,14 @@ Drag a thread from Projects onto the composer to add it as context for your next
 message; subagent rows in Projects and rows in **Lineage** drag the same way.
 Running subagents and background tasks appear beneath their parent
 thread: its own background tasks first, then its native subagents, then app-owned
-children, each followed by its own work. A thread's folder icon shows where it works; hover it for the folder and
-branch, such as **aurora-web · main**. A branch icon marks a worktree, such as
+children, each followed by its own work.
+
+A thread's folder icon shows where it works; hover it for the folder and branch,
+such as **aurora-web · main**. A branch icon marks a worktree, such as
 **feature (worktree) · t3/feature**. Threads on another environment show that
-environment's name and the folder. A child's question or approval also appears on
-the parent.
+environment's name and the folder. A child working in the same checkout or
+worktree as its parent leaves the icon to the parent; a child in its own worktree
+shows its own. A child's question or approval also appears on the parent.
 An amber spinner means the thread is waiting on its background work. Times show
 how long the work has run, such as **05m 09s** or **01h 05m 09s**, rather than time
 since the last message.

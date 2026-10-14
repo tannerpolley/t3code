@@ -56,6 +56,7 @@ import {
   childWorktreeLabel,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
+  sharesParentLocation,
   type BackgroundWorkTaskRow,
 } from "./SidebarBackgroundWork.logic";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
@@ -166,8 +167,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           props.columns && row.kind === "subagent" ? (props.nestedToggle?.(row) ?? null) : null;
         const worktree =
           row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
+        // In the tree, the top-most thread in a location carries its icon; children there skip it.
         const locationIcon =
-          row.kind === "subagent" && row.child ? <ThreadLocationIcon thread={row.child} /> : null;
+          row.kind === "subagent" &&
+          row.child &&
+          !(props.columns && sharesParentLocation(row.child, owner)) ? (
+            <ThreadLocationIcon thread={row.child} />
+          ) : null;
         const roleIcon =
           row.kind === "subagent" && row.child ? (
             <ThreadRoleIcon thread={row.child.source} />
