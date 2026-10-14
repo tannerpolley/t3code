@@ -113,7 +113,6 @@ function WorkflowMemberRow({
           }
         >
           <SidebarThreadColumns
-            depth={1}
             location={thread ? <ThreadLocationIcon thread={thread} /> : undefined}
             role={thread ? <ThreadRoleIcon thread={thread.source} /> : undefined}
             usage={<SidebarTokenUsage summary={thread?.source.usageSummary} />}

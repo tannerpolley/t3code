@@ -13,6 +13,7 @@ import { CornerDownRightIcon } from "lucide-react";
 import {
   useRef,
   type ComponentProps,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -74,7 +75,7 @@ export type SidebarBackgroundWorkRowsProps = {
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
   readonly columns?: boolean;
-  /** Nesting level of these rows below their thread, shown by the depth bar. */
+  /** Nesting level of these rows below their top-level thread, which sets their tint's shade. */
   readonly depth?: number;
   readonly renderNested?: (row: BackgroundWorkTaskRow) => ReactNode;
   readonly nestedToggle?: (row: BackgroundWorkTaskRow) => NestedWorkToggle | null;
@@ -110,7 +111,8 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
     threadIds: backgroundTasks.map((row) => row.ownerThreadId ?? props.threadId),
     enabled: isVisible,
   });
-  const padding = props.columns ? "px-2" : "px-1.5";
+  // Column rows take their group's tint, at their depth.
+  const rowClass = props.columns ? "rounded-md px-2 sidebar-thread-tint" : "px-1.5";
 
   return (
     <ul
@@ -190,7 +192,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           ) : null;
         const content = props.columns ? (
           <SidebarThreadColumns
-            depth={props.depth ?? 0}
             location={locationIcon}
             role={roleIcon}
             provider={icon}
@@ -256,7 +257,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               className={cn(
                 "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left hover:bg-accent",
                 PROJECTS_WORK_ROW_HEIGHT,
-                padding,
+                rowClass,
               )}
               onClick={(event) => {
                 if (row.child && props.onChildClick) {
@@ -293,14 +294,14 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               className={cn(
                 "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left hover:bg-accent",
                 PROJECTS_WORK_ROW_HEIGHT,
-                padding,
+                rowClass,
               )}
             >
               {content}
             </BackgroundProcessOutputButton>
           ) : (
             <div
-              className={cn("flex min-w-0 items-center gap-2", PROJECTS_WORK_ROW_HEIGHT, padding)}
+              className={cn("flex min-w-0 items-center gap-2", PROJECTS_WORK_ROW_HEIGHT, rowClass)}
             >
               {content}
             </div>
@@ -319,6 +320,11 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               index === agents.length && agents.length > 0 && "border-t border-sidebar-border/40",
               "relative",
             )}
+            style={
+              props.columns
+                ? ({ "--sidebar-thread-depth": props.depth ?? 0 } as CSSProperties)
+                : undefined
+            }
           >
             {props.compact ? (
               <Tooltip>

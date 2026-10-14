@@ -632,7 +632,7 @@ export function ThreadRelationshipsPanel(props: {
           {groups.map((group) => (
             <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
               {(visibleRows) =>
-                visibleRows.map(({ threadId, edge, depth }) => {
+                visibleRows.map(({ threadId, edge }) => {
                   const node = graph.nodes.get(threadId);
                   const isSubagent = edge.kind === "subagent";
                   const isMergeTarget = threadId === mergeTargetThreadId;
@@ -770,7 +770,6 @@ export function ThreadRelationshipsPanel(props: {
                   );
                   const relationshipContent = redesign ? (
                     <SidebarThreadColumns
-                      depth={Math.max(0, depth - 1)}
                       location={
                         node?.thread ? (
                           <ThreadLocationIcon

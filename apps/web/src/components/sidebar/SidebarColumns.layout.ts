@@ -2,7 +2,6 @@
 export const sidebarColumnLayout = {
   tracks: {
     usage: 2,
-    bar: 0.1875,
     caret: 0.75,
     location: 0.75,
     role: 0.75,
@@ -30,19 +29,21 @@ export function generateSidebarColumnLayoutCss() {
         name === "name"
           ? "minmax(0, 1fr)"
           : name === "caret"
-            ? // The caret starts at the inset, or after usage and the bar when those reach further.
+            ? // The caret starts at the inset, or after usage when that reaches further.
               "calc(var(--sidebar-caret-width) + max(0px, var(--sidebar-thread-inset, 0px) - var(--sidebar-thread-lead)))"
             : `var(--sidebar-${name}-width)`,
       )
       .join(" ");
-  // The lead is the caret column's offset from the row start, past usage and the depth bar.
+  // The lead is the caret column's offset from the row start, past the usage column.
   const leadingTracks = entries.slice(
     0,
     entries.findIndex(([name]) => name === "caret"),
   );
   const lead = (hidden: ReadonlySet<string>) => {
     const shown = leadingTracks.filter(([name]) => !hidden.has(name));
-    return `calc(${shown.map(([name]) => `var(--sidebar-${name}-width)`).join(" + ")} + ${shown.length * gapPx}px)`;
+    return shown.length === 0
+      ? "0px"
+      : `calc(${shown.map(([name]) => `var(--sidebar-${name}-width)`).join(" + ")} + ${shown.length * gapPx}px)`;
   };
   const threshold = (hidden: ReadonlySet<string>) => {
     const budget = sidebarColumnBudget(hidden);

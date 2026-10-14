@@ -21,12 +21,17 @@
 @utility sidebar-thread-outdent {
   margin-inline-start: calc(-1 * var(--sidebar-thread-outdent, 0px));
 }
-/* Depth shows as a bar instead of an indent: none at the top level, then light, medium, strong. */
-@utility sidebar-thread-bar {
-  align-self: stretch;
-  border-radius: 9999px;
-  background-color: var(--primary);
-  opacity: calc(min(var(--sidebar-thread-depth, 0), 3) / 3);
+/*
+ * A thread group (a top-level thread and its descendants) tints its rows with the group's hue, set
+ * on the group; deeper rows tint a little stronger. Without a hue the declaration drops out, so
+ * other rows stay clear. The tint paints over the row's background color, so hover and selection
+ * still show through.
+ */
+@utility sidebar-thread-tint {
+  --sidebar-thread-tint: oklch(
+    0.65 0.15 var(--sidebar-group-hue) / calc(0.05 + min(var(--sidebar-thread-depth, 0), 2) * 0.04)
+  );
+  background-image: linear-gradient(var(--sidebar-thread-tint), var(--sidebar-thread-tint));
 }
 @utility sidebar-thread-caret {
   display: flex;

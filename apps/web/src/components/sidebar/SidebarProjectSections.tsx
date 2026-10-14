@@ -58,6 +58,7 @@ import {
   SidebarTrailingColumns,
   SidebarThreadColumns,
   sidebarThreadName,
+  threadGroupHue,
   useSidebarRoleLabels,
   SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
@@ -1230,6 +1231,12 @@ const SidebarProjectThreadRow = memo(
     return (
       <li
         className={cn("relative list-none", props.codexStyle && "sidebar-thread-outdent")}
+        // A thread with listed descendants is a group: its rows share one hue.
+        style={
+          props.codexStyle && workRows.some((row) => row.kind === "subagent")
+            ? ({ "--sidebar-group-hue": threadGroupHue(props.thread.id) } as CSSProperties)
+            : undefined
+        }
         data-thread-item={activeThreadKey}
         data-sidebar-thread-key={activeThreadKey}
       >
@@ -1240,7 +1247,7 @@ const SidebarProjectThreadRow = memo(
           className={cn(
             "group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
             PROJECTS_WORK_ROW_HEIGHT,
-            props.codexStyle ? "text-xs" : "text-sm",
+            props.codexStyle ? "sidebar-thread-tint text-xs" : "text-sm",
             active
               ? "bg-sidebar-row-active text-sidebar-foreground"
               : selected

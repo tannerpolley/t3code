@@ -1,5 +1,5 @@
 import { ChevronRightIcon } from "lucide-react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import {
   THREAD_ROLE_LABELS,
   type ClientSettings,
@@ -102,10 +102,9 @@ export function SidebarTrailingColumns(props: {
 
 /**
  * All thread surfaces share these fixed tracks; only the name gets spare width. Rows never indent,
- * so every column lines up at every depth; a bar after usage, darker per level, marks the depth.
+ * so every column lines up at every depth; in Projects a group tint marks the depth instead.
  */
 export function SidebarThreadColumns(props: {
-  readonly depth?: number | undefined;
   readonly caret?: ReactNode;
   readonly location?: ReactNode;
   readonly role?: ReactNode;
@@ -120,12 +119,8 @@ export function SidebarThreadColumns(props: {
   readonly usage?: ReactNode;
 }) {
   return (
-    <span
-      className="sidebar-thread-columns"
-      style={{ "--sidebar-thread-depth": props.depth ?? 0 } as CSSProperties}
-    >
+    <span className="sidebar-thread-columns">
       <span className="sidebar-thread-usage">{props.usage}</span>
-      <span aria-hidden className="sidebar-thread-bar" />
       <span className="sidebar-thread-caret">{props.caret ?? <SidebarCaretSlot />}</span>
       <span className="sidebar-thread-icon">{props.location}</span>
       <span className="sidebar-thread-icon">{props.role}</span>
@@ -138,6 +133,18 @@ export function SidebarThreadColumns(props: {
       <span className={cn("sidebar-thread-icon", props.trailingClassName)}>{props.status}</span>
     </span>
   );
+}
+
+// oklch hue angles that read in light and dark themes as low-alpha row tints.
+const THREAD_GROUP_HUES = [250, 300, 160, 70, 20, 195] as const;
+
+/** The hue a thread group tints its rows with, fixed by its top-level thread's id. */
+export function threadGroupHue(rootThreadId: string): number {
+  let hash = 0;
+  for (let index = 0; index < rootThreadId.length; index++) {
+    hash = (hash * 31 + rootThreadId.charCodeAt(index)) | 0;
+  }
+  return THREAD_GROUP_HUES[Math.abs(hash) % THREAD_GROUP_HUES.length]!;
 }
 
 const selectSidebarThreadLabel = (settings: ClientSettings) => settings.sidebarThreadLabel;
