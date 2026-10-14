@@ -93,9 +93,10 @@ describe("aggregateBackgroundTaskProcessUsage", () => {
   });
 
   it("attributes Claude's escaped eval command without counting sibling shells", () => {
-    const command = 'for i in $(seq 1 5); do echo "tick $i"; sleep 1; done';
-    const escaped = String.raw`for i in \$(seq 1 5); do echo \"tick \$i\"; sleep 1; done`;
-    const wrapper = `bash -c source /tmp/snapshot.sh && eval "${escaped}" < /dev/null && pwd -P > /tmp/cwd`;
+    const command = `for i in $(seq 1 5); do echo "it's $i"; sleep 1; done`;
+    // Claude single-quotes the operand and writes each ' as '"'"'.
+    const escaped = `'for i in $(seq 1 5); do echo "it'"'"'s $i"; sleep 1; done'`;
+    const wrapper = `/bin/bash -c source /tmp/snapshot.sh && eval ${escaped} < /dev/null && pwd -P >| /tmp/cwd`;
     assert.isFalse(wrapper.includes(command));
     assert.deepEqual(
       aggregateBackgroundTaskProcessUsage({

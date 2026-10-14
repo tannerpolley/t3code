@@ -344,9 +344,10 @@ export function aggregateBackgroundTaskProcessUsage(input: {
         (process) =>
           process.command.includes(command) ||
           // Claude escapes the command as an eval operand before passing it to Bash.
-          shellCommandWords(process.command).some(
-            (words) => words[0] === "eval" && words.length === 2 && words[1] === command,
-          ),
+          (process.command.includes("eval") &&
+            shellCommandWords(process.command).some(
+              (words) => words[0] === "eval" && words.length === 2 && words[1]?.trim() === command,
+            )),
       )
       .map((process) => process.identity.pid),
   );

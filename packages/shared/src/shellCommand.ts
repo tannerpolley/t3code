@@ -494,8 +494,22 @@ function programKind(
  * the first command this recognizes, looking through wrappers (`nohup`, `setsid`, `timeout`,
  * `nice`, env assignments, `bash -lc '…'`), paths (`.venv/bin/python`) and runners (`python -m pytest`, `uv run`). A
  * command that watches a file or polls a process (`while kill -0 123; do sleep 20; done`) is a
- * watcher. Sleeping alone, including inside a finite loop, does not imply watching.
+ * watcher: any `while`/`until` loop waits on something unless it reads input or counts. Sleeping
+ * alone, including inside a finite `for` loop, does not imply watching.
  */
+const NUMERIC_TEST_OPERATORS = ["-lt", "-le", "-gt", "-ge", "-eq", "-ne"];
+
+/** A loop that consumes input (`while read`) or counts (`while [ $i -lt 10 ]`) finishes on its own. */
+const isFiniteLoopCondition = (condition: ReadonlyArray<string>): boolean => {
+  const first = condition[0] ?? "";
+  return (
+    first === "read" ||
+    first.startsWith("((") ||
+    (["test", "[", "[["].includes(first) &&
+      condition.some((word) => NUMERIC_TEST_OPERATORS.includes(word)))
+  );
+};
+
 export function classifyShellCommand(command: string): ShellCommandKind {
   const weak: Array<ShellCommandKind> = [];
   let hasPollingLoop = false;
@@ -504,9 +518,7 @@ export function classifyShellCommand(command: string): ShellCommandKind {
     for (const words of shellCommandWords(source)) {
       if (
         (words[0] === "while" || words[0] === "until") &&
-        (["grep", "egrep", "fgrep"].includes(basename(words[1] ?? "")) ||
-          (["test", "[", "[["].includes(words[1] ?? "") &&
-            words.some((word) => ["-s", "-e", "-f", "-d"].includes(word))))
+        !isFiniteLoopCondition(words.slice(1))
       ) {
         hasPollingLoop = true;
       }
