@@ -1,6 +1,6 @@
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
-import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
+import { FolderGit2Icon, FolderGitIcon, FolderRootIcon } from "lucide-react";
 import { memo, useMemo, type MouseEvent as ReactMouseEvent } from "react";
 
 import {
@@ -86,7 +86,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         ) : effectiveEnvMode === "worktree" ? (
           <FolderGit2Icon className="size-3" />
         ) : (
-          <FolderIcon className="size-3" />
+          <FolderRootIcon className="size-3" />
         )}
         <ComposerContextLabel>
           {forceNewWorktree
@@ -143,7 +143,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           ) : activeWorktreePath ? (
             <FolderGitIcon className="size-3" />
           ) : (
-            <FolderIcon className="size-3" />
+            <FolderRootIcon className="size-3" />
           )}
           <ComposerContextLabel>
             <SelectValue />
@@ -165,7 +165,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           {onReturnToRoot ? (
             <SelectItem value={RETURN_TO_ROOT_SELECT_VALUE} disabled={returnToRootDisabled}>
               <span className="inline-flex items-center gap-1.5">
-                <FolderIcon className="size-3" />
+                <FolderRootIcon className="size-3" />
                 Move to main checkout
               </span>
             </SelectItem>
@@ -175,7 +175,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               {activeWorktreePath ? (
                 <FolderGitIcon className="size-3" />
               ) : (
-                <FolderIcon className="size-3" />
+                <FolderRootIcon className="size-3" />
               )}
               {resolveCurrentWorkspaceLabel(activeWorktreePath)}
             </span>

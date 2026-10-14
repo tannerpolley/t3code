@@ -16,7 +16,7 @@ import {
   ChevronDownIcon,
   FolderGit2Icon,
   FolderGitIcon,
-  FolderIcon,
+  FolderRootIcon,
   ScaleIcon,
 } from "lucide-react";
 import {
@@ -203,7 +203,7 @@ const RunContextSelector = memo(function RunContextSelector({
       ? FolderGit2Icon
       : activeWorktreePath
         ? FolderGitIcon
-        : FolderIcon;
+        : FolderRootIcon;
   const workspaceLabel = forceNewWorktree
     ? resolveEnvModeLabel("worktree")
     : envModeLocked
@@ -421,7 +421,7 @@ const RunContextSelector = memo(function RunContextSelector({
           <MenuGroupLabel>Workspace</MenuGroupLabel>
           {onReturnToRoot ? (
             <MenuItem disabled={returnToRootDisabled} onClick={onReturnToRoot}>
-              <FolderIcon className="size-3" />
+              <FolderRootIcon className="size-3" />
               Move to main checkout
             </MenuItem>
           ) : null}
@@ -440,7 +440,7 @@ const RunContextSelector = memo(function RunContextSelector({
                 {activeWorktreePath ? (
                   <FolderGitIcon className="size-3" />
                 ) : (
-                  <FolderIcon className="size-3" />
+                  <FolderRootIcon className="size-3" />
                 )}
                 <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath)} />
               </span>
