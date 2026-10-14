@@ -175,6 +175,31 @@ describe("groupSpawnedProcesses", () => {
     assert.equal(hiddenCount, 3);
   });
 
+  it("totals usage over every attributed process, command's own and past the cap", () => {
+    const { groups, usage } = groupSpawnedProcesses({
+      processes: [
+        process(20, 1, "python worker.py"),
+        ...["a", "b", "c"].map((name, index) => process(30 + index, 20, `/bin/tool-${name}`)),
+        process(50, 1, "unrelated"),
+      ],
+      serverPid: 1,
+      commands: [{ command: "python worker.py" }],
+      limit: 1,
+    });
+    // The command (10 cpu, 100 bytes) and all three children count; the cap lists one group.
+    assert.equal(groups.length, 1);
+    assert.deepEqual(usage, { cpuPercent: 40, residentBytes: 400 });
+    // A command with no children is still its own process.
+    assert.deepEqual(
+      groupSpawnedProcesses({
+        processes: [process(20, 1, "python worker.py")],
+        serverPid: 1,
+        commands: [{ command: "python worker.py" }],
+      }).usage,
+      { cpuPercent: 10, residentBytes: 100 },
+    );
+  });
+
   it("groups by program kind through interpreter paths, versions and shell wrappers", () => {
     const { groups } = groupSpawnedProcesses({
       processes: [

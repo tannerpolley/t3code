@@ -23,6 +23,7 @@ export function summarizeProcessWork(
   commandCount: number,
   groups: ReadonlyArray<ThreadProcessGroup>,
   hiddenGroupCount: number,
+  usage?: { readonly cpuPercent: number; readonly residentBytes: number },
 ) {
   const processes = groups.reduce((total, group) => total + group.count, 0);
   if (commandCount === 0 && processes === 0) return null;
@@ -34,7 +35,9 @@ export function summarizeProcessWork(
   ];
   return {
     text: parts.filter((part) => part !== null).join(" · "),
-    cpuPercent: groups.reduce((total, group) => total + group.cpuPercent, 0),
-    residentBytes: groups.reduce((total, group) => total + group.residentBytes, 0),
+    // The server's total also counts the commands' own processes and the groups past the cap.
+    cpuPercent: usage?.cpuPercent ?? groups.reduce((total, group) => total + group.cpuPercent, 0),
+    residentBytes:
+      usage?.residentBytes ?? groups.reduce((total, group) => total + group.residentBytes, 0),
   };
 }

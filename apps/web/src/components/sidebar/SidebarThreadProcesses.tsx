@@ -66,7 +66,12 @@ export function useSidebarThreadProcesses(thread: SidebarThreadSummary, working:
     processRows: {
       groups: processGroups,
       hiddenGroupCount: hiddenProcessGroups,
-      summary: summarizeProcessWork(allCommandRows.length, processGroups, hiddenProcessGroups),
+      summary: summarizeProcessWork(
+        allCommandRows.length,
+        processGroups,
+        hiddenProcessGroups,
+        data?.usage,
+      ),
       open,
       onToggle: () => setExpanded([openKey], !open),
     },

@@ -37,6 +37,11 @@ it("summarizes commands and process groups, and is empty with neither", () => {
   });
   expect(summarizeProcessWork(0, [], 0)).toBeNull();
   expect(summarizeProcessWork(1, [], 0)?.text).toBe("1 command");
+  // The server's total wins: it counts a command's own processes and groups past the cap.
+  expect(summarizeProcessWork(1, [], 0, { cpuPercent: 40, residentBytes: 900 })).toMatchObject({
+    cpuPercent: 40,
+    residentBytes: 900,
+  });
   expect(summarizeProcessWork(3, [group(4, 10, 100), group(1, 5, 50)], 2)).toEqual({
     text: "3 commands · 5+ processes",
     cpuPercent: 15,

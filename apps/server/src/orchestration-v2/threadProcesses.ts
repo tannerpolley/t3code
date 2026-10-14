@@ -203,7 +203,12 @@ export function groupSpawnedProcesses(input: {
     readonly commandKind?: string;
   }>;
   readonly limit?: number;
-}): { readonly groups: ReadonlyArray<ThreadProcessGroup>; readonly hiddenCount: number } {
+}): {
+  readonly groups: ReadonlyArray<ThreadProcessGroup>;
+  readonly hiddenCount: number;
+  /** Everything the commands run or spawned, each process once, before exclusions and the cap. */
+  readonly usage: { readonly cpuPercent: number; readonly residentBytes: number };
+} {
   const commandPids = new Set<number>();
   const spawned = new Set<number>();
   for (const { command, commandKind } of input.commands) {
@@ -218,6 +223,11 @@ export function groupSpawnedProcesses(input: {
     for (const pid of attributed.tree) spawned.add(pid);
   }
   const byPid = new Map(input.processes.map((process) => [process.identity.pid, process]));
+  const usage = { cpuPercent: 0, residentBytes: 0 };
+  for (const pid of spawned) {
+    usage.cpuPercent += byPid.get(pid)?.cpuPercent ?? 0;
+    usage.residentBytes += byPid.get(pid)?.residentBytes ?? 0;
+  }
   const groups = new Map<
     string,
     { count: number; cpuPercent: number; residentBytes: number; commandLine: string }
@@ -241,5 +251,5 @@ export function groupSpawnedProcesses(input: {
   const listed = [...groups].map(([label, group]) => ({ label, ...group }));
   listed.sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
   const limit = input.limit ?? VISIBLE_PROCESS_GROUPS;
-  return { groups: listed.slice(0, limit), hiddenCount: Math.max(0, listed.length - limit) };
+  return { groups: listed.slice(0, limit), hiddenCount: Math.max(0, listed.length - limit), usage };
 }

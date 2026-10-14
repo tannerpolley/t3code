@@ -64,6 +64,23 @@ import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
+/** A row's label; a command's full command line shows on hover. */
+function RowLabel(props: {
+  readonly className: string;
+  readonly command: string | undefined;
+  readonly children: ReactNode;
+}) {
+  if (!props.command) return <span className={props.className}>{props.children}</span>;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className={props.className} />}>
+        {props.children}
+      </TooltipTrigger>
+      <TooltipPopup side="right">{props.command}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 type NestedWorkToggle = {
   readonly count: number;
   readonly open: boolean;
@@ -223,9 +240,9 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             }
             name={
               <span className="flex min-w-0 items-center gap-2">
-                <span
+                <RowLabel
                   className="min-w-0 flex-1 truncate"
-                  title={row.kind === "command" ? row.command : undefined}
+                  command={row.kind === "subagent" ? undefined : row.command}
                 >
                   {row.kind === "subagent"
                     ? sidebarThreadName(
@@ -233,7 +250,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                         row.child ? sidebarThreadTitle(row.child.source) : "Subagent",
                       )
                     : row.label}
-                </span>
+                </RowLabel>
                 {row.kind === "subagent" ? null : usage}
               </span>
             }
@@ -254,12 +271,12 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             {locationIcon}
             {roleIcon}
             {icon}
-            <span
+            <RowLabel
               className="min-w-0 flex-1 truncate text-foreground/85"
-              title={row.kind === "command" ? row.command : undefined}
+              command={row.kind === "subagent" ? undefined : row.command}
             >
               {row.label}
-            </span>
+            </RowLabel>
             {usage}
             {props.compact ? null : (
               <span className="shrink-0 text-muted-foreground">{kindLabel}</span>

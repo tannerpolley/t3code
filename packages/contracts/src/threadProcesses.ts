@@ -40,5 +40,9 @@ export const ThreadProcesses = Schema.Struct({
   /** The largest groups first, capped; `hiddenProcessGroupCount` counts the rest. */
   processGroups: Schema.Array(ThreadProcessGroup),
   hiddenProcessGroupCount: NonNegativeInt,
+  /** Usage of every process the commands and tasks run or spawned, listed or not. */
+  usage: Schema.optionalKey(
+    Schema.Struct({ cpuPercent: Schema.Number, residentBytes: NonNegativeInt }),
+  ),
 });
 export type ThreadProcesses = typeof ThreadProcesses.Type;
