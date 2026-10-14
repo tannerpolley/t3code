@@ -242,26 +242,29 @@ const RunContextSelector = memo(function RunContextSelector({
       </TooltipPopup>
     </Tooltip>
   );
+  const environmentIcon = (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+        {autoEnvironmentLabel ? (
+          <ScaleIcon
+            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
+            aria-hidden="true"
+          />
+        ) : (
+          <EnvironmentMachineIcon
+            kind={activeEnvironment?.machine ?? "server"}
+            className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
+          />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+    </Tooltip>
+  );
   const icon = showEnvironmentIndicator ? (
     // Button's base styles apply `-mx-0.5` to descendant SVGs, which eats 4px
     // out of whatever gap we set. mx-0! cancels that so gap-0.5 reads as 2px.
     <span className="inline-flex shrink-0 items-center gap-0.5">
-      <Tooltip>
-        <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-          {autoEnvironmentLabel ? (
-            <ScaleIcon
-              className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
-              aria-hidden="true"
-            />
-          ) : (
-            <EnvironmentMachineIcon
-              kind={activeEnvironment?.machine ?? "server"}
-              className={isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0 mx-0!"}
-            />
-          )}
-        </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
-      </Tooltip>
+      {environmentIcon}
       {workspaceIcon}
     </span>
   ) : (
@@ -272,7 +275,23 @@ const RunContextSelector = memo(function RunContextSelector({
     (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel);
   // The panel also names the folder the thread works in; the label before it truncates first.
   const folderName = isPanel && workspacePath ? fileBasename(workspacePath) : null;
-  const triggerContent = (
+  // With a machine shown, the panel gives the machine and the folder a row each, so neither
+  // name truncates the other.
+  const twoRows = showEnvironmentIndicator && folderName !== null;
+  const triggerContent = twoRows ? (
+    <span className="flex min-w-0 flex-1 flex-col gap-2 py-1.25">
+      <span className="flex min-w-0 items-center gap-2.5">
+        {environmentIcon}
+        <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>{label}</span>
+      </span>
+      <span className="flex min-w-0 items-center gap-2.5">
+        {workspaceIcon}
+        <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+          {folderName}
+        </span>
+      </span>
+    </span>
+  ) : (
     <>
       {icon}
       <ComposerContextLabel displayMode={displayMode}>
@@ -299,6 +318,7 @@ const RunContextSelector = memo(function RunContextSelector({
           "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6",
           isPanel && "max-w-full",
           isPanel && THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+          twoRows && "h-auto sm:h-auto",
         )}
         onContextMenu={handleContextMenu}
         aria-label={isPanel ? "Run context" : undefined}
@@ -312,7 +332,13 @@ const RunContextSelector = memo(function RunContextSelector({
   return (
     <Menu>
       <MenuTrigger
-        render={isPanel ? <ThreadDetailsControl part="select" /> : <ComposerControl size="xs" />}
+        render={
+          isPanel ? (
+            <ThreadDetailsControl part="select" multiline={twoRows} />
+          ) : (
+            <ComposerControl size="xs" />
+          )
+        }
         className={isPanel ? undefined : "min-w-0 max-w-[48%] flex-initial justify-start"}
         onContextMenu={handleContextMenu}
         onMouseDownCapture={
