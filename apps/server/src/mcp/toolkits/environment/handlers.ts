@@ -1,3 +1,4 @@
+import * as Sidebar from "../../../sidebarLayout.ts";
 import {
   editLocalServerHideRules,
   OrchestratorMcpFailure,
@@ -23,7 +24,6 @@ export function preferences(settings: ServerSettings) {
   } = settings;
   const characters = Array.from(sourceControlWritingStyle.customInstructions);
   return {
-    ...(settings.sidebarLayout === undefined ? {} : { sidebarLayout: settings.sidebarLayout }),
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,
@@ -57,7 +57,12 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         label: descriptor.label,
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
-        preferences: preferences(current),
+        preferences: {
+          ...preferences(current),
+          sidebarLayout: (yield* (yield* Sidebar.SidebarLayoutService).get.pipe(
+            Effect.mapError(unavailable),
+          )).layout,
+        },
       };
     }),
   ),

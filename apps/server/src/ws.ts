@@ -1773,6 +1773,7 @@ const layerWsRpc = (
               threadSnapshotPagination: true,
               threadFind: true,
               threadFindProgressive: true,
+              sidebarLayoutSync: true,
               ...Option.match(scratchWorkspaceRoot, {
                 onNone: () => ({}),
                 onSome: (root) => ({ scratchWorkspaceRoot: root }),

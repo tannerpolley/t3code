@@ -55,7 +55,6 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
-import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
@@ -149,6 +148,7 @@ import {
   currentAddProjectSection,
   placeAddedProject,
   sectionPlacementInput,
+  completeProjectSectionPlacement,
   sectionTarget,
   setAddProjectSection,
 } from "../projectSectionPlacement";
@@ -2573,6 +2573,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
+      completeProjectSectionPlacement(scopeProjectRef(input.environmentId, projectId), sectionId);
       setAddProjectSection(null);
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(input.environmentId, projectId)),
@@ -2849,6 +2850,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
+    completeProjectSectionPlacement(projectRef, sectionId);
     setAddProjectSection(null);
     setOpen(false);
     // The create event usually lands before this call returns; give the shell

@@ -80,7 +80,8 @@ export function organizeSectionsByFolder(input: {
     projectKeys: [...section.projectKeys],
   }));
   let changed = false;
-  const findOrCreate = (name: string, parentId: string | undefined) => {
+  const findOrCreate = (folderName: string, parentId: string | undefined) => {
+    const name = folderName.trim().slice(0, 80) || "Folder";
     const existing = sections.find(
       (section) =>
         section.parentId === parentId && section.name.toLowerCase() === name.toLowerCase(),

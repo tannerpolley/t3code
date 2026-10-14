@@ -1,7 +1,4 @@
-import { ProviderInstanceMutation } from "./providerInstance.ts";
-import { ServerSettingsPatch, requiredScopesForServerSettingsPatch } from "./settings.ts";
-import { ProjectCreateNewInput } from "./project.ts";
-import { ProjectCloneStartInput } from "./projectClone.ts";
+import { type ServerSettingsPatch, requiredScopesForServerSettingsPatch } from "./settings.ts";
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
@@ -18,6 +15,7 @@ import { WS_METHODS } from "./rpc.ts";
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
+  [WS_METHODS.sidebarLayoutUpdate]: AuthSettingsWriteScope,
   [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
   [WS_METHODS.terminalRunInline]: AuthTerminalOperateScope,
   [WS_METHODS.terminalWrite]: AuthTerminalOperateScope,
@@ -64,35 +62,39 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
-const decodeSettingsUpdate = Schema.decodeUnknownSync(
-  Schema.Struct({
-    patch: ServerSettingsPatch,
-    providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
-  }),
-);
-const decodeCloneStart = Schema.decodeUnknownSync(ProjectCloneStartInput);
-const decodeCreateNew = Schema.decodeUnknownSync(ProjectCreateNewInput);
 
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
   if (method === WS_METHODS.serverUpdateSettings && input !== undefined) {
-    const payload = decodeSettingsUpdate(input);
-    const scopes = requiredScopesForServerSettingsPatch(payload.patch);
+    const payload = (typeof input === "object" && input !== null ? input : {}) as {
+      patch?: unknown;
+      providerInstanceMutation?: unknown;
+    };
+    const patch = (
+      typeof payload.patch === "object" && payload.patch !== null ? payload.patch : {}
+    ) as ServerSettingsPatch;
+    const scopes = requiredScopesForServerSettingsPatch(patch);
     if (payload.providerInstanceMutation === undefined) return scopes;
-    return Object.values(payload.patch).every((value) => value === undefined)
+    return Object.values(patch).every((value) => value === undefined)
       ? [AuthProvidersManageScope]
       : [...new Set([...scopes, AuthProvidersManageScope])];
   }
   if (method === WS_METHODS.projectCloneStart && input !== undefined) {
-    const payload = decodeCloneStart(input);
+    const payload = (typeof input === "object" && input !== null ? input : {}) as {
+      sectionId?: unknown;
+      sidebarExpanded?: unknown;
+    };
     return payload.sectionId !== undefined || payload.sidebarExpanded !== undefined
       ? [AuthSourceControlWriteScope, AuthSettingsWriteScope]
       : [AuthSourceControlWriteScope];
   }
   if (method === WS_METHODS.projectsCreateNew && input !== undefined) {
-    const payload = decodeCreateNew(input);
+    const payload = (typeof input === "object" && input !== null ? input : {}) as {
+      sectionId?: unknown;
+      sidebarExpanded?: unknown;
+    };
     return payload.sectionId !== undefined || payload.sidebarExpanded !== undefined
       ? [AuthOrchestrationOperateScope, AuthSettingsWriteScope]
       : [AuthOrchestrationOperateScope];

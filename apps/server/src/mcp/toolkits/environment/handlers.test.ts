@@ -1,3 +1,5 @@
+import * as Sidebar from "../../../sidebarLayout.ts";
+import { EMPTY_SIDEBAR_LAYOUT } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -79,6 +81,16 @@ const layerMcpEnvironment = McpHttpServer.layerEnvironmentToolkit.pipe(
     }),
   ),
   Layer.provide(layerEnvironment),
+  Layer.provide(
+    Layer.mock(Sidebar.SidebarLayoutService)({
+      get: Effect.succeed({
+        revision: 0,
+        legacyImportedAt: null,
+        legacyImportId: null,
+        layout: EMPTY_SIDEBAR_LAYOUT,
+      }),
+    }),
+  ),
   Layer.provideMerge(Settings.layerTest()),
 );
 
@@ -125,6 +137,14 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     // Completes once the declaration's own check has read the caller.
     const checked = yield* Deferred.make<void>();
     const layerDependencies = Layer.mergeAll(
+      Layer.mock(Sidebar.SidebarLayoutService)({
+        get: Effect.succeed({
+          revision: 0,
+          legacyImportedAt: null,
+          legacyImportId: null,
+          layout: EMPTY_SIDEBAR_LAYOUT,
+        }),
+      }),
       ThreadCommandExecutor.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId,

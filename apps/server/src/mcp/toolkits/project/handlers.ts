@@ -14,7 +14,11 @@ import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../t
 import { ProjectToolkit } from "./tools.ts";
 
 function projectFailure(error: Project.ProjectServiceError) {
-  if (error._tag === "ProjectOperationError") return unavailable();
+  if (error._tag === "ProjectOperationError") {
+    if (error.operation === "sidebar-layout" && error.cause === "Section not found.")
+      return new OrchestratorMcpFailure({ code: "invalid_request", message: "Section not found." });
+    return unavailable();
+  }
   const message =
     error._tag === "ProjectNotFoundError"
       ? "The project was not found."

@@ -263,22 +263,33 @@ export function reorderProjects<T extends SidebarLayout>(
   };
 }
 
-/** Applied by ServerSettingsService under its existing write lock. */
+/** Pure operations shared by optimistic clients and the locked sidebar service. */
 export function applySidebarLayoutMutation(
   current: SidebarLayout | undefined,
   mutation: SidebarLayoutMutation,
 ): SidebarLayout | undefined {
   if (mutation.type === "migrate") {
-    if (current !== undefined) return current;
-    const layout = mutation.layout;
-    if (
-      layout.sidebarProjectSections.length === 0 &&
-      layout.projectOrder.length === 0 &&
-      Object.keys(layout.projectExpandedById).length === 0 &&
-      layout.sidebarOtherProjectsExpanded
-    )
-      return current;
-    return layout;
+    const state = current ?? EMPTY_SIDEBAR_LAYOUT;
+    const importedIds = new Set(
+      mutation.layout.sidebarProjectSections.map((section) => section.id),
+    );
+    const importedProjects = new Set(
+      mutation.layout.sidebarProjectSections.flatMap((section) => section.projectKeys),
+    );
+    return {
+      ...mutation.layout,
+      sidebarProjectSections: [
+        ...mutation.layout.sidebarProjectSections,
+        ...state.sidebarProjectSections
+          .filter((section) => !importedIds.has(section.id))
+          .map((section) => ({
+            ...section,
+            projectKeys: section.projectKeys.filter((id) => !importedProjects.has(id)),
+          })),
+      ],
+      projectExpandedById: { ...state.projectExpandedById, ...mutation.layout.projectExpandedById },
+      projectOrder: [...new Set([...mutation.layout.projectOrder, ...state.projectOrder])],
+    };
   }
   const state = current ?? EMPTY_SIDEBAR_LAYOUT;
   switch (mutation.type) {

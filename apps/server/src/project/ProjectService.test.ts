@@ -1,7 +1,24 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import { EnvironmentId, type OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ManagedFolders from "./ManagedProjectFolders.ts";
+import * as Git from "../vcs/GitVcsDriver.ts";
+import * as Invocation from "../mcp/McpInvocationContext.ts";
+import * as Access from "../mcp/McpToolAccess.ts";
+import * as ProjectHandlers from "../mcp/toolkits/project/handlers.ts";
+import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
+import * as SidebarLayout from "../sidebarLayout.ts";
 import * as Stream from "effect/Stream";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  type Project,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -81,6 +98,7 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(layerWorkspacePaths),
   Layer.provideMerge(layerMetadata),
+  Layer.provideMerge(SidebarLayout.layer),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
@@ -102,15 +120,186 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
 
 it.layer(layerTest)("ProjectService", (it) => {
   it.effect(
+    "MCP create-with-section and placement-only update persist through the real service",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const sidebar = yield* SidebarLayout.SidebarLayoutService;
+        yield* sidebar.update({
+          revision: 0,
+          operations: [{ type: "add", section: { id: "mcp", name: "MCP" } }],
+        });
+        const threadId = ThreadId.make("mcp-caller");
+        const caller = {
+          id: threadId,
+          projectId: ProjectId.make("caller-project"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          activeRunId: "active",
+          archivedAt: null,
+          deletedAt: null,
+        } as OrchestrationV2ThreadShell;
+        const dependencies = Layer.mergeAll(
+          Layer.succeed(ProjectService.ProjectService, service),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(caller),
+          }),
+          Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+          Layer.mock(ManagedFolders.ManagedProjectFolders)({ namedProjectsRoot: "/work" }),
+          Layer.mock(Git.GitVcsDriver)({}),
+          Layer.succeed(Invocation.McpInvocationContext, {
+            environmentId: EnvironmentId.make("mcp-test"),
+            requestNamespace: "session",
+            thread: {
+              threadId,
+              providerSessionId: "session",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+            },
+            client: undefined,
+            issuedAt: 0,
+            capabilities: new Set(["orchestration" as const]),
+          }),
+          NodeCrypto.layer,
+        );
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            Access.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+          ),
+        );
+        const created = yield* toolkit
+          .handle("t3_project_create", {
+            title: "Agent project",
+            workspaceRoot: "/work/agent-project",
+            sectionId: "mcp",
+            sidebarExpanded: true,
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        const project = created.at(-1)?.result;
+        assert.ok(project && "id" in project);
+        if (!project || !("id" in project)) return;
+        assert.deepEqual((yield* sidebar.get).layout.sidebarProjectSections[0]?.projectKeys, [
+          project.id,
+        ]);
+        assert.isTrue((yield* sidebar.get).layout.projectExpandedById[project.id]);
+        yield* toolkit
+          .handle("t3_project_update", {
+            projectId: project.id,
+            sectionId: null,
+            sidebarExpanded: false,
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        assert.deepEqual((yield* sidebar.get).layout.sidebarProjectSections[0]?.projectKeys, []);
+        const rejected = yield* toolkit
+          .handle("t3_project_create", {
+            title: "Invalid",
+            workspaceRoot: "/work/invalid-mcp",
+            sectionId: "missing",
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        const rejection = rejected.at(-1)?.result;
+        assert.ok(rejection && "message" in rejection);
+        if (rejection && "message" in rejection)
+          assert.equal(rejection.message, "Section not found.");
+        assert.isTrue(Option.isNone(yield* service.getByWorkspaceRoot("/work/invalid-mcp")));
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+  it.effect(
+    "organizes only lifecycle changes, skips empty metadata events, and deletes sidebar references",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProjectService.ProjectService;
+        const sidebar = yield* SidebarLayout.SidebarLayoutService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const sql = yield* SqlClient.SqlClient;
+        yield* settings.updateSettings({ projectFolderRoot: "/work" });
+        assert.equal((yield* sidebar.get).revision, 0);
+        const projectId = ProjectId.make("sidebar-lifecycle");
+        yield* service.create({
+          commandId: CommandId.make("lifecycle:create"),
+          projectId,
+          title: "Lifecycle",
+          workspaceRoot: "/work/Apps/lifecycle",
+          sidebarExpanded: true,
+        });
+        const created = yield* sidebar.get;
+        assert.deepEqual(created.layout.sidebarProjectSections[0]?.projectKeys, [projectId]);
+        yield* service.listShells();
+        yield* service.update({
+          commandId: CommandId.make("lifecycle:rename"),
+          projectId,
+          title: "Renamed",
+        });
+        assert.equal((yield* sidebar.get).revision, created.revision);
+        const eventsBefore = yield* sql.unsafe("SELECT sequence FROM orchestration_events");
+        yield* service.update({
+          commandId: CommandId.make("lifecycle:placement"),
+          projectId,
+          sectionId: created.layout.sidebarProjectSections[0]!.id,
+          sidebarExpanded: false,
+        });
+        assert.deepEqual(
+          yield* sql.unsafe("SELECT sequence FROM orchestration_events"),
+          eventsBefore,
+        );
+        yield* sidebar.update({
+          revision: 0,
+          operations: [
+            {
+              type: "projectsOrder",
+              currentProjectOrder: [projectId],
+              draggedProjectIds: [projectId],
+              targetProjectIds: [projectId],
+            },
+          ],
+        });
+        yield* service.delete({ commandId: CommandId.make("lifecycle:delete"), projectId });
+        const deleted = (yield* sidebar.get).layout;
+        assert.isUndefined(deleted.projectExpandedById[projectId]);
+        assert.isFalse(deleted.projectOrder.includes(projectId));
+        assert.isFalse(
+          deleted.sidebarProjectSections.some((section) => section.projectKeys.includes(projectId)),
+        );
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+  it.effect("rolls back a new project when placement persistence fails", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const sidebar = yield* SidebarLayout.SidebarLayoutService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sidebar.update({
+        revision: 0,
+        operations: [{ type: "add", section: { id: "atomic", name: "Atomic" } }],
+      });
+      yield* sql.unsafe(
+        "CREATE TRIGGER fail_sidebar BEFORE UPDATE ON sidebar_layout BEGIN SELECT RAISE(ABORT, 'placement failed'); END",
+      );
+      const projectId = ProjectId.make("atomic-project");
+      yield* service
+        .create({
+          commandId: CommandId.make("atomic:create"),
+          projectId,
+          title: "Atomic",
+          workspaceRoot: "/work/atomic",
+          sectionId: "atomic",
+        })
+        .pipe(Effect.flip);
+      assert.isTrue(Option.isNone(yield* service.getById(projectId)));
+      assert.equal((yield* sidebar.get).revision, 1);
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+  it.effect(
     "places and expands at creation, retains membership after repository enrichment, and supports removal",
     () =>
       Effect.gen(function* () {
-        const settings = yield* ServerSettings.ServerSettingsService;
+        const sidebar = yield* SidebarLayout.SidebarLayoutService;
         const service = yield* ProjectService.ProjectService;
         const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
         const changes = yield* enrichment.subscribeChanges;
-        yield* settings.updateSettings({
-          sidebarLayoutMutation: { type: "add", section: { id: "personal", name: "Personal" } },
+        yield* sidebar.update({
+          revision: 0,
+          operations: [{ type: "add", section: { id: "personal", name: "Personal" } }],
         });
         const projectId = ProjectId.make("sidebar-clone");
         const completed = yield* Stream.fromSubscription(changes).pipe(
@@ -130,28 +319,23 @@ it.layer(layerTest)("ProjectService", (it) => {
           sectionId: "personal",
           sidebarExpanded: true,
         });
-        assert.deepEqual(
-          (yield* settings.getSettings).sidebarLayout?.sidebarProjectSections[0]?.projectKeys,
-          [projectId],
-        );
-        assert.isTrue((yield* settings.getSettings).sidebarLayout?.projectExpandedById[projectId]);
+        assert.deepEqual((yield* sidebar.get).layout?.sidebarProjectSections[0]?.projectKeys, [
+          projectId,
+        ]);
+        assert.isTrue((yield* sidebar.get).layout?.projectExpandedById[projectId]);
         yield* Fiber.join(completed);
         assert.isNotNull(Option.getOrThrow(yield* service.getById(projectId)).repositoryIdentity);
-        assert.deepEqual(
-          (yield* settings.getSettings).sidebarLayout?.sidebarProjectSections[0]?.projectKeys,
-          [projectId],
-        );
+        assert.deepEqual((yield* sidebar.get).layout?.sidebarProjectSections[0]?.projectKeys, [
+          projectId,
+        ]);
         yield* service.update({
           projectId,
           commandId: CommandId.make("sidebar-remove"),
           sectionId: null,
           sidebarExpanded: false,
         });
-        assert.deepEqual(
-          (yield* settings.getSettings).sidebarLayout?.sidebarProjectSections[0]?.projectKeys,
-          [],
-        );
-        assert.isFalse((yield* settings.getSettings).sidebarLayout?.projectExpandedById[projectId]);
+        assert.deepEqual((yield* sidebar.get).layout?.sidebarProjectSections[0]?.projectKeys, []);
+        assert.isFalse((yield* sidebar.get).layout?.projectExpandedById[projectId]);
         const invalid = yield* service
           .create({
             projectId: ProjectId.make("invalid-section-project"),

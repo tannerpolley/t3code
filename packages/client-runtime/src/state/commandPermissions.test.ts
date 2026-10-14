@@ -63,6 +63,53 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("sidebar writes check the destination grant before calling transport", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.mount(sessions(other));
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        registry.set(
+          sessions(other),
+          AsyncResult.success({ ...grant(true), permissions: [AuthSettingsWriteScope] }),
+        );
+        let calls = 0;
+        const command = createEnvironmentRpcCommand(runtime, {
+          label: "test.sidebar",
+          tag: WS_METHODS.sidebarLayoutUpdate,
+          execute: () =>
+            Effect.sync(() => {
+              calls++;
+              return {
+                revision: 1,
+                legacyImportedAt: null,
+                legacyImportId: null,
+                layout: {
+                  sidebarProjectSections: [],
+                  projectExpandedById: {},
+                  projectOrder: [],
+                  sidebarOtherProjectsExpanded: false,
+                },
+              };
+            }),
+        });
+        const input = {
+          revision: 0,
+          operations: [{ type: "otherExpanded" as const, expanded: false }],
+        };
+        expect(
+          (yield* Effect.promise(() => command.run(registry, { environmentId: env, input })))._tag,
+        ).toBe("Failure");
+        expect(calls).toBe(0);
+        expect(
+          (yield* Effect.promise(() => command.run(registry, { environmentId: other, input })))
+            ._tag,
+        ).toBe("Success");
+        expect(calls).toBe(1);
+      }),
+    ),
+  );
+
   it.effect(
     "guards shared sidebar settings and create-with-section against the destination grants",
     () =>
@@ -78,11 +125,10 @@ describe("command permissions", () => {
               permissions: [AuthOrchestrationOperateScope, AuthSettingsWriteScope],
             }),
           );
-          const settings = createCommandPermissions(runtime, WS_METHODS.serverUpdateSettings);
+          const settings = createCommandPermissions(runtime, WS_METHODS.sidebarLayoutUpdate);
           const input = {
-            patch: {
-              sidebarLayoutMutation: { type: "add", section: { id: "work", name: "Work" } },
-            },
+            revision: 0,
+            operations: [{ type: "add", section: { id: "work", name: "Work" } }],
           };
           expect(registry.get(settings.permissionAtom(env, input))).toBe(false);
           expect(

@@ -211,10 +211,6 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     } as OrchestrationV2ThreadShell;
     const named: Array<string> = [];
     const registered: Array<string> = [];
-    const placements: Array<{
-      readonly sectionId?: string | null;
-      readonly sidebarExpanded?: boolean;
-    }> = [];
     const createdProject = {
       id: createdProjectId,
       title: "Pinball Stats",
@@ -248,12 +244,10 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
         create: (input) =>
           Effect.sync(() => {
             registered.push(input.workspaceRoot);
-            placements.push(input);
             return { ...createdProject, id: input.projectId, workspaceRoot: input.workspaceRoot };
           }),
         update: (input) =>
           Effect.sync(() => {
-            placements.push(input);
             return { ...createdProject, id: input.projectId };
           }),
         getById: (projectId) =>
@@ -266,7 +260,6 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
         createNamedProject: (input) =>
           Effect.sync(() => {
             named.push(input.name);
-            placements.push(input);
             return {
               projectId: createdProjectId,
               workspaceRoot: createdProject.workspaceRoot,
@@ -312,19 +305,6 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       sidebarExpanded: true,
     });
     expect(registered).toEqual(["/work/existing"]);
-    yield* toolkit
-      .handle("t3_project_update", {
-        projectId: createdProjectId,
-        sectionId: null,
-        sidebarExpanded: false,
-      })
-      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
-    expect(placements).toMatchObject([
-      { sectionId: "games", sidebarExpanded: true },
-      { sectionId: "games", sidebarExpanded: true },
-      { sectionId: null, sidebarExpanded: false },
-    ]);
-
     // Fields this mode cannot apply are rejected, not dropped.
     for (const extra of [
       { scripts: [] },

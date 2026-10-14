@@ -116,15 +116,21 @@ export function migrateSidebarLayout(
     ...new Set(keys.flatMap((key) => aliases.get(key) ?? [])),
   ];
   const claimed = new Set<string>();
+  const sections = legacy.sidebarProjectSections.map((section) => ({
+    ...section,
+    projectKeys: resolve(section.projectKeys).filter((id) => {
+      if (claimed.has(id)) return false;
+      claimed.add(id);
+      return true;
+    }),
+  }));
+  const included = new Set(
+    sections.filter((section) => section.projectKeys.length > 0).map((section) => section.id),
+  );
+  for (const section of sections)
+    if (included.has(section.id) && section.parentId) included.add(section.parentId);
   return {
-    sidebarProjectSections: legacy.sidebarProjectSections.map((section) => ({
-      ...section,
-      projectKeys: resolve(section.projectKeys).filter((id) => {
-        if (claimed.has(id)) return false;
-        claimed.add(id);
-        return true;
-      }),
-    })),
+    sidebarProjectSections: sections.filter((section) => included.has(section.id)),
     projectExpandedById: Object.fromEntries([
       ...groups.flatMap((group) =>
         group.memberProjects

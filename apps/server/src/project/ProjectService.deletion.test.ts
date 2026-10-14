@@ -1,3 +1,4 @@
+import * as SidebarLayout from "../sidebarLayout.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -64,6 +65,7 @@ const layerServices = Layer.mergeAll(
       ),
     ),
   ),
+  Layer.provideMerge(SidebarLayout.layer),
   Layer.provideMerge(ServerSettings.layerTest()),
 );
 const layerDatabase = SqlitePersistence.layerMemory.pipe(

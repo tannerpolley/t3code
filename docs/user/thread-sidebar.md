@@ -64,16 +64,22 @@ and keeps its files on disk.
 
 Sections, their order and nesting, project placement, and section and project
 expansion are shared by every web or desktop window connected to the same
-environment. Changes appear in the other windows immediately. Projects remain in
+environment. Changes appear immediately in the window you are using and sync to your other windows shortly afterward. Projects remain in
 their section when a clone finishes or you change project grouping. Each
 environment owns its sections; place a project in a section on its own environment.
 
-After upgrading, the first connected window with a saved layout imports it when
-the environment has no shared layout yet. If two windows have different saved
-layouts, the first accepted layout wins; the other window adopts it. Later windows
-cannot overwrite it, even after you remove every section. Your Projects/Activity
-choice, project filter, grouping preferences, and other thread view preferences
-remain local to each window.
+After upgrading, the first connected window with a saved layout imports it if this
+environment has not imported one before. Earlier sidebar edits do not prevent the
+import, and sections created since the upgrade are kept. Only sections containing
+this environment's projects, including their parent sections, are imported. If two
+windows have different saved layouts, the first accepted layout wins; the other
+window adopts it. Later windows cannot overwrite it, even after every section is
+removed. After a successful import, that window clears its old saved copy.
+
+Your Projects/Activity choice, project filter, grouping preferences, and other
+thread view preferences stay local to each window. Older servers and connections
+without permission to save settings keep a local layout, including expansion
+choices.
 
 Agents can read section IDs from the environment and place a project when creating
 or updating it. Ask an agent to put a new project in a named section and expand it;

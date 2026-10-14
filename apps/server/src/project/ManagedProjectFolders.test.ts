@@ -1,3 +1,4 @@
+import * as SidebarLayout from "../sidebarLayout.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -100,6 +101,7 @@ const withScratch = <A, E>(
   }) => Effect.Effect<
     A,
     E,
+    | SidebarLayout.SidebarLayoutService
     | ManagedProjectFolders.ManagedProjectFolders
     | ProjectService.ProjectService
     | ServerSettings.ServerSettingsService
@@ -379,22 +381,20 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         const root = path.resolve(baseDir, "projects");
         assert.equal(folders.namedProjectsRoot, root);
 
-        const settings = yield* ServerSettings.ServerSettingsService;
-        yield* settings.updateSettings({
-          sidebarLayoutMutation: { type: "add", section: { id: "games", name: "Games" } },
+        const sidebar = yield* SidebarLayout.SidebarLayoutService;
+        yield* sidebar.update({
+          revision: 0,
+          operations: [{ type: "add", section: { id: "games", name: "Games" } }],
         });
         const first = yield* folders.createNamedProject({
           name: "Pinball Stats",
           sectionId: "games",
           sidebarExpanded: true,
         });
-        assert.deepEqual(
-          (yield* settings.getSettings).sidebarLayout?.sidebarProjectSections[0]?.projectKeys,
-          [first.projectId],
-        );
-        assert.isTrue(
-          (yield* settings.getSettings).sidebarLayout?.projectExpandedById[first.projectId],
-        );
+        assert.deepEqual((yield* sidebar.get).layout?.sidebarProjectSections[0]?.projectKeys, [
+          first.projectId,
+        ]);
+        assert.isTrue((yield* sidebar.get).layout?.projectExpandedById[first.projectId]);
         const second = yield* folders.createNamedProject({ name: "pinball stats" });
 
         assert.equal(first.workspaceRoot, path.join(root, "pinball-stats"));

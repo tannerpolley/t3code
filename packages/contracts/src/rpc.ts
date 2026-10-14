@@ -1,3 +1,4 @@
+import { SidebarLayoutRecord, SidebarLayoutUpdate, SidebarLayoutError } from "./sidebarLayout.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -646,6 +647,8 @@ export const WS_METHODS = {
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
   subscribeServerConfig: "subscribeServerConfig",
+  sidebarLayoutUpdate: "sidebarLayout.update",
+  subscribeSidebarLayout: "sidebarLayout.subscribe",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
@@ -1899,6 +1902,18 @@ const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTerminalMeta
   stream: true,
 });
 
+const WsSidebarLayoutUpdateRpc = Rpc.make(WS_METHODS.sidebarLayoutUpdate, {
+  payload: SidebarLayoutUpdate,
+  success: SidebarLayoutRecord,
+  error: Schema.Union([SidebarLayoutError, EnvironmentAuthorizationError]),
+});
+const WsSubscribeSidebarLayoutRpc = Rpc.make(WS_METHODS.subscribeSidebarLayout, {
+  payload: Schema.Struct({}),
+  success: SidebarLayoutRecord,
+  error: Schema.Union([SidebarLayoutError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerConfig, {
   payload: Schema.Struct({
     /**
@@ -2094,6 +2109,8 @@ const WsTerminalWatchInlineRunRpc = Rpc.make(WS_METHODS.terminalWatchInlineRun, 
 });
 
 const forkWsRpcs = [
+  WsSidebarLayoutUpdateRpc,
+  WsSubscribeSidebarLayoutRpc,
   WsTerminalWatchInlineRunRpc,
   WsTerminalRunInlineRpc,
   WsTerminalGetInlineRunRpc,
@@ -2316,6 +2333,8 @@ export const WsRpcGroup = RpcGroup.make(
 ).middleware(RpcScopeAuthorization);
 export const ForkWsRpcGroup = RpcGroup.make(...forkWsRpcs).middleware(RpcScopeAuthorization);
 export const UpstreamWsRpcGroup = WsRpcGroup.omit(
+  WS_METHODS.sidebarLayoutUpdate,
+  WS_METHODS.subscribeSidebarLayout,
   WS_METHODS.terminalWatchInlineRun,
   WS_METHODS.terminalRunInline,
   WS_METHODS.terminalGetInlineRun,

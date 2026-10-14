@@ -1331,6 +1331,15 @@ describe("branch naming settings", () => {
 });
 
 describe("fork sidebar preferences", () => {
+  it("keeps folder automation on the environment rather than in client preferences", () => {
+    expect(decodeServerSettings({ autoOrganizeByFolder: false }).autoOrganizeByFolder).toBe(false);
+    expect(decodeServerSettingsPatch({ autoOrganizeByFolder: false })).toEqual({
+      autoOrganizeByFolder: false,
+    });
+    expect(decodeClientSettings({ autoOrganizeByFolder: false })).not.toHaveProperty(
+      "autoOrganizeByFolder",
+    );
+  });
   it("retains existing persisted settings through snapshots, encoding, and patches", () => {
     const input = {
       projectsView: false,
@@ -1339,7 +1348,6 @@ describe("fork sidebar preferences", () => {
       projectIconFallback: "initials",
       sidebarTogglePosition: "right",
       topBackButton: false,
-      autoOrganizeByFolder: false,
       revealOpenThreadInSidebar: false,
       lineageDetailsExpanded: true,
       lineageAutoClearMinutes: 5,

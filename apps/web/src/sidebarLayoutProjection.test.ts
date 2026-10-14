@@ -53,6 +53,45 @@ const layout = {
 };
 
 describe("shared sidebar projection", () => {
+  it("imports only each environment's projects and necessary section ancestors", () => {
+    const snapshot = groups([project("clone"), project("remote-project", remote)]);
+    const legacy = {
+      ...EMPTY_SIDEBAR_LAYOUT,
+      sidebarProjectSections: [
+        { id: "local-only", name: "Local", collapsed: false, projectKeys: ["clone"] },
+        { id: "remote-only", name: "Remote", collapsed: false, projectKeys: ["remote-project"] },
+        { id: "empty", name: "Empty", collapsed: false, projectKeys: [] },
+      ],
+    };
+    expect(
+      migrateSidebarLayout(legacy, snapshot, local).sidebarProjectSections.map((s) => s.id),
+    ).toEqual(["local-only"]);
+    expect(
+      migrateSidebarLayout(legacy, snapshot, remote).sidebarProjectSections.map((s) => s.id),
+    ).toEqual(["remote-only"]);
+    expect(
+      migrateSidebarLayout(legacy, snapshot, EnvironmentId.make("third")).sidebarProjectSections,
+    ).toEqual([]);
+  });
+  it("resolves available ID keys before identity, retaining unresolved aliases for later projection", () => {
+    const before = groups([project("clone")]);
+    const after = groups([project("clone", local, identity)]);
+    const legacy = {
+      ...EMPTY_SIDEBAR_LAYOUT,
+      sidebarProjectSections: [
+        { id: "known", name: "Known", collapsed: false, projectKeys: ["clone"] },
+        { id: "pending", name: "Pending", collapsed: false, projectKeys: [after[0]!.projectKey] },
+      ],
+    };
+    expect(
+      migrateSidebarLayout(legacy, before, local).sidebarProjectSections.map((s) => s.id),
+    ).toEqual(["known"]);
+    const unresolved = { ...legacy, sidebarProjectSections: [legacy.sidebarProjectSections[1]!] };
+    expect(migrateSidebarLayout(unresolved, before, local).sidebarProjectSections).toEqual([]);
+    expect(
+      migrateSidebarLayout(unresolved, after, local).sidebarProjectSections[0]?.projectKeys,
+    ).toEqual(["clone"]);
+  });
   it("keeps clone membership and expansion as its row gains repository identity", () => {
     const before = groups([project("clone")]);
     const after = groups([project("clone", local, identity)]);
@@ -136,7 +175,6 @@ describe("shared sidebar projection", () => {
     const migrated = migrateSidebarLayout(legacy, current, local);
     expect(migrated.sidebarProjectSections.map((section) => section.projectKeys)).toEqual([
       ["clone"],
-      [],
     ]);
     expect(migrated.projectExpandedById).toEqual({ clone: false });
   });

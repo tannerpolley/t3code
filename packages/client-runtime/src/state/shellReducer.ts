@@ -110,12 +110,27 @@ export function mergeShellSnapshotProjects(
           return project;
         }
         if (resolvedRootSet?.has(project.workspaceRoot) === true) {
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+          return {
+            ...project,
+            repositoryIdentity: candidate.repositoryIdentity,
+            ...(candidate.repositoryIdentityResolved === undefined
+              ? {}
+              : { repositoryIdentityResolved: candidate.repositoryIdentityResolved }),
+          };
         }
         if (project.repositoryIdentity == null && candidate.repositoryIdentity != null) {
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+          return {
+            ...project,
+            repositoryIdentity: candidate.repositoryIdentity,
+            ...(candidate.repositoryIdentityResolved === undefined
+              ? {}
+              : { repositoryIdentityResolved: candidate.repositoryIdentityResolved }),
+          };
         }
-        return project;
+        return candidate.repositoryIdentityResolved === true &&
+          project.repositoryIdentityResolved !== true
+          ? { ...project, repositoryIdentityResolved: true }
+          : project;
       }),
     };
   }

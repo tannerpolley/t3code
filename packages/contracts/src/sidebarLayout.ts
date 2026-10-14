@@ -1,40 +1,38 @@
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { ProjectIconColor } from "./project.ts";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleArray, TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const SidebarProjectSection = Schema.Struct({
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
   /** Stable environment-local project IDs, never repository grouping keys. */
-  projectKeys: Schema.Array(TrimmedNonEmptyString),
+  projectKeys: ForwardCompatibleArray(TrimmedNonEmptyString),
   collapsed: Schema.Boolean,
   color: Schema.optionalKey(ProjectIconColor),
   parentId: Schema.optionalKey(TrimmedNonEmptyString),
   folderIcons: Schema.optionalKey(Schema.Boolean),
 });
 export type SidebarProjectSection = typeof SidebarProjectSection.Type;
-export const SidebarLayout = Schema.Struct({
-  sidebarProjectSections: Schema.Array(SidebarProjectSection),
-  projectExpandedById: Schema.Record(Schema.String, Schema.Boolean),
-  projectOrder: Schema.Array(Schema.String),
-  sidebarOtherProjectsExpanded: Schema.Boolean,
-}).check(
-  Schema.makeFilter((layout) => {
-    const ids = new Set(layout.sidebarProjectSections.map((section) => section.id));
-    const top = new Set(
-      layout.sidebarProjectSections
-        .filter((section) => section.parentId === undefined)
-        .map((section) => section.id),
-    );
-    const keys = layout.sidebarProjectSections.flatMap((section) => section.projectKeys);
-    return (
-      ids.size === layout.sidebarProjectSections.length &&
-      new Set(keys).size === keys.length &&
-      layout.sidebarProjectSections.every(
-        (section) => section.parentId === undefined || top.has(section.parentId),
-      )
-    );
-  }),
+const SidebarProjectExpansion = Schema.Record(Schema.String, Schema.Unknown).pipe(
+  Schema.decodeTo(
+    Schema.Record(Schema.String, Schema.Boolean),
+    SchemaTransformation.transform<Record<string, boolean>, Record<string, unknown>>({
+      decode: (values) =>
+        Object.fromEntries(
+          Object.entries(values).filter(
+            (entry): entry is [string, boolean] => typeof entry[1] === "boolean",
+          ),
+        ),
+      encode: (values) => values,
+    }),
+  ),
 );
+export const SidebarLayout = Schema.Struct({
+  sidebarProjectSections: ForwardCompatibleArray(SidebarProjectSection),
+  projectExpandedById: SidebarProjectExpansion,
+  projectOrder: ForwardCompatibleArray(Schema.String),
+  sidebarOtherProjectsExpanded: Schema.Boolean,
+});
 export type SidebarLayout = typeof SidebarLayout.Type;
 export const EMPTY_SIDEBAR_LAYOUT: SidebarLayout = {
   sidebarProjectSections: [],
@@ -44,7 +42,11 @@ export const EMPTY_SIDEBAR_LAYOUT: SidebarLayout = {
 };
 const id = TrimmedNonEmptyString;
 export const SidebarLayoutMutation = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("migrate"), layout: SidebarLayout }),
+  Schema.Struct({
+    type: Schema.Literal("migrate"),
+    layout: SidebarLayout,
+    importId: Schema.optionalKey(Schema.String),
+  }),
   Schema.Struct({
     type: Schema.Literal("add"),
     section: Schema.Struct({
@@ -108,3 +110,20 @@ export const SidebarLayoutMutation = Schema.Union([
   }),
 ]);
 export type SidebarLayoutMutation = typeof SidebarLayoutMutation.Type;
+
+export const SidebarLayoutRecord = Schema.Struct({
+  revision: Schema.Int,
+  legacyImportedAt: Schema.NullOr(Schema.String),
+  legacyImportId: Schema.NullOr(Schema.String),
+  layout: SidebarLayout,
+});
+export type SidebarLayoutRecord = typeof SidebarLayoutRecord.Type;
+export const SidebarLayoutUpdate = Schema.Struct({
+  revision: Schema.Int,
+  operations: Schema.Array(SidebarLayoutMutation),
+});
+export type SidebarLayoutUpdate = typeof SidebarLayoutUpdate.Type;
+export class SidebarLayoutError extends Schema.TaggedError<SidebarLayoutError>()(
+  "SidebarLayoutError",
+  { message: Schema.String },
+) {}

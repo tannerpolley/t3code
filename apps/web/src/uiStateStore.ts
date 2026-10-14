@@ -572,7 +572,17 @@ let sendSidebarMutation: (mutation: SidebarLayoutMutation) => Promise<boolean> =
 export function configureSidebarLayoutActions(send: typeof sendSidebarMutation): void {
   sendSidebarMutation = send;
 }
-export const legacySidebarLayout = readPersistedState();
+export let legacySidebarLayout = readPersistedState();
+export function clearLegacySidebarLayout() {
+  legacySidebarLayout = {
+    ...legacySidebarLayout,
+    sidebarProjectSections: [],
+    projectExpandedById: {},
+    projectOrder: [],
+    sidebarOtherProjectsExpanded: true,
+  };
+  persistState(useUiStateStore.getState());
+}
 
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;

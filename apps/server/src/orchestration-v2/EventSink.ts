@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type SidebarLayoutError,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
@@ -164,6 +165,7 @@ export interface EventSinkV2Shape {
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
     readonly event: UnsequencedProjectEvent;
+    readonly beforeCommit?: Effect.Effect<void, SidebarLayoutError>;
   }) => Effect.Effect<
     { readonly receipt: CommandReceiptStore.ProjectCommandReceiptV2; readonly committed: boolean },
     EventSinkV2Error
@@ -694,6 +696,7 @@ const layerBase: Layer.Layer<
             yield* projectStore.apply(event);
             const receipt = { ...reserved, resultSequence: event.sequence };
             yield* commandReceipts.upsert(receipt);
+            if (input.beforeCommit !== undefined) yield* input.beforeCommit;
             return { receipt, event };
           }),
           (result) =>

@@ -2,6 +2,7 @@ import {
   currentAddProjectSection,
   setAddProjectSection,
   sectionPlacementInput,
+  completeProjectSectionPlacement,
 } from "../projectSectionPlacement";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -107,6 +108,7 @@ export function useNewProject() {
       }
 
       const { projectId, workspaceRoot, commitError } = result.value;
+      completeProjectSectionPlacement({ environmentId: input.environmentId, projectId }, sectionId);
       // The folder sits in T3 Code's data directory, so always say where.
       toastManager.add(
         stackedThreadToast(

@@ -1212,6 +1212,15 @@ export function createServerEnvironmentAtoms<R, E>(
       concurrency: configConcurrency,
     }),
     updateSettings,
+    sidebarLayout: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:sidebar:layout",
+      tag: WS_METHODS.subscribeSidebarLayout,
+      idleTtlMs: 0,
+    }),
+    updateSidebarLayout: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:sidebar:update",
+      tag: WS_METHODS.sidebarLayoutUpdate,
+    }),
     // Provider-instance mutations share the settings command and its
     // environment-serial scheduler. The named boundary keeps clients on the
     // atomic map-entry payload instead of rebuilding a stale whole map.

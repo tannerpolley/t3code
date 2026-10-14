@@ -5,6 +5,7 @@ import {
   LocalServerHideRule,
   OrchestratorMcpFailure,
   ServerSettings,
+  SidebarLayout,
   ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -12,11 +13,12 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as Sidebar from "../../../sidebarLayout.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const PreferenceFields = {
-  sidebarLayout: ServerSettings.fields.sidebarLayout,
+  sidebarLayout: Schema.optionalKey(SidebarLayout),
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
   newWorktreesStartFromOrigin: ServerSettings.fields.newWorktreesStartFromOrigin,
   enableProviderUpdateChecks: ServerSettings.fields.enableProviderUpdateChecks,
@@ -37,6 +39,7 @@ const shared = {
     ThreadManagementService.ThreadManagementService,
     ServerEnvironment.ServerEnvironment,
     Settings.ServerSettingsService,
+    Sidebar.SidebarLayoutService,
     ThreadCommandExecutor.ThreadCommandExecutor,
   ],
 };

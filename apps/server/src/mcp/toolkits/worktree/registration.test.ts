@@ -1,3 +1,5 @@
+import * as Sidebar from "../../../sidebarLayout.ts";
+import { EMPTY_SIDEBAR_LAYOUT } from "@t3tools/contracts";
 import * as IssueLinks from "../../../issues/IssueLinks.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
@@ -39,6 +41,14 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 
 const layerStubServices = Layer.mergeAll(
+  Layer.mock(Sidebar.SidebarLayoutService)({
+    get: Effect.succeed({
+      revision: 0,
+      legacyImportedAt: null,
+      legacyImportId: null,
+      layout: EMPTY_SIDEBAR_LAYOUT,
+    }),
+  }),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
   Layer.mock(DeviceService.DeviceService)({}),

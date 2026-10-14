@@ -6,6 +6,7 @@ import { ForkWsRpcGroup, ORCHESTRATION_V2_WS_METHODS, WS_METHODS } from "@t3tool
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
+import * as SidebarLayout from "./sidebarLayout.ts";
 import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
 import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
@@ -28,7 +29,10 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const roadmap = yield* IssueRoadmap.IssueRoadmap;
       const issueWork = yield* IssueWorkService.IssueWorkService;
       const issueChanges = yield* IssueChangeService.IssueChangeService;
+      const sidebarLayout = yield* SidebarLayout.SidebarLayoutService;
       return {
+        [WS_METHODS.sidebarLayoutUpdate]: (input) => sidebarLayout.update(input),
+        [WS_METHODS.subscribeSidebarLayout]: () => sidebarLayout.stream,
         [WS_METHODS.terminalRunInline]: (input) => inlineShell.run(input),
         [WS_METHODS.terminalGetInlineRun]: (input) => inlineShell.latest(input),
         [WS_METHODS.terminalWatchInlineRun]: (input) => inlineShell.observe(input),

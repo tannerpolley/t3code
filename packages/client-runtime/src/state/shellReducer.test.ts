@@ -33,6 +33,28 @@ const otherIdentity = {
 };
 
 describe("applyShellStreamEvent", () => {
+  it("enrichment carries identity resolution for repositories and non-repositories", () => {
+    for (const identity of [repositoryIdentity, null]) {
+      const before = {
+        ...v2ShellSnapshot,
+        snapshotSequence: 5,
+        projects: [{ ...v2Project, repositoryIdentity: null, repositoryIdentityResolved: false }],
+      };
+      const next = mergeShellSnapshotProjects(
+        before,
+        {
+          ...before,
+          snapshotSequence: 4,
+          projects: [
+            { ...v2Project, repositoryIdentity: identity, repositoryIdentityResolved: true },
+          ],
+        },
+        { resolvedRepositoryIdentityRoots: [v2Project.workspaceRoot] },
+      );
+      expect(next.projects[0]?.repositoryIdentityResolved).toBe(true);
+      expect(next.projects[0]?.repositoryIdentity).toEqual(identity);
+    }
+  });
   it("keeps a routed request hidden when the child delta arrives before the parent delta", () => {
     const parentId = ThreadId.make("routing-parent");
     const parent = {

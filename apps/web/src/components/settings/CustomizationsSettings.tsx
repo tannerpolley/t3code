@@ -75,13 +75,6 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "Tint the folder icons of a section's projects with the color chosen in the section's menu. Off keeps the colors saved but unused.",
   },
   {
-    key: "autoOrganizeByFolder",
-    searchId: "auto-organize-by-folder",
-    section: "folders",
-    description:
-      "Put projects that are in no section yet into their folder's section automatically, using the Organize by folder root. Projects you move by hand stay where you put them.",
-  },
-  {
     key: "revealOpenThreadInSidebar",
     searchId: "reveal-open-thread-in-sidebar",
     section: "sidebar",
@@ -255,6 +248,7 @@ function CustomizationsGroup({
 }
 
 type ServerSwitchKey =
+  | "autoOrganizeByFolder"
   | "keepThreadTitlesCurrent"
   | "agentBrowserTabLimits"
   | "issueUpkeepRequiresApproval";
@@ -509,6 +503,11 @@ export function CustomizationsSettings() {
         />
         <CustomizationSwitchRows section="folders" />
         <SidebarProjectSettings />
+        <ServerSwitchRow
+          settingKey="autoOrganizeByFolder"
+          searchId="auto-organize-by-folder"
+          description="New projects under the folder root join their folder's section automatically. Existing projects keep the sections you chose."
+        />
         <ServerSwitchRow
           settingKey="keepThreadTitlesCurrent"
           searchId="keep-thread-titles-current"

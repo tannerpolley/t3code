@@ -11,7 +11,11 @@ import { useState, type FormEvent } from "react";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { newProjectId } from "../../lib/utils";
-import { sectionPlacementInput, sectionTarget } from "../../projectSectionPlacement";
+import {
+  sectionPlacementInput,
+  sectionTarget,
+  completeProjectSectionPlacement,
+} from "../../projectSectionPlacement";
 import { projectFolderNameProblem, sectionFolderPath } from "../../sectionProjectPath";
 import { waitForProject } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -102,6 +106,7 @@ export function NewSectionProjectDialog(props: {
       return;
     }
     const projectRef = scopeProjectRef(environmentId, projectId);
+    completeProjectSectionPlacement(projectRef, target.sectionId);
     if (initGit) {
       const initialized = await initRepository({ environmentId, input: { cwd: path } });
       if (initialized._tag === "Failure" && !isAtomCommandInterrupted(initialized)) {

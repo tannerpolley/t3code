@@ -1,5 +1,7 @@
+import * as SidebarLayout from "../sidebarLayout.ts";
 import {
   CommandId,
+  type SidebarLayoutError,
   type OrchestrationProjectShell,
   ProjectId,
   type Project,
@@ -107,6 +109,8 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
   },
 ) {
   override get message(): string {
+    if (this.operation === "sidebar-layout" && this.cause === "Section not found.")
+      return "Section not found.";
     return `Project operation '${this.operation}' failed${this.projectId === undefined ? "" : ` for ${this.projectId}`}.`;
   }
 }
@@ -162,6 +166,7 @@ export const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const sidebarLayout = yield* SidebarLayout.SidebarLayoutService;
   // Commands for one project run in order. Commands that claim a workspace root
   // also hold that root, so two projects cannot both claim it.
   const projectLocks = yield* KeyedLock.make<ProjectId>();
@@ -229,7 +234,10 @@ export const make = Effect.gen(function* () {
    * Plan one command against rows read under its locks, then commit its event or
    * its rejection. A reused command id resolves to the receipt it already has.
    */
-  const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
+  const commit = Effect.fn("ProjectService.commit")(function* (
+    command: ProjectCommand,
+    beforeCommit?: Effect.Effect<void, SidebarLayoutError>,
+  ) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
       new ProjectOperationError({ operation: "dispatch-project-command", projectId, cause });
@@ -261,6 +269,7 @@ export const make = Effect.gen(function* () {
           commandType: command.type,
           acceptedAt: now,
           event: planned.success,
+          ...(beforeCommit === undefined ? {} : { beforeCommit }),
         });
         return receipt;
       }
@@ -344,77 +353,42 @@ export const make = Effect.gen(function* () {
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
   });
 
-  const checkSection = (sectionId: string | null | undefined, projectId: ProjectId) =>
-    sectionId == null
-      ? Effect.void
-      : serverSettings.getSettings.pipe(
-          Effect.flatMap((settings) =>
-            settings.sidebarLayout?.sidebarProjectSections.some(
-              (section) => section.id === sectionId,
-            )
-              ? Effect.void
-              : Effect.fail(
-                  new ProjectOperationError({
-                    operation: "sidebar-layout",
-                    projectId,
-                    cause: "Section not found.",
-                  }),
-                ),
-          ),
-          Effect.mapError((cause) =>
-            cause._tag === "ProjectOperationError"
-              ? cause
-              : new ProjectOperationError({ operation: "sidebar-layout", projectId, cause }),
-          ),
-        );
-  const placeProject = (input: ProjectCreateInput | ProjectUpdateInput) => {
-    if (input.sectionId === undefined && input.sidebarExpanded === undefined) return Effect.void;
-    return serverSettings
-      .updateSettings({
-        sidebarLayoutMutation:
-          input.sectionId === undefined
-            ? {
-                type: "projectExpanded",
-                projectKeys: [input.projectId],
-                expanded: input.sidebarExpanded!,
-              }
-            : {
-                type: "move",
-                projectKeys: [input.projectId],
-                sectionId: input.sectionId,
-                ...(input.sidebarExpanded === undefined ? {} : { expanded: input.sidebarExpanded }),
-              },
-      })
-      .pipe(
-        Effect.asVoid,
-        Effect.mapError(
-          (cause) =>
-            new ProjectOperationError({
-              operation: "sidebar-layout",
-              projectId: input.projectId,
-              cause,
-            }),
-        ),
-      );
-  };
+  const sidebarError = (projectId: ProjectId) => (cause: { message: string }) =>
+    new ProjectOperationError({ operation: "sidebar-layout", projectId, cause: cause.message });
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
-      yield* checkSection(input.sectionId, input.projectId);
       const workspaceRoot = yield* normalizeWorkspaceRoot({
         projectId: input.projectId,
         workspaceRoot: input.workspaceRoot,
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
-      yield* commit({
-        type: "project.create",
-        commandId: input.commandId,
-        projectId: input.projectId,
-        title: input.title,
-        workspaceRoot,
-        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-      });
-      yield* placeProject(input);
+      yield* sidebarLayout
+        .withProjectChange(
+          {
+            projectId: input.projectId,
+            workspaceRoot,
+            sectionId: input.sectionId,
+            expanded: input.sidebarExpanded,
+          },
+          (persist) =>
+            commit(
+              {
+                type: "project.create",
+                commandId: input.commandId,
+                projectId: input.projectId,
+                title: input.title,
+                workspaceRoot,
+                ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+              },
+              persist,
+            ),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "SidebarLayoutError" ? sidebarError(input.projectId)(cause) : cause,
+          ),
+        );
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
@@ -426,7 +400,6 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(existing)) {
         return yield* new ProjectNotFoundError({ projectId: input.projectId });
       }
-      yield* checkSection(input.sectionId, input.projectId);
       const previousRoot = existing.value.workspaceRoot;
       const workspaceRoot =
         input.workspaceRoot === undefined
@@ -435,25 +408,55 @@ export const make = Effect.gen(function* () {
               projectId: input.projectId,
               workspaceRoot: input.workspaceRoot,
             });
-      yield* commit({
-        type: "project.meta.update",
-        commandId: input.commandId,
-        projectId: input.projectId,
-        ...(input.title === undefined ? {} : { title: input.title }),
-        ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
-        ...(input.defaultModelSelection === undefined
-          ? {}
-          : { defaultModelSelection: input.defaultModelSelection }),
-        ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
-        ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
-        ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
-        ...(input.defaultThreadEnvMode === undefined
-          ? {}
-          : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
-        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-      });
-      yield* placeProject(input);
-      if (workspaceRoot !== previousRoot) {
+      const hasMetadata =
+        input.title !== undefined ||
+        input.workspaceRoot !== undefined ||
+        input.defaultModelSelection !== undefined ||
+        input.autoPull !== undefined ||
+        input.projectIcon !== undefined ||
+        input.faviconPath !== undefined ||
+        input.defaultThreadEnvMode !== undefined ||
+        input.scripts !== undefined;
+      const refreshWorkspace =
+        !hasMetadata && input.sectionId === undefined && input.sidebarExpanded === undefined;
+      yield* sidebarLayout
+        .withProjectChange(
+          {
+            projectId: input.projectId,
+            ...(workspaceRoot === previousRoot && !refreshWorkspace ? {} : { workspaceRoot }),
+            sectionId: input.sectionId,
+            expanded: input.sidebarExpanded,
+          },
+          (persist) =>
+            hasMetadata
+              ? commit(
+                  {
+                    type: "project.meta.update",
+                    commandId: input.commandId,
+                    projectId: input.projectId,
+                    ...(input.title === undefined ? {} : { title: input.title }),
+                    ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
+                    ...(input.defaultModelSelection === undefined
+                      ? {}
+                      : { defaultModelSelection: input.defaultModelSelection }),
+                    ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
+                    ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
+                    ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
+                    ...(input.defaultThreadEnvMode === undefined
+                      ? {}
+                      : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+                    ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+                  },
+                  persist,
+                )
+              : persist.pipe(Effect.mapError(sidebarError(input.projectId))),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "SidebarLayoutError" ? sidebarError(input.projectId)(cause) : cause,
+          ),
+        );
+      if (workspaceRoot !== previousRoot || refreshWorkspace) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
       return yield* readCommitted(input.projectId);
@@ -596,7 +599,15 @@ export const make = Effect.gen(function* () {
       if (isFirstDelete) {
         yield* deleteChildThreads(input);
       }
-      yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
+      yield* sidebarLayout
+        .withProjectChange({ projectId, deleted: true }, (persist) =>
+          commit({ type: "project.delete", commandId: input.commandId, projectId }, persist),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            cause._tag === "SidebarLayoutError" ? sidebarError(projectId)(cause) : cause,
+          ),
+        );
       if (isFirstDelete) {
         yield* clearProjectSettingsOverrides(projectId);
       }
@@ -669,5 +680,6 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ProjectService, make).pipe(
+  Layer.provideMerge(SidebarLayout.layer),
   Layer.provide(ThreadCommandExecutor.layer),
 );
