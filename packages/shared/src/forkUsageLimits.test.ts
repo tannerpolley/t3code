@@ -1,4 +1,5 @@
 import { UsageDay, type ServerProviderUsageWindow, type UsageBucket } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import { isUsageWindowStale, weeklyLimitPercentPerUsd } from "./forkUsageLimits.ts";
 
@@ -23,7 +24,7 @@ const HOUR = 60 * 60 * 1000;
 function bucket(hoursAgo: number, costUsd: number, priced = true): UsageBucket {
   return {
     day: UsageDay.make("2026-09-23"),
-    hourStart: new Date(NOW - hoursAgo * HOUR).toISOString(),
+    hourStart: DateTime.formatIso(DateTime.makeUnsafe(NOW - hoursAgo * HOUR)),
     provider: "codex",
     model: "gpt-a",
     totals: {
@@ -48,7 +49,7 @@ const weekly: ServerProviderUsageWindow = {
   kind: "weekly",
   label: "Weekly",
   usedPercent: 20,
-  resetsAt: new Date(NOW + 24 * HOUR).toISOString(),
+  resetsAt: DateTime.formatIso(DateTime.makeUnsafe(NOW + 24 * HOUR)),
   windowDurationMins: 7 * 24 * 60,
 };
 const factor = (window: ServerProviderUsageWindow, buckets: readonly UsageBucket[]) =>
