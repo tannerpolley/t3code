@@ -55,7 +55,6 @@ import {
   childWorktreeLabel,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
-  sharesParentLocation,
   sidebarThreadTitle,
   type BackgroundWorkTaskRow,
 } from "./SidebarBackgroundWork.logic";
@@ -76,6 +75,8 @@ export type SidebarBackgroundWorkRowsProps = {
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
   readonly columns?: boolean;
+  /** Threads that carry their location's icon; without it every subagent row shows its own. */
+  readonly locationLeadKeys?: ReadonlySet<string> | undefined;
   /** Nesting level of these rows below their top-level thread, which sets their tint's shade. */
   readonly depth?: number;
   readonly renderNested?: (row: BackgroundWorkTaskRow) => ReactNode;
@@ -166,11 +167,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           props.columns && row.kind === "subagent" ? (props.nestedToggle?.(row) ?? null) : null;
         const worktree =
           row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
-        // In the tree, the top-most thread in a location carries its icon; children there skip it.
+        // In Projects only each location's lead carries the icon; other cells stay empty.
         const locationIcon =
           row.kind === "subagent" &&
           row.child &&
-          !(props.columns && sharesParentLocation(row.child, owner)) ? (
+          props.locationLeadKeys?.has(
+            scopedThreadKey(scopeThreadRef(props.environmentId, row.child.id)),
+          ) !== false ? (
             <ThreadLocationIcon thread={row.child} />
           ) : null;
         const roleIcon =

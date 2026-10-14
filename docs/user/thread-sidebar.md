@@ -101,12 +101,17 @@ Running subagents and background tasks appear beneath their parent
 thread: its own background tasks first, then its native subagents, then app-owned
 children, each followed by its own work.
 
-A thread's folder icon shows where it works; hover it for the location and branch,
-such as **Local · main**. A branch icon marks a worktree, such as
-**Worktree feature · t3/feature**. Threads on another environment lead with that
-environment's name. A child working in the same checkout or
-worktree as its parent leaves the icon to the parent; a child in its own worktree
-shows its own. A child's question or approval also appears on the parent.
+With **Codex-style sidebar** on, each project lists its threads under one small
+header per location: **Local · main** for the project's own checkout, then
+**Worktree feature · t3/feature** for each worktree, led by the environment's name
+when it is elsewhere. The location is the folder; the branch is what is checked out
+there. Child agents stay under their parent even when they work elsewhere.
+
+Within a location, only its lead thread shows the folder or branch icon: the
+orchestrator if there is one, otherwise the implementor or top-level thread. Hover
+the icon for the location and branch. A child working in a different worktree from
+the rest of its group shows its own icon. A child's question or approval also
+appears on the parent.
 An amber spinner means the thread is waiting on its background work. Times show
 how long the work has run, such as **05m 09s** or **01h 05m 09s**, rather than time
 since the last message.

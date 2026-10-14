@@ -202,6 +202,7 @@ import {
   firstValidTimestampMs,
   hasUnseenCompletion,
   groupRunningSubagentsByParent,
+  groupThreadsByLocation,
   withChildNeeds,
   isSidebarNestedLinkClick,
   isSidebarThreadWorking,
@@ -2415,6 +2416,7 @@ export default function Sidebar() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
+  const codexStyleSidebar = useClientSettings((s) => s.codexStyleSidebar);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -3007,8 +3009,14 @@ export default function Sidebar() {
       projectThreads.push(thread);
       grouped.set(projectKey, projectThreads);
     }
+    // The Codex-style rows sit under one header per location, so keyboard order follows them too.
+    if (codexStyleSidebar) {
+      for (const [projectKey, projectThreads] of grouped) {
+        grouped.set(projectKey, groupThreadsByLocation(projectThreads));
+      }
+    }
     return grouped;
-  }, [logicalProjectKeyByScopedProjectRef, sidebarThreadSortOrder, threads]);
+  }, [codexStyleSidebar, logicalProjectKeyByScopedProjectRef, sidebarThreadSortOrder, threads]);
   const searchEnvironmentIds = useConnectedEnvironmentIds();
   // useThreadSearch owns the debounce and the two-character floor.
   const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);

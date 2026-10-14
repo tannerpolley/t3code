@@ -1154,6 +1154,64 @@ export function groupRunningSubagentsByParent<
   return byParent;
 }
 
+/** Where a thread works: its environment and worktree, or the main checkout without one. */
+export function threadLocationKey(
+  thread: Pick<SidebarThreadSummary, "environmentId" | "worktreePath">,
+): string {
+  return `${thread.environmentId}:${thread.worktreePath ?? ""}`;
+}
+
+/**
+ * Projects lists a project's threads under one header per location: main checkouts first, then
+ * worktrees, each in the order its first thread appears. Threads keep their order within one.
+ */
+export function groupThreadsByLocation<
+  TThread extends Pick<SidebarThreadSummary, "environmentId" | "worktreePath">,
+>(threads: readonly TThread[]): TThread[] {
+  const groups = new Map<string, TThread[]>();
+  for (const thread of threads) {
+    const key = threadLocationKey(thread);
+    const group = groups.get(key);
+    if (group) group.push(thread);
+    else groups.set(key, [thread]);
+  }
+  const all = [...groups.values()];
+  return [
+    ...all.filter((group) => group[0]!.worktreePath === null),
+    ...all.filter((group) => group[0]!.worktreePath !== null),
+  ].flat();
+}
+
+const LOCATION_LEAD_RANK = { orchestrator: 0, implementor: 1 } as const;
+
+/**
+ * The one thread per location that carries its location icon: the orchestrator working there,
+ * else the implementor, else the top-level thread, else the first. Ties go to the earliest row.
+ * `rows` lists every shown thread in display order, each top-level thread before its children.
+ */
+export function resolveLocationLeads<
+  TThread extends Pick<SidebarThreadSummary, "environmentId" | "worktreePath"> & {
+    readonly source: Pick<SidebarThreadSummary["source"], "role">;
+  },
+>(
+  rows: ReadonlyArray<{ readonly thread: TThread; readonly topLevel: boolean }>,
+): ReadonlyMap<string, TThread> {
+  const leads = new Map<string, { readonly thread: TThread; readonly rank: number }>();
+  for (const { thread, topLevel } of rows) {
+    const role = thread.source.role;
+    const rank =
+      role === "orchestrator" || role === "implementor"
+        ? LOCATION_LEAD_RANK[role]
+        : topLevel
+          ? 2
+          : 3;
+    const key = threadLocationKey(thread);
+    const current = leads.get(key);
+    if (current === undefined || rank < current.rank) leads.set(key, { thread, rank });
+  }
+  return new Map([...leads].map(([key, { thread }]) => [key, thread]));
+}
+
 /** Running subagents, each followed by its own running subagents, for lists without nesting. */
 export function flattenRunningSubagents<
   TThread extends Pick<SidebarThreadSummary, "id" | "environmentId">,

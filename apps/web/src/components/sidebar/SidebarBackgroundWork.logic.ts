@@ -64,20 +64,6 @@ export function childWorktreeLabel(
 }
 
 /**
- * Whether a child works in its parent's checkout or worktree, so only the parent's row needs the
- * location mark. A child whose worktree is still being prepared has no path yet but is elsewhere.
- */
-export function sharesParentLocation(
-  child: Pick<SidebarThreadSummary, "worktreePath" | "branch"> & {
-    readonly source: Pick<SidebarThreadSummary["source"], "status">;
-  },
-  parent: Pick<SidebarThreadSummary, "worktreePath"> | null | undefined,
-): boolean {
-  if (!parent || child.worktreePath !== parent.worktreePath) return false;
-  return !(child.worktreePath === null && child.source.status === "preparing" && child.branch);
-}
-
-/**
  * A thread's stored model selection and effort, with no model fallback to its parent. `short`
  * is the shortModelNames switch.
  */

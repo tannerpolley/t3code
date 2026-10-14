@@ -20,6 +20,8 @@ import {
   formatStoppedThreadDuration,
   flattenRunningSubagents,
   groupRunningSubagentsByParent,
+  groupThreadsByLocation,
+  resolveLocationLeads,
   withChildNeeds,
   resolveThreadStatusMark,
   getFallbackThreadIdAfterDelete,
@@ -2555,6 +2557,43 @@ describe("groupRunningSubagentsByParent", () => {
       grouped.get(scopedThreadKey(scopeThreadRef(localEnvironmentId, ThreadId.make(id)))) ?? [];
     expect(listedUnder("fork").map((thread) => thread.id)).toEqual(["leaf"]);
     expect(listedUnder("parent")).toEqual([]);
+  });
+});
+
+describe("thread locations", () => {
+  const at = (id: string, worktreePath: string | null, role?: "orchestrator" | "implementor") => ({
+    id,
+    environmentId: localEnvironmentId,
+    worktreePath,
+    source: { role },
+  });
+
+  it("groups main checkouts first, then worktrees, keeping each group's order", () => {
+    const threads = [at("a", "/wt/x"), at("b", null), at("c", "/wt/y"), at("d", "/wt/x")];
+    expect(groupThreadsByLocation(threads).map((thread) => thread.id)).toEqual([
+      "b",
+      "a",
+      "d",
+      "c",
+    ]);
+  });
+
+  it("leads each location with its orchestrator, else implementor, else top-level thread", () => {
+    const leads = resolveLocationLeads([
+      { thread: at("main", null), topLevel: true },
+      { thread: at("helper", null), topLevel: false },
+      { thread: at("orchestrator", null, "orchestrator"), topLevel: true },
+      // A child in its own worktree leads that worktree, even under another location's thread.
+      { thread: at("worker", "/wt/x"), topLevel: false },
+      { thread: at("implementor", "/wt/x", "implementor"), topLevel: false },
+      { thread: at("first", "/wt/y"), topLevel: false },
+      { thread: at("second", "/wt/y"), topLevel: true },
+    ]);
+    expect([...leads.values()].map((thread) => thread.id)).toEqual([
+      "orchestrator",
+      "implementor",
+      "second",
+    ]);
   });
 });
 

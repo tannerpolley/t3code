@@ -13,7 +13,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { makeThreadFixture } from "../../test-fixtures";
 import {
   childWorktreeLabel,
-  sharesParentLocation,
   sidebarThreadTitle,
   splitSidebarModelLabel,
   sameSidebarSubagentTree,
@@ -342,23 +341,6 @@ describe("splitSidebarModelLabel", () => {
     expect(split("Flash 3.8 (High)")).toEqual(["Flash", "3.8"]);
     expect(split("Codestral 25")).toEqual(["Codest", "25"]);
     expect(split("Default")).toEqual(["Defaul", ""]);
-  });
-});
-
-describe("sharesParentLocation", () => {
-  const child = (worktreePath: string | null, preparing = false) => ({
-    worktreePath,
-    branch: "t3/child",
-    source: { status: preparing ? ("preparing" as const) : ("idle" as const) },
-  });
-  it("leaves the location mark to a parent in the same checkout or worktree", () => {
-    expect(sharesParentLocation(child(null), { worktreePath: null })).toBe(true);
-    expect(sharesParentLocation(child("/wt/a"), { worktreePath: "/wt/a" })).toBe(true);
-    // Its own worktree, the root under a worktree parent, a worktree in preparation, no parent.
-    expect(sharesParentLocation(child("/wt/b"), { worktreePath: "/wt/a" })).toBe(false);
-    expect(sharesParentLocation(child(null), { worktreePath: "/wt/a" })).toBe(false);
-    expect(sharesParentLocation(child(null, true), { worktreePath: null })).toBe(false);
-    expect(sharesParentLocation(child(null), null)).toBe(false);
   });
 });
 
