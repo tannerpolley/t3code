@@ -50,6 +50,8 @@ import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-regis
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
+import { INLINE_SHELL_OUTPUT_BYTES, INLINE_SHELL_OUTPUT_LINES } from "@t3tools/contracts";
+import { inlineShellCandidates } from "./InlineShellLaunch.ts";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Equal from "effect/Equal";
@@ -158,6 +160,10 @@ export class TerminalManager extends Context.Service<
      * Reuses an existing session for the same thread/terminal id and restores
      * persisted history on first open.
      */
+    readonly openCommand: (
+      input: TerminalCommandInput,
+    ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
+
     readonly open: (
       input: TerminalOpenInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
@@ -276,7 +282,14 @@ export interface ShellCandidate {
   args?: string[];
 }
 
-export interface TerminalStartInput extends TerminalOpenInput {
+export interface TerminalCommandInput extends TerminalOpenInput {
+  command?: {
+    readonly command: string;
+    readonly language: import("@t3tools/contracts").InlineShellLanguage;
+  };
+}
+
+export interface TerminalStartInput extends TerminalCommandInput {
   cols: number;
   rows: number;
 }
@@ -304,6 +317,7 @@ interface TerminalSessionState {
   process: PtyAdapter.PtyProcess | null;
   unsubscribeData: (() => void) | null;
   unsubscribeExit: (() => void) | null;
+  isCommand: boolean;
   hasRunningSubprocess: boolean;
   /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
@@ -2245,7 +2259,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.rows = input.rows;
       session.exitCode = null;
       session.exitSignal = null;
-      session.hasRunningSubprocess = false;
+      session.isCommand = input.command !== undefined;
+      session.hasRunningSubprocess = session.isCommand;
       session.childCommandLabel = null;
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
@@ -2261,7 +2276,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+            const defaultCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+            const shellCandidates = input.command
+              ? inlineShellCandidates(input.command, defaultCandidates)
+              : defaultCandidates;
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
               session.runtimeEnv,
@@ -2489,7 +2507,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return;
       }
 
-      const next = inspectResult.value;
+      const next = session.isCommand
+        ? { ...inspectResult.value, hasRunningSubprocess: true }
+        : inspectResult.value;
       yield* registerTerminalProcesses({
         threadId: session.threadId,
         terminalId: session.terminalId,
@@ -2599,7 +2619,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   );
 
   const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
-    input: TerminalOpenInput,
+    input: TerminalCommandInput,
   ) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
@@ -2608,7 +2628,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const existing = yield* getSession(input.threadId, terminalId);
     if (Option.isNone(existing)) {
       yield* flushPersist(input.threadId, terminalId);
-      const history = yield* readHistory(input.threadId, terminalId);
+      const retainedHistory = yield* readHistory(input.threadId, terminalId);
+      const history = input.command
+        ? new BoundedTerminalHistory(
+            INLINE_SHELL_OUTPUT_LINES,
+            retainedHistory.value(),
+            INLINE_SHELL_OUTPUT_BYTES,
+          )
+        : retainedHistory;
       const cols = input.cols ?? DEFAULT_OPEN_COLS;
       const rows = input.rows ?? DEFAULT_OPEN_ROWS;
       const session: TerminalSessionState = {
@@ -2633,6 +2660,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         process: null,
         unsubscribeData: null,
         unsubscribeExit: null,
+        isCommand: false,
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
@@ -2656,6 +2684,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols,
           rows,
           ...(input.env ? { env: input.env } : {}),
+          ...(input.command ? { command: input.command } : {}),
         },
         "started",
       );
@@ -2708,6 +2737,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           cols: targetCols,
           rows: targetRows,
           ...(input.env ? { env: input.env } : {}),
+          ...(input.command ? { command: input.command } : {}),
         },
         "started",
       );
@@ -2724,13 +2754,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return snapshot(liveSession);
   });
 
-  const openLocked = (input: TerminalOpenInput) =>
+  const openLocked = (input: TerminalCommandInput) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
       openWithWorkspaceLease(input),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
+    withThreadLock(
+      input.threadId,
+      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+    );
+
+  const openCommand: TerminalManager["Service"]["openCommand"] = (input) =>
     withThreadLock(
       input.threadId,
       resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
@@ -3073,6 +3109,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           process: null,
           unsubscribeData: null,
           unsubscribeExit: null,
+          isCommand: false,
           hasRunningSubprocess: false,
           childCommandLabel: null,
           runtimeEnv: normalizedRuntimeEnv(input.env),
@@ -3159,6 +3196,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const running = (yield* sessionsForThread(input.threadId)).filter(
           (session): session is TerminalSessionState & { pid: number } =>
             session.status === "running" &&
+            !session.isCommand &&
             Number.isInteger(session.pid) &&
             (input.terminalId === undefined || session.terminalId === input.terminalId),
         );
@@ -3200,6 +3238,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   return TerminalManager.of({
     open,
+    openCommand,
     attachStream,
     observeStream,
     write,

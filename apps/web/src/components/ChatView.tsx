@@ -1,3 +1,4 @@
+import { InlineShellRunProvider } from "./chat/InlineShellRun";
 import { BackgroundWorkTaskList } from "./chat/BackgroundWorkTaskList";
 import { describeSidebarBackgroundWork } from "./sidebar/SidebarBackgroundWork.logic";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
@@ -5160,22 +5161,22 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
-  const runProjectScriptRef = useRef(runProjectScript);
-  useLayoutEffect(() => {
-    runProjectScriptRef.current = runProjectScript;
-  }, [runProjectScript]);
-  const runShellCommand = useCallback((command: string) => {
-    void runProjectScriptRef.current(
-      {
-        id: "chat-code-block",
-        name: "Chat code block",
-        command,
-        icon: "play",
-        runOnWorktreeCreate: false,
-      },
-      { rememberAsLastInvoked: false },
-    );
-  }, []);
+  const openInlineShellTerminal = useCallback(
+    (terminalId: string) => {
+      if (!activeThreadRef || !activeThreadId || !activeProject) return;
+      useTerminalUiStateStore
+        .getState()
+        .ensureTerminal(activeThreadRef, terminalId, { open: true });
+      setTerminalUiLaunchContext({
+        threadId: activeThreadId,
+        cwd: gitCwd ?? activeProject.workspaceRoot,
+        worktreePath: activeThreadWorktreePath,
+      });
+      setTerminalOpen(true);
+      setTerminalFocusRequestId((value) => value + 1);
+    },
+    [activeThreadRef, activeThreadId, activeProject, gitCwd, activeThreadWorktreePath],
+  );
 
   const supportsProjectSettingsOverrides =
     environmentById.get(environmentId)?.serverConfig?.environment.capabilities
@@ -11642,7 +11643,12 @@ export default function ChatView(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col bg-background">
+            <InlineShellRunProvider
+              environmentId={environmentId}
+              threadId={activeThread.id}
+              items={serverProjection?.turnItems ?? []}
+              className="relative flex min-h-0 flex-1 flex-col bg-background"
+            >
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
@@ -11650,7 +11656,7 @@ export default function ChatView(props: ChatViewProps) {
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       onCiteAssistantText: citeAssistantText,
-                      ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
+                      ...(activeProject ? { onRunShellCommand: openInlineShellTerminal } : {}),
                     }
                   : {})}
                 isWorking={!paintOnlyDisplayedTimeline && isWorking}
@@ -11722,7 +11728,10 @@ export default function ChatView(props: ChatViewProps) {
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
                 }
                 {...(!paintOnlyDisplayedTimeline
-                  ? { onUseArtifactTemplate: useArtifactTemplate, onSendAppMessage: sendAppMessage }
+                  ? {
+                      onUseArtifactTemplate: useArtifactTemplate,
+                      onSendAppMessage: sendAppMessage,
+                    }
                   : {})}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}
@@ -11782,7 +11791,7 @@ export default function ChatView(props: ChatViewProps) {
                   </Button>
                 </div>
               )}
-            </div>
+            </InlineShellRunProvider>
 
             {/* Input bar — centered for an empty draft, docked after sending. */}
             <div

@@ -1,3 +1,4 @@
+import { InlineShellBlock } from "./chat/InlineShellRun";
 import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
@@ -37,7 +38,6 @@ import {
   MessageSquareIcon,
   MessageSquareWarningIcon,
   OctagonAlertIcon,
-  PlayIcon,
   PresentationIcon,
   SparklesIcon,
   TriangleAlertIcon,
@@ -237,7 +237,8 @@ interface ChatMarkdownProps {
   parseRawHtml?: boolean;
   /** Append a prompt that invokes a newly created artifact-template skill. */
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
-  onRunShellCommand?: ((command: string) => void) | undefined;
+  onRunShellCommand?: ((terminalId: string) => void) | undefined;
+  shellMessageId?: string | undefined;
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
@@ -835,6 +836,7 @@ function MarkdownCodeBlock({
   fenceTitle,
   theme,
   onRunShellCommand,
+  shellMessageId,
   isStreaming,
   leadingActions,
   canWrap = true,
@@ -845,7 +847,8 @@ function MarkdownCodeBlock({
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
-  onRunShellCommand?: ((command: string) => void) | undefined;
+  onRunShellCommand?: ((terminalId: string) => void) | undefined;
+  shellMessageId?: string | undefined;
   isStreaming: boolean;
   leadingActions?: ReactNode;
   canWrap?: boolean;
@@ -871,7 +874,7 @@ function MarkdownCodeBlock({
     !command.endsWith("\\") &&
     // Control and invisible format characters (bidi overrides, zero-width) can
     // make the rendered command differ from what the terminal would receive.
-    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
+    !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1).replace(/[\n\t]/g, ""));
 
   const copyButton = (
     <Tooltip>
@@ -904,7 +907,7 @@ function MarkdownCodeBlock({
     );
   }
 
-  return (
+  const renderFrame = (runAction: ReactNode, output: ReactNode) => (
     <MarkdownCodeBlockFrame
       language={language}
       fenceTitle={fenceTitle}
@@ -934,30 +937,26 @@ function MarkdownCodeBlock({
               <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
             </Tooltip>
           ) : null}
-          {canRun ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost-muted"
-                    size="icon-xs"
-                    onClick={() => onRunShellCommand(command)}
-                    aria-label="Run in terminal"
-                  />
-                }
-              >
-                <PlayIcon className="size-3" />
-              </TooltipTrigger>
-              <TooltipPopup side="top">Run in terminal</TooltipPopup>
-            </Tooltip>
-          ) : null}
+          {runAction}
           {copyButton}
         </span>
       }
     >
       {children}
+      {output}
     </MarkdownCodeBlockFrame>
+  );
+  return canRun && shellMessageId && onRunShellCommand ? (
+    <InlineShellBlock
+      blockId={shellMessageId}
+      command={command}
+      language={language}
+      onOpenTerminal={onRunShellCommand}
+    >
+      {renderFrame}
+    </InlineShellBlock>
+  ) : (
+    renderFrame(null, null)
   );
 }
 
@@ -2327,6 +2326,7 @@ function useChatMarkdownState({
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   onRunShellCommand,
+  shellMessageId,
   imageBaseDir,
   onImageExpand,
   renderContextReference,
@@ -2749,6 +2749,7 @@ function useChatMarkdownState({
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
+      shellMessageId,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
@@ -2782,6 +2783,7 @@ function useChatMarkdownState({
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
+      shellMessageId,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
@@ -3387,9 +3389,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, expandMedia, isStreaming, onRunShellCommand, text } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      resolvedTheme,
+      diffThemeName,
+      expandMedia,
+      isStreaming,
+      onRunShellCommand,
+      shellMessageId,
+      text,
+    } = use(ChatMarkdownRendererContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return (
@@ -3449,6 +3457,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
         language={language}
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
+        shellMessageId={
+          shellMessageId === undefined
+            ? undefined
+            : `${shellMessageId}:${node?.position?.start.offset ?? 0}`
+        }
         onRunShellCommand={
           onRunShellCommand && !isStreaming && isClosedCodeFence(node, text)
             ? onRunShellCommand

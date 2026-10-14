@@ -2,6 +2,7 @@ import { ThreadRoleInput } from "./threadRole.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { InlineShellRunRecord } from "./inlineShell.ts";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -1644,6 +1645,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    inlineShellRun: Schema.optional(InlineShellRunRecord),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2453,6 +2455,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    inlineShellRun: Schema.optional(InlineShellRunRecord),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,

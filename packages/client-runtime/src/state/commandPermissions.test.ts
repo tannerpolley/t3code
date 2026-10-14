@@ -11,6 +11,7 @@ import {
   CommandId,
   ProjectId,
   AuthSettingsWriteScope,
+  AuthTerminalOperateScope,
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
@@ -412,4 +413,30 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
   }),
+);
+
+it.effect("guards inline shell launch and input against the destination terminal grant", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthTerminalOperateScope],
+          permissions: [AuthTerminalOperateScope],
+        }),
+      );
+      registry.set(sessions(other), AsyncResult.success(grant(true)));
+      for (const method of [WS_METHODS.terminalRunInline, WS_METHODS.terminalWrite]) {
+        const permission = createCommandPermissions(runtime, method);
+        expect(registry.get(permission.permissionAtom(env))).toBe(true);
+        yield* permission.authorize(registry, env);
+        expect(registry.get(permission.permissionAtom(other))).toBe(false);
+        expect((yield* permission.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }
+    }),
+  ),
 );

@@ -498,6 +498,10 @@
     "./PtyAdapter": {
       "types": "./src/PtyAdapter.ts",
       "import": "./src/PtyAdapter.ts"
+    },
+    "./inlineShell": {
+      "types": "./src/inlineShell.ts",
+      "import": "./src/inlineShell.ts"
     }
   },
   "scripts": {

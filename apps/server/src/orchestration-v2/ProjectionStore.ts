@@ -4234,7 +4234,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `.pipe(Effect.flatMap(decodeRows(decodeContextTransferPayload, threadId)));
             const turnItems = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_turn_items
-              WHERE thread_id = ${threadId} AND run_id = ${runId} ORDER BY ordinal ASC, turn_item_id ASC
+              WHERE thread_id = ${threadId} AND (run_id = ${runId}
+                OR (type = 'system_notice' AND json_extract(payload_json, '$.inlineShellRun') IS NOT NULL)) ORDER BY ordinal ASC, turn_item_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeTurnItemPayload, threadId)));
             const providerSessions = yield* sql<PayloadRow>`
               SELECT sessions.payload_json FROM orchestration_v2_projection_provider_sessions AS sessions
@@ -7013,7 +7014,11 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 (message.text.trim().toLowerCase() !== "/compact" ||
                   message.attachments.length > 0),
             ),
-            turnItems: projection.turnItems.filter((item) => item.runId === runId),
+            turnItems: projection.turnItems.filter(
+              (item) =>
+                item.runId === runId ||
+                (item.type === "system_notice" && item.inlineShellRun !== undefined),
+            ),
           })),
         ),
       getTurnStartHistory: (threadId, runIds) =>

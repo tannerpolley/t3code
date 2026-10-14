@@ -1,3 +1,4 @@
+import { pendingInlineShellContext } from "./InlineShellContext.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -947,10 +948,21 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      const userText = [
+        pendingInlineShellContext(
+          projection.turnItems,
+          projection.providerTurns,
+          attempt.id,
+          providerThread.id,
+          !sameNativeThread,
+        ),
+        projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
       const noteContinuation = isRestartNoteContinuation(

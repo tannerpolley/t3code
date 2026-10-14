@@ -14,6 +14,7 @@ import * as IssueWorkService from "./issues/IssueWorkService.ts";
 import { RpcInstrumentation } from "./observability/RpcInstrumentation.ts";
 import * as ThreadWorkspaceService from "./orchestration-v2/ThreadWorkspaceService.ts";
 import * as BackgroundTasks from "./orchestration-v2/backgroundTaskOutput.ts";
+import { InlineShellRuns } from "./terminal/InlineShellRuns.ts";
 
 export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
   ForkWsRpcGroup.middleware(RpcInstrumentation).toLayer(
@@ -21,12 +22,15 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const backgroundTasks = yield* BackgroundTasks.BackgroundTasks.pipe(
         Effect.provide(BackgroundTasks.layer),
       );
+      const inlineShell = yield* InlineShellRuns;
       const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
       const issues = yield* IssueService.IssueService;
       const roadmap = yield* IssueRoadmap.IssueRoadmap;
       const issueWork = yield* IssueWorkService.IssueWorkService;
       const issueChanges = yield* IssueChangeService.IssueChangeService;
       return {
+        [WS_METHODS.terminalRunInline]: (input) => inlineShell.run(input),
+        [WS_METHODS.terminalGetInlineRun]: (input) => inlineShell.latest(input),
         [WS_METHODS.worktreeReturnToRoot]: (input) =>
           workspace.returnToRoot(input.threadId, input, {
             createdBy: "user",

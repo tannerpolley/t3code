@@ -2962,3 +2962,55 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });
+
+it.effect(
+  "launches inline shell commands directly and streams ordered output, input and exit",
+  () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        subprocessInspector: () =>
+          Effect.succeed({ hasRunningSubprocess: false, childCommand: null, processIds: [] }),
+      });
+      const exited = yield* Deferred.make<void>();
+      const received: TerminalEvent[] = [];
+      const unsubscribe = yield* manager.subscribe((event) =>
+        Effect.gen(function* () {
+          received.push(event);
+          if (event.type === "exited") yield* Deferred.succeed(exited, undefined);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* manager.openCommand({
+        ...openInput(),
+        terminalId: "inline-run",
+        command: { command: "read answer; printf '%s' \"$answer\"; exit 7", language: "bash" },
+      });
+      expect(ptyAdapter.spawnInputs[0]).toMatchObject({
+        shell: "bash",
+        args: ["-c", "read answer; printf '%s' \"$answer\"; exit 7"],
+      });
+      const process = ptyAdapter.processes[0]!;
+      yield* manager.closeIdle({ threadId: "thread-1" });
+      expect(process.killed).toBe(false);
+      yield* manager.write({ threadId: "thread-1", terminalId: "inline-run", data: "yes\r" });
+      yield* manager.write({ threadId: "thread-1", terminalId: "inline-run", data: "\u0003" });
+      expect(process.writes).toEqual(["yes\r", "\u0003"]);
+      process.emitData("answer: yes\r\n");
+      process.emitExit({ exitCode: 7, signal: null });
+      yield* Deferred.await(exited);
+      expect(
+        received
+          .filter((event) => event.type === "output" || event.type === "exited")
+          .map((event) => event.type),
+      ).toEqual(["output", "exited"]);
+      expect(received.at(-1)).toMatchObject({ type: "exited", exitCode: 7 });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)),
+        ),
+      ),
+    ),
+);

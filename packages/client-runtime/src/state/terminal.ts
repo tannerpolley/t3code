@@ -5,9 +5,11 @@ import { Atom } from "effect/reactivity";
 import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
+import { applyInlineShellOutput, emptyInlineShellOutput } from "./inlineShell.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
 import {
@@ -37,6 +39,17 @@ export function createTerminalEnvironmentAtoms<R, E>(
   }) => JSON.stringify([environmentId, input.threadId, input.terminalId ?? null]);
   const lifecycleConcurrency = { mode: "serial" as const, key: terminalThreadKey };
   return {
+    inlineRun: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:terminal:inline-run",
+      tag: WS_METHODS.terminalGetInlineRun,
+    }),
+    observeInline: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:terminal:observe-inline",
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>) =>
+        subscribe(WS_METHODS.terminalObserve, input).pipe(
+          Stream.scan(() => emptyInlineShellOutput, applyInlineShellOutput),
+        ),
+    }),
     observe: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:observe",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>) =>
@@ -69,6 +82,12 @@ export function createTerminalEnvironmentAtoms<R, E>(
     followBackgroundTask: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:follow-background-task",
       tag: WS_METHODS.terminalFollowBackgroundTask,
+      scheduler: lifecycleScheduler,
+      concurrency: lifecycleConcurrency,
+    }),
+    runInline: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:terminal:run-inline",
+      tag: WS_METHODS.terminalRunInline,
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),

@@ -23,6 +23,12 @@ import {
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
 import {
+  InlineShellRunInput,
+  InlineShellRunRecord,
+  InlineShellRunError,
+  InlineShellRunLookupInput,
+} from "./inlineShell.ts";
+import {
   IssueChange,
   IssueChangeError,
   IssueChangesListInput,
@@ -480,6 +486,8 @@ export const WS_METHODS = {
 
   // Terminal methods
   terminalOpen: "terminal.open",
+  terminalRunInline: "terminal.runInline",
+  terminalGetInlineRun: "terminal.getInlineRun",
   terminalAttach: "terminal.attach",
   terminalObserve: "terminal.observe",
   terminalWrite: "terminal.write",
@@ -2065,7 +2073,21 @@ const WsOrchestrationV2StopBackgroundTaskRpc = Rpc.make(
  * instantiation limit and keeps the fork's handlers out of `ws.ts`. Keep `WsRpcGroup`
  * one flat `make`: building it with `merge` or `add` made the web typecheck take minutes.
  */
+const WsTerminalRunInlineRpc = Rpc.make(WS_METHODS.terminalRunInline, {
+  payload: InlineShellRunInput,
+  success: InlineShellRunRecord,
+  error: Schema.Union([InlineShellRunError, EnvironmentAuthorizationError]),
+});
+
+const WsTerminalGetInlineRunRpc = Rpc.make(WS_METHODS.terminalGetInlineRun, {
+  payload: InlineShellRunLookupInput,
+  success: Schema.NullOr(InlineShellRunRecord),
+  error: Schema.Union([InlineShellRunError, EnvironmentAuthorizationError]),
+});
+
 const forkWsRpcs = [
+  WsTerminalRunInlineRpc,
+  WsTerminalGetInlineRunRpc,
   WsWorktreeReturnToRootRpc,
   WsTerminalFollowBackgroundTaskRpc,
   WsServerGetBackgroundTaskResourceUsageRpc,
@@ -2285,6 +2307,8 @@ export const WsRpcGroup = RpcGroup.make(
 ).middleware(RpcScopeAuthorization);
 export const ForkWsRpcGroup = RpcGroup.make(...forkWsRpcs).middleware(RpcScopeAuthorization);
 export const UpstreamWsRpcGroup = WsRpcGroup.omit(
+  WS_METHODS.terminalRunInline,
+  WS_METHODS.terminalGetInlineRun,
   WS_METHODS.worktreeReturnToRoot,
   WS_METHODS.terminalFollowBackgroundTask,
   WS_METHODS.serverGetBackgroundTaskResourceUsage,

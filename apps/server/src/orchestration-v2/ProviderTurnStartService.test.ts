@@ -13,6 +13,7 @@ import {
   RunId,
   ThreadId,
   ProjectId,
+  TurnItemId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -157,6 +158,7 @@ function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
+  readonly inlineItems?: readonly import("@t3tools/contracts").OrchestrationV2TurnItem[];
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
   /** Opens the session, then fails loading its provider thread. */
@@ -334,7 +336,7 @@ function makeLocalCommandHarness(input: {
     providerTurns: [],
     contextHandoffs: [],
     contextTransfers: [],
-    turnItems: [],
+    turnItems: input.inlineItems ?? [],
     visibleTurnItems: [],
     runtimeRequests: [],
     subagents: [],
@@ -855,3 +857,59 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("injects completed inline shell runs into the next provider prompt", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread-native-account-command");
+    const harness = makeLocalCommandHarness({
+      text: "Explain that result",
+      failReadsAfterRunning: true,
+      inlineItems: [
+        {
+          id: TurnItemId.make("inline-shell:context"),
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "system_notice",
+          message: "Inline shell run",
+          inlineShellRun: {
+            threadId,
+            runId: "context",
+            blockId: "message:0",
+            command: "printf shared; exit 7",
+            language: "bash",
+            terminalId: "inline-context",
+            status: "completed",
+            startedAt: DateTime.formatIso(now),
+            completedAt: DateTime.formatIso(now),
+            durationMs: 1234,
+            exitCode: 7,
+            output: "shared-output",
+          },
+        },
+      ],
+    });
+    yield* harness.start;
+    expect(harness.startRootRun).toHaveBeenCalledOnce();
+    const prompt = harness.startRootRun.mock.calls[0]![0].message.text;
+    for (const value of [
+      "printf shared; exit 7",
+      "Exit code: 7",
+      "1234 ms",
+      "shared-output",
+      "Explain that result",
+    ])
+      expect(prompt).toContain(value);
+  }),
+);
