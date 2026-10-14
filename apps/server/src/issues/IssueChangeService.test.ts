@@ -6,7 +6,6 @@ import {
   ThreadId,
   type IssueChangeOperation,
   type IssueChangeBaseline,
-  type OrchestrationV2UserInputQuestion,
   type ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -28,6 +27,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import { DONT_ASK_NOTE, dontAskAnswers } from "../orchestration-v2/DontAskModeWorker.ts";
+import { issueChangeQuestion } from "./IssueChangeQuestion.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 
 const threadId = ThreadId.make("root");
@@ -356,60 +356,59 @@ it.effect(
     ),
 );
 
-it.effect("only a pending change asks the user, and their answer decides it", () =>
-  inDatabase((h) =>
-    Effect.gen(function* () {
-      const service = yield* IssueChangeService.IssueChangeService;
-      const asked: OrchestrationV2UserInputQuestion[] = [];
-      const approve = (question: OrchestrationV2UserInputQuestion) =>
-        Effect.sync(() => {
-          asked.push(question);
-          return { answers: { [question.id]: "Approve" } };
+it.effect(
+  "only the owner's answer approves; Don't ask mode and agents can only leave or decline",
+  () =>
+    inDatabase((h) =>
+      Effect.gen(function* () {
+        const service = yield* IssueChangeService.IssueChangeService;
+        const close = yield* propose({ type: "state", number: 10, state: "closed" }, "close");
+        const question = issueChangeQuestion(close);
+        assert.include(question.question, "Close #10 in acme/repo");
+        assert.include(question.question, "State: open → closed");
+        const approve = { [question.id]: `Approve\n\n${DONT_ASK_NOTE}` };
+        for (const respondedBy of ["dont_ask_mode", "orchestrator"] as const)
+          assert.equal(
+            (yield* service.applyAnswer(close.id, { answers: approve, respondedBy })).decision,
+            "pending",
+          );
+        const approved = yield* service.applyAnswer(close.id, {
+          answers: { [question.id]: "Approve" },
         });
-      const create = yield* propose({
-        type: "create",
-        title: "New",
-        body: "Task",
-        milestoneNumber: 1,
-      });
-      assert.equal((yield* service.requestApproval(create, approve)).decision, "auto_approved");
-      assert.equal(asked.length, 0);
-      const close = yield* propose({ type: "state", number: 10, state: "closed" }, "close");
-      const approved = yield* service.requestApproval(close, approve);
-      assert.equal(asked.length, 1);
-      assert.include(asked[0]!.question, "Close #10 in acme/repo");
-      assert.include(asked[0]!.question, "State: open → closed");
-      assert.equal(approved.decision, "approved");
-      assert.equal(yield* drain, 2);
-      assert.equal(h.calls.state, 1);
-    }).pipe(Effect.provide(h.runtime)),
-  ),
+        assert.equal(approved.decision, "approved");
+        const body = yield* propose({ type: "body", number: 10, body: "Updated\n" }, "body");
+        const declined = yield* service.applyAnswer(body.id, {
+          answers: dontAskAnswers([issueChangeQuestion(body)]),
+          respondedBy: "dont_ask_mode",
+        });
+        assert.equal(declined.decision, "rejected");
+        assert.include(declined.result!, "Don't ask mode");
+        assert.equal(yield* drain, 1);
+        assert.deepStrictEqual([h.calls.body, h.calls.state], [0, 1]);
+      }).pipe(Effect.provide(h.runtime)),
+    ),
 );
 
-it.effect("Don't ask mode never approves; an unanswered change stays decidable", () =>
+it.effect("a standalone create waits on its repository until it is decided", () =>
   inDatabase((h) =>
     Effect.gen(function* () {
       const service = yield* IssueChangeService.IssueChangeService;
-      const body = yield* propose({ type: "body", number: 10, body: "Updated\n" });
-      const declined = yield* service.requestApproval(body, (question) =>
-        Effect.succeed({ answers: dontAskAnswers([question]), respondedBy: "dont_ask_mode" }),
+      h.requireApproval(true);
+      const create = yield* propose(
+        { type: "create", title: "New", body: "Task", milestoneNumber: 1 },
+        "create",
       );
-      assert.equal(declined.decision, "rejected");
-      assert.include(declined.result!, "Don't ask mode");
-      const close = yield* propose({ type: "state", number: 10, state: "closed" }, "close");
-      const autoApprove = yield* service.requestApproval(close, (question) =>
-        Effect.succeed({
-          answers: { [question.id]: `Approve\n\n${DONT_ASK_NOTE}` },
-          respondedBy: "dont_ask_mode",
-        }),
+      const onIssue = yield* propose({ type: "body", number: 10, body: "Edit" }, "body");
+      const repositoryChanges = service
+        .list({ host: "GitHub.com", repository: "Acme/Repo" })
+        .pipe(Effect.map((rows) => rows.map((row) => row.id)));
+      assert.deepStrictEqual(yield* repositoryChanges, [create.id]);
+      assert.deepStrictEqual(
+        (yield* service.list({ ...repository, number: 10 })).map((row) => row.id),
+        [onIssue.id],
       );
-      assert.equal(autoApprove.decision, "pending");
-      const dismissed = yield* service.requestApproval(close, () => Effect.succeed(null));
-      assert.equal(dismissed.decision, "pending");
-      assert.equal(yield* drain, 0);
-      yield* service.decide({ id: close.id, decision: "approved" }, user);
-      assert.equal(yield* drain, 1);
-      assert.deepStrictEqual([h.calls.body, h.calls.state], [0, 1]);
+      yield* service.decide({ id: create.id, decision: "rejected" }, user);
+      assert.deepStrictEqual(yield* repositoryChanges, []);
     }).pipe(Effect.provide(h.runtime)),
   ),
 );

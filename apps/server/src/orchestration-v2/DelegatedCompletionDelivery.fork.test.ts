@@ -1,5 +1,5 @@
 import { delegatedRequestWakeCommand } from "./DelegatedRequestWake.ts";
-import { issueChangeQuestionCommandId } from "../issues/IssueChangeQuestion.ts";
+import { issueChangeQuestionRequestId } from "../issues/IssueChangeQuestion.ts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import { assert, it } from "@effect/vitest";
 import {
@@ -372,9 +372,7 @@ it.layer(layerTest)("delegated request routing", (it) => {
         name: "issue-change",
         requestKind: "user_input",
         completionWake: "settled_only",
-        requestId: RuntimeRequestId.make(
-          `${issueChangeQuestionCommandId("change-1", "ask-1")}:user-input`,
-        ),
+        requestId: issueChangeQuestionRequestId("change-1"),
       });
       assert.isTrue(yield* ownerCanSee(child));
       for (const callerThreadId of [child.parentThreadId, child.childThreadId]) {

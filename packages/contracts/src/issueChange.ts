@@ -122,6 +122,8 @@ export function issueChangePreview(
 export const IssueChangesListInput = Schema.Union([
   Schema.Struct({ threadId: ThreadId }),
   IssueRef,
+  // A repository lists the changes that still need action and target no issue yet.
+  IssueRepositoryRef,
 ]);
 export type IssueChangesListInput = typeof IssueChangesListInput.Type;
 export const IssueChangeDecisionInput = Schema.Struct({

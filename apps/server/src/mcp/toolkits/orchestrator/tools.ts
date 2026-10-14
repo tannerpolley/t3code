@@ -63,7 +63,7 @@ const threadMetadataDependencies = [
 ];
 const ProposeIssueChangeTool = Tool.make("propose_issue_change", {
   description:
-    "Propose an exact GitHub issue change from a repository-managed thread. Use a stable clientRequestId on retries. Create/split and milestone moves execute automatically unless the user requires approval. A change needing approval (body edits, close/reopen, standalone parent changes) asks the user in this thread and waits for Approve or Decline; do not ask about it yourself. Don't ask mode declines it. The returned change includes the exact preview, decision and result; one still pending can be decided later by the user from the issue. Agents cannot approve or answer these questions. A conflict needs a new proposal and preview. Labels and assignees are outside this tool's scope.",
+    "Propose an exact GitHub issue change from a repository-managed thread. Use a stable clientRequestId on retries. Create/split and milestone moves execute automatically unless the user requires approval. A change needing approval (body edits, close/reopen, standalone parent changes) returns at once as pending while the owner is asked in this thread; do not ask them yourself. Their Approve or Decline arrives here as a message and the server applies it; Don't ask mode declines. Proposing again with the same clientRequestId returns the current decision and status. The returned change includes the exact preview, decision and result. Agents cannot approve or answer these questions. A conflict needs a new proposal and preview. Labels and assignees are outside this tool's scope.",
   parameters: IssueChangeProposeInput,
   success: IssueChange,
   failure: OrchestratorMcpFailure,

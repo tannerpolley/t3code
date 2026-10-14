@@ -165,6 +165,29 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          case "issue.change.settle-question": {
+            const requestId = effect.request.requestId;
+            return Effect.gen(function* () {
+              const request = yield* projections.getRuntimeRequest(effect.threadId, requestId);
+              if (request?.status !== "pending") return;
+              yield* threads.dispatch({
+                type: "runtime-request.respond",
+                commandId: CommandId.make(`${effect.id}:attempt:${effect.attemptCount}`),
+                threadId: effect.threadId,
+                requestId,
+                decision: "cancel",
+              });
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
           case "issue.suspension.interrupt": {
             const runId = effect.request.runId;
             return Effect.gen(function* () {

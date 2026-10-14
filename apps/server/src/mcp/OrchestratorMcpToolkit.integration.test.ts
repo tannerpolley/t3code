@@ -1027,6 +1027,34 @@ describe("orchestrator MCP toolkit", () => {
             });
             yield* settings.updateSettings({ dontAskMode: false });
 
+            // A question asked without waiting is created once however often it is asked, and
+            // is answered by message so it outlives the run.
+            const threads = yield* ThreadManagementService.ThreadManagementService;
+            const askingShell = (yield* orchestrator.getThreadShell(parentThreadId))!;
+            const askOnce = {
+              thread: { ...askingShell, activeRunId: askingShell.activeRunId! },
+              mcpCredentialId: scopeForCaller.thread!.providerSessionId,
+              commandId: CommandId.make("command:ask-once"),
+              questions: [areasQuestion],
+            };
+            expect(
+              yield* Effect.all([threads.askUser(askOnce), threads.askUser(askOnce)], {
+                concurrency: "unbounded",
+              }),
+            ).toEqual([true, true]);
+            const askedOnce = (yield* orchestrator.getThreadProjection(
+              parentThreadId,
+            )).runtimeRequests.filter((request) => request.id === "command:ask-once:user-input");
+            expect(askedOnce.map((request) => request.responseCapability.type)).toEqual([
+              "message",
+            ]);
+            yield* orchestrator.dispatch({
+              type: "thread.user-input.dismiss",
+              commandId: CommandId.make("command:ask-once:dismiss"),
+              threadId: parentThreadId,
+              requestId: askedOnce[0]!.id,
+            });
+
             const supersededScope = scopeForCaller;
             scopeForCaller = yield* scopeForThread(
               yield* orchestrator.getThreadProjection(parentThreadId),

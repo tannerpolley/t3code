@@ -127,6 +127,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     revision: Schema.Number,
   }),
   Schema.Struct({ type: Schema.Literal("issue.change.execute"), changeId: Schema.String }),
+  // Closes a decided change's question if it is still open.
+  Schema.Struct({
+    type: Schema.Literal("issue.change.settle-question"),
+    requestId: RuntimeRequestId,
+  }),
   Schema.Struct({
     type: Schema.Literal("issue.suspension.interrupt"),
     runId: RunId,
@@ -166,6 +171,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "issue.github.comment",
   "issue.status.refresh",
   "issue.change.execute",
+  "issue.change.settle-question",
   "issue.suspension.interrupt",
   "issue.suspension.notify",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;

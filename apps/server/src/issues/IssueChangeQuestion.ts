@@ -2,24 +2,34 @@ import {
   CommandId,
   issueChangePreview,
   issueChangeTitle,
+  RuntimeRequestId,
   type IssueChange,
   type OrchestrationV2UserInputQuestion,
   type ProviderUserInputAnswers,
-  type RuntimeRequestId,
 } from "@t3tools/contracts";
 
-// requestUserInput derives the request id from the command id, so both carry this prefix.
+// One question per change: requestUserInput derives the request id from this command id,
+// and a repeated command id is answered from its receipt instead of asking again.
 const prefix = "issue-change-question:";
+const suffix = ":user-input";
 const questionId = "issue-change";
 // Questions are capped at 20,000 characters in total; a long body diff stays readable in the issue.
 const previewLimit = 16_000;
 
-/** A fresh command per ask: each proposal retry may ask again. */
-export const issueChangeQuestionCommandId = (changeId: string, attempt: string) =>
-  CommandId.make(`${prefix}${changeId}:${attempt}`);
+export const issueChangeQuestionCommandId = (changeId: string) =>
+  CommandId.make(`${prefix}${changeId}`);
+
+export const issueChangeQuestionRequestId = (changeId: string) =>
+  RuntimeRequestId.make(`${prefix}${changeId}${suffix}`);
 
 /** Only the user answers these: agents are refused and they are never routed to an orchestrator. */
 export const isIssueChangeQuestion = (requestId: RuntimeRequestId) => requestId.startsWith(prefix);
+
+/** The change a question asks about, or undefined for any other request. */
+export const issueChangeIdOfQuestion = (requestId: RuntimeRequestId) =>
+  requestId.startsWith(prefix) && requestId.endsWith(suffix)
+    ? requestId.slice(prefix.length, -suffix.length)
+    : undefined;
 
 export function issueChangeQuestion(change: IssueChange): OrchestrationV2UserInputQuestion {
   const preview = issueChangePreview(change);

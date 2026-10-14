@@ -32,7 +32,6 @@ import {
   resolveProjectProviderInstanceEnabled,
   RunId,
   RuntimeRequestId,
-  type RuntimeRequestResponder,
   type ScheduledTaskId,
   ThreadId,
   type TurnItemId,
@@ -197,12 +196,7 @@ export interface ThreadManagementUserInputInput {
 }
 
 export type ThreadManagementUserInputResult =
-  | {
-      readonly type: "answered";
-      readonly answers: ProviderUserInputAnswers;
-      /** Set when Don't ask mode or an orchestrator answered instead of the user. */
-      readonly respondedBy?: RuntimeRequestResponder | undefined;
-    }
+  | { readonly type: "answered"; readonly answers: ProviderUserInputAnswers }
   | { readonly type: "session_not_active" }
   /** Dismissed, interrupted, or its run or session ended. */
   | { readonly type: "dismissed" }
@@ -481,6 +475,14 @@ export interface ThreadManagementServiceShape {
   readonly requestUserInput: (
     input: ThreadManagementUserInputInput,
   ) => Effect.Effect<ThreadManagementUserInputResult, ThreadManagementFailure>;
+  /**
+   * Asks without waiting. The question outlives the run, its answer reaches the
+   * thread as a message, and a repeated command id asks nothing new. False when
+   * the run or session is gone.
+   */
+  readonly askUser: (
+    input: ThreadManagementUserInputInput,
+  ) => Effect.Effect<boolean, ThreadManagementFailure>;
   readonly respondToPendingRequest: (input: {
     readonly projectId: ProjectId;
     readonly threadId: ThreadId;
@@ -1059,9 +1061,11 @@ const make = Effect.gen(function* () {
       return { type: "interrupt_requested", run: interruptibleRun, dispatch } as const;
     });
 
-  const requestUserInput: ThreadManagementServiceShape["requestUserInput"] = Effect.fn(
-    "orchestrationV2.threadManagement.requestUserInput",
-  )(function* ({ thread, mcpCredentialId, commandId, questions }) {
+  /** Creates the question on the thread's live run; null when that run or session is gone. */
+  const createUserInput = Effect.fn("orchestrationV2.threadManagement.createUserInput")(function* (
+    { thread, mcpCredentialId, commandId, questions }: ThreadManagementUserInputInput,
+    answerByMessage: boolean,
+  ) {
     const credential = yield* mcpSessions.read(thread.id);
     const current = yield* getProjectThreadRecords(
       { projectId: thread.projectId, threadId: thread.id },
@@ -1078,7 +1082,7 @@ const make = Effect.gen(function* () {
       current.thread.archivedAt !== null ||
       current.thread.deletedAt !== null
     )
-      return { type: "session_not_active" } as const;
+      return null;
     const requestId = RuntimeRequestId.make(`${commandId}:user-input`);
     const created = yield* dispatch({
       type: "runtime-request.create-user-input",
@@ -1088,9 +1092,18 @@ const make = Effect.gen(function* () {
       runId: thread.activeRunId,
       providerSessionId: activeProviderThread.providerSessionId,
       questions,
+      ...(answerByMessage ? { answerByMessage: true as const } : {}),
     });
+    return { requestId, sequence: created.sequence };
+  });
+  const requestUserInput: ThreadManagementServiceShape["requestUserInput"] = Effect.fn(
+    "orchestrationV2.threadManagement.requestUserInput",
+  )(function* (input) {
+    const created = yield* createUserInput(input, false);
+    if (created === null) return { type: "session_not_active" } as const;
+    const { requestId, sequence } = created;
     const resolution = yield* orchestrator
-      .streamStoredEventsFrom({ threadId: thread.id, afterSequence: created.sequence })
+      .streamStoredEventsFrom({ threadId: input.thread.id, afterSequence: sequence })
       .pipe(
         Stream.filter(
           (stored) =>
@@ -1102,26 +1115,14 @@ const make = Effect.gen(function* () {
       );
     const event = Option.getOrUndefined(resolution)?.event;
     if (event?.type !== "runtime-request.updated") return { type: "stream_ended" } as const;
-    if (
-      event.payload.status !== "resolved" ||
-      event.payload.decision !== undefined ||
-      event.payload.answers === undefined
-    )
-      return { type: "dismissed" } as const;
-    // Only the question's turn item records who answered; it commits with the resolution.
-    const { turnItems } = yield* orchestrator.getThreadRecords(thread.id, ["turnItems"], {
-      turnItemRunId: thread.activeRunId,
-      turnItemTypes: ["user_input_request"],
-    });
-    const item = turnItems.find(
-      (candidate) => candidate.type === "user_input_request" && candidate.requestId === requestId,
-    );
-    return {
-      type: "answered",
-      answers: event.payload.answers,
-      respondedBy: item?.type === "user_input_request" ? item.respondedBy : undefined,
-    } as const;
+    return event.payload.status === "resolved" &&
+      event.payload.decision === undefined &&
+      event.payload.answers !== undefined
+      ? ({ type: "answered", answers: event.payload.answers } as const)
+      : ({ type: "dismissed" } as const);
   });
+  const askUser: ThreadManagementServiceShape["askUser"] = (input) =>
+    createUserInput(input, true).pipe(Effect.map((created) => created !== null));
   const respondToPendingRequest: ThreadManagementServiceShape["respondToPendingRequest"] =
     Effect.fn("orchestrationV2.threadManagement.respondToPendingRequest")(function* (input) {
       const projection = yield* getProjectThreadRecords(input, ["runtimeRequests"]);
@@ -1332,6 +1333,7 @@ const make = Effect.gen(function* () {
     settleThread,
     interruptThread,
     requestUserInput,
+    askUser,
     respondToPendingRequest,
     stopDelegatedTasks,
     stopWorkflow,

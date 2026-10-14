@@ -5,6 +5,7 @@ import {
   type IssueChange,
   type IssueChangeDecisionInput,
   type IssueChangesListInput,
+  type IssueRepositoryRef,
 } from "@t3tools/contracts";
 import { useState } from "react";
 import { useServerConfigs } from "~/state/entities";
@@ -14,24 +15,45 @@ import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query"
 import { Button } from "../ui/button";
 
 /**
- * An issue's change history. Agents ask about pending changes in their thread; one whose
- * question was dismissed, or that predates those questions, can still be decided here.
+ * Where agents' issue changes are decided outside their questions: an issue's change
+ * history, or a repository's proposals that target no issue yet, such as a new issue.
+ * Agents ask about pending changes in their thread; one whose question was dismissed,
+ * or that predates those questions, is still decided here.
  */
 export function IssueChangeCards(props: {
   environmentId: EnvironmentId;
   input: IssueChangesListInput;
+  title?: string;
 }) {
   const configs = useServerConfigs();
   if (configs.get(props.environmentId)?.environment.capabilities.issueChanges !== true) return null;
   return <Cards {...props} />;
 }
 
+/** A repository's pending changes that target no issue yet; nothing renders without any. */
+export function IssueRepositoryChanges(props: {
+  environmentId: EnvironmentId;
+  reference: IssueRepositoryRef;
+}) {
+  return (
+    <div className="py-1 ps-6 pe-2 empty:hidden">
+      <IssueChangeCards
+        environmentId={props.environmentId}
+        input={props.reference}
+        title="Pending changes"
+      />
+    </div>
+  );
+}
+
 function Cards({
   environmentId,
   input,
+  title,
 }: {
   environmentId: EnvironmentId;
   input: IssueChangesListInput;
+  title?: string | undefined;
 }) {
   const query = useEnvironmentQuery(issueEnvironment.changes({ environmentId, input }));
   const decide = useAtomCommand(issueEnvironment.decideChange, { reportFailure: false });
@@ -133,7 +155,12 @@ function Cards({
     (change) => change.decision !== "pending" && change.status !== "needs_attention",
   );
   return (
-    <section aria-label="Issue changes" className="mb-3 max-h-96 overflow-y-auto">
+    <section aria-label={title ?? "Issue changes"} className="mb-3 max-h-96 overflow-y-auto">
+      {title === undefined ? null : (
+        <p className="mb-2 text-xs font-medium text-muted-foreground">
+          {title} ({changes.length})
+        </p>
+      )}
       {(error ?? query.error) ? (
         <p role="alert" className="mb-2 text-xs text-destructive">
           {error ?? query.error}

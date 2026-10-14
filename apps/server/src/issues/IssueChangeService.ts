@@ -9,8 +9,8 @@ import {
   type IssueChangeBaseline,
   type IssueChangeDecisionInput,
   type IssueChangesListInput,
-  type OrchestrationV2UserInputQuestion,
   type ProviderUserInputAnswers,
+  RuntimeRequestId,
   type RuntimeRequestResponder,
   type ThreadId,
   type ThreadLinkedIssue,
@@ -29,7 +29,7 @@ import * as IssueService from "./IssueService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
-import { issueChangeAnswerDecision, issueChangeQuestion } from "./IssueChangeQuestion.ts";
+import { issueChangeAnswerDecision } from "./IssueChangeQuestion.ts";
 
 // Actor authority is supplied by the authenticated transport, never decoded from a proposal.
 // Don't ask mode answers for an away user and may only decline.
@@ -38,7 +38,7 @@ type Actor = {
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
 };
-/** An answer to the approval question; respondedBy is set when someone other than the user answered. */
+/** An answer to a change's question; respondedBy is set when someone other than the user answered. */
 export type ApprovalAnswer = {
   readonly answers: ProviderUserInputAnswers;
   readonly respondedBy?: RuntimeRequestResponder | undefined;
@@ -54,14 +54,21 @@ export class IssueChangeService extends Context.Service<
       input: IssueChangeDecisionInput,
       actor: Actor,
     ) => Effect.Effect<IssueChange, IssueChangeError>;
-    /**
-     * Asks the requesting thread's user about a pending change and applies their answer.
-     * `ask` returns null when the question was dismissed or could not be asked.
-     */
-    readonly requestApproval: (
-      change: IssueChange,
-      ask: (question: OrchestrationV2UserInputQuestion) => Effect.Effect<ApprovalAnswer | null>,
+    /** Applies an answer to a change's question; one naming no decision leaves it pending. */
+    readonly applyAnswer: (
+      id: string,
+      answer: ApprovalAnswer,
     ) => Effect.Effect<IssueChange, IssueChangeError>;
+    /** Records the question asked about a change, so a decision made elsewhere closes it. */
+    readonly recordQuestion: (
+      id: string,
+      requestId: RuntimeRequestId,
+    ) => Effect.Effect<void, IssueChangeError>;
+    /** Questions of changes still pending, whose answers may not have been applied yet. */
+    readonly awaitingAnswer: Effect.Effect<
+      ReadonlyArray<{ readonly threadId: ThreadId; readonly requestId: RuntimeRequestId }>,
+      IssueChangeError
+    >;
     readonly list: (
       input: IssueChangesListInput,
     ) => Effect.Effect<ReadonlyArray<IssueChange>, IssueChangeError>;
@@ -79,6 +86,7 @@ type Row = {
   steps_json: string;
   in_flight_step: string | null;
   result: string | null;
+  question_request_id: string | null;
 };
 const decodeChange = Schema.decodeEffect(Schema.fromJsonString(IssueChange));
 const encodeChange = Schema.encodeEffect(Schema.fromJsonString(IssueChange));
@@ -325,7 +333,8 @@ const make = Effect.gen(function* () {
       yield* sql
         .withTransaction(
           Effect.gen(function* () {
-            const change = yield* get(input.id);
+            const row = yield* rowById(input.id);
+            const change = yield* fromRow(row);
             if (input.decision === "resolved") {
               if (change.status === "resolved") return;
               if (change.status !== "needs_attention")
@@ -354,6 +363,20 @@ const make = Effect.gen(function* () {
             }
             yield* sql`UPDATE issue_changes SET decision = ${input.decision}, decided_by = ${actor.subject}, status = ${input.decision === "approved" ? "queued" : "rejected"}, result = ${input.decision !== "rejected" ? null : declinedWhileAway ? "Declined by Don't ask mode while the user was away." : "Rejected by the user."} WHERE change_id = ${input.id} AND decision = 'pending'`;
             if (input.decision === "approved") yield* enqueue(change);
+            if (row.question_request_id !== null)
+              yield* outbox
+                .enqueue([
+                  {
+                    id: `effect:issue-change-question:${change.id}`,
+                    commandId: CommandId.make(`issue-change-question-settle:${change.id}`),
+                    threadId: change.requestingThreadId,
+                    request: {
+                      type: "issue.change.settle-question",
+                      requestId: RuntimeRequestId.make(row.question_request_id),
+                    },
+                  },
+                ])
+                .pipe(Effect.mapError(storageError));
           }),
         )
         .pipe(Effect.mapError((error) => (isChangeError(error) ? error : storageError(error))));
@@ -364,18 +387,11 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const requestApproval: IssueChangeService["Service"]["requestApproval"] = Effect.fn(
-    "IssueChangeService.requestApproval",
-  )(function* (change, ask) {
-    if (change.decision !== "pending") return change;
-    const answer = yield* ask(issueChangeQuestion(change));
-    const decision = answer === null ? null : issueChangeAnswerDecision(answer.answers);
-    if (answer === null || decision === null)
-      return {
-        ...change,
-        result:
-          "The user has not decided. The change stays pending until they approve or decline it in the issue's detail view; do not ask them about it yourself.",
-      };
+  const applyAnswer: IssueChangeService["Service"]["applyAnswer"] = Effect.fn(
+    "IssueChangeService.applyAnswer",
+  )(function* (id, answer) {
+    const decision = issueChangeAnswerDecision(answer.answers);
+    if (decision === null) return yield* get(id);
     // Answering a question needs the same operate scope as deciding through the issue view.
     const actor: Actor =
       answer.respondedBy === undefined
@@ -384,10 +400,10 @@ const make = Effect.gen(function* () {
           ? { kind: "dont_ask_mode", subject: "dont-ask-mode", scopes: [] }
           : { kind: "agent", subject: answer.respondedBy, scopes: [] };
     // A refused or already-final decision leaves the stored change as the answer.
-    return yield* decide({ id: change.id, decision }, actor).pipe(
+    return yield* decide({ id, decision }, actor).pipe(
       Effect.catchIf(
         (error) => error.code === "forbidden" || error.code === "invalid-request",
-        () => get(change.id),
+        () => get(id),
       ),
     );
   });
@@ -585,7 +601,24 @@ const make = Effect.gen(function* () {
   return IssueChangeService.of({
     propose,
     decide,
-    requestApproval,
+    applyAnswer,
+    recordQuestion: (id, requestId) =>
+      sql`UPDATE issue_changes SET question_request_id = ${requestId} WHERE change_id = ${id}`.pipe(
+        Effect.asVoid,
+        Effect.mapError(storageError),
+      ),
+    awaitingAnswer: sql<{
+      requesting_thread_id: ThreadId;
+      question_request_id: RuntimeRequestId;
+    }>`SELECT requesting_thread_id, question_request_id FROM issue_changes WHERE decision = 'pending' AND question_request_id IS NOT NULL`.pipe(
+      Effect.map((rows) =>
+        rows.map((row) => ({
+          threadId: row.requesting_thread_id,
+          requestId: row.question_request_id,
+        })),
+      ),
+      Effect.mapError(storageError),
+    ),
     execute,
     subscribe: (input) =>
       Stream.unwrap(
@@ -599,7 +632,7 @@ const make = Effect.gen(function* () {
                   ? event.threadId === input.threadId
                   : event.host === input.host.toLowerCase() &&
                     event.repository === input.repository.toLowerCase() &&
-                    event.numbers.includes(input.number),
+                    (!("number" in input) || event.numbers.includes(input.number)),
               ),
               Stream.map((event) => event.revision),
             ),
@@ -609,7 +642,10 @@ const make = Effect.gen(function* () {
     list: (input) =>
       ("threadId" in input
         ? sql<Row>`SELECT * FROM issue_changes WHERE requesting_thread_id = ${input.threadId} ORDER BY decision = 'pending' DESC, rowid DESC LIMIT 100`
-        : sql<Row>`SELECT change.* FROM issue_changes change JOIN issue_change_targets target ON target.change_id = change.change_id WHERE target.host = ${input.host.toLowerCase()} AND target.repository = ${input.repository.toLowerCase()} AND target.issue_number = ${input.number} ORDER BY change.decision = 'pending' DESC, change.rowid DESC LIMIT 100`
+        : "number" in input
+          ? sql<Row>`SELECT change.* FROM issue_changes change JOIN issue_change_targets target ON target.change_id = change.change_id WHERE target.host = ${input.host.toLowerCase()} AND target.repository = ${input.repository.toLowerCase()} AND target.issue_number = ${input.number} ORDER BY change.decision = 'pending' DESC, change.rowid DESC LIMIT 100`
+          : // A proposal with no issue yet, such as a standalone create, has no other place to be decided.
+            sql<Row>`SELECT change.* FROM issue_changes change WHERE change.host = ${input.host.toLowerCase()} AND change.repository = ${input.repository.toLowerCase()} AND (change.decision = 'pending' OR change.status IN ('needs_attention', 'failed')) AND NOT EXISTS (SELECT 1 FROM issue_change_targets target WHERE target.change_id = change.change_id) ORDER BY change.rowid DESC LIMIT 100`
       ).pipe(
         Effect.mapError(storageError),
         Effect.flatMap((rows) => Effect.forEach(rows, fromRow)),

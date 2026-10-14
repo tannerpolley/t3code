@@ -7807,10 +7807,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         nativeRequestRef: null,
         kind: "user_input" as const,
         status: "pending" as const,
-        responseCapability: {
-          type: "app_owned" as const,
-          providerSessionId: command.providerSessionId,
-        },
+        responseCapability: command.answerByMessage
+          ? ({ type: "message" } as const)
+          : {
+              type: "app_owned" as const,
+              providerSessionId: command.providerSessionId,
+            },
         createdAt: now,
         resolvedAt: null,
       };

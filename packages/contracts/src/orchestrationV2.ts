@@ -3232,6 +3232,8 @@ export const OrchestrationV2Command = Schema.Union([
     runId: RunId,
     providerSessionId: ProviderSessionId,
     questions: OrchestrationV2UserInputQuestions,
+    /** Outlives the run and arrives back as a message, like an async Codex question. */
+    answerByMessage: Schema.optional(Schema.Literal(true)),
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),

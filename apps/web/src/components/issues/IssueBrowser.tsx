@@ -1,4 +1,5 @@
 import { IssueMilestoneControls, IssueRepositoryControls } from "./IssueMilestoneControls";
+import { IssueRepositoryChanges } from "./IssueChangeCards";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import {
@@ -739,6 +740,10 @@ export function IssueBrowser({
         {repositoryOpen ? (
           <div id={panelId}>
             <IssueRepositoryControls
+              environmentId={entry.environmentId}
+              reference={{ host: entry.host, repository: entry.repository }}
+            />
+            <IssueRepositoryChanges
               environmentId={entry.environmentId}
               reference={{ host: entry.host, repository: entry.repository }}
             />
