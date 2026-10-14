@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as Electron from "electron";
+import { zoomFactorToLevel, zoomLevelToFactor } from "@t3tools/shared/interfaceZoom";
 import * as NodeEvents from "node:events";
 import { vi } from "vite-plus/test";
 
@@ -796,11 +797,32 @@ describe("DesktopWindow", () => {
 
         assert.deepEqual(
           fakeWindow.setZoomLevel.mock.calls.map(([level]) => level),
-          [-0.5, -1, -0.5, 0],
+          [0.9, 0.8, 0.9, 1].map(zoomFactorToLevel),
         );
         // Recorded after the window level moved, so the preview is put back at
         // its own zoom on every step rather than left on the inherited one.
-        assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0]);
+        assert.deepEqual(previewZoomReapplies, [0.9, 0.8, 0.9, 1].map(zoomFactorToLevel));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  // The Settings dropdown and the shortcuts share the window's zoom level, so
+  // the dropdown must read back what a shortcut set and keep to the listed steps.
+  it.effect("sets the interface zoom to a listed step and reads it back", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        yield* desktopWindow.setMainZoomFactor(1.27);
+        assert.closeTo(yield* desktopWindow.mainZoomFactor, 1.25, 1e-9);
+        yield* desktopWindow.zoomMain("in");
+        assert.closeTo(zoomLevelToFactor(fakeWindow.setZoomLevel.mock.lastCall![0]), 1.5, 1e-9);
       }).pipe(Effect.provide(layer));
     }),
   );

@@ -10,6 +10,13 @@ import * as Electron from "electron";
 
 import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
+import {
+  nearestInterfaceZoom,
+  stepInterfaceZoom,
+  zoomFactorToLevel,
+  zoomLevelToFactor,
+} from "@t3tools/shared/interfaceZoom";
+
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
@@ -141,6 +148,10 @@ export class DesktopWindow extends Context.Service<
     // guest page instead of the app UI. The menu routes here to always target
     // the main window.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
+    // The one interface zoom value, read and set by the Settings dropdown.
+    // Chromium remembers it per origin in the session, so it survives restarts.
+    readonly mainZoomFactor: Effect.Effect<number>;
+    readonly setMainZoomFactor: (factor: number) => Effect.Effect<void>;
     // Reload and DevTools for the main window's own webContents, for the same
     // reason as zoomMain: the Electron roles act on the focused webContents,
     // which is a preview guest whenever a browser page has focus.
@@ -373,6 +384,18 @@ export const make = Effect.gen(function* () {
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+
+  const applyMainZoom = Effect.fn("desktop.window.applyMainZoom")(function* (
+    window: Electron.BrowserWindow,
+    factor: number,
+  ) {
+    window.webContents.setZoomLevel(zoomFactorToLevel(factor));
+    if (environment.platform === "darwin") syncMacosWindowButtons(window);
+    // Chromium pushes the new level down to embedded guests, which would zoom
+    // the previewed page along with the app UI. The preview browser keeps its
+    // own zoom, so put each guest back where the preview left it.
+    yield* previewManager.reapplyZoom();
+  });
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
     Electron.BrowserWindow,
@@ -1037,19 +1060,22 @@ export const make = Effect.gen(function* () {
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
       const window = yield* focusedMainWindow;
-      if (Option.isNone(window) || window.value.isDestroyed()) {
-        return;
-      }
-      const webContents = window.value.webContents;
-      // Same step size as the Electron zoomIn/zoomOut menu roles.
-      webContents.setZoomLevel(
-        direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
+      if (Option.isNone(window) || window.value.isDestroyed()) return;
+      const current = zoomLevelToFactor(window.value.webContents.getZoomLevel());
+      yield* applyMainZoom(
+        window.value,
+        direction === "reset" ? 1 : stepInterfaceZoom(current, direction),
       );
-      if (environment.platform === "darwin") syncMacosWindowButtons(window.value);
-      // Chromium pushes the new level down to embedded guests, which would zoom
-      // the previewed page along with the app UI. The preview browser keeps its
-      // own zoom, so put each guest back where the preview left it.
-      yield* previewManager.reapplyZoom();
+    }),
+    mainZoomFactor: Effect.gen(function* () {
+      const window = yield* currentMainWindow;
+      if (Option.isNone(window) || window.value.isDestroyed()) return 1;
+      return zoomLevelToFactor(window.value.webContents.getZoomLevel());
+    }),
+    setMainZoomFactor: Effect.fn("desktop.window.setMainZoomFactor")(function* (factor) {
+      const window = yield* currentMainWindow;
+      if (Option.isNone(window) || window.value.isDestroyed()) return;
+      yield* applyMainZoom(window.value, nearestInterfaceZoom(factor));
     }),
     runMainContentsCommand: Effect.fn("desktop.window.runMainContentsCommand")(function* (command) {
       yield* Effect.annotateCurrentSpan({ command });

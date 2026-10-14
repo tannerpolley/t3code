@@ -21,6 +21,12 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Interface zoom
+
+On desktop, **Settings → Appearance → Interface zoom** (80% to 200%) scales the whole window, for
+example after moving it to a higher-resolution display. **Ctrl+=** and **Ctrl+-** step it, **Ctrl+0**
+returns to 100% (**Cmd** on macOS), and the choice is remembered. The in-app browser keeps its own zoom.
+
 ## Composer context
 
 Git-backed projects show branch and worktree controls below the composer while you create a thread.

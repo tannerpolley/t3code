@@ -257,6 +257,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
+    id: "interface-zoom",
+    title: "Interface zoom",
+    to: "/settings/appearance",
+    searchTerms: ["zoom scale size larger smaller display resolution ctrl plus minus"],
+    desktopOnly: true,
+  },
+  {
     // Prefixed because the slider control already owns the `appearance-contrast` id.
     id: "setting-appearance-contrast",
     title: "Contrast",

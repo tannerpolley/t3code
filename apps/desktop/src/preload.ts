@@ -208,6 +208,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
   pasteAsText: () => ipcRenderer.invoke(IpcChannels.PASTE_AS_TEXT_CHANNEL, undefined),
   showMainWindow: () => ipcRenderer.invoke(IpcChannels.SHOW_MAIN_WINDOW_CHANNEL, undefined),
+  interfaceZoom: {
+    get: () => ipcRenderer.invoke(IpcChannels.INTERFACE_ZOOM_GET_CHANNEL, undefined),
+    set: (factor) => ipcRenderer.invoke(IpcChannels.INTERFACE_ZOOM_SET_CHANNEL, factor),
+  },
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;

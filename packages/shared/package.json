@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./interfaceZoom": {
+      "types": "./src/interfaceZoom.ts",
+      "import": "./src/interfaceZoom.ts"
+    },
     "./shellCommand": {
       "types": "./src/shellCommand.ts",
       "import": "./src/shellCommand.ts"

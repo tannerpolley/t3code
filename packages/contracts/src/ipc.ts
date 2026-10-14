@@ -1233,6 +1233,11 @@ export interface DesktopBridge {
   pasteAsText?: () => Promise<void>;
   /** Shows the app window, which may be hidden in the tray. Absent on older desktop builds. */
   showMainWindow?: () => Promise<void>;
+  /** Interface zoom of the main window (1 = 100%). Shared with the Ctrl/Cmd +, -, 0 shortcuts. */
+  interfaceZoom?: {
+    get: () => Promise<number>;
+    set: (factor: number) => Promise<void>;
+  };
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   /**
