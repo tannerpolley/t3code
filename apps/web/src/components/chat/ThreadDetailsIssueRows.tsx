@@ -21,8 +21,11 @@ import { issueEnvironment } from "~/state/issues";
 import { useUiStateStore } from "~/uiStateStore";
 
 import { IssueRoadmap } from "../issues/IssueRoadmap";
-import { IssueViewToggle, useIssueView } from "../issues/IssueViewToggle";
-import { IssueFilterMenu, useIssueFilterPreferences } from "../issues/IssueFilterMenu";
+import {
+  IssueFilterMenu,
+  useIssueFilterPreferences,
+  useIssueView,
+} from "../issues/IssueFilterMenu";
 import { groupIssuesByMilestone, type IssueGroup } from "../issues/issueTree.logic";
 import {
   filterAndSortIssues,
@@ -144,17 +147,15 @@ function IssueRows({
       headingId="thread-details-issues-heading"
       title="Issues"
       actions={
-        <>
-          <IssueViewToggle value={issueView} onChange={setIssueView} />
-          <IssueFilterMenu
-            host=""
-            hosts={[]}
-            onChange={setPreferences}
-            onHostChange={() => {}}
-            preferences={preferences}
-            singleRepository
-          />
-        </>
+        <IssueFilterMenu
+          host=""
+          hosts={[]}
+          onChange={setPreferences}
+          onHostChange={() => {}}
+          preferences={preferences}
+          singleRepository
+          view={{ value: issueView, onChange: setIssueView }}
+        />
       }
     >
       <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">

@@ -34,11 +34,11 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Spinner } from "../ui/spinner";
-import { IssueFilterMenu, useIssueFilterPreferences } from "./IssueFilterMenu";
+import { Switch } from "../ui/switch";
+import { IssueFilterMenu, useIssueFilterPreferences, useIssueViews } from "./IssueFilterMenu";
 import { acceptIssueListPage, type IssueListSnapshot } from "./issuePaging.logic";
 import { IssueTree, IssueTreeRow, IssueTreeTag } from "./IssueTree";
 import { IssueRoadmap } from "./IssueRoadmap";
-import { IssueViewToggle, useIssueViews } from "./IssueViewToggle";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 import {
   filterAndSortIssues,
@@ -272,6 +272,8 @@ export function IssueBrowser({
           ) ?? null),
     [repositoryTargets, search.host, search.repository],
   );
+  const scopedKey =
+    urlRepository === null ? null : repositoryKey(urlRepository.host, urlRepository.repository);
   const explicitScopeMissing =
     explicitScope && urlRepository === null && !issueRepositories.isPending;
   // A repository link shows that repository whatever the Filter menu says.
@@ -609,12 +611,19 @@ export function IssueBrowser({
     return (
       <>
         {variant === "panel" && !explicitScope ? (
-          <div className="px-6 pb-2">
-            <IssueViewToggle
-              value={views[entry.key] ?? "milestones"}
-              onChange={(value) => setViews((current) => ({ ...current, [entry.key]: value }))}
+          <label className="mx-6 mb-2 flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <Switch
+              size="sm"
+              checked={views[entry.key] === "roadmap"}
+              onCheckedChange={(checked) =>
+                setViews((current) => ({
+                  ...current,
+                  [entry.key]: checked ? "roadmap" : "milestones",
+                }))
+              }
             />
-          </div>
+            Roadmap view
+          </label>
         ) : null}
         {views[entry.key] === "roadmap" ? (
           <IssueRoadmap
@@ -891,25 +900,21 @@ export function IssueBrowser({
               value={query}
             />
           </InputGroup>
-          {variant === "panel" && urlRepository !== null ? (
-            <IssueViewToggle
-              value={
-                views[repositoryKey(urlRepository.host, urlRepository.repository)] ?? "milestones"
-              }
-              onChange={(value) =>
-                setViews((current) => ({
-                  ...current,
-                  [repositoryKey(urlRepository.host, urlRepository.repository)]: value,
-                }))
-              }
-            />
-          ) : null}
           <IssueFilterMenu
             host={explicitScope ? "" : (search.host ?? "")}
             hosts={explicitScope ? [] : hosts}
             onChange={setPreferences}
             onHostChange={(host) => onSearchChange({ host: host || undefined })}
             preferences={preferences}
+            view={
+              variant === "panel" && scopedKey !== null
+                ? {
+                    value: views[scopedKey] ?? "milestones",
+                    onChange: (value) =>
+                      setViews((current) => ({ ...current, [scopedKey]: value })),
+                  }
+                : undefined
+            }
           />
           {stateFilter !== null && repositoryEntries.length > 0 ? (
             <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:inline">

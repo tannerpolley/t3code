@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { ListFilterIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -18,6 +19,7 @@ import {
   changedIssueFilterCount,
   DEFAULT_ISSUE_FILTER_PREFERENCES,
   IssueFilterPreferences,
+  repositoryKey,
 } from "./issueWorkspace.logic";
 
 /** The Filter menu's saved choices, shared by the Issues page and the thread's issue list. */
@@ -27,6 +29,22 @@ export function useIssueFilterPreferences() {
     DEFAULT_ISSUE_FILTER_PREFERENCES,
     IssueFilterPreferences,
   );
+}
+
+type IssueView = "milestones" | "roadmap";
+const IssueViews = Schema.Record(Schema.String, Schema.Literals(["milestones", "roadmap"]));
+
+/** Each repository's remembered view, keyed by `repositoryKey`. */
+export function useIssueViews() {
+  return useLocalStorage("t3code:issue-views", {}, IssueViews);
+}
+export function useIssueView(host: string, repository: string) {
+  const [views, setViews] = useIssueViews();
+  const key = repositoryKey(host, repository);
+  return [
+    views[key] ?? "milestones",
+    (value: IssueView) => setViews((current) => ({ ...current, [key]: value })),
+  ] as const;
 }
 
 type ShowKey = {
@@ -77,7 +95,8 @@ function RadioSection<Value extends string>({
  * Every list narrowing behind one control: positive "show" checkboxes for issue states and
  * repository kinds, then milestone, assignment, host and sort. The trigger counts choices that
  * differ from the defaults. A single repository's list drops the repository choices and uses an
- * icon trigger.
+ * icon trigger. A one-repository list can pass `view` for a roadmap switch at the top; the trigger
+ * does not count it, because the roadmap layout is visible at a glance.
  */
 export function IssueFilterMenu({
   preferences,
@@ -86,6 +105,7 @@ export function IssueFilterMenu({
   host,
   onHostChange,
   singleRepository = false,
+  view,
 }: {
   preferences: IssueFilterPreferences;
   onChange: (preferences: IssueFilterPreferences) => void;
@@ -94,6 +114,7 @@ export function IssueFilterMenu({
   host: string;
   onHostChange: (host: string) => void;
   singleRepository?: boolean;
+  view?: { readonly value: IssueView; readonly onChange: (value: IssueView) => void } | undefined;
 }) {
   const changed = singleRepository
     ? (["open", "closed", "milestone", "assignee"] as const).filter(
@@ -130,6 +151,19 @@ export function IssueFilterMenu({
         </MenuTrigger>
       )}
       <MenuPopup align="end" side="bottom" className="max-h-[70vh] w-52 overflow-y-auto">
+        {view ? (
+          <>
+            {/* A menu item, not a bare Switch, so arrow keys reach it; it leaves the menu open. */}
+            <MenuCheckboxItem
+              variant="switch"
+              checked={view.value === "roadmap"}
+              onCheckedChange={(checked) => view.onChange(checked ? "roadmap" : "milestones")}
+            >
+              Roadmap view
+            </MenuCheckboxItem>
+            <MenuSeparator />
+          </>
+        ) : null}
         <MenuGroup>
           <MenuGroupLabel>Show issues</MenuGroupLabel>
           {ISSUE_OPTIONS.map(checkbox)}

@@ -256,8 +256,8 @@ sorted. Open issues are shown by default, with archived, forked, and empty repos
 Filter choices are remembered in that browser. The search box matches repository names and issue
 details.
 
-In the Issues pane, switch a repository to **Roadmap** for its open issues in dependency order,
-with **In progress**,
+In the Issues pane, turn on **Roadmap view** for a repository (at the top of **Filter** when the
+pane shows one repository) for its open issues in dependency order, with **In progress**,
 **Ready**, and **Blocked** sections. Within a section, open blockers and sub-issues come before
 the issues that depend on them; closed blockers no longer hold work back. The view choice is
 remembered per repository. An issue with any linked thread stays **In progress**, including when
