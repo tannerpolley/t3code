@@ -87,13 +87,7 @@ export function projectSidebarLayout(input: {
 
 /** Resolve the old logical/path keys once; new storage never needs repository re-keying. */
 export function migrateSidebarLayout(
-  legacy: Pick<
-    UiProjectState,
-    | "sidebarProjectSections"
-    | "projectExpandedById"
-    | "projectOrder"
-    | "sidebarOtherProjectsExpanded"
-  >,
+  legacy: SidebarLayout,
   groups: readonly SidebarProjectSnapshot[],
   environmentId: EnvironmentId,
 ): SidebarLayout {
