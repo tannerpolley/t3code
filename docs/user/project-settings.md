@@ -133,10 +133,7 @@ applies when the project and environment are both on **Inherit**.
 
 ## Worktree location
 
-New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,
-such as another drive, set **Settings → Storage → Worktree location** to an absolute path like
-`D:\worktrees` or `~/worktrees`. The setting is per machine. Existing worktrees stay where they
-are, and cleanup covers both the default folder and the custom one.
+Choose **T3 home**, **One custom folder** (such as `D:\worktrees` or `~/worktrees`), or **Inside each project** in **Settings → Storage → Worktree location**, also linked from Customizations; project-local worktrees use `.worktrees` at the Git repository root, even when the project is a subfolder. The setting is per machine; existing worktrees stay in place and remain eligible for cleanup, and T3 excludes `.worktrees` from Git and workspace scans (external tools must honor Git ignores or exclude it themselves).
 
 ## Storage cleanup
 

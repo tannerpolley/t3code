@@ -64,6 +64,7 @@ export default defineConfig({
     exclude: [
       "**/.repos/**",
       "**/.t3/**",
+      "**/.worktrees/**",
       "**/node_modules/**",
       "**/dist/**",
       "**/dist-electron/**",
@@ -83,6 +84,7 @@ export default defineConfig({
   },
   fmt: {
     ignorePatterns: [
+      "**/.worktrees/**",
       ".repos/**",
       // Macroscope's glob-per-line ignore grammar, not Markdown: formatting
       // it rewrites `*` as `_` and joins lines.
@@ -111,6 +113,7 @@ export default defineConfig({
   },
   lint: {
     ignorePatterns: [
+      "**/.worktrees/**",
       ".repos",
       ".repos/**",
       "dist",

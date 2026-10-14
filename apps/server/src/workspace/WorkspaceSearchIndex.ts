@@ -25,6 +25,7 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
+import { isProjectLocalWorktreePath } from "../worktreesDirectory.ts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
 // fff-node stays external to the CLI bundle because it dlopens a native
@@ -142,7 +143,7 @@ function parentPathOf(input: string): string | undefined {
 
 function toProjectEntry(item: MixedItem): ProjectEntry | null {
   const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
-  if (!normalizedPath) {
+  if (!normalizedPath || isProjectLocalWorktreePath(normalizedPath)) {
     return null;
   }
 
@@ -154,12 +155,16 @@ function toProjectEntry(item: MixedItem): ProjectEntry | null {
 
 function toFileEntry(item: FileItem): ProjectEntry | null {
   const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
-  return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
+  return normalizedPath && !isProjectLocalWorktreePath(normalizedPath)
+    ? { path: normalizedPath, kind: "file" }
+    : null;
 }
 
 function toDirectoryEntry(item: DirItem): ProjectEntry | null {
   const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
-  return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
+  return normalizedPath && !isProjectLocalWorktreePath(normalizedPath)
+    ? { path: normalizedPath, kind: "directory" }
+    : null;
 }
 
 function mapFileSearchResult(
@@ -307,6 +312,7 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   const result = yield* Effect.try({
     try: () =>
       FileFinder.create({
+        // Local worktrees contain .ignore so native scans and the watcher skip their contents.
         basePath: cwd,
         disableMmapCache: true,
         // Content indexing costs scan CPU and memory, so only the on-demand
@@ -520,6 +526,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       );
 
       for (const match of result.items) {
+        if (isProjectLocalWorktreePath(match.relativePath)) continue;
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );

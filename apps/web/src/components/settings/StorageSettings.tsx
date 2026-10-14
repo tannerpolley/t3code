@@ -4,7 +4,7 @@ import type {
   WorktreeCleanupRules,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
@@ -18,7 +18,7 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
-import { Input } from "../ui/input";
+import { WorktreesDirectoryRow } from "./WorktreesDirectoryRow";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
@@ -29,7 +29,6 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import {
-  SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
@@ -44,63 +43,8 @@ import { searchableSetting } from "./settingsSearch";
 import {
   useClearScopedSettings,
   useScopedSettings,
-  useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
-
-function WorktreesDirectoryRow() {
-  const { connectedEnvironments, targets } = useSettingsScope();
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  const mixed = useScopedSettingsMixed(["worktreesDirectory"]);
-  const edited = useRef(false);
-  if (
-    connectedEnvironments.some(
-      (environment) =>
-        environment.serverConfig?.environment.capabilities.worktreesDirectory !== true,
-    )
-  )
-    return null;
-  const scopeKey = targets.map((target) => target.environmentId).join(",");
-
-  return (
-    <SettingsRow
-      {...searchableSetting("storage-worktrees-location")}
-      description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
-      }
-      serverScoped
-      settingKeys={["worktreesDirectory"]}
-      resetAction={
-        mixed || settings.worktreesDirectory !== "" ? (
-          <SettingResetButton
-            label="worktree location"
-            onClick={() => updateSettings({ worktreesDirectory: "" })}
-          />
-        ) : null
-      }
-      control={
-        <Input
-          key={`${scopeKey}:${mixed}:${settings.worktreesDirectory}`}
-          aria-label="Worktree location"
-          autoCapitalize="none"
-          spellCheck={false}
-          placeholder={mixed ? "Mixed" : "Default"}
-          defaultValue={mixed ? "" : settings.worktreesDirectory}
-          onChange={() => {
-            edited.current = true;
-          }}
-          onBlur={(event) => {
-            const value = event.target.value.trim();
-            if (edited.current && (mixed || value !== settings.worktreesDirectory))
-              updateSettings({ worktreesDirectory: value });
-            edited.current = false;
-          }}
-        />
-      }
-    />
-  );
-}
 
 function RetentionControl({
   label,

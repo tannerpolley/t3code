@@ -17,7 +17,6 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -40,7 +39,6 @@ import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGe
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
-import * as ServerConfig from "../config.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -91,8 +89,6 @@ const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const config = yield* ServerConfig.ServerConfig;
   // Runs outlive the request that started them and end with the server.
   const serviceScope = yield* Effect.scope;
   // In memory on purpose: a restart drops a run in progress, and a reader presses Generate again.
@@ -306,17 +302,12 @@ const make = Effect.gen(function* () {
       },
       { concurrency: 4 },
     );
-    const directory = yield* fileSystem.makeTempDirectoryScoped({
-      directory: config.worktreesDir,
-      prefix: "review-guide-",
-    });
-    const path = `${directory}/checkout`;
-    yield* git.execute({
-      operation: "PullRequestReviewGuideService.addWorktree",
-      cwd: workspaceRoot,
-      args: ["worktree", "add", "--detach", "--quiet", path, resolvedHead.commitSha],
-      timeoutMs: 5 * 60_000,
-    });
+    const settings = yield* serverSettings.getSettings;
+    const checkout = yield* git.createWorktree(
+      { cwd: workspaceRoot, refName: resolvedHead.commitSha, path: null },
+      { worktreesDirectory: settings.worktreesDirectory, detached: true, submodules: "none" },
+    );
+    const path = checkout.worktree.path;
     yield* Effect.addFinalizer(() =>
       git
         .removeWorktree({ cwd: workspaceRoot, path, force: true })

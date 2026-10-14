@@ -1319,6 +1319,10 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
   ),
 ];
 
+/** Stored in `worktreesDirectory` to select a repository-local folder. */
+export const PROJECT_LOCAL_WORKTREES = "project-local";
+export const PROJECT_WORKTREES_FOLDER = ".worktrees";
+
 export const ServerSettings = Schema.Struct({
   issueUpkeepRequiresApproval: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -1342,11 +1346,12 @@ export const ServerSettings = Schema.Struct({
   ),
   /**
    * Absolute directory new worktrees are created under, e.g. `D:\worktrees`
-   * or `~/worktrees`. Empty uses `<T3 home>/worktrees`.
+   * or `~/worktrees`. Empty uses `<T3 home>/worktrees`;
+   * `PROJECT_LOCAL_WORKTREES` uses the repository root's `.worktrees` folder.
    */
   worktreesDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /**
-   * Custom locations used before the current one. Server-maintained so
+   * Locations used before the current one. Server-maintained so
    * worktrees left there stay eligible for cleanup and review diffs.
    */
   previousWorktreesDirectories: Schema.Array(TrimmedString).pipe(

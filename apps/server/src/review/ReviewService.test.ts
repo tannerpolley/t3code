@@ -20,6 +20,7 @@ function layer(input: {
   readonly worktreesDirectory?: string;
   readonly previousWorktreesDirectories?: ReadonlyArray<string>;
   readonly projectRoots?: ReadonlyArray<string> | "unavailable";
+  readonly repositoryRoot?: string;
 }) {
   const projectRoots = input.projectRoots ?? [];
   return ReviewService.layer.pipe(
@@ -54,7 +55,12 @@ function layer(input: {
           }),
       }),
     ),
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(
+      Layer.mock(GitVcsDriver.GitVcsDriver)({
+        listWorktreePaths: () =>
+          Effect.succeed(input.repositoryRoot === undefined ? [] : [input.repositoryRoot]),
+      }),
+    ),
     Layer.provide(
       ServerSettings.ServerSettingsService.layerTest({
         worktreesDirectory: input.worktreesDirectory ?? "",
@@ -67,6 +73,26 @@ function layer(input: {
 }
 
 describe("ReviewService", () => {
+  it.effect("allows project-local review worktrees for a project registered in a subfolder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped();
+      const repositoryRoot = yield* fs.makeTempDirectoryScoped();
+      const baseDir = yield* fs.makeTempDirectoryScoped();
+      const project = `${repositoryRoot}/finance`;
+      const checkout = `${repositoryRoot}/.worktrees/feature`;
+      yield* fs.makeDirectory(project);
+      yield* fs.makeDirectory(checkout, { recursive: true });
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ cwd: checkout });
+      }).pipe(
+        Effect.provide(layer({ workspaceRoot, baseDir, projectRoots: [project], repositoryRoot })),
+      );
+      assert.strictEqual(result.cwd, checkout);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("rejects diff preview cwd outside the configured workspace roots", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

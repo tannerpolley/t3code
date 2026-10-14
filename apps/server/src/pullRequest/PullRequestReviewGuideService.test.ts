@@ -164,6 +164,7 @@ const makeLayer = (input: {
   readonly stored: Deferred.Deferred<void>;
   /** The server's beta switch; on unless a test is about it being off. */
   readonly enabled?: boolean;
+  readonly worktreesDirectory?: string;
   /** The head the host reports now, for a test that pushes between runs. */
   readonly currentHead?: Ref.Ref<string>;
   /** The project's own repository; defaults to the one the test reference names. */
@@ -217,7 +218,12 @@ const makeLayer = (input: {
         generateReviewGuide: input.generate,
       } as unknown as TextGeneration.TextGeneration["Service"]),
     ),
-    Layer.provide(ServerSettings.layerTest({ reviewGuidesEnabled: input.enabled ?? true })),
+    Layer.provide(
+      ServerSettings.layerTest({
+        reviewGuidesEnabled: input.enabled ?? true,
+        worktreesDirectory: input.worktreesDirectory ?? "",
+      }),
+    ),
     Layer.provide(ServerConfig.layerTest(input.root, { prefix: "t3-review-guide-config-" })),
   );
 
@@ -576,6 +582,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         const context = yield* Layer.build(
           makeLayer({
             ...repositories,
+            worktreesDirectory: "project-local",
             stored,
             generate: (input) =>
               Effect.gen(function* () {
@@ -636,6 +643,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           Effect.retry(Schedule.spaced("20 millis")),
         );
         const observed = yield* Effect.raceFirst(Deferred.await(seen), failedRun);
+        assert.include(observed.input.cwd, `${repositories.workspace}/.worktrees/review-guide-`);
         assert.strictEqual(observed.head, repositories.headSha);
         assert.strictEqual(observed.changed, "feature.txt");
         assert.strictEqual(observed.input.baseBranch, "stack-base");

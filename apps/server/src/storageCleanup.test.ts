@@ -12,11 +12,13 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
   DEFAULT_SERVER_SETTINGS,
+  PROJECT_LOCAL_WORKTREES,
   StorageCleanupReport,
   type WorktreeKeepWhen,
 } from "@t3tools/contracts";
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Settings from "./serverSettings.ts";
@@ -226,7 +228,7 @@ describe("merged pull request cleanup", () => {
   });
 });
 
-const cleanupFixture = Effect.gen(function* () {
+const makeCleanupFixture = Effect.fnUntraced(function* (location?: "custom" | "project-local") {
   const fs = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig.ServerConfig;
   const git = yield* GitVcsDriver.GitVcsDriver;
@@ -241,10 +243,22 @@ const cleanupFixture = Effect.gen(function* () {
   yield* command(repo, ["add", "."]);
   yield* command(repo, ["commit", "-m", "initial"]);
   yield* fs.makeDirectory(config.worktreesDir, { recursive: true });
-  const worktree = `${config.worktreesDir}/feature`;
+  const directory =
+    location === "custom"
+      ? yield* fs.makeTempDirectoryScoped({ prefix: "old-custom-worktrees-" })
+      : location === "project-local"
+        ? `${repo}/.worktrees`
+        : config.worktreesDir;
+  const worktree = `${directory}/feature`;
   yield* command(repo, ["worktree", "add", "-b", "feature", worktree]);
   let settings: import("@t3tools/contracts").ServerSettings = {
     ...DEFAULT_SERVER_SETTINGS,
+    worktreesDirectory:
+      location === "custom"
+        ? directory
+        : location === "project-local"
+          ? PROJECT_LOCAL_WORKTREES
+          : "",
     storageCleanup: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, worktreeAfterDays: 8 },
   };
   let threads = [shell({ branch: "feature", worktreePath: worktree })];
@@ -327,6 +341,9 @@ const cleanupFixture = Effect.gen(function* () {
         },
       };
     },
+    setLocation: (directory: string) => {
+      settings = applyServerSettingsPatch(settings, { worktreesDirectory: directory });
+    },
     setPolicy: (worktreeKeepWhen: WorktreeKeepWhen) => {
       settings = { ...settings, storageCleanup: { ...settings.storageCleanup, worktreeKeepWhen } };
     },
@@ -345,6 +362,7 @@ const cleanupFixture = Effect.gen(function* () {
     fullStatusCalls: () => fullStatusCalls,
   };
 });
+const cleanupFixture = makeCleanupFixture();
 const cleanupTestLayer = GitVcsDriver.layer.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "storage-cleanup-" })),
   Layer.provideMerge(NodeServices.layer),
@@ -362,6 +380,34 @@ const runCleanupTest = <A, E>(
 ) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);
 
 describe("storage cleanup reports and local file policies", () => {
+  it.live("cleans old custom worktrees after switching to project-local mode", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const harness = yield* makeCleanupFixture("custom");
+        harness.setLocation(PROJECT_LOCAL_WORKTREES);
+        const report = yield* harness.service.runNow;
+        expect(report.entries.find((entry) => entry.path === harness.worktree)?.outcome).toBe(
+          "removed",
+        );
+        expect(yield* harness.fs.exists(harness.worktree)).toBe(false);
+      }),
+    ),
+  );
+
+  it.live("cleans project-local worktrees after switching back to T3 home", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const harness = yield* makeCleanupFixture("project-local");
+        harness.setLocation("");
+        const report = yield* harness.service.runNow;
+        expect(report.entries.find((entry) => entry.path === harness.worktree)?.outcome).toBe(
+          "removed",
+        );
+        expect(yield* harness.fs.exists(harness.worktree)).toBe(false);
+      }),
+    ),
+  );
+
   it.live("measures nested regular files without following symlinks", () =>
     runCleanupTest(
       Effect.gen(function* () {

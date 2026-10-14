@@ -20,6 +20,7 @@ import { Switch } from "../ui/switch";
 import { groupProviderPlugins } from "./CustomizationsSettings.logic";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { ModelRolesSection } from "./ModelRolesSettings";
+import { WorktreeLocationLink } from "./WorktreesDirectoryRow";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { SidebarProjectSettings } from "./SidebarProjectSettings";
@@ -543,6 +544,7 @@ export function CustomizationsSettings() {
       </CustomizationsGroup>
       <CustomizationsGroup title="Composer & chat" section="composer" />
       <CustomizationsGroup title="Version control & issues" section="versionControl">
+        <WorktreeLocationLink />
         <ServerSwitchRow
           settingKey="issueUpkeepRequiresApproval"
           searchId="issue-upkeep-requires-approval"

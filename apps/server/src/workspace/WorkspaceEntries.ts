@@ -25,6 +25,7 @@ import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { isProjectLocalWorktreePath } from "../worktreesDirectory.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -301,13 +302,20 @@ export const make = Effect.gen(function* () {
               relative.startsWith(`..${path.sep}`) ||
               path.isAbsolute(relative) ||
               relative.split(path.sep).includes(".git") ||
-              target.relativePath.split("/").includes(".git")
+              target.relativePath.split("/").includes(".git") ||
+              isProjectLocalWorktreePath(relative) ||
+              isProjectLocalWorktreePath(target.relativePath)
             ) {
               throw new Error("Directory must be inside the workspace and outside .git.");
             }
             const children = await NodeFSP.readdir(directory, { withFileTypes: true });
             return children.flatMap((child): ProjectEntry[] => {
-              if (child.name === ".git" || (!child.isDirectory() && !child.isFile())) return [];
+              if (
+                child.name === ".git" ||
+                isProjectLocalWorktreePath(child.name) ||
+                (!child.isDirectory() && !child.isFile())
+              )
+                return [];
               return [
                 {
                   path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,

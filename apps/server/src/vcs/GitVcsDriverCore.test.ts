@@ -24,6 +24,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
+  PROJECT_LOCAL_WORKTREES,
   ReviewDiffPreviewInput,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewResult,
@@ -3175,6 +3176,38 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(created.worktree.path, worktreePath);
         assert.equal(yield* fileSystem.exists(worktreePath), true);
       }),
+    );
+
+    it.effect(
+      "creates project-local worktrees from subfolders and linked checkouts and excludes them once",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const subfolder = path.join(cwd, "finance");
+          yield* fs.makeDirectory(subfolder);
+          const exclude = path.join(cwd, ".git", "info", "exclude");
+          yield* fs.writeFileString(exclude, "# preserve existing rules\nlocal.txt");
+          const create = (cwd: string, branch: string) =>
+            driver.createWorktree(
+              { cwd, path: null, refName: initialBranch, newRefName: branch },
+              { worktreesDirectory: PROJECT_LOCAL_WORKTREES },
+            );
+          const first = yield* create(subfolder, "feature/finance");
+          assert.equal(first.worktree.path, path.join(cwd, ".worktrees", "feature-finance"));
+          const second = yield* create(first.worktree.path, "feature/child");
+          assert.equal(second.worktree.path, path.join(cwd, ".worktrees", "feature-child"));
+          assert.equal(
+            yield* fs.readFileString(exclude),
+            "# preserve existing rules\nlocal.txt\n.worktrees/\n",
+          );
+          assert.equal(yield* fs.readFileString(path.join(cwd, ".worktrees", ".ignore")), "*\n");
+          assert.equal(yield* fs.exists(path.join(cwd, ".gitignore")), false);
+          assert.equal(yield* git(cwd, ["status", "--porcelain"]), "");
+        }),
     );
 
     it.effect("creates worktrees under the configured worktrees directory", () =>

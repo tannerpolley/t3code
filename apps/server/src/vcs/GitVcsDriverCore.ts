@@ -20,6 +20,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
+  PROJECT_LOCAL_WORKTREES,
   type GitCommandFailureReason,
   T3_PROJECT_FILE_NAME,
   type ReviewDiffFileContentsInput,
@@ -37,7 +38,8 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
-import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
+import { resolveWorktreePath } from "../worktreesDirectory.ts";
+import { excludeProjectWorktrees } from "../projectLocalWorktrees.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
@@ -3432,21 +3434,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const worktreeExcludeSemaphore = yield* Semaphore.make(1);
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
     const targetBranch = input.newRefName ?? input.refName;
-    const sanitizedBranch = targetBranch.replace(/\//g, "-");
-    const repoName = path.basename(input.cwd);
+    let directoryName = targetBranch;
+    if (options?.detached) {
+      const id = yield* crypto.randomUUIDv4.pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.createWorktree",
+              command: "git worktree add",
+              cwd: input.cwd,
+              detail: "Failed to name the detached worktree.",
+              cause,
+            }),
+        ),
+      );
+      directoryName = `review-guide-${id}`;
+    }
     let worktreePath = input.path;
     if (worktreePath == null) {
-      const parentDir = resolveWorktreesDirectory(
+      const repositoryRoot =
+        options?.worktreesDirectory === PROJECT_LOCAL_WORKTREES
+          ? (yield* listWorktreePaths(input.cwd))[0]
+          : undefined;
+      const resolvedPath = resolveWorktreePath(
         options?.worktreesDirectory ?? "",
         worktreesDir,
         path,
         yield* HostProcess.HomeDirectory,
+        input.cwd,
+        directoryName,
+        repositoryRoot,
       );
-      if (parentDir === null) {
+      if (resolvedPath === null) {
         return yield* new GitCommandError({
           operation: "GitVcsDriver.createWorktree",
           command: "git worktree add",
@@ -3454,11 +3478,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Storage.`,
         });
       }
-      worktreePath = path.join(parentDir, repoName, sanitizedBranch);
+      if (repositoryRoot !== undefined) {
+        const repository = yield* resolveRepositoryPaths(input.cwd);
+        if (repository !== null)
+          yield* worktreeExcludeSemaphore.withPermits(1)(
+            excludeProjectWorktrees(input.cwd, repository.gitCommonDir, repositoryRoot).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            ),
+          );
+      }
+      worktreePath = resolvedPath;
     }
-    const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
-      : ["worktree", "add", worktreePath, input.refName];
+    const args = options?.detached
+      ? ["worktree", "add", "--detach", worktreePath, input.refName]
+      : input.newRefName
+        ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
+        : ["worktree", "add", worktreePath, input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 

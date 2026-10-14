@@ -20,6 +20,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { PROJECT_WORKTREES_FOLDER } from "@t3tools/contracts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -110,6 +111,21 @@ export const make = Effect.gen(function* () {
       if (root !== null && isWithinRoot(candidate, root)) {
         return;
       }
+      if (root === null) continue;
+      const repositoryRoot = yield* git.listWorktreePaths(project.workspaceRoot).pipe(
+        Effect.map((paths) => paths[0]),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (repositoryRoot === undefined) continue;
+      const localRoot = yield* canonicalizePath(
+        path.join(repositoryRoot, PROJECT_WORKTREES_FOLDER),
+      ).pipe(Effect.orElseSucceed(() => null));
+      if (
+        localRoot !== null &&
+        !isFilesystemRoot(localRoot, path) &&
+        isWithinRoot(candidate, localRoot)
+      )
+        return;
     }
 
     return yield* new VcsRepositoryDetectionError({

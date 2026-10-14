@@ -158,6 +158,8 @@ export interface CreateWorktreeOptions {
   readonly submodules?: WorktreeSubmodules | null;
   /** The `worktreesDirectory` setting, used when the input has no explicit path. */
   readonly worktreesDirectory?: string;
+  /** Disposable review checkouts use a unique folder without creating a branch. */
+  readonly detached?: boolean;
 }
 
 export interface GitCommitProgress {

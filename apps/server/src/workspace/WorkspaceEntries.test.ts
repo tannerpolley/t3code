@@ -396,6 +396,30 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("excludes project-local worktrees from listing, indexing and content search", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".git/info/exclude", ".worktrees/\n");
+        yield* writeTextFile(cwd, ".worktrees/.ignore", "*\n");
+        yield* writeTextFile(cwd, ".worktrees/feature/duplicate.ts", "worktree-secret");
+        yield* writeTextFile(cwd, "src/keep.ts", "worktree-secret");
+        const entries = yield* WorkspaceEntries.WorkspaceEntries;
+        const listed = yield* entries.list({ cwd, directoryPath: "" });
+        expect(listed.entries.some((entry) => entry.path === ".worktrees")).toBe(false);
+        const searched = yield* searchWorkspaceEntries({ cwd, query: "", limit: 100 });
+        expect(searched.entries.some((entry) => entry.path.startsWith(".worktrees"))).toBe(false);
+        const contents = yield* entries.searchContents({
+          cwd,
+          query: "worktree-secret",
+          limit: 100,
+          caseSensitive: false,
+          wholeWord: false,
+          useRegex: false,
+        });
+        expect(contents.matches.map((match) => match.path)).toEqual(["src/keep.ts"]);
+      }),
+    );
+
     it.effect("excludes gitignored paths for git repositories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-gitignore-", git: true });

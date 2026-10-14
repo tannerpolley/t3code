@@ -396,20 +396,6 @@ const make = Effect.gen(function* () {
     now: number,
     entries: StorageCleanupReportEntry[],
   ) {
-    const roots: Array<string> = [];
-    for (const directory of managedWorktreesDirectories(
-      serverSettings,
-      config.worktreesDir,
-      path,
-      yield* HostProcess.HomeDirectory,
-    )) {
-      // An unmounted drive only skips its own worktrees.
-      const root = yield* fs.exists(directory).pipe(
-        Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
-        Effect.orElseSucceed(() => null),
-      );
-      if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
-    }
     const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
           SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
           FROM orchestration_v2_projection_threads t
@@ -422,6 +408,35 @@ const make = Effect.gen(function* () {
       ),
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
+    const roots: Array<string> = [];
+    const repositoryRoots = yield* Effect.forEach(
+      [
+        ...new Set([
+          ...snapshot.projects.map((project) => project.workspaceRoot),
+          ...deletedThreads.map((thread) => thread.workspaceRoot),
+        ]),
+      ],
+      (cwd) =>
+        git.listWorktreePaths(cwd).pipe(
+          Effect.map((paths) => paths.slice(0, 1)),
+          Effect.orElseSucceed(() => []),
+        ),
+    ).pipe(Effect.map((roots) => roots.flat()));
+    for (const directory of managedWorktreesDirectories(
+      serverSettings,
+      config.worktreesDir,
+      path,
+      yield* HostProcess.HomeDirectory,
+      repositoryRoots,
+    )) {
+      // An unmounted drive only skips its own worktrees.
+      const root = yield* fs.exists(directory).pipe(
+        Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
+        Effect.orElseSucceed(() => null),
+      );
+      if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
+    }
+
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const groups = Map.groupBy(
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
