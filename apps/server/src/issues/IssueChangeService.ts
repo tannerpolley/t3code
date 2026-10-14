@@ -244,8 +244,9 @@ const make = Effect.gen(function* () {
               Effect.mapError(storageError),
             );
       const policy = yield* settings.getSettings.pipe(Effect.mapError(storageError));
-      // Issue changes follow the requesting thread's permission mode, like commands: full access
-      // applies every change. "Ask before agents create, split or move issues" still holds those.
+      // Agents handle their issues themselves: only a thread in "approval required" mode, where the
+      // owner approves every action, waits. "Ask before agents create, split or move issues" still
+      // holds those three.
       const [mode] = yield* sql<{ runtime_mode: string }>`
         SELECT runtime_mode FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`.pipe(
         Effect.mapError(storageError),
@@ -253,7 +254,7 @@ const make = Effect.gen(function* () {
       const planning = ["create", "split", "milestone"].includes(op.type);
       const auto = planning
         ? !policy.issueUpkeepRequiresApproval
-        : mode?.runtime_mode === "full-access";
+        : mode?.runtime_mode !== "approval-required";
       const change: IssueChange = {
         ...input,
         id: yield* randomUuidV4,
