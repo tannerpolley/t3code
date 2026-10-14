@@ -2726,12 +2726,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect(
-    "keeps a subagent shell's tag and start across snapshots and stops it via the parent's query",
+    "keeps a background Bash command, tag and start across snapshots and stops it via the parent's query",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           const AGENT_TOOL_USE_ID = "toolu-shell-owner-agent";
           const BASH_TOOL_USE_ID = "toolu-shell-owner-bash";
+          const command = "for i in $(seq 1 40); do echo tick $i; sleep 3; done";
           const harness = yield* makeWakeHarness;
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -2739,20 +2740,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               providerThread: harness.providerThread,
               now: yield* DateTime.now,
               attemptId: RunAttemptId.make("attempt-subagent-shell-owner"),
-              text: "Have a subagent start the dev server.",
+              text: "Have a subagent print 40 ticks in the background.",
               attachments: [],
             }),
           );
-          const shellTask = { task_id: WAKE_TASK_ID, description: "npm run dev" };
+          const shellTask = {
+            task_id: WAKE_TASK_ID,
+            description: "Print 40 ticks, 3 seconds apart",
+          };
           for (const frame of [
             claudeSdkFrame({
               type: "system",
               subtype: "task_started",
               task_id: "task-shell-owner-agent",
               tool_use_id: AGENT_TOOL_USE_ID,
-              description: "Start the dev server",
+              description: "Print 40 ticks",
               task_type: "local_agent",
-              prompt: "Start the dev server.",
+              prompt: "Print 40 ticks.",
               uuid: "00000000-0000-4000-8000-000000000921",
               session_id: WAKE_NATIVE_SESSION,
             }),
@@ -2765,7 +2769,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     type: "tool_use",
                     id: BASH_TOOL_USE_ID,
                     name: "Bash",
-                    input: { command: "npm run dev", run_in_background: true },
+                    input: { command, run_in_background: true },
                   },
                 ],
               },
@@ -2793,6 +2797,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const firstRoster = yield* Queue.take(harness.rosterReceipts);
           const startedAt = firstRoster.providerThread.pendingBackgroundTasks?.[0]?.startedAt;
           assert.isDefined(startedAt);
+          assert.equal(firstRoster.providerThread.pendingBackgroundTasks?.[0]?.command, command);
           // A later snapshot must not restart the shell's clock.
           yield* TestClock.adjust("1 hour");
           // Snapshots carry ids only; the tag must survive the replacement.
@@ -2815,9 +2820,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.deepEqual(rosters().at(-1), [
             {
               taskId: WAKE_TASK_ID,
-              description: "npm run dev",
+              description: "Print 40 ticks, 3 seconds apart",
               kind: "command",
-              commandKind: "node",
+              commandKind: "shell",
+              command,
               ownerThreadId: childThreadId,
               startedAt,
             },
@@ -5055,6 +5061,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             kind: "monitor",
             description: "Monitor 0",
             commandKind: "watcher",
+            command: "sleep 8 && echo MONITOR_DONE",
             startedAt: now,
           },
         ]);

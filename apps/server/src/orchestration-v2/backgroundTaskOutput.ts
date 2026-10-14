@@ -428,17 +428,13 @@ const readBackgroundTaskResourceUsage = Effect.fn("orchestration.readBackgroundT
       tasks,
       ({ threadId, task }) =>
         Effect.gen(function* () {
-          const command = yield* Effect.option(
-            findBackgroundTaskCommand({
+          const command =
+            task.command ??
+            (yield* findBackgroundTaskCommand({
               threadId,
               taskId: task.taskId,
-            }),
-          );
-          return {
-            threadId,
-            task,
-            command: Option.getOrNull(command),
-          };
+            }).pipe(Effect.orElseSucceed(() => null)));
+          return { threadId, task, command };
         }),
       { concurrency: 4 },
     );

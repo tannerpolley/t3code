@@ -198,7 +198,10 @@ describe("orchestration V2 contracts", () => {
       updatedAt: timestamp,
       contextUsage: null,
       nativeMetadata: null,
-      pendingBackgroundTasks: [task, { ...task, taskId: "task-2", kind: "command" }],
+      pendingBackgroundTasks: [
+        task,
+        { ...task, taskId: "task-2", kind: "command", command: "python check.py" },
+      ],
     };
     const assistantItem = {
       id: "item-1",
@@ -258,7 +261,7 @@ describe("orchestration V2 contracts", () => {
         goal: null,
         pendingBackgroundTasks: [
           { ...task, kind: "background_task" },
-          { ...task, taskId: "task-2", kind: "command" },
+          { ...task, taskId: "task-2", kind: "command", command: "python check.py" },
         ],
       },
     });
@@ -269,6 +272,14 @@ describe("orchestration V2 contracts", () => {
         startedAt: now,
       }),
     ).toEqual({ ...task, startedAt: now, kind: "background_task" });
+    expect(
+      decodePendingBackgroundTask({
+        ...task,
+        startedAt: now,
+        kind: "command",
+        command: "python check.py",
+      }),
+    ).toEqual({ ...task, startedAt: now, kind: "command", command: "python check.py" });
   });
 
   it("carries command failure metadata through runtime and JSON schemas without output text", () => {

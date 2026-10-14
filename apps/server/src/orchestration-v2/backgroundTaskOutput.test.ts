@@ -7,9 +7,11 @@ import { it as effectIt } from "@effect/vitest";
 import {
   ProviderSessionId,
   ProviderThreadId,
+  ThreadId,
   type TerminalOpenInput,
   type TerminalSessionSnapshot,
 } from "@t3tools/contracts";
+import { shellCommandWords } from "@t3tools/shared/shellCommand";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -33,6 +35,9 @@ import {
   readOutputTail,
 } from "./backgroundTaskOutput.ts";
 import { codexBackgroundTaskLogPath, makeBackgroundTaskLogWriter } from "./backgroundTaskFiles.ts";
+
+const CLAUDE_BACKGROUND_COMMAND = "for i in $(seq 1 40); do echo tick $i; sleep 3; done";
+const CLAUDE_BACKGROUND_ARGV = String.raw`/bin/bash -c source /home/tnnrpolley21/.t3/provider-homes/claude/shell-snapshots/snapshot-bash-….sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'for i in $(seq 1 40); do echo tick $i; sleep 3; done' < /dev/null && pwd -P >| /tmp/claude-6c53-cwd`;
 
 const notice = (taskId: string, path: string) =>
   `Command running in background with ID: ${taskId}. Output is being written to: ${path}. You will be notified when it completes. To check interim output, use Read on that file path.`;
@@ -92,11 +97,25 @@ describe("aggregateBackgroundTaskProcessUsage", () => {
     );
   });
 
+  it("attributes the exact Claude background Bash argv captured in the sandbox", () => {
+    assert.includeDeepMembers(shellCommandWords(CLAUDE_BACKGROUND_ARGV), [
+      ["eval", CLAUDE_BACKGROUND_COMMAND],
+    ]);
+    assert.deepEqual(
+      aggregateBackgroundTaskProcessUsage({
+        processes: taskTree(CLAUDE_BACKGROUND_ARGV),
+        serverPid: 1,
+        command: CLAUDE_BACKGROUND_COMMAND,
+      }),
+      { cpuPercent: 18.5, residentBytes: 100 },
+    );
+  });
+
   it("attributes Claude's escaped eval command without counting sibling shells", () => {
     const command = `for i in $(seq 1 5); do echo "it's $i"; sleep 1; done`;
     // Claude single-quotes the operand and writes each ' as '"'"'.
     const escaped = `'for i in $(seq 1 5); do echo "it'"'"'s $i"; sleep 1; done'`;
-    const wrapper = `/bin/bash -c source /tmp/snapshot.sh && eval ${escaped} < /dev/null && pwd -P >| /tmp/cwd`;
+    const wrapper = CLAUDE_BACKGROUND_ARGV.replace(`'${CLAUDE_BACKGROUND_COMMAND}'`, escaped);
     assert.isFalse(wrapper.includes(command));
     assert.deepEqual(
       aggregateBackgroundTaskProcessUsage({
@@ -304,6 +323,60 @@ describe("followBackgroundTaskInTerminal", () => {
         ...(worktreePath === undefined ? {} : { worktreePath }),
       }),
     );
+
+  effectIt.effect("samples a Claude roster command without a launching turn item", () =>
+    Effect.gen(function* () {
+      const tasks = yield* BackgroundTasks;
+      assert.deepEqual(yield* tasks.resourceUsage({ threadIds: [ThreadId.make("thread-usage")] }), [
+        {
+          threadId: ThreadId.make("thread-usage"),
+          taskId: "byzb0gnxc",
+          cpuPercent: 1.5,
+          residentBytes: 200,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        backgroundTasksLayer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              dependencies,
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                getThreadShell: () =>
+                  Effect.succeed({
+                    lineage: { parentThreadId: null },
+                    pendingBackgroundTasks: [
+                      { taskId: "byzb0gnxc", kind: "command", command: CLAUDE_BACKGROUND_COMMAND },
+                    ],
+                  } as never),
+              }),
+              Layer.mock(ResourceTelemetry.ResourceTelemetry)({
+                refresh: Effect.succeed({
+                  health: { native: { status: "healthy" } },
+                  processes: [
+                    {
+                      identity: { pid: 20, startTimeMs: 1 },
+                      ppid: 10,
+                      command: CLAUDE_BACKGROUND_ARGV,
+                      cpuPercent: 1,
+                      residentBytes: 100,
+                    },
+                    {
+                      identity: { pid: 21, startTimeMs: 1 },
+                      ppid: 20,
+                      command: "sleep 3",
+                      cpuPercent: 0.5,
+                      residentBytes: 100,
+                    },
+                  ],
+                } as never),
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
   effectIt.effect(
     "follows a Claude task's file or a Codex task's log, and only the thread's own tasks",

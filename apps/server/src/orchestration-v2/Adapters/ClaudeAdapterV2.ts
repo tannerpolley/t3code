@@ -3498,7 +3498,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const taskOutputDirByNativeThread = new Map<string, string>();
         const backgroundToolUses = new Map<
           string,
-          { readonly commandKind: string; readonly ownerToolUseId: string | null }
+          {
+            readonly command: string;
+            readonly commandKind: string;
+            readonly ownerToolUseId: string | null;
+          }
         >();
         const pendingBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
@@ -4033,6 +4037,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                           ...(kept?.commandKind === undefined
                             ? {}
                             : { commandKind: kept.commandKind }),
+                          ...(kept?.command === undefined ? {} : { command: kept.command }),
                           startedAt: kept?.startedAt ?? now,
                         },
                       ] as const;
@@ -6586,7 +6591,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   typeof message.description === "string" ? message.description : undefined,
               }),
               ...(ownerThreadId === undefined ? {} : { ownerThreadId }),
-              ...(toolUse === undefined ? {} : { commandKind: toolUse.commandKind }),
+              ...(toolUse === undefined
+                ? {}
+                : { commandKind: toolUse.commandKind, command: toolUse.command }),
             });
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_notification") {
@@ -6737,6 +6744,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : undefined;
               if (typeof command === "string")
                 backgroundToolUses.set(tool.id, {
+                  command,
                   commandKind: tool.name === "Monitor" ? "watcher" : classifyShellCommand(command),
                   ownerToolUseId: parentToolUseIdFromSdkMessage(message),
                 });

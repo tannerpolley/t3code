@@ -923,6 +923,7 @@ function pendingBackgroundTaskSchema<
     childThreadId: Schema.optional(ThreadId),
     startedAt: Schema.optional(startedAt),
     commandKind: Schema.optional(TrimmedNonEmptyString),
+    command: Schema.optional(Schema.String),
     /** App thread that spawned a command in a shared provider session. */
     ownerThreadId: Schema.optional(ThreadId),
   };
