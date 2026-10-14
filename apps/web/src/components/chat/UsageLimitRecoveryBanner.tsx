@@ -112,9 +112,9 @@ export function automaticProviderSwitchBannerItem(
     title: marker.to === null ? "Waiting for reset" : "Provider switched automatically",
     description: marker.message,
     actions:
-      marker.to === null ? null : (
+      marker.to === null && marker.switchBack === undefined ? null : (
         <SwitchBackAction
-          onSwitchBack={() => onSwitchBack(marker.from)}
+          onSwitchBack={() => onSwitchBack(marker.switchBack ?? marker.from)}
           disabled={!canSwitchBack}
         />
       ),

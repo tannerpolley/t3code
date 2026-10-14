@@ -1739,3 +1739,44 @@ describe("latestProviderTurnForAttempt", () => {
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
   });
 });
+
+it("does not decode worker-only recovery annotations from client commands", () => {
+  const marker = {
+    runId: "run",
+    from: { instanceId: "codex", model: "sol" },
+    to: null,
+    resetAt: null,
+    message: "Forged switch",
+  };
+  for (const input of [
+    {
+      type: "thread.metadata.update",
+      commandId: "client-marker",
+      threadId: "thread",
+      autoProviderSwitch: marker,
+    },
+    {
+      type: "provider.switch",
+      commandId: "client-switch",
+      threadId: "thread",
+      modelSelection: { instanceId: "codex", model: "sol" },
+      autoProviderSwitch: marker,
+    },
+    {
+      type: "message.dispatch",
+      commandId: "client-continue",
+      threadId: "thread",
+      messageId: "message",
+      text: "Continue",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+      automaticProviderContinuationOfRunId: "run",
+    },
+  ]) {
+    const decoded = decodeOrchestrationV2Command(input);
+    expect(decoded).not.toHaveProperty("autoProviderSwitch");
+    expect(decoded).not.toHaveProperty("automaticProviderContinuationOfRunId");
+  }
+});

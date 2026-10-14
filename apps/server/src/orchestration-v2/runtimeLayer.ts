@@ -400,6 +400,7 @@ export const layerProduction = Layer.mergeAll(
       Layer.mergeAll(
         ProjectionStore.layer,
         layerThreadManagementProvided,
+        layerOrchestratorProvided,
         layerProviderAdapterRegistryProvided,
         layerEventSinkProvided,
       ),

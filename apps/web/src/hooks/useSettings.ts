@@ -679,7 +679,11 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
         });
       }
       if (Object.keys(serverPatch).length > 0 && canWriteServerPatch) {
-        const { sharedPatch, localPatch } = splitSharedServerPatch(serverPatch);
+        const { sharedPatch, localPatch } = splitSharedServerPatch(
+          serverPatch,
+          environments.find((environment) => environment.environmentId === environmentId)
+            ?.serverConfig?.settings,
+        );
         // Dropping the write silently leaves the control looking saved.
         const warnUnsaved = (description = PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE) =>
           toastManager.add({

@@ -1,4 +1,12 @@
-import { CommandId, MessageId, type OrchestrationV2Command } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  type ServerSettingsError,
+  type OrchestrationV2Command,
+} from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Option from "effect/Option";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -71,25 +79,50 @@ export function limitRecoveryCommand(
   };
 }
 
+export class UsageLimitRecoveryWorker extends Context.Service<
+  UsageLimitRecoveryWorker,
+  {
+    readonly sweep: Effect.Effect<
+      void,
+      ProjectionStore.ProjectionStoreV2Error | ServerSettingsError
+    >;
+  }
+>()("t3/orchestration-v2/UsageLimitRecoveryWorker") {}
+
 const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const settings = yield* ServerSettings.ServerSettingsService;
-  return Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
+  const providers = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const sweep = Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
     const preferences = yield* settings.getSettings;
     const now = yield* DateTime.now;
+    const waitForInstanceIds =
+      preferences.usageLimitRecovery === "switch" && Option.isSome(providers)
+        ? (yield* providers.value.getProviders)
+            .filter((provider) => provider.driver !== "codex" && provider.driver !== "claudeAgent")
+            .map((provider) => provider.instanceId)
+        : [];
     const candidates = yield* projections.getLimitRecoveryCandidates({
+      waitForInstanceIds,
       now,
       autoResume: preferences.usageLimitRecovery === "wait" && preferences.autoResumeLimitedThreads,
       snooze: preferences.usageLimitRecovery === "wait" && preferences.snoozeLimitedThreads,
     });
     const nowMs = DateTime.toEpochMillis(now);
     for (const thread of candidates) {
+      const fallbackWait =
+        preferences.usageLimitRecovery === "switch" &&
+        (waitForInstanceIds.includes(thread.providerInstanceId) ||
+          (thread.autoProviderSwitch?.runId === thread.latestRunId &&
+            thread.autoProviderSwitch.to === null));
       const command = limitRecoveryCommand(
         thread,
-        preferences.usageLimitRecovery === "wait" && preferences.autoResumeLimitedThreads,
+        fallbackWait ||
+          (preferences.usageLimitRecovery === "wait" && preferences.autoResumeLimitedThreads),
         nowMs,
-        preferences.usageLimitRecovery === "wait" && preferences.snoozeLimitedThreads,
+        fallbackWait ||
+          (preferences.usageLimitRecovery === "wait" && preferences.snoozeLimitedThreads),
       );
       if (command === null) continue;
       yield* threads.dispatch(command).pipe(
@@ -102,14 +135,17 @@ const makeSweep = Effect.gen(function* () {
       );
     }
   });
+  return UsageLimitRecoveryWorker.of({ sweep: sweep() });
 });
+
+export const serviceLayer = Layer.effect(UsageLimitRecoveryWorker, makeSweep);
 
 // The shared scheduler derives due work from persisted failures and recovery
 // choices, so restarts need no timer restoration or connected client.
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const sweep = yield* makeSweep;
+    const { sweep } = yield* makeSweep;
     const scheduler = yield* Scheduler.Scheduler;
-    yield* scheduler.register("usage-limit-recovery", sweep());
+    yield* scheduler.register("usage-limit-recovery", sweep);
   }),
 );

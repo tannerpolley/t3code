@@ -39,6 +39,7 @@ export function usageLimitSwitchTarget(
   providers: readonly ServerProvider[],
   capableIds: ReadonlySet<ProviderInstanceId>,
   now: number,
+  excludedTargetInstanceIds: ReadonlySet<ProviderInstanceId> = new Set(),
 ): ModelSelection | null {
   const source = providers.find(
     (provider) => provider.instanceId === thread.modelSelection.instanceId,
@@ -52,30 +53,42 @@ export function usageLimitSwitchTarget(
     ...(selection.options === undefined ? {} : { options: selection.options }),
   }));
   const first = fallbackTargets[0];
-  if (!role && !first) return null;
-  const candidates = role ?? {
-    id: "usage-limit-fallback",
-    name: "Usage limit fallback",
-    description: "",
-    targets: [first!, ...fallbackTargets.slice(1)] as const,
-  };
-  const choices = modelRoleStatuses([candidates], providers, capableIds, now)[0]?.targets ?? [];
-  const choice = choices.find((target) => {
-    const provider = providers.find(
-      (provider) => provider.instanceId === target.providerInstanceId,
-    );
-    return (
-      target.unavailableReason === null &&
-      provider !== undefined &&
-      (provider.driver === "codex" || provider.driver === "claudeAgent") &&
-      provider.driver !== source.driver &&
-      target.weeklyUsage?.remainingPercent !== 0 &&
-      !provider.usageLimits?.windows.some(
-        (window) =>
-          window.kind !== "weekly" && window.usedPercent >= 100 && !isUsageWindowStale(window, now),
-      )
-    );
-  });
+  const fallbackRole =
+    first === undefined
+      ? undefined
+      : {
+          id: "usage-limit-fallback",
+          name: "Usage limit fallback",
+          description: "",
+          targets: [first, ...fallbackTargets.slice(1)] as const,
+        };
+  const ranked = modelRoleStatuses(
+    [...(role === undefined ? [] : [role]), ...(fallbackRole === undefined ? [] : [fallbackRole])],
+    providers,
+    capableIds,
+    now,
+  );
+  const choice = ranked
+    .flatMap((candidate) => candidate.targets)
+    .find((target) => {
+      const provider = providers.find(
+        (provider) => provider.instanceId === target.providerInstanceId,
+      );
+      return (
+        target.unavailableReason === null &&
+        provider !== undefined &&
+        !excludedTargetInstanceIds.has(target.providerInstanceId) &&
+        (provider.driver === "codex" || provider.driver === "claudeAgent") &&
+        provider.driver !== source.driver &&
+        target.weeklyUsage?.remainingPercent !== 0 &&
+        !provider.usageLimits?.windows.some(
+          (window) =>
+            window.kind !== "weekly" &&
+            window.usedPercent >= 100 &&
+            !isUsageWindowStale(window, now),
+        )
+      );
+    });
   return choice === undefined
     ? null
     : {

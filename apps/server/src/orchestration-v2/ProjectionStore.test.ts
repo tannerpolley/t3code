@@ -2940,6 +2940,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             archivedAt: sqlShell.archivedAt,
             settledOverride: sqlShell.settledOverride,
             pendingRuntimeRequest: null,
+            providerInstanceId: sqlShell.providerInstanceId,
+            autoProviderSwitch: sqlShell.autoProviderSwitch,
             limitRecovery: sqlShell.limitRecovery,
             snoozedUntil: sqlShell.snoozedUntil,
           });

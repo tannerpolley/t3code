@@ -7941,9 +7941,11 @@ export default function ChatView(props: ChatViewProps) {
   const switchMarker = activeThreadShell?.autoProviderSwitch;
   const automaticSwitchBanner =
     switchMarker &&
-    (switchMarker.to === null
-      ? activeThreadShell?.latestRun?.runId === switchMarker.runId
-      : activeThreadShell?.modelSelection.instanceId === switchMarker.to.instanceId)
+    ((switchMarker.switchBack !== undefined &&
+      activeThreadShell?.modelSelection.instanceId !== switchMarker.switchBack.instanceId) ||
+      (switchMarker.to === null
+        ? activeThreadShell?.latestRun?.runId === switchMarker.runId
+        : activeThreadShell?.modelSelection.instanceId === switchMarker.to.instanceId))
       ? automaticProviderSwitchBannerItem(
           switchMarker,
           async (modelSelection) => {

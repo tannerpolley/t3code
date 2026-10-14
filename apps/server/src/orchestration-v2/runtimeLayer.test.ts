@@ -4,6 +4,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { type ServerProvider, type ModelRole } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -6080,25 +6081,27 @@ const layerSwitchInstances = Layer.succeed(ProviderInstanceRegistry.ProviderInst
   streamChanges: Stream.empty,
   subscribeChanges: Effect.never,
 });
-const layerUsageSwitchTest = Layer.mergeAll(
-  RuntimeLayer.layer,
-  RuntimeLayer.layerEventSink,
-  ProjectStore.layer,
-  ProjectionStore.layer,
-  EffectOutbox.layer,
-  ThreadCommandExecutor.layer,
-).pipe(
-  Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(McpProviderSessions.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
-  Layer.provide(layerCheckpointStoreTest),
-  Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(layerSwitchInstances),
-  Layer.provide(layerGitWorkflowTest),
-  Layer.provide(layerProjectServiceTest),
-  Layer.provide(layerPlatformTest),
-);
+const makeUsageSwitchTest = (preferences: Parameters<typeof ServerSettings.layerTest>[0] = {}) =>
+  Layer.mergeAll(
+    RuntimeLayer.layer,
+    RuntimeLayer.layerEventSink,
+    ProjectStore.layer,
+    ProjectionStore.layer,
+    EffectOutbox.layer,
+    ThreadCommandExecutor.layer,
+  ).pipe(
+    Layer.provide(McpSessionRegistryTestkit.layer),
+    Layer.provide(McpProviderSessions.layer),
+    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provide(layerCheckpointStoreTest),
+    Layer.provide(layerServerConfig),
+    Layer.provideMerge(ServerSettings.layerTest(preferences)),
+    Layer.provide(layerSwitchInstances),
+    Layer.provide(layerGitWorkflowTest),
+    Layer.provide(layerProjectServiceTest),
+    Layer.provide(layerPlatformTest),
+  );
+const layerUsageSwitchTest = makeUsageSwitchTest();
 const switchSnapshots: readonly ServerProvider[] = [modelSelection, claudeSelection].map(
   (selection) => ({
     instanceId: selection.instanceId,
@@ -6129,6 +6132,11 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
     "reactor",
     "claude-to-codex",
     "both-limited",
+    "queued",
+    "back-before-reset",
+    "expired-no-target",
+    "out-of-scope",
+    "retired",
   ] as const)("recovers committed failures: %s", (scenario) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -6178,10 +6186,26 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
           creationSource: "web",
         });
       }
+      if (scenario === "queued")
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:queued`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:queued`),
+          text: "Next task",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
       const initial = yield* orchestrator.getThreadProjection(threadId);
       const original = initial.runs[0]!;
       const resetAt =
-        scenario === "unknown-reset" ? null : DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+        scenario === "unknown-reset"
+          ? null
+          : DateTime.formatIso(
+              DateTime.add(now, { hours: scenario === "expired-no-target" ? -1 : 1 }),
+            );
       const role: ModelRole = {
         id: "implementor-thorough",
         role: "implementor",
@@ -6205,16 +6229,28 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
               ? ("wait" as const)
               : ("switch" as const),
         modelRoles: scenario === "role" || scenario === "reactor" ? [role] : [],
-        usageLimitFallbackModels: scenario === "unavailable" ? [] : [target],
+        usageLimitFallbackModels:
+          scenario === "unavailable" || scenario === "expired-no-target" ? [] : [target],
         dontAskMode: true,
         autoResumeLimitedThreads: scenario === "wait",
         snoozeLimitedThreads: scenario === "wait",
       };
-      const workerLayer = UsageLimitProviderSwitchWorker.layer.pipe(
+      const workerLayer = Layer.merge(
+        UsageLimitProviderSwitchWorker.layer,
+        UsageLimitRecoveryWorker.serviceLayer,
+      ).pipe(
         Layer.provide(ServerSettings.layerTest(settings)),
         Layer.provide(
           Layer.mock(ProviderRegistry.ProviderRegistry)({
-            getProviders: Effect.succeed(switchSnapshots),
+            getProviders: Effect.succeed(
+              scenario === "out-of-scope"
+                ? switchSnapshots.map((provider) =>
+                    provider.instanceId === source.instanceId
+                      ? { ...provider, driver: ProviderDriverKind.make("cursor") }
+                      : provider,
+                  )
+                : switchSnapshots,
+            ),
           }),
         ),
         Layer.provide(
@@ -6225,6 +6261,7 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
       );
       yield* Effect.gen(function* () {
         const worker = yield* UsageLimitProviderSwitchWorker.UsageLimitProviderSwitchWorker;
+        const resetWorker = yield* UsageLimitRecoveryWorker.UsageLimitRecoveryWorker;
         const afterSequence = yield* sink.latestSequence();
         const continued = yield* Deferred.make<void>();
         if (scenario === "reactor") {
@@ -6297,7 +6334,6 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
           ],
         });
         const otherBefore = yield* orchestrator.getThreadProjection(otherId);
-        const limited = (yield* projections.getThreadShell(threadId))!;
         if (scenario === "user-race") {
           // A saved automatic command cannot override a later user-selected model.
           yield* orchestrator.dispatch({
@@ -6328,6 +6364,61 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
             "user-selected",
           );
           assert.isNull((yield* projections.getThreadShell(threadId))?.autoProviderSwitch ?? null);
+          assert.lengthOf(
+            yield* projections.getLimitRecoveryCandidates({
+              now,
+              autoResume: false,
+              snooze: false,
+              switchProvider: true,
+              switchProviderInstanceIds: [source.instanceId],
+            }),
+            0,
+          );
+          return;
+        }
+        if (scenario === "retired") {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:retired`),
+                type: "thread.metadata-updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...initial.thread,
+                  repositoryOrchestration: {
+                    host: "github.com",
+                    repository: "owner/repo",
+                    repositoryId: "repository",
+                    projectId,
+                    launchCommandId: CommandId.make("launch"),
+                    revision: 1,
+                    paused: false,
+                    workerLimit: 4,
+                    publishStatusComments: false,
+                    publishCloseoutComments: false,
+                    milestones: [],
+                    suspendedIssues: [],
+                    retiredToThreadId: otherId,
+                  },
+                },
+              },
+            ],
+          });
+          assert.lengthOf(
+            yield* projections.getLimitRecoveryCandidates({
+              now,
+              autoResume: true,
+              snooze: true,
+              switchProvider: true,
+              switchProviderInstanceIds: [source.instanceId],
+            }),
+            0,
+          );
+          yield* worker.recover(threadId);
+          assert.isUndefined(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.autoProviderSwitch,
+          );
           return;
         }
         if (scenario === "restart") {
@@ -6349,27 +6440,39 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
         else yield* worker.sweep;
         const changed = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(yield* orchestrator.getThreadProjection(otherId), otherBefore);
-        if (scenario === "off" || scenario === "wait") {
+        if (scenario === "off" || scenario === "wait" || scenario === "out-of-scope") {
           assert.deepEqual(changed.thread.modelSelection, source);
           assert.isNull(changed.thread.autoProviderSwitch ?? null);
           assert.equal(changed.runs.length, 1);
-          const recovery = limitRecoveryCommand(
-            limited,
-            settings.autoResumeLimitedThreads,
-            DateTime.toEpochMillis(now),
-            settings.snoozeLimitedThreads,
-          );
-          if (scenario === "off") assert.isNull(recovery);
+          yield* resetWorker.sweep;
+          const armed = (yield* projections.getThreadShell(threadId))!;
+          if (scenario === "off") assert.isNull(armed.limitRecovery ?? null);
           else {
-            assert.isNotNull(recovery);
-            yield* orchestrator.dispatch(recovery!);
-            const armed = (yield* projections.getThreadShell(threadId))!;
-            const resume = limitRecoveryCommand(armed, true, Date.parse(resetAt!));
-            assert.isNotNull(resume);
+            assert.isTrue(armed.limitRecovery?.autoResume);
+            assert.isTrue(armed.limitRecovery?.snooze);
             yield* TestClock.adjust("1 hour");
-            yield* orchestrator.dispatch(resume!);
+            yield* resetWorker.sweep;
             assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 2);
           }
+          return;
+        }
+        if (scenario === "expired-no-target") {
+          assert.equal(changed.thread.autoProviderSwitch?.to, null);
+          assert.isNull(changed.thread.limitRecovery ?? null);
+          assert.lengthOf(
+            yield* projections.getLimitRecoveryCandidates({
+              now,
+              autoResume: false,
+              snooze: false,
+              switchProvider: true,
+              switchProviderInstanceIds: [source.instanceId],
+            }),
+            0,
+          );
+          const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+          yield* worker.sweep;
+          yield* resetWorker.sweep;
+          assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
           return;
         }
         if (scenario === "unavailable") {
@@ -6378,16 +6481,115 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
           assert.include(changed.thread.autoProviderSwitch!.message, "No alternative");
           assert.isTrue(changed.thread.limitRecovery?.autoResume);
           assert.isTrue(changed.thread.limitRecovery?.snooze);
-          const armed = (yield* projections.getThreadShell(threadId))!;
           yield* TestClock.adjust("1 hour");
-          yield* orchestrator.dispatch(limitRecoveryCommand(armed, false, Date.parse(resetAt!))!);
+          yield* resetWorker.sweep;
           assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 2);
           return;
         }
         assert.deepEqual(changed.thread.modelSelection, target);
         assert.deepEqual(changed.thread.autoProviderSwitch?.from, source);
-        assert.equal(changed.runs.length, 2);
-        assert.equal(changed.runs[1]?.providerInstanceId, target.instanceId);
+        const continuation = changed.runs.find(
+          (run) =>
+            run.userMessageId === MessageId.make(`limit-switch-resume:${threadId}:${original.id}`),
+        )!;
+        assert.equal(changed.runs.length, scenario === "queued" ? 3 : 2);
+        assert.equal(continuation.providerInstanceId, target.instanceId);
+        if (scenario === "queued") {
+          const queued = changed.runs.find((run) => run.status === "queued")!;
+          assert.deepEqual(queued.modelSelection, target);
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:continue-completed`),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...continuation, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.resumeQueuedRuns;
+          const started = yield* orchestrator.getThreadProjection(threadId);
+          const next = started.runs.find((run) => run.id === queued.id)!;
+          assert.equal(next.status, "starting");
+          assert.deepEqual(next.modelSelection, target);
+          assert.deepEqual(started.thread.modelSelection, target);
+          assert.equal(
+            started.attempts.find((attempt) => attempt.id === next.activeAttemptId)
+              ?.providerInstanceId,
+            target.instanceId,
+          );
+          assert.equal(
+            started.nodes.find((node) => node.id === next.rootNodeId)?.providerThreadId,
+            next.providerThreadId,
+          );
+          return;
+        }
+        if (scenario === "back-before-reset") {
+          const marker = changed.thread.autoProviderSwitch!;
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${threadId}:early-back`),
+            threadId,
+            modelSelection: marker.switchBack ?? marker.from,
+          });
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:continue-completed`),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...continuation, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:retry`),
+            threadId,
+            messageId: MessageId.make(`${threadId}:retry`),
+            text: "Try again",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const next = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+          const error = changed.turnItems.find((item) => item.type === "error")!;
+          if (error.type !== "error") return;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:retry-failed`),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...next, status: "failed", completedAt: now },
+              },
+              {
+                id: EventId.make(`${threadId}:retry-error`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...error,
+                  id: TurnItemId.make(`${threadId}:retry-error`),
+                  runId: next.id,
+                  nodeId: next.rootNodeId,
+                  providerThreadId: next.providerThreadId,
+                },
+              },
+            ],
+          });
+          yield* worker.recover(threadId);
+          const again = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(again.thread.modelSelection, target);
+          assert.equal(again.thread.autoProviderSwitch?.runId, next.id);
+          assert.deepEqual(again.thread.autoProviderSwitch?.switchBack, source);
+          assert.equal(again.runs.length, 4);
+          return;
+        }
         assert.isTrue(
           changed.turnItems.some(
             (item) => item.type === "user_message" && item.text === "Continue where you left off.",
@@ -6467,6 +6669,7 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
           const waiting = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(waiting.thread.modelSelection, target);
           assert.equal(waiting.thread.autoProviderSwitch?.to, null);
+          assert.deepEqual(waiting.thread.autoProviderSwitch?.switchBack, source);
           assert.equal(
             waiting.runs.length,
             2,
@@ -6484,7 +6687,7 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
           type: "thread.model-selection.set",
           commandId: CommandId.make(`${threadId}:switch-back`),
           threadId,
-          modelSelection: source,
+          modelSelection: marker.switchBack ?? marker.from,
         });
         assert.deepEqual(
           (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
@@ -6494,3 +6697,195 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
     }),
   );
 });
+it.effect.each(["switch", "wait"] as const)(
+  "holds a delegated child's limited result through %s recovery",
+  (mode) => {
+    const preferences = {
+      usageLimitRecovery: mode,
+      autoResumeLimitedThreads: mode === "wait",
+      snoozeLimitedThreads: mode === "wait",
+      usageLimitFallbackModels: [claudeSelection],
+    };
+    const workers = Layer.merge(
+      UsageLimitProviderSwitchWorker.layer,
+      UsageLimitRecoveryWorker.serviceLayer,
+    ).pipe(
+      Layer.provide(
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed(switchSnapshots),
+        }),
+      ),
+      Layer.provide(
+        ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+          Layer.provide(layerSwitchInstances),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const switchWorker = yield* UsageLimitProviderSwitchWorker.UsageLimitProviderSwitchWorker;
+      const resetWorker = yield* UsageLimitRecoveryWorker.UsageLimitRecoveryWorker;
+      const parentThreadId = ThreadId.make(`limit-child:${mode}:parent`);
+      const projectId = ProjectId.make(`limit-child:${mode}:project`);
+      const now = yield* DateTime.now;
+      yield* seedProject({
+        projectId,
+        title: "Delegated recovery",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${parentThreadId}:create`),
+        threadId: parentThreadId,
+        projectId,
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${parentThreadId}:start`),
+        threadId: parentThreadId,
+        messageId: MessageId.make(`${parentThreadId}:start`),
+        text: "Delegate the work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make(`${parentThreadId}:delegate`),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Finish the implementation",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+      const childThreadId = task.childThreadId!;
+      const child = yield* orchestrator.getThreadProjection(childThreadId);
+      const original = child.runs[0]!;
+      yield* sink.write({
+        commandId: CommandId.make(`${childThreadId}:failure`),
+        events: [
+          {
+            id: EventId.make(`${childThreadId}:failed`),
+            type: "run.updated",
+            threadId: childThreadId,
+            occurredAt: now,
+            payload: { ...original, status: "failed", completedAt: now },
+          },
+          {
+            id: EventId.make(`${childThreadId}:error`),
+            type: "turn-item.updated",
+            threadId: childThreadId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${childThreadId}:error`),
+              type: "error",
+              threadId: childThreadId,
+              runId: original.id,
+              nodeId: original.rootNodeId,
+              providerThreadId: original.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Allowance used",
+                code: "usageLimitExceeded",
+                retryable: null,
+                resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+              },
+            },
+          },
+        ],
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      assert.isNull((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result);
+      assert.isTrue(yield* orchestrator.delegatedTaskResultPending(childThreadId, task.id));
+      if (mode === "switch") yield* switchWorker.recover(childThreadId);
+      else {
+        yield* resetWorker.sweep;
+        yield* TestClock.adjust("1 hour");
+        yield* resetWorker.sweep;
+      }
+      const resumed = yield* orchestrator.getThreadProjection(childThreadId);
+      const continuation = resumed.runs.findLast(
+        (run) => run.id !== original.id && run.delegatedTaskId === task.id,
+      )!;
+      assert.equal(continuation.delegatedTaskId, task.id);
+      assert.isNull((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result);
+      const completedAt = yield* DateTime.now;
+      yield* sink.write({
+        commandId: CommandId.make(`${childThreadId}:success`),
+        events: [
+          {
+            id: EventId.make(`${childThreadId}:completed`),
+            type: "run.updated",
+            threadId: childThreadId,
+            occurredAt: completedAt,
+            payload: { ...continuation, status: "completed", completedAt },
+          },
+          {
+            id: EventId.make(`${childThreadId}:answer`),
+            type: "message.updated",
+            threadId: childThreadId,
+            occurredAt: completedAt,
+            payload: {
+              ...resumed.messages[0]!,
+              id: MessageId.make(`${childThreadId}:answer`),
+              runId: continuation.id,
+              nodeId: continuation.rootNodeId,
+              role: "assistant",
+              text: "Recovered task result",
+              streaming: false,
+              updatedAt: completedAt,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+      const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+      assert.equal(parent.subagents.length, 1);
+      assert.equal(parent.subagents[0]!.status, "completed");
+      assert.include(parent.subagents[0]!.result ?? "", "Recovered task result");
+      const transfers = parent.contextTransfers.filter(
+        (transfer) =>
+          transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+      );
+      assert.lengthOf(transfers, 1);
+      yield* orchestrator.recoverDelegatedTasks;
+      yield* switchWorker.sweep;
+      yield* resetWorker.sweep;
+      assert.lengthOf(
+        (yield* orchestrator.getThreadProjection(parentThreadId)).contextTransfers.filter(
+          (transfer) =>
+            transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+        ),
+        1,
+      );
+    }).pipe(Effect.provide(workers.pipe(Layer.provideMerge(makeUsageSwitchTest(preferences)))));
+  },
+);

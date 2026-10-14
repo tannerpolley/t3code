@@ -40,7 +40,6 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProjectId,
-  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -64,6 +63,7 @@ import {
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
+  ProviderInstanceId,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -160,6 +160,10 @@ export type ProjectionRecoveryKind =
   | "delegated-completions"
   | "pending-requests";
 
+const encodeRecoveryInstanceIds = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(ProviderInstanceId)),
+);
+
 /** Persisted state needed for limit recovery, without transcript or fork history. */
 export type ProjectionLimitRecoveryCandidate = Pick<
   OrchestrationV2ThreadShell,
@@ -174,6 +178,8 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "latestRunCompletedAt"
   | "updatedAt"
   | "limitRecovery"
+  | "autoProviderSwitch"
+  | "providerInstanceId"
   | "snoozedUntil"
 >;
 
@@ -440,6 +446,8 @@ export interface ProjectionStoreV2Shape {
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly switchProvider?: boolean;
+    readonly switchProviderInstanceIds?: ReadonlyArray<ProviderInstanceId>;
+    readonly waitForInstanceIds?: ReadonlyArray<ProviderInstanceId>;
     readonly autoResume: boolean;
     readonly snooze: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
@@ -3887,15 +3895,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           WHERE t.deleted_at IS NULL
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+            AND json_extract(t.payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
+            AND (
+              (t.provider_instance_id = r.provider_instance_id
+                AND json_extract(t.payload_json, '$.modelSelection.model') IS json_extract(r.payload_json, '$.modelSelection.model')
+                AND COALESCE(json_extract(t.payload_json, '$.modelSelection.options'), '[]') IS COALESCE(json_extract(r.payload_json, '$.modelSelection.options'), '[]'))
+              OR (json_extract(t.payload_json, '$.autoProviderSwitch.runId') IS r.run_id
+                AND json_extract(t.payload_json, '$.autoProviderSwitch.to.instanceId') IS t.provider_instance_id
+                AND json_extract(t.payload_json, '$.autoProviderSwitch.to.model') IS json_extract(t.payload_json, '$.modelSelection.model')
+                AND COALESCE(json_extract(t.payload_json, '$.autoProviderSwitch.to.options'), '[]') IS COALESCE(json_extract(t.payload_json, '$.modelSelection.options'), '[]'))
+            )
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
             AND ((
-              ${booleanInt(options.switchProvider ?? false)} AND (
+              ${booleanInt(options.switchProvider ?? false)}
+              AND json_extract(t.payload_json, '$.snoozedUntil') IS NULL
+              AND t.provider_instance_id IN (SELECT value FROM json_each(${encodeRecoveryInstanceIds(options.switchProviderInstanceIds ?? [])}))
+              AND (
                 json_extract(t.payload_json, '$.autoProviderSwitch.runId') IS NOT r.run_id
                 OR json_extract(t.payload_json, '$.autoProviderSwitch.to.instanceId') IS NOT NULL
-                OR (
-                  json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
-                  AND json_extract(t.payload_json, '$.limitRecovery.runId') IS NOT r.run_id
-                )
               )
             ) OR (
             json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
@@ -3918,6 +3935,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
                 AND (
                   ${booleanInt(options.autoResume)}
+                  OR r.provider_instance_id IN (SELECT value FROM json_each(${encodeRecoveryInstanceIds(options.waitForInstanceIds ?? [])}))
+                  OR (json_extract(t.payload_json, '$.autoProviderSwitch.runId') IS r.run_id AND json_extract(t.payload_json, '$.autoProviderSwitch.to') IS NULL AND json_extract(t.payload_json, '$.autoProviderSwitch.message') IS NOT NULL)
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
               )
@@ -3954,6 +3973,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             archivedAt: thread.archivedAt,
             settledOverride: thread.settledOverride,
             pendingRuntimeRequest: null,
+            autoProviderSwitch: thread.autoProviderSwitch ?? null,
+            providerInstanceId: thread.providerInstanceId,
             limitRecovery: thread.limitRecovery ?? null,
             snoozedUntil: thread.snoozedUntil ?? null,
           });

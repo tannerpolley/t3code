@@ -24,7 +24,10 @@ export function UsageLimitRecoverySettings() {
   const providers = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
-  ).filter((entry) => entry.driverKind === "codex" || entry.driverKind === "claudeAgent");
+  ).filter(
+    (entry) =>
+      entry.enabled && (entry.driverKind === "codex" || entry.driverKind === "claudeAgent"),
+  );
   const models = getCustomModelOptionsByInstance(settings, providers);
   const save = (selection: ModelSelection) =>
     update({
@@ -74,7 +77,7 @@ export function UsageLimitRecoverySettings() {
                 serverScoped
                 settingKeys={["usageLimitFallbackModels"]}
                 title={`${entry.displayName} fallback`}
-                description="Model and effort used when a thread has no matching model role. Choose effort separately for each provider."
+                description="Model and effort used when the thread’s role has no available choice on another provider, or no role matches. Choose effort separately for each provider."
                 control={
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <ProviderModelPicker
@@ -130,6 +133,32 @@ export function UsageLimitRecoverySettings() {
             );
           })
         : null}
+      {settings.usageLimitFallbackModels
+        .filter((selection) => !entries.some((entry) => entry.instanceId === selection.instanceId))
+        .map((selection) => (
+          <SettingsRow
+            key={selection.instanceId}
+            serverScoped
+            settingKeys={["usageLimitFallbackModels"]}
+            title={`${selection.instanceId} fallback`}
+            description={`${selection.model} · Provider is disabled or no longer configured.`}
+            control={
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  update({
+                    usageLimitFallbackModels: settings.usageLimitFallbackModels.filter(
+                      (saved) => saved.instanceId !== selection.instanceId,
+                    ),
+                  })
+                }
+              >
+                Clear
+              </Button>
+            }
+          />
+        ))}
     </>
   );
 }

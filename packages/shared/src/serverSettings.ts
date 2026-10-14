@@ -380,28 +380,36 @@ function translateLegacyProjectOverridePatch(
   } as ServerSettingsPatch;
 }
 
+/** Retired switches remain accepted from older clients; the mode owns the preference. */
+export function normalizeUsageLimitRecoveryPatch(
+  current: Pick<ServerSettings, "autoResumeLimitedThreads" | "snoozeLimitedThreads">,
+  patch: ServerSettingsPatch,
+): ServerSettingsPatch {
+  if (patch.usageLimitRecovery !== undefined)
+    return {
+      ...patch,
+      autoResumeLimitedThreads:
+        patch.usageLimitRecovery === "wait" && (patch.autoResumeLimitedThreads ?? true),
+      snoozeLimitedThreads:
+        patch.usageLimitRecovery === "wait" && (patch.snoozeLimitedThreads ?? true),
+    };
+  if (patch.autoResumeLimitedThreads === undefined && patch.snoozeLimitedThreads === undefined)
+    return patch;
+  const autoResume = patch.autoResumeLimitedThreads ?? current.autoResumeLimitedThreads;
+  const snooze = patch.snoozeLimitedThreads ?? current.snoozeLimitedThreads;
+  return {
+    ...patch,
+    usageLimitRecovery: autoResume || snooze ? "wait" : "off",
+    autoResumeLimitedThreads: autoResume,
+    snoozeLimitedThreads: snooze,
+  };
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   rawPatch: ServerSettingsPatch,
 ): ServerSettings {
-  const recoveryPatch =
-    rawPatch.usageLimitRecovery !== undefined
-      ? {
-          ...rawPatch,
-          autoResumeLimitedThreads: rawPatch.usageLimitRecovery === "wait",
-          snoozeLimitedThreads: rawPatch.usageLimitRecovery === "wait",
-        }
-      : rawPatch.autoResumeLimitedThreads !== undefined ||
-          rawPatch.snoozeLimitedThreads !== undefined
-        ? {
-            ...rawPatch,
-            usageLimitRecovery:
-              (rawPatch.autoResumeLimitedThreads ?? current.autoResumeLimitedThreads) ||
-              (rawPatch.snoozeLimitedThreads ?? current.snoozeLimitedThreads)
-                ? ("wait" as const)
-                : ("off" as const),
-          }
-        : rawPatch;
+  const recoveryPatch = normalizeUsageLimitRecoveryPatch(current, rawPatch);
   const patch = translateLegacyProjectOverridePatch(current, recoveryPatch);
   const selectionPatch = patch.textGenerationModelSelection;
   const {

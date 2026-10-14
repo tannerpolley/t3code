@@ -14,7 +14,10 @@ import type {
   ServerSettings,
   ServerSettingsPatch,
 } from "@t3tools/contracts";
-import { isModelSelectionProviderEnabled } from "@t3tools/shared/serverSettings";
+import {
+  normalizeUsageLimitRecoveryPatch,
+  isModelSelectionProviderEnabled,
+} from "@t3tools/shared/serverSettings";
 import * as Equal from "effect/Equal";
 import * as Struct from "effect/Struct";
 
@@ -25,8 +28,7 @@ const SHARED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleOnMerge",
-  "autoResumeLimitedThreads",
-  "snoozeLimitedThreads",
+  "usageLimitRecovery",
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
   "textGenerationModelSelection",
@@ -37,14 +39,21 @@ export type SharedServerSettingKey = (typeof SHARED_SERVER_SETTING_KEYS)[number]
 const SHARED_KEY_SET = new Set<string>(SHARED_SERVER_SETTING_KEYS);
 
 /** Split a server patch into the keys every environment should receive and the primary-only rest. */
-export function splitSharedServerPatch(patch: ServerSettingsPatch): {
+export function splitSharedServerPatch(
+  patch: ServerSettingsPatch,
+  current = { autoResumeLimitedThreads: false, snoozeLimitedThreads: false },
+): {
   sharedPatch: ServerSettingsPatch;
   localPatch: ServerSettingsPatch;
 } {
   const sharedPatch: Record<string, unknown> = {};
   const localPatch: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(patch)) {
-    if (SHARED_KEY_SET.has(key)) {
+  for (const [key, value] of Object.entries(normalizeUsageLimitRecoveryPatch(current, patch))) {
+    if (
+      SHARED_KEY_SET.has(key) ||
+      key === "autoResumeLimitedThreads" ||
+      key === "snoozeLimitedThreads"
+    ) {
       sharedPatch[key] = value;
     } else {
       localPatch[key] = value;

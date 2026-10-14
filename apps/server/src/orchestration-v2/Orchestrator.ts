@@ -152,6 +152,8 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { usageLimitQueuedRunEvents } from "./usageLimitQueuedRuns.ts";
+import { usageLimitRecoveryPending } from "./usageLimitRecoveryPending.ts";
 import { delegatedRequestOwner } from "./DelegatedRequestRouting.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
@@ -2955,11 +2957,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (command.type === "provider.switch" || command.type === "thread.metadata.update") &&
       command.autoProviderSwitch !== undefined
     ) {
-      const projection = yield* loadProjectionForCommand(command, [
-        "runs",
-        "turnItems",
-        "runtimeRequests",
-      ]);
+      const projection = yield* loadProjectionForCommand(
+        command,
+        ["runs", "turnItems", "runtimeRequests"],
+        { turnItemTypes: ["error"] },
+      );
       const source = latestExecutedRun(projection.runs);
       const marker = command.autoProviderSwitch;
       if (
@@ -4919,7 +4921,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   const dispatchMessage = (
-    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) =>
@@ -5056,9 +5058,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
-      const continuedTaskId = projection.runs.find(
-        (run) => run.id === command.restartContinuationOfRunId,
-      )?.delegatedTaskId;
+      const continuationOf =
+        command.restartContinuationOfRunId ??
+        command.automaticProviderContinuationOfRunId ??
+        command.usageLimitContinuationOfRunId;
+      const continuedTaskId =
+        continuationOf === undefined
+          ? undefined
+          : (projection.runs.find((run) => run.id === continuationOf)?.delegatedTaskId ??
+            (projection.thread.lineage.relationshipToParent === "subagent" &&
+            projection.thread.forkedFrom?.type === "node"
+              ? projection.thread.forkedFrom.nodeId
+              : undefined));
 
       if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
@@ -7630,13 +7641,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // its own task so results, acknowledgments, Stop, and recovery use the same
   // lifecycle as a fresh delegation without replacing the original result.
   const recordSubagentFollowup = Effect.fnUntraced(function* (
-    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
     if (
       command.scheduledTaskId !== undefined ||
       command.notification !== undefined ||
       command.restartContinuationOfRunId !== undefined ||
+      command.automaticProviderContinuationOfRunId !== undefined ||
+      command.usageLimitContinuationOfRunId !== undefined ||
       (command.createdBy !== "user" && command.creationSource !== "mcp")
     )
       return;
@@ -10873,9 +10886,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   /**
    * A delegated child's result is held while its result run, or a run after it
-   * that a second restart cut before it started, still has a continuation pending.
+   * that a restart cut before it started, still has recovery pending.
    */
-  const childAwaitsRestartContinuation = (
+  const childAwaitsRecoveryContinuation = (
+    thread: OrchestrationV2AppThread,
     runs: ReadonlyArray<OrchestrationV2Run>,
     resultRun: OrchestrationV2Run,
     settledContinuationOf?: RunId,
@@ -10887,7 +10901,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (run.id === resultRun.id || runRanAfter(run, resultRun)),
       ),
       awaitsRestartContinuation,
-    ).pipe(Effect.map((pending) => pending.includes(true)));
+    ).pipe(
+      Effect.flatMap((pending) =>
+        Effect.gen(function* () {
+          if (pending.includes(true)) return true;
+          const latest = latestExecutedRun(runs);
+          if (!latest || latest.status !== "failed") return false;
+          const {
+            thread: current,
+            turnItems,
+            providerThreads,
+          } = yield* projectionStore.getThreadRecords(thread.id, ["turnItems", "providerThreads"], {
+            turnItemRunId: latest.id,
+            turnItemTypes: ["error"],
+          });
+          const driver = providerThreads.find(
+            (providerThread) => providerThread.id === latest.providerThreadId,
+          )?.driver;
+          return usageLimitRecoveryPending(
+            current,
+            latest,
+            latestRootProviderFailure(latest, turnItems),
+            yield* serverSettings.getSettings,
+            driver,
+          );
+        }),
+      ),
+    );
 
   const planDelegatedCompletionDelivery = Effect.fn(
     "orchestrationV2.planDelegatedCompletionDelivery",
@@ -11180,7 +11220,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       if (
-        yield* childAwaitsRestartContinuation(
+        yield* childAwaitsRecoveryContinuation(
+          childControls.thread,
           taskRuns.length === 0 ? childControls.runs : taskRuns,
           childRun,
           options?.settledContinuationOf,
@@ -11463,7 +11504,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         progress.state === "result_available" &&
         progress.resultRun !== undefined &&
         progress.resultRun.delegatedTaskId === undefined &&
-        !(yield* childAwaitsRestartContinuation(
+        !(yield* childAwaitsRecoveryContinuation(
+          childControls.thread,
           childControls.runs,
           progress.resultRun,
           options?.settledContinuationOf,
@@ -11879,6 +11921,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
         yield* dispatchMessage(command, events, effects);
+        if (command.automaticProviderContinuationOfRunId !== undefined) {
+          const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+          const continuation = projection.runs.find(
+            (run) => run.userMessageId === command.messageId,
+          );
+          if (continuation?.providerThreadId != null) {
+            for (const event of usageLimitQueuedRunEvents(
+              projection,
+              continuation.providerThreadId,
+              yield* DateTime.now,
+            ))
+              yield* emit(events, command)(event);
+          }
+        }
         yield* recordSubagentFollowup(command, events).pipe(mapDispatchError(command));
         break;
       }
@@ -12922,7 +12978,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
         const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-        return yield* childAwaitsRestartContinuation(runs, run);
+        return yield* childAwaitsRecoveryContinuation(child.thread, runs, run);
       }
       const childShell = yield* projectionStore.getThreadShell(childThreadId);
       const progress = delegatedTaskProgress({
@@ -12932,7 +12988,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A caller's older read saw a result; newer work since then means it is not final.
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;
-      return yield* childAwaitsRestartContinuation(child.runs, progress.resultRun);
+      return yield* childAwaitsRecoveryContinuation(child.thread, child.runs, progress.resultRun);
     }).pipe(
       Effect.mapError(
         (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),

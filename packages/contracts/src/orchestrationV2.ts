@@ -352,6 +352,7 @@ export const OrchestrationV2AutoProviderSwitch = Schema.Struct({
   to: Schema.NullOr(ModelSelection),
   resetAt: Schema.NullOr(IsoDateTime),
   message: Schema.String,
+  switchBack: Schema.optional(ModelSelection),
 });
 export type OrchestrationV2AutoProviderSwitch = typeof OrchestrationV2AutoProviderSwitch.Type;
 
@@ -3005,7 +3006,6 @@ export const OrchestrationV2Command = Schema.Union([
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
-    autoProviderSwitch: Schema.optional(OrchestrationV2AutoProviderSwitch),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -3112,7 +3112,6 @@ export const OrchestrationV2Command = Schema.Union([
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
     usageLimitContinuationOfRunId: Schema.optional(RunId),
-    automaticProviderContinuationOfRunId: Schema.optional(RunId),
     manualContinuationOfRunId: Schema.optional(RunId),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     /** Resolve untargeted delivery against the server's serialized thread state. */
@@ -3344,7 +3343,6 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     modelSelection: ModelSelection,
-    autoProviderSwitch: Schema.optional(OrchestrationV2AutoProviderSwitch),
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
@@ -3473,6 +3471,9 @@ export type OrchestrationV2ServerCommand = (
   | OrchestrationV2Command
   | OrchestrationV2InternalCommand
 ) & {
+  /** Worker-owned recovery annotations are deliberately absent from client command schemas. */
+  readonly autoProviderSwitch?: OrchestrationV2AutoProviderSwitch;
+  readonly automaticProviderContinuationOfRunId?: RunId;
   /** Server-read relationship snapshots, acquired before entering command planning. */
   readonly issueReads?: ReadonlyArray<IssueWorkRead>;
   /** Managed worker preparation, supplied only by IssueWorkService. */

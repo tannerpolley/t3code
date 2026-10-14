@@ -190,3 +190,30 @@ describe("usage-limit target selection", () => {
     },
   );
 });
+
+it("uses fallbacks when a role has no available other-provider choice and excludes only targets", () => {
+  const settings = {
+    modelRoles: [role("orchestrator", source, source, { role: "orchestrator" })],
+    usageLimitFallbackModels: [alternative],
+  };
+  const providers = [provider(codex, "codex", "sol"), provider(claude, "claudeAgent", "opus")];
+  expect(
+    usageLimitSwitchTarget(
+      { role: "orchestrator", modelSelection: source },
+      settings,
+      providers,
+      new Set([codex, claude]),
+      now,
+    ),
+  ).toEqual(alternative);
+  expect(
+    usageLimitSwitchTarget(
+      { role: "orchestrator", modelSelection: source },
+      settings,
+      providers,
+      new Set([codex, claude]),
+      now,
+      new Set([codex]),
+    ),
+  ).toEqual(alternative);
+});

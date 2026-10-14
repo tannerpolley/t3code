@@ -1,4 +1,4 @@
-import { CommandId, MessageId, type ThreadId } from "@t3tools/contracts";
+import { CommandId, MessageId, type ProviderInstanceId, type ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -13,6 +13,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import { usageLimitSwitchTarget } from "./usageLimitSwitchTarget.ts";
@@ -31,6 +32,7 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const lock = yield* Semaphore.make(1);
   const recover = Effect.fn("UsageLimitProviderSwitchWorker.recover")(
     function* (threadId: ThreadId) {
@@ -45,7 +47,8 @@ const make = Effect.gen(function* () {
         shell.archivedAt !== null ||
         shell.deletedAt !== null ||
         shell.settledOverride === "settled" ||
-        shell.pendingRuntimeRequest !== null
+        shell.pendingRuntimeRequest !== null ||
+        shell.snoozedUntil != null
       )
         return;
       const now = yield* DateTime.now;
@@ -56,11 +59,15 @@ const make = Effect.gen(function* () {
           ? shell.autoProviderSwitch
           : undefined;
       if (marker === undefined) {
-        const { runs } = yield* projections.getThreadRecords(threadId, ["runs"], {
+        const { thread, runs } = yield* projections.getThreadRecords(threadId, ["runs"], {
           runIds: [shell.latestRunId],
         });
         const failedRun = runs[0];
-        if (!failedRun || !modelSelectionsEqual(failedRun.modelSelection, shell.modelSelection))
+        if (
+          thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
+          !failedRun ||
+          !modelSelectionsEqual(failedRun.modelSelection, shell.modelSelection)
+        )
           return;
         const snapshots = yield* providers.getProviders;
         const source = snapshots.find(
@@ -68,21 +75,26 @@ const make = Effect.gen(function* () {
         );
         if (source?.driver !== "codex" && source?.driver !== "claudeAgent") return;
         const previous = shell.autoProviderSwitch;
-        const candidates =
-          previous?.to != null &&
+        const excludedTargets =
+          previous?.switchBack !== undefined &&
+          shell.modelSelection.instanceId !== previous.switchBack.instanceId &&
           (previous.resetAt === null || Date.parse(previous.resetAt) > nowMs)
-            ? snapshots.filter((provider) => provider.instanceId !== previous.from.instanceId)
-            : snapshots;
+            ? new Set([previous.switchBack.instanceId])
+            : new Set<ProviderInstanceId>();
         const target = usageLimitSwitchTarget(
           shell,
           preferences,
-          candidates,
+          snapshots,
           new Set(yield* adapters.list()),
           nowMs,
+          excludedTargets,
         );
         marker = {
           runId: shell.latestRunId,
           from: shell.modelSelection,
+          ...(target !== null || previous?.switchBack !== undefined || previous?.to != null
+            ? { switchBack: previous?.switchBack ?? previous?.from ?? shell.modelSelection }
+            : {}),
           to: target,
           resetAt: shell.usageLimitResetAt ?? null,
           message:
@@ -127,9 +139,10 @@ const make = Effect.gen(function* () {
       if (marker.to === null) {
         const current = yield* projections.getThreadShell(threadId);
         if (!current) return;
-        // The normal recovery worker owns the timer; a per-thread choice survives setting changes.
-        const command = limitRecoveryCommand(current, true, nowMs, true);
-        if (command) yield* threads.dispatch(command);
+        const arm = limitRecoveryCommand(current, true, nowMs, true);
+        if (arm?.type === "thread.metadata.update") yield* threads.dispatch(arm);
+        // A terminal decision without a schedulable reset releases the child's failure.
+        yield* orchestrator.recoverDelegatedTask(threadId, marker.runId);
         return;
       }
       const current = yield* projections.getThread(threadId);
@@ -160,6 +173,9 @@ const make = Effect.gen(function* () {
       autoResume: false,
       snooze: false,
       switchProvider: true,
+      switchProviderInstanceIds: (yield* providers.getProviders)
+        .filter((provider) => provider.driver === "codex" || provider.driver === "claudeAgent")
+        .map((provider) => provider.instanceId),
     });
     for (const candidate of candidates) yield* recover(candidate.id);
   }).pipe(

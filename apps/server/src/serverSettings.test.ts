@@ -2196,12 +2196,6 @@ it.effect.each([
   { saved: { snoozeLimitedThreads: true }, mode: "wait", resume: false, snooze: true },
   { saved: {}, mode: "off", resume: false, snooze: false },
   {
-    saved: { usageLimitRecovery: "off", autoResumeLimitedThreads: true },
-    mode: "off",
-    resume: true,
-    snooze: false,
-  },
-  {
     saved: { usageLimitRecovery: "unknown", snoozeLimitedThreads: true },
     mode: "wait",
     resume: false,
@@ -2231,7 +2225,11 @@ it.effect.each([
     assert.isFalse(changed.snoozeLimitedThreads);
     assert.equal(changed.usageLimitFallbackModels[0]?.options?.[0]?.value, "high");
     assert.equal((yield* service.getSettings).usageLimitRecovery, "switch");
-    const off = yield* service.updateSettings({ usageLimitRecovery: "off" });
+    const off = yield* service.updateSettings({
+      usageLimitRecovery: "off",
+      autoResumeLimitedThreads: true,
+    });
     assert.equal(off.usageLimitRecovery, "off");
+    assert.isFalse(off.autoResumeLimitedThreads);
   }).pipe(Effect.provide(layerServerSettings().pipe(Layer.provideMerge(NodeServices.layer)))),
 );
