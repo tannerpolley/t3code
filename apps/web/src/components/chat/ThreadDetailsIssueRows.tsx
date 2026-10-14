@@ -98,6 +98,8 @@ export function ThreadDetailsIssueRows({
   return <IssueRows environmentId={environmentId} threadId={threadId} {...target} />;
 }
 
+const LIST_HEADINGS = { open: "Open issues", closed: "Closed issues", all: "Issues" } as const;
+
 function IssueRows({
   environmentId,
   threadId,
@@ -168,7 +170,9 @@ function IssueRows({
             )
           }
         >
-          {issueView === "roadmap" ? "Roadmap" : "Open issues"}
+          {issueView === "roadmap"
+            ? "Roadmap"
+            : LIST_HEADINGS[issueStateFilter(preferences) ?? "open"]}
         </CollapsibleSectionHeader>
         {open && issueView === "roadmap" && list !== null ? (
           <>

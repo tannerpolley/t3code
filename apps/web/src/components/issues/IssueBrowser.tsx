@@ -319,6 +319,7 @@ export function IssueBrowser({
           return {
             environmentId: target.environmentId,
             roadmapView,
+            live: explicitScope,
             input: {
               host: target.host,
               repository: target.repository,
@@ -327,7 +328,7 @@ export function IssueBrowser({
             },
           };
         }),
-    [listState, shownRepositories, stateFilter, views],
+    [explicitScope, listState, shownRepositories, stateFilter, views],
   );
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const generationRef = useRef(0);
@@ -336,7 +337,7 @@ export function IssueBrowser({
       baseListTargets.flatMap((target) => {
         const state = pagingByKey[issueListScopeKey(target)];
         const cursors = new Set<string | null>([state?.cursor ?? null]);
-        if (target.roadmapView && !state?.refreshing) cursors.add(null);
+        if ((target.roadmapView || target.live) && !state?.refreshing) cursors.add(null);
         return [...cursors].map((cursor) => ({
           ...target,
           input: { ...target.input, ...(cursor === null ? {} : { cursor }) },
@@ -693,6 +694,10 @@ export function IssueBrowser({
       return (
         <section key={entry.key}>
           <IssueRepositoryControls
+            environmentId={entry.environmentId}
+            reference={{ host: entry.host, repository: entry.repository }}
+          />
+          <IssueInboxSection
             environmentId={entry.environmentId}
             reference={{ host: entry.host, repository: entry.repository }}
           />

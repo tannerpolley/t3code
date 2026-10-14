@@ -21,6 +21,8 @@ export interface IssueListTarget {
   readonly input: IssueListInput;
   /** The repository shows the Roadmap view, whose first page stays live. */
   readonly roadmapView?: boolean;
+  /** A pane scoped to this one repository, whose first page stays live like a thread's list. */
+  readonly live?: boolean;
 }
 
 export interface IssueListAnswer {
@@ -40,11 +42,16 @@ interface IssueListsView {
   readonly isPending: boolean;
 }
 
-// Only the first Roadmap page is kept live; other pages and Milestones retain ordinary reads.
+// Only first pages are kept live: the Roadmap's, and a one-repository pane's, which also re-reads
+// when agent turns finish. Later pages and the many-repository page retain ordinary reads.
 const issueListAtom = (target: IssueListTarget) =>
-  (target.roadmapView && target.input.cursor === undefined
-    ? issueEnvironment.roadmapList
-    : issueEnvironment.list)(target);
+  (target.input.cursor !== undefined
+    ? issueEnvironment.list
+    : target.roadmapView
+      ? issueEnvironment.roadmapList
+      : target.live
+        ? issueEnvironment.liveList
+        : issueEnvironment.list)(target);
 
 const issueLists = Atom.family((key: string) =>
   Atom.make((get): IssueListsView => {
