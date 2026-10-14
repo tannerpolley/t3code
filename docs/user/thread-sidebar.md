@@ -270,7 +270,10 @@ task. Hosts that cannot follow in a terminal show live output in a popover inste
 Turn off **Settings → Customizations → Background process output** to disable this.
 
 To stop one background task, hover its row and use its Stop control. **Stop** above
-the composer stops all the thread's background work. A non-server shell running for
+the composer stops all the thread's background work. Finished and stopped tasks
+leave the running list; stopped commands keep their stopped state in the conversation.
+Claude can also report background monitors, while Codex reports terminal commands.
+A non-server shell running for
 over two hours is marked as possibly stuck.
 
 To tell agents which model and effort suit each kind of delegated work, edit

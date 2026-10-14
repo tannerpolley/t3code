@@ -1915,6 +1915,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         // Streamed plan text per plan item, dropped when the item completes.
         const planDeltas = new Map<string, string>();
+        const stoppedCommandItemsByTurn = new Map<string, Set<string>>();
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingCodexRuntimeRequest>(),
@@ -2241,6 +2242,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (yield* turnHasRetainedBackgroundWork(nativeTurnId)) {
               return;
             }
+            if (!(yield* Ref.get(activeTurns)).has(nativeTurnId))
+              stoppedCommandItemsByTurn.delete(nativeTurnId);
             yield* Ref.update(settledTurns, (current) => {
               if (!current.has(nativeTurnId)) {
                 return current;
@@ -2286,6 +2289,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           nativeTurnId: string,
           status: "interrupted" | "failed",
           completedAt: DateTime.Utc,
+          nativeItemId?: string,
         ) =>
           Effect.gen(function* () {
             const items = (yield* Ref.get(runningCommandItemsByTurn)).get(nativeTurnId);
@@ -2293,6 +2297,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             for (const tracked of items.values()) {
+              if (nativeItemId !== undefined && tracked.id !== nativeItemId) continue;
               const nodeId = idAllocator.derive.nodeFromProviderItem({
                 driver: CODEX_PROVIDER,
                 nativeItemId: tracked.id,
@@ -4736,6 +4741,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
+            if (stoppedCommandItemsByTurn.get(payload.turnId)?.has(payload.item.id)) return;
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
@@ -4871,6 +4877,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/completed", (payload) =>
           Effect.gen(function* () {
+            if (stoppedCommandItemsByTurn.get(payload.turnId)?.has(payload.item.id)) return;
             if (payload.item.type === "contextCompaction")
               // The notification callback runs on the input reader. Let it read
               // the injection response while the session-scoped request waits.
@@ -6059,6 +6066,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const retainSettledContext =
                 input.status === "completed" &&
                 (yield* turnHasRetainedBackgroundWork(input.nativeTurnId));
+              if (!retainSettledContext) stoppedCommandItemsByTurn.delete(input.nativeTurnId);
               if (retainSettledContext) {
                 yield* Ref.update(settledTurns, (current) => {
                   const updated = new Map(current);
@@ -7384,20 +7392,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // A background command's task id is its native item id; Codex names its process.
               const nativeThreadId = yield* getNativeThreadId(stopInput.providerThread);
               let tracked: TrackedRunningCommandItem | undefined;
+              let stoppedContext: ActiveCodexTurnContext | undefined;
               for (const [turnId, items] of yield* Ref.get(runningCommandItemsByTurn)) {
                 const resolved = yield* resolveItemEventContext(turnId);
                 if (resolved?.context.providerThread.id === stopInput.providerThread.id) {
                   tracked = items.get(stopInput.taskId);
-                  if (tracked !== undefined) break;
+                  if (tracked !== undefined) {
+                    stoppedContext = resolved.context;
+                    break;
+                  }
                 }
               }
-              if (tracked?.processId === undefined) {
+              if (tracked?.processId === undefined || stoppedContext === undefined) {
                 return yield* toProtocolError(
                   `Codex has no running background command ${stopInput.taskId}.`,
                 );
               }
-              // Codex then completes the command item, which ends its pending work.
               yield* terminateBackgroundTerminal(nativeThreadId, tracked.processId);
+              const turnId = stoppedContext.nativeTurnId;
+              // Natural completion may have won the race with the terminate response.
+              if (!(yield* Ref.get(runningCommandItemsByTurn)).get(turnId)?.has(stopInput.taskId))
+                return;
+              const stopped = stoppedCommandItemsByTurn.get(turnId) ?? new Set<string>();
+              stopped.add(stopInput.taskId);
+              stoppedCommandItemsByTurn.set(turnId, stopped);
+              // The terminate response confirms Stop even when no item/completed follows.
+              yield* terminalizeRunningCommandItems(
+                stoppedContext,
+                turnId,
+                "interrupted",
+                yield* DateTime.now,
+                stopInput.taskId,
+              );
+              yield* clearRunningCommandItem(turnId, stopInput.taskId);
+              yield* commandOutputLogs.remove(stoppedContext.projectionThreadId, stopInput.taskId);
+              yield* releaseSettledTurnIfIdle(turnId);
             }).pipe(
               Effect.mapError(
                 (cause) =>

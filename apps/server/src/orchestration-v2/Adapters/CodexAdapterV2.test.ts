@@ -4819,6 +4819,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   it.effect("stops one background command by its item id through its process", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        const stopped = yield* Deferred.make<void>();
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario: "codex-bg-stop-one",
@@ -4840,6 +4841,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             ],
           }),
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.status === "interrupted"
+              ? Deferred.succeed(stopped, undefined).pipe(Effect.asVoid)
+              : Effect.void,
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -4860,12 +4867,132 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isTrue(Exit.isFailure(unknown));
         // The replay only accepts terminate for the command's own process id.
         yield* stop({ providerThread: harness.providerThread, taskId: BG_COMMAND_ITEM });
+        yield* Deferred.await(stopped);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
     ),
+  );
+
+  it.effect(
+    "keeps a stopped command terminal after the root settles while its sibling completes normally",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const ready = yield* Deferred.make<void>();
+          const lateFramesDrained = yield* Deferred.make<void>();
+          const commandFrame = (
+            method: "item/started" | "item/completed",
+            item: Record<string, unknown>,
+          ) => ({
+            type: "emit_inbound" as const,
+            frame: {
+              method,
+              params: {
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+                startedAtMs: 1782622440500,
+                completedAtMs: 1782622465500,
+                item,
+              },
+            },
+          });
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "codex-bg-stop-late",
+              entries: [
+                ...codexReplayPreamble({
+                  nativeThreadId: BG_NATIVE_THREAD,
+                  nativeTurnId: BG_NATIVE_TURN,
+                  prompt: BG_PROMPT,
+                }),
+                commandFrame("item/started", backgroundCommandItem("inProgress")),
+                commandFrame("item/started", {
+                  ...backgroundCommandItem("inProgress"),
+                  id: "sibling-command",
+                  processId: "4243",
+                }),
+                {
+                  type: "expect_outbound",
+                  frame: {
+                    id: 4,
+                    method: "thread/backgroundTerminals/terminate",
+                    params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+                  },
+                },
+                { type: "emit_inbound", frame: { id: 4, result: { terminated: true } } },
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: BG_NATIVE_THREAD,
+                      turn: makeCodexReplayTurn({ id: BG_NATIVE_TURN, status: "completed" }),
+                    },
+                  },
+                },
+                commandFrame("item/started", backgroundCommandItem("inProgress")),
+                commandFrame("item/completed", {
+                  ...backgroundCommandItem("completed"),
+                  status: "failed",
+                  exitCode: 130,
+                }),
+                commandFrame("item/completed", {
+                  ...backgroundCommandItem("completed"),
+                  id: "sibling-command",
+                  processId: "4243",
+                }),
+              ],
+            }),
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.nativeItemRef?.nativeId === "sibling-command"
+                ? Deferred.succeed(
+                    event.turnItem.status === "completed" ? lateFramesDrained : ready,
+                    undefined,
+                  ).pipe(Effect.asVoid)
+                : Effect.void,
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("stop-late"),
+              text: BG_PROMPT,
+            }),
+          );
+          yield* Deferred.await(ready);
+          yield* harness.runtime.stopBackgroundTask!({
+            providerThread: harness.providerThread,
+            taskId: BG_COMMAND_ITEM,
+          });
+          yield* harness.firstTerminal;
+          yield* Deferred.await(lateFramesDrained);
+          const commands = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+              ? [event.turnItem]
+              : [],
+          );
+          assert.equal(
+            commands.findLast((item) => item.nativeItemRef?.nativeId === BG_COMMAND_ITEM)?.status,
+            "interrupted",
+          );
+          assert.equal(
+            commands.findLast((item) => item.nativeItemRef?.nativeId === "sibling-command")?.status,
+            "completed",
+          );
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
   );
 
   // "thread_unloaded": the thread was settled, so T3 unsubscribed and Codex
