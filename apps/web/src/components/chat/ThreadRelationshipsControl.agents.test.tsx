@@ -1234,6 +1234,7 @@ it("shows readable models and only differing workspace details in agent tooltips
 
 it("shows the parent's own visible status as parent and child activity change", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.showTooltips = true;
   const environmentId = EnvironmentId.make("test");
   const parent = {
     id: "parent",
@@ -1272,7 +1273,9 @@ it("shows the parent's own visible status as parent and child activity change", 
       .findAll((node) => typeof node.type === "string" && node.props.className !== "sr-only")
       .flatMap((node) => node.children.filter((child) => typeof child === "string"))
       .join(" ");
-  expect(visibleText()).toContain("Parent conversation");
+  // A role-less top-level parent is titled Main, with its name on hover.
+  expect(visibleText()).toContain("Main");
+  expect(JSON.stringify(renderer.toJSON())).toContain("Parent conversation");
   expect(visibleText()).toContain("Running");
   state.shells = shells(
     { ...parent, activityRunStatus: "completed" },
@@ -1330,9 +1333,8 @@ it.each(["source", "target"])(
         .findAll((node) => typeof node.type === "string")
         .flatMap((node) => node.children.filter((child) => typeof child === "string"))
         .join(" ");
-      expect(visibleText).toContain(
-        currentThreadId === "source" ? "target conversation" : "source conversation",
-      );
+      // The related conversation is titled Main; its name is on hover.
+      expect(visibleText).toContain("Main");
       expect(visibleText).toContain(label);
       expect(visibleText).not.toContain("Unknown");
       expect(visibleText).not.toContain("Running");

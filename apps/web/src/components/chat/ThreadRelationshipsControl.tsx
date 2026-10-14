@@ -3,7 +3,6 @@ import {
   SidebarCaretToggle,
   SidebarThreadColumns,
   sidebarThreadName,
-  useSidebarRoleLabels,
   SidebarTokenUsage,
 } from "../sidebar/SidebarColumns";
 import { shortModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
@@ -15,6 +14,7 @@ import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
 import {
   childWorktreeLabel,
   describeSidebarBackgroundWork,
+  sidebarThreadTitle,
 } from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
@@ -347,7 +347,6 @@ export function ThreadRelationshipsPanel(props: {
   const expandDetailsByDefault = useClientSettings((settings) => settings.lineageDetailsExpanded);
   const autoClearMinutes = useClientSettings((settings) => settings.lineageAutoClearMinutes);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
-  const roleLabels = useSidebarRoleLabels();
   // Off restores the original rows: title, corner status badge, no details or clearing.
   const redesign = useClientSettings((settings) => settings.threadDetailsRedesign);
   const nowMinute = useNowMinute();
@@ -794,7 +793,9 @@ export function ThreadRelationshipsPanel(props: {
                       name={
                         <span className="flex min-w-0 items-center gap-1">
                           <span className="min-w-0 flex-1 truncate">
-                            {sidebarThreadName(threadTitle, node?.thread?.role, roleLabels)}
+                            {node?.thread
+                              ? sidebarThreadName(threadTitle, sidebarThreadTitle(node.thread))
+                              : threadTitle}
                           </span>
                           {!elapsedAgent ? (
                             <span className="shrink-0 text-2xs text-muted-foreground">

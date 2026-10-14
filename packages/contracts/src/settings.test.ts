@@ -1347,7 +1347,6 @@ describe("fork sidebar preferences", () => {
       sectionFolderColors: false,
       projectIconFallback: "initials",
       sidebarTogglePosition: "right",
-      sidebarThreadLabel: "role",
       topBackButton: false,
       revealOpenThreadInSidebar: false,
       lineageDetailsExpanded: true,

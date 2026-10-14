@@ -59,7 +59,6 @@ import {
   SidebarThreadColumns,
   sidebarThreadName,
   threadGroupHue,
-  useSidebarRoleLabels,
   SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
@@ -72,6 +71,7 @@ import {
   type BackgroundWorkTaskRow,
   resolveSidebarThreadModelLabel,
   sameSidebarSubagentTree,
+  sidebarThreadTitle,
 } from "./SidebarBackgroundWork.logic";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
@@ -1227,7 +1227,6 @@ const SidebarProjectThreadRow = memo(
     const provider = useServerConfigs()
       .get(props.thread.environmentId)
       ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
-    const roleLabels = useSidebarRoleLabels();
     return (
       <li
         className={cn("relative list-none", props.codexStyle && "sidebar-thread-outdent")}
@@ -1282,7 +1281,7 @@ const SidebarProjectThreadRow = memo(
               effort={shortModelSelectionEffort(
                 formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
               )}
-              name={sidebarThreadName(props.thread.title, props.thread.source.role, roleLabels)}
+              name={sidebarThreadName(props.thread.title, sidebarThreadTitle(props.thread.source))}
               count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
               time={<SidebarThreadTime thread={props.thread} status={status} />}
               status={<ThreadStatusMark status={statusMark} />}

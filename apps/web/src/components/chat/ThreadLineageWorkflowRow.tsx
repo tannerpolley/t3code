@@ -5,9 +5,9 @@ import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import {
   SidebarThreadColumns,
   sidebarThreadName,
-  useSidebarRoleLabels,
   SidebarTokenUsage,
 } from "../sidebar/SidebarColumns";
+import { sidebarThreadTitle } from "../sidebar/SidebarBackgroundWork.logic";
 import { shortModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { shortModelName } from "./providerIconUtils";
 import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
@@ -97,7 +97,6 @@ function WorkflowMemberRow({
     threadId === null ? null : scopeThreadRef(environmentId, threadId as ThreadId),
   );
   const canOpen = threadId !== null && isThreadAvailable(threadId);
-  const roleLabels = useSidebarRoleLabels();
   return (
     <li>
       <Tooltip>
@@ -121,7 +120,10 @@ function WorkflowMemberRow({
             effort={shortModelSelectionEffort(member.effort ?? null)}
             name={
               <span>
-                {sidebarThreadName(member.title, thread?.source.role, roleLabels)}
+                {sidebarThreadName(
+                  member.title,
+                  thread ? sidebarThreadTitle(thread.source) : "Subagent",
+                )}
                 <span className="sr-only">
                   Status: {threadRelationshipStatusLabel(member.status)}
                 </span>

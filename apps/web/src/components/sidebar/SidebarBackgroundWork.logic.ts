@@ -5,7 +5,9 @@ import { fileBasename } from "@t3tools/shared/path";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import {
   isProviderNativeSubagentThread,
+  THREAD_ROLE_LABELS,
   type OrchestrationV2PendingBackgroundTask,
+  type OrchestrationV2ThreadShell,
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -96,6 +98,20 @@ export function resolveSidebarThreadModelLabel(
     provider?.models,
   );
   return !includeEffort || effort === null ? modelLabel : `${modelLabel} · ${effort}`;
+}
+
+/**
+ * What a thread row is titled instead of its task name: an issue worker's issue, else the thread's
+ * role, else Main for a top-level thread or Subagent for a child. The name shows on hover.
+ */
+export function sidebarThreadTitle(
+  thread: Pick<OrchestrationV2ThreadShell, "role" | "linkedIssue"> & {
+    readonly lineage: Pick<OrchestrationV2ThreadShell["lineage"], "relationshipToParent">;
+  },
+): string {
+  if (thread.linkedIssue) return `#${thread.linkedIssue.number} ${thread.linkedIssue.title}`;
+  if (thread.role) return THREAD_ROLE_LABELS[thread.role];
+  return thread.lineage.relationshipToParent === "subagent" ? "Subagent" : "Main";
 }
 
 /**

@@ -369,7 +369,6 @@ function ProviderPluginsSection() {
 
 const PROJECT_ICON_FALLBACK_LABELS = { folder: "Folder", initials: "Initials" } as const;
 const SIDEBAR_TOGGLE_POSITION_LABELS = { left: "Left", right: "Right" } as const;
-const SIDEBAR_THREAD_LABEL_LABELS = { name: "Thread name", role: "Role" } as const;
 const LINEAGE_AUTO_CLEAR_MINUTES = [0, 30, 60] as const;
 const lineageAutoClearLabel = (minutes: number) =>
   minutes === 0 ? "Off" : minutes === 60 ? "1 hour" : `${minutes} minutes`;
@@ -497,34 +496,6 @@ export function CustomizationsSettings() {
                 </SelectItem>
                 <SelectItem hideIndicator value="initials">
                   {PROJECT_ICON_FALLBACK_LABELS.initials}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("sidebar-thread-label")}
-          description="Title of thread rows in the Projects view and Lineage. Role shows a thread's role, such as Orchestrator or Reviewer, with its name on hover; threads without a role keep their name. Thread name is the original."
-          control={
-            <Select
-              value={settings.sidebarThreadLabel}
-              onValueChange={(value) => {
-                if (value === "name" || value === "role") {
-                  updateSettings({ sidebarThreadLabel: value });
-                }
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Thread row title">
-                <SelectValue>
-                  {SIDEBAR_THREAD_LABEL_LABELS[settings.sidebarThreadLabel]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="name">
-                  {SIDEBAR_THREAD_LABEL_LABELS.name}
-                </SelectItem>
-                <SelectItem hideIndicator value="role">
-                  {SIDEBAR_THREAD_LABEL_LABELS.role}
                 </SelectItem>
               </SelectPopup>
             </Select>

@@ -378,9 +378,13 @@ its child agents. Child rows keep the same columns as their parent. A thread wit
 child agents and everything under it share one tint color, so each group stands out;
 deeper rows take a slightly stronger shade. A thread without children has no tint.
 Turn it off in **Settings → Customizations** to use the classic rows and flat child list.
-The Activity view keeps its cards. To title rows by role (Orchestrator, Implementor, and so on)
-instead of thread name, set **Thread row title** to **Role** there; hover a role to see the
-thread's name. Threads without a role keep their name.
+The Activity view keeps its cards.
+
+Rows are titled by what each thread does rather than its task name: a thread working
+on an issue shows the issue, such as **#42 Fix login**; a thread with a role shows it
+(Orchestrator, Implementor, Reviewer, Investigator, Checker); other top-level threads
+show **Main** and other child agents **Subagent**. Hover a title to see the thread's
+name.
 
 For Codex and Claude, the number at the sidebar's left edge shows tokens used by the
 latest turn, such as **48k**. Hover it for input, cached input, output, context

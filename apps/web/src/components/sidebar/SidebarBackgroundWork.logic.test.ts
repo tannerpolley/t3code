@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   RunId,
   type ServerProvider,
+  type ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -13,6 +14,7 @@ import { makeThreadFixture } from "../../test-fixtures";
 import {
   childWorktreeLabel,
   sharesParentLocation,
+  sidebarThreadTitle,
   splitSidebarModelLabel,
   sameSidebarSubagentTree,
   describeSidebarBackgroundWork,
@@ -310,6 +312,24 @@ describe("background task metadata", () => {
     );
     expect(msUntilPossiblyStuck(start, Date.parse("2026-09-23T12:00:00.000Z"))).toBe(0);
     expect(msUntilPossiblyStuck(start, Date.parse("2026-09-24T12:00:00.000Z"))).toBe(0);
+  });
+});
+
+describe("sidebarThreadTitle", () => {
+  it("titles issue workers by issue, then by role, then Main or Subagent", () => {
+    const top = { relationshipToParent: null } as const;
+    const child = { relationshipToParent: "subagent" } as const;
+    const issue = { number: 42, title: "Fix login" } as ThreadLinkedIssue;
+    expect(sidebarThreadTitle({ role: "implementor", linkedIssue: issue, lineage: child })).toBe(
+      "#42 Fix login",
+    );
+    expect(sidebarThreadTitle({ role: "checker", lineage: child })).toBe("Checker");
+    expect(sidebarThreadTitle({ role: undefined, lineage: top })).toBe("Main");
+    expect(sidebarThreadTitle({ role: undefined, lineage: child })).toBe("Subagent");
+    // A fork is a top-level thread of its own.
+    expect(sidebarThreadTitle({ role: undefined, lineage: { relationshipToParent: "fork" } })).toBe(
+      "Main",
+    );
   });
 });
 

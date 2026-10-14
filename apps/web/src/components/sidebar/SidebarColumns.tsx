@@ -1,12 +1,6 @@
 import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import {
-  THREAD_ROLE_LABELS,
-  type ClientSettings,
-  type OrchestrationV2ThreadShell,
-  type ThreadRole,
-} from "@t3tools/contracts";
-import { useClientSettings } from "../../hooks/useSettings";
+import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
 import { formatSidebarTokens } from "./SidebarTokenUsage.logic";
@@ -149,26 +143,13 @@ export function threadGroupHue(rootThreadId: string): number {
   return THREAD_GROUP_HUES[Math.abs(hash) % THREAD_GROUP_HUES.length]!;
 }
 
-const selectSidebarThreadLabel = (settings: ClientSettings) => settings.sidebarThreadLabel;
-
-/** Whether thread rows show a thread's role instead of its name (the "Thread row title" setting). */
-export function useSidebarRoleLabels() {
-  return useClientSettings(selectSidebarThreadLabel) === "role";
-}
-
-/** A thread row's title: with role labels on, a thread that has a role shows it, name on hover. */
-export function sidebarThreadName(
-  title: string,
-  role: ThreadRole | undefined,
-  roleLabels: boolean,
-): ReactNode {
-  if (!roleLabels || role === undefined) return title;
+/** A row's title (see `sidebarThreadTitle`) with the thread's own name on hover. */
+export function sidebarThreadName(name: string, title: string): ReactNode {
+  if (title === name) return name;
   return (
     <Tooltip>
-      <TooltipTrigger render={<span className="block truncate" />}>
-        {THREAD_ROLE_LABELS[role]}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{title}</TooltipPopup>
+      <TooltipTrigger render={<span className="block truncate" />}>{title}</TooltipTrigger>
+      <TooltipPopup side="top">{name}</TooltipPopup>
     </Tooltip>
   );
 }
