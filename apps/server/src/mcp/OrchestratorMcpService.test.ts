@@ -1883,7 +1883,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(request.modelSelection.instanceId, altInstanceId);
           assert.equal(
             request.role,
-            role === "general" ? "implementor" : role === "test" ? "checker" : role,
+            role === "general" ? "investigator" : role === "test" ? "checker" : role,
           );
           assert.isUndefined(request.worktree);
           assert.equal(

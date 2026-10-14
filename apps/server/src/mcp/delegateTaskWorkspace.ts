@@ -4,6 +4,7 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpFailure,
   resolveThreadRole,
+  type ThreadRole,
 } from "@t3tools/contracts";
 import { WORKTREE_BRANCH_PREFIX, sanitizeBranchFragment } from "@t3tools/shared/git";
 import type * as Crypto from "effect/Crypto";
@@ -74,3 +75,18 @@ export const resolveDelegatedWorkspace = (input: {
       note: "This thread's checkout has no git commit to branch from, so the child shares this checkout instead of getting its own worktree.",
     };
   });
+
+/**
+ * The child's thread role. A child without one, or with legacy general, edits
+ * code when it gets its own worktree, so it is an Implementor; otherwise it is
+ * an Investigator.
+ */
+export const delegatedTaskRole = (
+  role: OrchestratorMcpDelegateTaskInput["role"],
+  worktree: boolean,
+): ThreadRole =>
+  role === undefined || role === "general"
+    ? worktree
+      ? "implementor"
+      : "investigator"
+    : resolveThreadRole(role)!;

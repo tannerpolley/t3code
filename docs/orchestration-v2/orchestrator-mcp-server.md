@@ -263,8 +263,8 @@ Reviewer, Investigator and Checker share the caller's checkout. Checker reviews
 the builder's existing checkout. Explicit `isolation` overrides the role
 default. Legacy role names remain accepted: `implementation` maps to
 Implementor, `research`/`design` to Investigator, `review` to Reviewer, and
-`test` to Checker. Legacy `general` maps to Implementor but keeps the shared
-default. Implementor has Fast and Thorough model profiles; pass a profile's
+`test` to Checker. A child without a role, or with legacy `general`, is an
+Implementor when it gets its own worktree and an Investigator otherwise. Implementor has Fast and Thorough model profiles; pass a profile's
 Target JSON as `target` and `implementor` as `role`. When the checkout has no
 commit to branch from, a defaulted worktree falls back to `shared` with a
 `workspaceNote`, and an explicit one fails. The branch name derives from the

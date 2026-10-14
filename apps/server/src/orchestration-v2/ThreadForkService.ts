@@ -86,8 +86,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           });
         }
         const targetThread: OrchestrationV2AppThread = {
+          // A fork keeps its source's role.
           ...input.sourceProjection.thread,
-          role: undefined,
           createdBy: input.createdBy,
           creationSource: input.creationSource,
           id: input.targetThreadId,

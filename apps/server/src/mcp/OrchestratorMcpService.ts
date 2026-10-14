@@ -96,7 +96,7 @@ import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { resolveDelegatedWorkspace } from "./delegateTaskWorkspace.ts";
+import { delegatedTaskRole, resolveDelegatedWorkspace } from "./delegateTaskWorkspace.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -2213,7 +2213,10 @@ const make = Effect.gen(function* () {
           parentRunId: parentRun.id,
           parentNodeId: parentRun.rootNodeId,
           task: taskPrompt(input),
-          ...(input.role === undefined ? {} : { role: resolveThreadRole(input.role)! }),
+          role: delegatedTaskRole(
+            input.role,
+            linkedIssue !== undefined || workspace.workspaceStrategy?.type === "worktree",
+          ),
           ...(input.title === undefined ? {} : { title: input.title }),
           modelSelection: target.modelSelection,
           runtimeMode,

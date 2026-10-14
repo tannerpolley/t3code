@@ -156,7 +156,7 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
     const sourceRun = makeSourceRun("completed");
     const result = yield* planFork(sourceRun);
 
-    assert.isUndefined(result.targetThread.role);
+    assert.equal(result.targetThread.role, "orchestrator");
     assert.isUndefined(result.targetThread.linkedIssue);
     assert.isUndefined(result.targetThread.repositoryOrchestration);
     assert.isNull(result.targetThread.snoozedUntil);

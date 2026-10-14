@@ -237,6 +237,36 @@ describe("delegate_task isolation", () => {
     );
   });
 
+  it.effect.each([
+    { choice: {}, role: "investigator" },
+    { choice: { role: "general" }, role: "investigator" },
+    { choice: { isolation: "worktree" }, role: "implementor" },
+    { choice: { role: "general", isolation: "worktree" }, role: "implementor" },
+    // Binding the worktree keeps an explicit role.
+    { choice: { role: "checker", isolation: "worktree" }, role: "checker" },
+  ] as const)("gives a delegated child the $role role ($choice)", ({ choice, role }) => {
+    const harness = makeHarness({ providers: [codexProvider] });
+    return withDelegatingParent(harness, (service) =>
+      Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const task = yield* service.delegateTask(scope, { task: "Handle the parser", ...choice });
+        if ("isolation" in choice) {
+          yield* tracker.stream(task.childThreadId).pipe(
+            Stream.filter((snapshot) => snapshot?.phase === "done"),
+            Stream.runHead,
+          );
+        }
+        const child = yield* threads.getThreadProjection(task.childThreadId);
+        assert.equal(child.thread.role, role);
+        assert.equal(
+          child.thread.worktreePath,
+          "isolation" in choice ? "/repo-worktrees/feature" : "/repo-worktrees/parent",
+        );
+      }),
+    );
+  });
+
   // A thread started in the project root records no worktree; the project root is its checkout.
   const rootParent = { branch: null, worktreePath: null };
 
