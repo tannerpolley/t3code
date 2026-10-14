@@ -66,6 +66,10 @@ export type ProjectIconFallback = typeof ProjectIconFallback.Type;
 export const SidebarTogglePosition = Schema.Literals(["left", "right"]);
 export type SidebarTogglePosition = typeof SidebarTogglePosition.Type;
 
+/** What sidebar thread rows show as their title: the thread name, or its role when it has one. */
+export const SidebarThreadLabel = Schema.Literals(["name", "role"]);
+export type SidebarThreadLabel = typeof SidebarThreadLabel.Type;
+
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
@@ -513,6 +517,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarTogglePosition: SidebarTogglePosition.pipe(
     Schema.withDecodingDefault(Effect.succeed("left" as const)),
+  ),
+  sidebarThreadLabel: SidebarThreadLabel.pipe(
+    Schema.withDecodingDefault(Effect.succeed("name" as const)),
   ),
   projectsView: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   codexStyleSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -2105,6 +2112,7 @@ export const ClientSettingsPatch = Schema.Struct({
   timestampFormat: Schema.optionalKey(TimestampFormat),
   projectIconFallback: Schema.optionalKey(ProjectIconFallback),
   sidebarTogglePosition: Schema.optionalKey(SidebarTogglePosition),
+  sidebarThreadLabel: Schema.optionalKey(SidebarThreadLabel),
   projectsView: Schema.optionalKey(Schema.Boolean),
   codexStyleSidebar: Schema.optionalKey(Schema.Boolean),
   sectionFolderColors: Schema.optionalKey(Schema.Boolean),

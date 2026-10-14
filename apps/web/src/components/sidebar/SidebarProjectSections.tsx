@@ -57,6 +57,8 @@ import {
   SidebarCaretToggle,
   SidebarTrailingColumns,
   SidebarThreadColumns,
+  sidebarThreadName,
+  useSidebarRoleLabels,
   SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
@@ -1204,6 +1206,7 @@ const SidebarProjectThreadRow = memo(
     const provider = useServerConfigs()
       .get(props.thread.environmentId)
       ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
+    const roleLabels = useSidebarRoleLabels();
     return (
       <li
         className="relative list-none"
@@ -1252,7 +1255,7 @@ const SidebarProjectThreadRow = memo(
               effort={shortModelSelectionEffort(
                 formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
               )}
-              name={props.thread.title}
+              name={sidebarThreadName(props.thread.title, props.thread.source.role, roleLabels)}
               count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
               time={<SidebarThreadTime compact thread={props.thread} status={status} />}
               status={<ThreadStatusMark status={statusMark} />}

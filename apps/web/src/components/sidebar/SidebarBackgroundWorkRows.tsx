@@ -43,6 +43,8 @@ import { cn } from "../../lib/utils";
 import {
   SidebarCaretToggle,
   SidebarThreadColumns,
+  sidebarThreadName,
+  useSidebarRoleLabels,
   SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
@@ -102,6 +104,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
   const rows = [...agents, ...backgroundTasks];
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
+  const roleLabels = useSidebarRoleLabels();
   const { listRef, isVisible } = useBackgroundTaskListVisibility(backgroundTasks.length > 0);
   const resourceUsage = useBackgroundTaskResourceUsage({
     environmentId: props.environmentId,
@@ -209,7 +212,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             }
             name={
               <span className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 flex-1 truncate">{row.label}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {sidebarThreadName(
+                    row.label,
+                    row.kind === "subagent" ? row.child?.source.role : undefined,
+                    roleLabels,
+                  )}
+                </span>
                 {row.kind === "subagent" ? null : usage}
               </span>
             }

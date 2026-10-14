@@ -364,7 +364,9 @@ With **Codex-style sidebar** enabled on web and desktop, the Projects view align
 role, provider, model, effort, name, time, and work status. Expand a thread to follow
 its child agents; each level indents while usage, time, and status stay aligned.
 Turn it off in **Settings → Customizations** to use the classic rows and flat child list.
-The Activity view keeps its cards.
+The Activity view keeps its cards. To title rows by role (Orchestrator, Implementor, and so on)
+instead of thread name, set **Thread row title** to **Role** there; hover a role to see the
+thread's name. Threads without a role keep their name.
 
 For Codex and Claude, the number at the start of each row shows tokens used by the
 latest turn, such as **48k**. Hover it for input, cached input, output, context

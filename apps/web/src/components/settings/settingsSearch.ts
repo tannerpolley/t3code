@@ -431,6 +431,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["project icon folder initials monogram letters favicon sidebar"],
   },
   {
+    id: "sidebar-thread-label",
+    title: "Thread row title",
+    to: "/settings/customizations",
+    searchTerms: [
+      "customization fork sidebar thread name label role orchestrator implementor reviewer investigator checker lineage projects",
+    ],
+  },
+  {
     id: "organize-by-folder",
     title: "Organize by folder",
     to: "/settings/customizations",
