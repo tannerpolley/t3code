@@ -24,9 +24,9 @@
     ) var(--sidebar-count-width) var(--sidebar-time-width) var(--sidebar-work-width) var(
       --sidebar-usage-width
     );
-  column-gap: 1px;
+  column-gap: 4px;
 }
-@container sidebar-columns (width < calc(15.625rem + 10px + 10ch)) {
+@container sidebar-columns (width < calc(15.625rem + 40px + 10ch)) {
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
         --sidebar-role-width
@@ -39,7 +39,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(13.625rem + 9px + 10ch)) {
+@container sidebar-columns (width < calc(13.625rem + 36px + 10ch)) {
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
         --sidebar-role-width
@@ -51,7 +51,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(11.125rem + 8px + 10ch)) {
+@container sidebar-columns (width < calc(11.125rem + 32px + 10ch)) {
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
         --sidebar-role-width

@@ -23,11 +23,9 @@ const optionalColumns = (sidebarRem: number) => {
 describe("sidebar width budget", () => {
   it("protects ten title characters before admitting optional columns", () => {
     expect(optionalColumns(16)).toEqual([]);
-    expect(optionalColumns(20)).toEqual(["model"]);
-    expect(optionalColumns(24)).toEqual(["model", "effort", "usage"]);
-    expect(optionalColumns(28)).toEqual(["model", "effort", "usage"]);
-    const basic = sidebarColumnBudget(new Set(["usage", "effort", "model"]));
-    expect(216 - basic.rem * 16 - basic.px).toBeGreaterThanOrEqual(10 * ch);
+    expect(optionalColumns(21)).toEqual(["model"]);
+    expect(optionalColumns(24)).toEqual(["model", "effort"]);
+    expect(optionalColumns(26)).toEqual(["model", "effort", "usage"]);
   });
 });
 

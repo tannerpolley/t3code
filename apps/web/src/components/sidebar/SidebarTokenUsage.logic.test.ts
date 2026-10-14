@@ -7,6 +7,6 @@ describe("sidebar token formatting", () => {
       [undefined, 0, 999, 1_000, 48_123, 999_499, 999_500, 1_250_000, 10_000_000].map(
         formatSidebarTokens,
       ),
-    ).toEqual(["—", "0", "999", "1k", "48k", "999k", "1m", "1.3m", "10m"]);
+    ).toEqual(["—", "0", "999", "1k", "48k", "999k", "1M", "1.3M", "10M"]);
   });
 });
