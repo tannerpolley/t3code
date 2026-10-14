@@ -50,6 +50,7 @@ vi.mock("../../state/entities", () => ({
   useProjects: () => state.projects,
   useServerConfigs: () => state.configs,
   useThreadShell: () => null,
+  useProject: () => null,
 }));
 vi.mock("../../lib/archivedThreadsState", () => ({
   useArchivedThreadSnapshots: () => ({ snapshots: [] }),
