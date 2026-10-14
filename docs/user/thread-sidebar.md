@@ -71,7 +71,8 @@ environment owns its sections; place a project in a section on its own environme
 After upgrading, the first connected window with a saved layout imports it if this
 environment has not imported one before. Earlier sidebar edits do not prevent the
 import, and sections created since the upgrade are kept. Only sections containing
-this environment's projects, including their parent sections, are imported. If two
+this environment's projects, including their parent sections, are imported; empty
+sections go only to the primary environment. If two
 windows have different saved layouts, the first accepted layout wins; the other
 window adopts it. Later windows cannot overwrite it, even after every section is
 removed. Your old saved copy is kept while any of your environments still needs it.
