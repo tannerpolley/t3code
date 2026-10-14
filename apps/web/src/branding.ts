@@ -17,10 +17,12 @@ export const HOSTED_APP_CHANNEL =
 export const HOSTED_APP_CHANNEL_LABEL =
   HOSTED_APP_CHANNEL === "nightly" ? "Nightly" : HOSTED_APP_CHANNEL === "latest" ? "Latest" : null;
 export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? "T3 Code";
+// VITE_APP_STAGE_LABEL (for example "Alpha") lets a dev server present as an installed app,
+// without the Dev header art and labels.
 export const APP_STAGE_LABEL =
   injectedDesktopAppBranding?.stageLabel ??
   HOSTED_APP_CHANNEL_LABEL ??
-  (import.meta.env.DEV ? "Dev" : "Alpha");
+  (import.meta.env.VITE_APP_STAGE_LABEL?.trim() || (import.meta.env.DEV ? "Dev" : "Alpha"));
 export const APP_DISPLAY_NAME =
   injectedDesktopAppBranding?.displayName ??
   formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL });
