@@ -271,10 +271,12 @@ To keep one repository visible while its kind is hidden, such as a single fork, 
 use the pin button on its row. A pinned repository ignores the repository filters but still follows
 the issue filters and search. Pins are remembered with your filter choices.
 
-Select an issue to open it in a resizable panel with its comments and the pull requests linked to
-it; a linked pull request opens in the pull request panel. **Prepare draft** opens a new thread
+Select an issue to open it in a resizable panel: **Summary** shows its description and the pull
+requests linked to it, **Timeline** its comments. A linked pull request opens in the pull request
+panel, and its back arrow returns to the issue. A GitHub issue link in a pull request, issue or
+chat message opens the same issue panel. **Prepare draft** opens a new thread
 for the issue's project in a worktree on a branch named after the issue, with an unsent prompt.
-Use **Open on GitHub** to comment or make other changes.
+Select the issue number at the top to comment or make other changes on GitHub.
 
 To run issue work, open an issue, choose **Start agent**, then a model role and the
 matching repository project. Use a model role with an available Codex or Claude target.

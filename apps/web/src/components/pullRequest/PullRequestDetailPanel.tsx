@@ -420,6 +420,7 @@ export function PullRequestDetailPanel({
   context = "page",
   composerDraftTarget,
   onBack,
+  backLabel,
   onSelectPullRequest,
   onGuideShown,
 }: {
@@ -469,6 +470,8 @@ export function PullRequestDetailPanel({
    * expects to land on it, with this one still open behind.
    */
   onBack?: (() => void) | undefined;
+  /** What back returns to, where it is not the thread's pull requests (an issue that linked here). */
+  backLabel?: string | undefined;
   /** Told when a written guide comes on screen. The page maximizes its panel for the guide. */
   onGuideShown?: (() => void) | undefined;
 }) {
@@ -1815,13 +1818,17 @@ export function PullRequestDetailPanel({
                           variant="ghost-muted"
                           onClick={onBack}
                           className="-ml-1.5"
-                          aria-label="Back to this thread's pull requests"
+                          aria-label={
+                            backLabel
+                              ? `Back to ${backLabel}`
+                              : "Back to this thread's pull requests"
+                          }
                         >
                           <ArrowLeftIcon aria-hidden className="size-3.5" />
                         </Button>
                       }
                     />
-                    <TooltipPopup side="top">Back to pull requests</TooltipPopup>
+                    <TooltipPopup side="top">Back to {backLabel ?? "pull requests"}</TooltipPopup>
                   </Tooltip>
                 ) : null}
                 <Tooltip>
@@ -1891,13 +1898,17 @@ export function PullRequestDetailPanel({
                           tabIndex={condensed ? 0 : -1}
                           onClick={onBack}
                           className="-ml-1.5"
-                          aria-label="Back to this thread's pull requests"
+                          aria-label={
+                            backLabel
+                              ? `Back to ${backLabel}`
+                              : "Back to this thread's pull requests"
+                          }
                         >
                           <ArrowLeftIcon aria-hidden className="size-3.5" />
                         </Button>
                       }
                     />
-                    <TooltipPopup side="top">Back to pull requests</TooltipPopup>
+                    <TooltipPopup side="top">Back to {backLabel ?? "pull requests"}</TooltipPopup>
                   </Tooltip>
                 ) : null}
                 <Tooltip>

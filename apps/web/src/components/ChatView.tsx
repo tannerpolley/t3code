@@ -302,6 +302,7 @@ import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavaila
 import { IssueListPanel } from "./issues/IssueBrowser";
 import { threadIssueRepository } from "./chat/ThreadDetailsIssueRows";
 import { IssueDetailPanel } from "./issues/IssueDetailPanel";
+import { issueOriginFor } from "./issues/issuePullRequestOrigin";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -2410,6 +2411,15 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelControlsAtRoot = rightPanelPresent && !shouldUsePlanSidebarSheet;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
+  const openIssueList = rightPanelState.surfaces.find((surface) => surface.kind === "issues");
+  const pullRequestIssueOrigin =
+    renderedRightPanelSurface?.kind === "pull-request" && activeThreadRef !== null
+      ? issueOriginFor(
+          activeThreadRef,
+          renderedRightPanelSurface,
+          rightPanelState.surfaces.map((surface) => surface.id),
+        )
+      : null;
   const issueEnvironmentId =
     renderedRightPanelSurface?.kind === "issue"
       ? ((renderedRightPanelSurface.environmentId as EnvironmentId | undefined) ??
@@ -11317,11 +11327,23 @@ export default function ChatView(props: ChatViewProps) {
           renderedRightPanelSurface,
         )}
         composerDraftTarget={composerDraftTarget}
-        onBack={
-          activeThreadRef !== null && pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
-            ? addPullRequestsSurface
-            : undefined
-        }
+        {...(pullRequestIssueOrigin !== null && activeThreadRef !== null
+          ? {
+              // Opened from an issue's linked pull requests: back returns to that issue.
+              onBack: () =>
+                useRightPanelStore
+                  .getState()
+                  .activateSurface(activeThreadRef, pullRequestIssueOrigin.id),
+              backLabel: `issue #${pullRequestIssueOrigin.number}`,
+            }
+          : {
+              onBack:
+                activeThreadRef !== null &&
+                pullRequestsSurfaceAvailable &&
+                visiblePullRequestCount > 1
+                  ? addPullRequestsSurface
+                  : undefined,
+            })}
       />
     ) : renderedRightPanelSurface?.kind === "issue" && issueEnvironmentUnavailable ? (
       <PullRequestsUnavailableState
@@ -11347,6 +11369,21 @@ export default function ChatView(props: ChatViewProps) {
           } satisfies IssueRef
         }
         threadRef={activeThreadRef}
+        {...(activeThreadRef === null
+          ? {}
+          : {
+              onBack: () =>
+                useRightPanelStore.getState().openIssueList(
+                  activeThreadRef,
+                  // An open list keeps its scope; otherwise it opens on this issue's repository.
+                  openIssueList
+                    ? (openIssueList.scope ?? null)
+                    : {
+                        host: renderedRightPanelSurface.host,
+                        repository: renderedRightPanelSurface.repository,
+                      },
+                ),
+            })}
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />

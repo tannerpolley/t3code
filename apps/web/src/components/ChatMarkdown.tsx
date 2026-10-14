@@ -208,6 +208,7 @@ import {
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
 import { useOpenLink } from "../browser/useOpenLink";
+import { useOpenIssueLink } from "../lib/openIssueLink";
 import { useCopyToClipboard, writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import {
@@ -255,6 +256,14 @@ interface ChatMarkdownProps {
       author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
 }
+
+/** A plain click for opening a link outside a real click handler. */
+const NO_MODIFIER_CLICK = {
+  metaKey: false,
+  ctrlKey: false,
+  preventDefault: () => undefined,
+  stopPropagation: () => undefined,
+};
 
 export interface ChatMarkdownContextReference {
   kind: string;
@@ -2512,7 +2521,15 @@ function useChatMarkdownState({
         : payload.html,
     );
   }, []);
-  const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
+  const openPullRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
+  const openIssueLink = useOpenIssueLink(threadRef);
+  // A GitHub issue link opens in T3's issue detail the way a change request opens in its pane.
+  const openChangeRequestLink = useCallback<typeof openPullRequestLink>(
+    (event, url, targetThreadRef, targetEnvironmentId) =>
+      openPullRequestLink(event, url, targetThreadRef, targetEnvironmentId) ||
+      openIssueLink(event, url, targetEnvironmentId),
+    [openIssueLink, openPullRequestLink],
+  );
   const openDeferredMarkdownLink = useOpenLink(threadRef);
   // Subscribed rather than read at click time: the anchor has to decide
   // synchronously whether to intercept its `_blank`, and a subscription is what
@@ -3181,7 +3198,18 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 environmentId ?? undefined,
               )
             }
-            onOpenFallback={openDeferredMarkdownLink}
+            // A `#n` that is not a pull request is usually an issue.
+            onOpenFallback={async (url) => {
+              if (
+                !openChangeRequestLink(
+                  NO_MODIFIER_CLICK,
+                  url,
+                  undefined,
+                  environmentId ?? undefined,
+                )
+              )
+                await openDeferredMarkdownLink(url);
+            }}
           />
         );
       }
