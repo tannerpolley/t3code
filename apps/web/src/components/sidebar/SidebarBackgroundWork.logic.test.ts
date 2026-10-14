@@ -35,7 +35,21 @@ const runningChild = makeThreadFixture({
 });
 
 describe("describeSidebarBackgroundWork", () => {
-  it("deduplicates linked children and lists roster-only subagents ahead of app-owned children", () => {
+  it("lists a thread's own tasks, then native subagents, then app-owned children", () => {
+    const nativeFixture = makeThreadFixture({
+      id: ThreadId.make("native-child"),
+      title: "Explore natively",
+      lineage: {
+        rootThreadId: ThreadId.make("parent"),
+        parentThreadId: ThreadId.make("parent"),
+        relationshipToParent: "subagent",
+      },
+      runtime: runningChild.runtime,
+    });
+    const nativeChild = {
+      ...nativeFixture,
+      source: { ...nativeFixture.source, creationSource: "provider" as const },
+    };
     const rows = describeSidebarBackgroundWork(
       [
         {
@@ -44,30 +58,33 @@ describe("describeSidebarBackgroundWork", () => {
           kind: "subagent",
           childThreadId: runningChild.id,
         },
+        { taskId: "native-agent", kind: "subagent", childThreadId: nativeChild.id },
         { taskId: "roster-agent", description: "Explore", kind: "subagent" },
         { taskId: "command", description: "Run tests", kind: "command" },
         { taskId: "monitor", description: "Watch build", kind: "monitor" },
         { taskId: "unknown", kind: "background_task" },
       ],
-      [runningChild],
+      // groupRunningSubagentsByParent lists native children first.
+      [nativeChild, runningChild],
     );
 
     expect(rows.map(({ taskId, kind }) => [taskId, kind])).toEqual([
-      ["roster-agent", "subagent"],
-      [runningChild.id, "subagent"],
       ["command", "command"],
       ["monitor", "monitor"],
       ["unknown", "background_task"],
+      [nativeChild.id, "subagent"],
+      ["roster-agent", "subagent"],
+      [runningChild.id, "subagent"],
     ]);
-    expect(rows[1]).toMatchObject({
+    expect(rows[5]).toMatchObject({
       label: "Review the diff",
       childThreadId: runningChild.id,
       startedAt: "2026-09-23T10:00:00.000Z",
       status: "working",
       child: runningChild,
     });
-    expect(rows[0]).toMatchObject({ childThreadId: null, startedAt: null });
-    expect(rows[2]).not.toHaveProperty("childThreadId");
+    expect(rows[4]).toMatchObject({ childThreadId: null, startedAt: null });
+    expect(rows[0]).not.toHaveProperty("childThreadId");
   });
 
   it("uses the pending-work kind to distinguish waiting from a leftover command", () => {
@@ -246,8 +263,8 @@ describe("background task metadata", () => {
         [],
       ).map((row) => [row.kind, row.startedAt]),
     ).toEqual([
-      ["subagent", "2026-09-23T10:00:00.000Z"],
       ["command", "2026-09-23T10:00:00.000Z"],
+      ["subagent", "2026-09-23T10:00:00.000Z"],
     ]);
     expect(
       describeSidebarBackgroundWork(

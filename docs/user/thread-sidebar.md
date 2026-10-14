@@ -98,7 +98,8 @@ sidebar toggle position, and revealing the thread you open.
 Drag a thread from Projects onto the composer to add it as context for your next
 message; subagent rows in Projects and rows in **Lineage** drag the same way.
 Running subagents and background tasks appear beneath their parent
-thread, native subagents first, then app-owned children. A thread's folder icon shows where it works; hover it for the folder and
+thread: its own background tasks first, then its native subagents, then app-owned
+children, each followed by its own work. A thread's folder icon shows where it works; hover it for the folder and
 branch, such as **aurora-web · main**. A branch icon marks a worktree, such as
 **feature (worktree) · t3/feature**. Threads on another environment show that
 environment's name and the folder. A child's question or approval also appears on

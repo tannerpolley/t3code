@@ -96,6 +96,9 @@ export function groupBackgroundWorkTaskRows(rows: ReadonlyArray<BackgroundWorkTa
  * Joins provider-reported subagent tasks to their thread rows. Some providers omit a child id;
  * those roster entries pair with running children by count. Commands started by a child sit
  * beneath that child while staying on the parent provider's roster.
+ *
+ * Under a thread the order is: its own background tasks, its native subagents (roster-only ones
+ * included), then its app-owned children.
  */
 export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
@@ -172,10 +175,10 @@ export function describeSidebarBackgroundWork(
   );
   const split = firstAppOwned === -1 ? childRows.length : firstAppOwned;
   return [
+    ...backgroundTaskRows,
     ...childRows.slice(0, split),
     ...unmatchedSubagentRows,
     ...childRows.slice(split),
-    ...backgroundTaskRows,
   ];
 }
 

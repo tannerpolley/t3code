@@ -100,8 +100,9 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
       : [],
     title: draggedChild.current?.title ?? "Thread",
   }));
-  const { agents, backgroundTasks } = groupBackgroundWorkTaskRows(props.rows);
-  const rows = [...agents, ...backgroundTasks];
+  // Rows keep describeSidebarBackgroundWork's order: the thread's own tasks, then its agents.
+  const rows = props.rows;
+  const { backgroundTasks } = groupBackgroundWorkTaskRows(rows);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   const roleLabels = useSidebarRoleLabels();
@@ -317,7 +318,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             }
             className={cn(
               row.kind !== "subagent" && "group/shell",
-              index === agents.length && agents.length > 0 && "border-t border-sidebar-border/40",
+              index > 0 &&
+                row.kind === "subagent" &&
+                rows[index - 1]!.kind !== "subagent" &&
+                "border-t border-sidebar-border/40",
               "relative",
             )}
             style={
