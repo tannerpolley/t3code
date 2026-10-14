@@ -42,7 +42,7 @@
 }
 /*
  * The model's name and version in fixed parts with no gap, so every version starts at the same x.
- * The parts' ch widths resolve in the row font, like the model track itself.
+ * The parts' ch widths resolve in the container's font, like the model track itself.
  */
 @utility sidebar-thread-model {
   display: grid;
