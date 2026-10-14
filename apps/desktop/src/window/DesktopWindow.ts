@@ -272,6 +272,25 @@ export function concealPendingQuitWindow(
   window.setOpacity(0);
 }
 
+/**
+ * Zoom keys on Windows and Linux. The View menu accelerators for these do not
+ * fire on Linux, where the hidden-title-bar main window has no menu bar widget
+ * to deliver them, so the main window's own key events handle them as well.
+ */
+export function zoomShortcutDirection(input: {
+  readonly type: string;
+  readonly key: string;
+  readonly control: boolean;
+  readonly alt: boolean;
+  readonly meta: boolean;
+}): MainWindowZoomDirection | null {
+  if (input.type !== "keyDown" || !input.control || input.alt || input.meta) return null;
+  if (input.key === "=" || input.key === "+") return "in";
+  if (input.key === "-") return "out";
+  if (input.key === "0") return "reset";
+  return null;
+}
+
 function getWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
@@ -384,6 +403,14 @@ export const make = Effect.gen(function* () {
 
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+
+  const applyZoomDirection = (window: Electron.BrowserWindow, direction: MainWindowZoomDirection) =>
+    applyMainZoom(
+      window,
+      direction === "reset"
+        ? 1
+        : stepInterfaceZoom(zoomLevelToFactor(window.webContents.getZoomLevel()), direction),
+    );
 
   const applyMainZoom = Effect.fn("desktop.window.applyMainZoom")(function* (
     window: Electron.BrowserWindow,
@@ -708,6 +735,14 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("before-input-event", (event, input) => {
       quitShortcutHandler(event, input);
+      const zoomDirection = environment.platform === "darwin" ? null : zoomShortcutDirection(input);
+      if (zoomDirection !== null) {
+        // preventDefault keeps the menu accelerator from zooming a second time
+        // on platforms where it does fire.
+        event.preventDefault();
+        runFork(applyZoomDirection(window, zoomDirection));
+        return;
+      }
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
       if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
@@ -1061,11 +1096,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ direction });
       const window = yield* focusedMainWindow;
       if (Option.isNone(window) || window.value.isDestroyed()) return;
-      const current = zoomLevelToFactor(window.value.webContents.getZoomLevel());
-      yield* applyMainZoom(
-        window.value,
-        direction === "reset" ? 1 : stepInterfaceZoom(current, direction),
-      );
+      yield* applyZoomDirection(window.value, direction);
     }),
     mainZoomFactor: Effect.gen(function* () {
       const window = yield* currentMainWindow;
