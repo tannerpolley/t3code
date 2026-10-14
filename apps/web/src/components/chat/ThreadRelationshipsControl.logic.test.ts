@@ -1,11 +1,45 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  canStopLineageSubagent,
   groupThreadLineageRows,
   resolveLineageClearedAt,
   SHOW_ALL_CLEARED,
 } from "./ThreadRelationshipsControl.logic";
+
+describe("canStopLineageSubagent", () => {
+  const agent = {
+    origin: "provider_native" as const,
+    driver: ProviderDriverKind.make("codex"),
+    runId: RunId.make("run"),
+    nativeTaskRef: {
+      driver: ProviderDriverKind.make("codex"),
+      nativeId: "task",
+      strength: "strong" as const,
+    },
+    nativeStatus: "running" as const,
+    startedAt: "2026-10-13T12:00:00.000Z",
+    status: "running" as const,
+  };
+  it("offers Stop for Codex and Claude with a live native handle", () => {
+    expect(canStopLineageSubagent(agent)).toBe(true);
+    expect(
+      canStopLineageSubagent({ ...agent, driver: ProviderDriverKind.make("claudeAgent") }),
+    ).toBe(true);
+    expect(canStopLineageSubagent({ ...agent, origin: "app_owned", nativeTaskRef: null })).toBe(
+      true,
+    );
+  });
+  it("rejects finished, unstarted, unsupported and weakly identified native work", () => {
+    expect(canStopLineageSubagent({ ...agent, status: "completed" })).toBe(false);
+    expect(canStopLineageSubagent({ ...agent, nativeStatus: "pending" })).toBe(false);
+    expect(canStopLineageSubagent({ ...agent, driver: ProviderDriverKind.make("cursor") })).toBe(
+      false,
+    );
+    expect(canStopLineageSubagent({ ...agent, nativeTaskRef: null })).toBe(false);
+  });
+});
 
 describe("thread lineage groups", () => {
   const parent = ThreadId.make("parent");

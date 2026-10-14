@@ -254,6 +254,9 @@ retry and the normal snooze choices.
 
 On web and desktop, open **Agents** to follow delegated work and **Lineage** to see
 parent and fork relationships. Stop on a thread also stops the subagents it delegated to.
+You can stop a running native Codex or Claude subagent from its row while its
+parent keeps working. Codex Stop interrupts the child's current turn and its
+descendants; Claude Stop uses its native task control.
 Use **Clear** under **Previous agents** to hide finished agents, and **Show** to restore
 them. To clear them automatically, set **Settings → Customizations → Clear finished agents
 automatically** to 30 minutes or 1 hour. Turn off **Redesigned Lineage** there for the

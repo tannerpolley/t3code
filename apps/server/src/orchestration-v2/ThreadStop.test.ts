@@ -24,7 +24,6 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { CLAUDE_PROVIDER } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { OrchestrationEffectRequestV2 } from "./EffectOutbox.ts";
@@ -651,9 +650,16 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)(
-  "a native child Stop only settles a confirmed %s outcome and preserves its owner and sibling",
-  (providerState) =>
+it.effect.each(
+  ["claudeAgent", "codex"].flatMap((driver) =>
+    (["missing session", "completed", "failed", "cancelled"] as const).map((providerState) => ({
+      driver,
+      providerState,
+    })),
+  ),
+)(
+  "a native child Stop only settles confirmed provider evidence and preserves its owner and sibling (%s)",
+  ({ driver, providerState }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -668,11 +674,11 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       const subagent = {
         ...before.subagents[0]!,
         origin: "provider_native" as const,
-        driver: CLAUDE_PROVIDER,
-        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make(driver),
+        providerInstanceId: ProviderInstanceId.make(driver),
         nativeTaskRef: {
-          driver: CLAUDE_PROVIDER,
-          nativeId: "claude-task",
+          driver: ProviderDriverKind.make(driver),
+          nativeId: "native-task",
           strength: "strong" as const,
         },
         status: "running" as const,
@@ -740,8 +746,8 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
         occurredAt: now,
         payload: {
           ...providerThread,
-          driver: CLAUDE_PROVIDER,
-          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make(driver),
+          providerInstanceId: ProviderInstanceId.make(driver),
           providerSessionId: ProviderSessionId.make("session:native-child-stop"),
         },
       });
@@ -802,7 +808,7 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
         providerSessionId: "session:native-child-stop",
         providerThreadId: providerThread.id,
         providerTurnId,
-        subagent: { id: subagent.id, nativeTaskId: "claude-task" },
+        subagent: { id: subagent.id, nativeTaskId: "native-task" },
       });
       assert.equal(
         (yield* orchestrator.getThreadProjection(threadId)).subagents[0]?.status,

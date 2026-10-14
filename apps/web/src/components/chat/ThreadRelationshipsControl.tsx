@@ -86,6 +86,7 @@ import { AgentElapsed } from "./AgentElapsed";
 import { useThreadContextPointerDrag } from "./threadContextDrag";
 import { shortModelName } from "./providerIconUtils";
 import {
+  canStopLineageSubagent,
   groupThreadLineageRows,
   resolveLineageClearedAt,
   SHOW_ALL_CLEARED,
@@ -644,17 +645,7 @@ export function ThreadRelationshipsPanel(props: {
                     ? projectedAgent
                     : currentSubagent(projectedAgent, node?.thread);
                   const failed = rowStatus === "failed" || rowStatus === "error";
-                  const canStop =
-                    agent &&
-                    (agent.origin === "app_owned" ||
-                      (agent.origin === "provider_native" &&
-                        agent.driver === "claudeAgent" &&
-                        agent.runId != null &&
-                        agent.nativeTaskRef?.strength === "strong" &&
-                        agent.nativeTaskRef.nativeId !== null &&
-                        ["pending", "running", "waiting"].includes(agent.nativeStatus))) &&
-                    agent.startedAt &&
-                    ["pending", "running", "waiting"].includes(agent.status);
+                  const canStop = canStopLineageSubagent(agent);
                   const threadTitle = relationshipThreadTitle({
                     // A workflow's name is shorter than its child thread's title.
                     title:

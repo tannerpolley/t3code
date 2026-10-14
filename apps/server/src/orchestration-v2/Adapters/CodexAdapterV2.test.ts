@@ -5824,6 +5824,85 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ],
   });
 
+  it.effect("stops only a native Codex child and ignores a stale Stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const entries = interruptSubagentCommandTranscript.entries
+          .filter(
+            (entry) =>
+              entry.type !== "runtime_exit" &&
+              !(
+                "label" in entry &&
+                ["turn/interrupt/root", "turn/completed/root"].includes(entry.label ?? "")
+              ),
+          )
+          .map((entry) => {
+            if (entry.type === "expect_outbound" || entry.type === "emit_inbound") {
+              const frame = entry.frame as Record<string, unknown>;
+              return typeof frame.id === "number" && frame.id > 4
+                ? { ...entry, frame: { ...frame, id: frame.id - 1 } }
+                : entry;
+            }
+            return entry;
+          });
+        const childReady = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-stop-one-child",
+            entries,
+          }),
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM
+              ? Deferred.succeed(childReady, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("stop-one-child"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* Deferred.await(childReady);
+        const child = harness.events.findLast((event) => event.type === "subagent.updated");
+        assert.equal(child?.type, "subagent.updated");
+        if (child?.type !== "subagent.updated") return;
+        const stop = harness.runtime.stopSubagent!;
+        const unknown = yield* Effect.exit(
+          stop({ providerThread: harness.providerThread, nativeTaskId: "unknown" }),
+        );
+        assert.isTrue(Exit.isFailure(unknown));
+        yield* stop({
+          providerThread: harness.providerThread,
+          nativeTaskId: child.subagent.nativeTaskRef!.nativeId!,
+          requestedAt: DateTime.makeUnsafe(0),
+        });
+        assert.isFalse(
+          harness.events.some(
+            (event) => event.type === "subagent.updated" && event.subagent.status === "interrupted",
+          ),
+        );
+        yield* stop({
+          providerThread: harness.providerThread,
+          nativeTaskId: child.subagent.nativeTaskRef!.nativeId!,
+        });
+        assert.equal(
+          harness.events.findLast((event) => event.type === "subagent.updated")?.subagent.status,
+          "interrupted",
+        );
+        assert.lengthOf(harness.terminalEvents(), 0, "the parent must keep running");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   const assertChildProviderTerminalBeforeRoot = (
     events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
     rootThreadId: ThreadId,

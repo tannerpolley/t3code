@@ -7289,6 +7289,48 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
               ),
             ),
+          stopSubagent: (stopInput) =>
+            Effect.gen(function* () {
+              const subagent = Array.from((yield* Ref.get(subagentThreads)).values()).find(
+                (candidate) =>
+                  candidate.task.nativeTaskRef?.nativeId === stopInput.nativeTaskId &&
+                  candidate.task.threadId === stopInput.providerThread.appThreadId &&
+                  candidate.parentContext.providerThread.id === stopInput.providerThread.id,
+              );
+              if (subagent === undefined) {
+                return yield* toProtocolError("Codex subagent has no known owning thread.");
+              }
+              // A delayed Stop belongs to the old invocation, not a resumed child.
+              if (
+                stopInput.requestedAt !== undefined &&
+                subagent.task.startedAt !== null &&
+                DateTime.toEpochMillis(subagent.task.startedAt) >
+                  DateTime.toEpochMillis(stopInput.requestedAt)
+              )
+                return;
+              if (!isOrchestrationV2WorkActive(subagent.task.status)) return;
+              const activeTurn = Array.from((yield* Ref.get(activeTurns)).values()).find(
+                (candidate) => candidate.subagent === subagent,
+              );
+              if (activeTurn === undefined) {
+                return yield* toProtocolError("Codex subagent has no active native turn to stop.");
+              }
+              // Reuse lineage interruption with the child as its root; parents and siblings survive.
+              yield* runtime.interruptTurn({
+                providerThread: subagent.providerThread,
+                providerTurnId: activeTurn.providerTurnId,
+                requestRuntimeRestart: true,
+              });
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CODEX_PROVIDER,
+                    detail: "Failed to stop Codex native subagent.",
+                    cause,
+                  }),
+              ),
+            ),
           respondToRuntimeRequest: (requestInput) =>
             Effect.gen(function* () {
               const pending = (yield* Ref.get(pendingRuntimeRequests)).get(

@@ -1,6 +1,30 @@
 import { isParentThreadRelationship } from "@t3tools/client-runtime/state/thread-relationships";
-import type { ThreadId } from "@t3tools/contracts";
+import type { OrchestrationV2Subagent, ThreadId } from "@t3tools/contracts";
+import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ThreadRelationshipWalkRow } from "@t3tools/client-runtime/state/thread-relationships";
+
+/** Native Stop needs a live task handle; Codex interrupts a running child turn. */
+export function canStopLineageSubagent(
+  agent:
+    | (Pick<OrchestrationV2Subagent, "origin" | "driver" | "runId" | "nativeTaskRef"> &
+        Pick<RuntimeSubagent, "startedAt" | "status"> & {
+          readonly nativeStatus: OrchestrationV2Subagent["status"];
+        })
+    | undefined,
+): boolean {
+  if (!agent?.startedAt || !["pending", "running", "waiting"].includes(agent.status)) return false;
+  if (agent.origin === "app_owned") return true;
+  return (
+    agent.origin === "provider_native" &&
+    (agent.driver === "claudeAgent" || agent.driver === "codex") &&
+    agent.runId != null &&
+    agent.nativeTaskRef?.strength === "strong" &&
+    agent.nativeTaskRef.nativeId !== null &&
+    (agent.driver === "codex"
+      ? agent.nativeStatus === "running"
+      : ["pending", "running", "waiting"].includes(agent.nativeStatus))
+  );
+}
 
 const FINISHED_AGENT_STATUSES = new Set([
   "completed",
