@@ -3404,7 +3404,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect("suffixes a unique worktree name past taken branches and folders", () =>
+    it.effect("suffixes a unique worktree name past taken branches, folders and namespaces", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -3421,18 +3421,41 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               ...(directoryName ? { directoryName } : {}),
             },
           );
-        // `issue-7-fix` is a branch without a folder; `issue-7-fix-2` is a stray folder.
+        const refNames = (results: ReadonlyArray<{ worktree: { refName: string } }>) =>
+          results.map((result) => result.worktree.refName).toSorted();
+
+        // A taken branch, a stray folder, and a ref namespace each move to the next suffix.
         yield* git(cwd, ["branch", "issue-7-fix"]);
         yield* fs.makeDirectory(path.join(local, "issue-7-fix-2"), { recursive: true });
+        yield* fs.writeFileString(path.join(local, "issue-7-fix-2", "keep"), "");
         const created = yield* create("issue-7-fix");
         assert.equal(created.worktree.refName, "issue-7-fix-3");
         assert.equal(created.worktree.path, path.join(local, "issue-7-fix-3"));
-        assert.equal((yield* create("issue-7-fix")).worktree.refName, "issue-7-fix-4");
+        yield* git(cwd, ["branch", "parser/old"]);
+        assert.equal((yield* create("parser")).worktree.refName, "parser-2");
 
-        // A separate folder name is checked only as a folder; the branch stays exact.
-        const temporary = yield* create("t3/deadbeef", "issue-7-fix-3");
-        assert.equal(temporary.worktree.refName, "t3/deadbeef");
-        assert.equal(temporary.worktree.path, path.join(local, "issue-7-fix-3-2"));
+        // Concurrent requests for one name all succeed under distinct suffixes.
+        const same = yield* Effect.all(
+          Array.from({ length: 4 }, () => create("same-title")),
+          { concurrency: "unbounded" },
+        );
+        assert.deepEqual(refNames(same), [
+          "same-title",
+          "same-title-2",
+          "same-title-3",
+          "same-title-4",
+        ]);
+
+        // Temporary branches sharing a folder name keep their branches; only folders move.
+        const temporary = yield* Effect.all(
+          [create("t3/aaaaaaaa", "new-thread"), create("t3/bbbbbbbb", "new-thread")],
+          { concurrency: "unbounded" },
+        );
+        assert.deepEqual(refNames(temporary), ["t3/aaaaaaaa", "t3/bbbbbbbb"]);
+        assert.deepEqual(
+          temporary.map((result) => path.basename(result.worktree.path)).toSorted(),
+          ["new-thread", "new-thread-2"],
+        );
       }),
     );
 

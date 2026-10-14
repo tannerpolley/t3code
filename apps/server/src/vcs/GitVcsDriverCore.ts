@@ -53,6 +53,8 @@ const gitProcesses = Semaphore.makeUnsafe(8);
 // take well beyond the default 30s (e.g. a 375k-file repo takes ~40s on an idle
 // machine). Give it generous headroom while still bounding a genuinely hung git.
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
+// ponytail: linear probe; past this many copies of one name, creation fails.
+const UNIQUE_WORKTREE_NAME_ATTEMPTS = 100;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -447,6 +449,8 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   [/would clobber existing tag/i, "tag_would_be_clobbered"],
   [/is already (?:used by worktree at|checked out at)/i, "branch_checked_out_in_worktree"],
   [/a branch named .+ already exists/i, "branch_already_exists"],
+  // A branch blocked by a ref under its name (`parser` with `parser/old`) or above it.
+  [/cannot lock ref '[^']+': '[^']+' exists; cannot create/i, "ref_name_conflict"],
   // ssh names the methods it tried, so the parenthesized list varies:
   // `(publickey)`, `(publickey,password)`, `(keyboard-interactive)`.
   [
@@ -3514,7 +3518,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
       directoryName = `detached-${id}`;
     }
+    const progress = options?.progress;
+    const onCheckoutProgress = progress?.onCheckoutProgress;
+    const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
+    const addWorktree = (target: string, branch: string | undefined) =>
+      executeGit(
+        "GitVcsDriver.createWorktree",
+        input.cwd,
+        [
+          "-c",
+          `checkout.workers=${checkoutWorkers}`,
+          ...(options?.detached
+            ? ["worktree", "add", "--detach", target, input.refName]
+            : branch
+              ? ["worktree", "add", "-b", branch, target, input.refName]
+              : ["worktree", "add", target, input.refName]),
+        ],
+        {
+          fallbackErrorDetail: "git worktree add failed",
+          timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+          ...(onCheckoutProgress
+            ? {
+                // Git only prints checkout progress when stderr is a tty or the
+                // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+                env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
+                progress: {
+                  onStderrLine: (line) => {
+                    const parsed = parseGitCheckoutProgressLine(line);
+                    return parsed ? onCheckoutProgress(parsed) : Effect.void;
+                  },
+                },
+              }
+            : {}),
+        },
+      );
+
     let worktreePath = input.path;
+    let added = false;
     if (worktreePath == null) {
       const repositoryRoot =
         options?.worktreesDirectory === PROJECT_LOCAL_WORKTREES
@@ -3531,23 +3571,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           name,
           repositoryRoot,
         );
-      let resolvedPath = resolve(directoryName);
-      if (options?.uniqueName && newRefName !== undefined) {
-        const baseDirectory = directoryName;
-        const baseRefName = newRefName;
-        const suffixBranch = options.directoryName === undefined;
-        for (let suffix = 2; resolvedPath !== null; suffix += 1) {
-          const taken =
-            (yield* fileSystem.exists(resolvedPath).pipe(Effect.orElseSucceed(() => false))) ||
-            (suffixBranch && (yield* branchExists(input.cwd, newRefName)));
-          if (!taken) break;
-          // ponytail: linear probe; past 100 copies of one name, let git report the clash.
-          if (suffix > 100) break;
-          directoryName = `${baseDirectory}-${suffix}`;
-          if (suffixBranch) newRefName = `${baseRefName}-${suffix}`;
-          resolvedPath = resolve(directoryName);
-        }
-      }
+      const resolvedPath = resolve(directoryName);
       if (resolvedPath === null) {
         return yield* new GitCommandError({
           operation: "GitVcsDriver.createWorktree",
@@ -3567,38 +3591,68 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           );
       }
       worktreePath = resolvedPath;
+      if (options?.uniqueName && newRefName !== undefined) {
+        // Each attempt is the creation itself, so concurrent requests cannot
+        // both pass a check and then collide: the folder is claimed with an
+        // atomic mkdir (Git accepts an empty folder), and Git's own refusal of
+        // a taken branch or ref namespace moves on to the next suffix.
+        const baseDirectory = directoryName;
+        const baseRefName = newRefName;
+        const suffixBranch = options.directoryName === undefined;
+        const fileSystemError = (detail: string) => (cause: PlatformError.PlatformError) =>
+          new GitCommandError({
+            operation: "GitVcsDriver.createWorktree",
+            command: "git worktree add",
+            cwd: input.cwd,
+            detail,
+            cause,
+          });
+        yield* fileSystem
+          .makeDirectory(path.dirname(resolvedPath), { recursive: true })
+          .pipe(Effect.mapError(fileSystemError("Failed to create the worktrees folder.")));
+        for (let attempt = 1; !added; attempt += 1) {
+          if (attempt > UNIQUE_WORKTREE_NAME_ATTEMPTS)
+            return yield* new GitCommandError({
+              operation: "GitVcsDriver.createWorktree",
+              command: "git worktree add",
+              cwd: input.cwd,
+              detail: `Could not find a free worktree name for '${baseDirectory}'.`,
+            });
+          const suffix = attempt === 1 ? "" : `-${attempt}`;
+          const candidatePath = resolve(`${baseDirectory}${suffix}`)!;
+          const candidateRef = suffixBranch ? `${baseRefName}${suffix}` : baseRefName;
+          const claimed = yield* fileSystem.makeDirectory(candidatePath).pipe(
+            Effect.as(true),
+            Effect.catchIf(
+              (error) => error.reason._tag === "AlreadyExists",
+              () => Effect.succeed(false),
+            ),
+            Effect.mapError(fileSystemError("Failed to create the worktree folder.")),
+          );
+          if (!claimed) continue;
+          added = yield* addWorktree(candidatePath, candidateRef).pipe(
+            Effect.as(true),
+            // The folder is this attempt's own, so a failed add releases it.
+            Effect.onError(() =>
+              fileSystem
+                .remove(candidatePath, { recursive: true, force: true })
+                .pipe(Effect.ignore),
+            ),
+            Effect.catchIf(
+              (error) =>
+                suffixBranch &&
+                (error.reason === "branch_already_exists" || error.reason === "ref_name_conflict"),
+              () => Effect.succeed(false),
+            ),
+          );
+          if (added) {
+            worktreePath = candidatePath;
+            newRefName = candidateRef;
+          }
+        }
+      }
     }
-    const args = options?.detached
-      ? ["worktree", "add", "--detach", worktreePath, input.refName]
-      : newRefName
-        ? ["worktree", "add", "-b", newRefName, worktreePath, input.refName]
-        : ["worktree", "add", worktreePath, input.refName];
-    const progress = options?.progress;
-    const onCheckoutProgress = progress?.onCheckoutProgress;
-
-    const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    yield* executeGit(
-      "GitVcsDriver.createWorktree",
-      input.cwd,
-      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
-      {
-        fallbackErrorDetail: "git worktree add failed",
-        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
-                },
-              },
-            }
-          : {}),
-      },
-    );
+    if (!added) yield* addWorktree(worktreePath, newRefName);
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);

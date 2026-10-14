@@ -374,6 +374,7 @@ export const GitCommandFailureReason = Schema.Literals([
   "host_key_unverified",
   "not_a_repository",
   "path_already_exists",
+  "ref_name_conflict",
   "remote_unreachable",
   "tag_would_be_clobbered",
 ]);
