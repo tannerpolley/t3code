@@ -22,10 +22,12 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { afterAll, assert, describe, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -488,6 +490,60 @@ describe("BackgroundTasks", () => {
         ),
       ),
   );
+
+  effectIt.effect("shares one process sample across callers within the poll interval", () => {
+    let samples = 0;
+    const telemetry = Layer.mock(ResourceTelemetry.ResourceTelemetry)({
+      refresh: Effect.sync(() => {
+        samples += 1;
+        return { health: { native: { status: "healthy" } }, processes: [] } as never;
+      }).pipe(Effect.delay("200 millis")),
+    });
+    const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadRecords: () =>
+        Effect.succeed({
+          thread: { lineage: { parentThreadId: null }, activeProviderThreadId: null },
+          providerThreads: [
+            {
+              id: "provider-thread",
+              pendingBackgroundTasks: [{ taskId: "t1", kind: "command", command: "make" }],
+            },
+          ],
+          turnItems: [],
+        } as never),
+    });
+    return Effect.gen(function* () {
+      const tasks = yield* BackgroundTasks;
+      const threadA = ThreadId.make("thread-a");
+      const threadB = ThreadId.make("thread-b");
+      const poll = Effect.all(
+        [
+          tasks.processes({ threadId: threadA }),
+          tasks.processes({ threadId: threadB }),
+          tasks.resourceUsage({ threadIds: [threadA, threadB] }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      const first = yield* Effect.forkChild(poll);
+      yield* TestClock.adjust("200 millis");
+      yield* Fiber.join(first);
+      assert.equal(samples, 1);
+      yield* TestClock.adjust("3 seconds");
+      yield* tasks.processes({ threadId: threadA });
+      assert.equal(samples, 1);
+      yield* TestClock.adjust("2 seconds");
+      const next = yield* Effect.forkChild(tasks.processes({ threadId: threadA }));
+      yield* TestClock.adjust("200 millis");
+      yield* Fiber.join(next);
+      assert.equal(samples, 2);
+    }).pipe(
+      Effect.provide(
+        backgroundTasksLayer.pipe(
+          Layer.provideMerge(Layer.mergeAll(dependencies, telemetry, threads)),
+        ),
+      ),
+    );
+  });
 
   effectIt.effect(
     "reads a Claude task's file or a Codex task's log, and only the thread's own tasks",

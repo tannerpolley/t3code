@@ -369,12 +369,13 @@ const readBackgroundTaskResourceUsage = Effect.fn("orchestration.readBackgroundT
       readonly threadId: ThreadId;
       readonly tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>;
     }>;
+    readonly sample: typeof sampleProcesses;
   }) {
     const tasks = input.threads.flatMap(({ threadId, tasks }) =>
       tasks.map((task) => ({ threadId, task })),
     );
     if (tasks.length === 0) return [];
-    const processes = yield* sampleProcesses;
+    const processes = yield* input.sample;
     if (processes === null) {
       return tasks.map(({ threadId, task }) => ({
         threadId,
@@ -459,6 +460,12 @@ const make = Effect.gen(function* () {
     | ProviderSessionManager.ProviderSessionManagerV2
     | ResourceTelemetry.ResourceTelemetry
   >();
+  // Every thread's poll would otherwise take its own sample, and the monitor samples one at a
+  // time; callers within a poll interval share one, waiting on it while it is taken.
+  const sample = yield* Effect.cachedWithTTL(
+    sampleProcesses.pipe(Effect.provide(context)),
+    "4 seconds",
+  );
   // A thread that cannot be read runs nothing the caller can show.
   const runningWork = (threadId: ThreadId) =>
     readRunningThreadWork(threadId).pipe(
@@ -474,14 +481,14 @@ const make = Effect.gen(function* () {
         runningWork(threadId).pipe(Effect.map((work) => ({ threadId, tasks: work?.tasks ?? [] }))),
       { concurrency: 2 },
     );
-    return yield* readBackgroundTaskResourceUsage({ threads: records }).pipe(
+    return yield* readBackgroundTaskResourceUsage({ threads: records, sample }).pipe(
       Effect.provide(context),
     );
   });
   const processes = Effect.fn("BackgroundTasks.processes")(function* (input: ThreadProcessesInput) {
     const work = yield* runningWork(input.threadId);
     if (work === null || work.tasks.length === 0) return NO_THREAD_PROCESSES;
-    const sampled = yield* sampleProcesses.pipe(Effect.provide(context));
+    const sampled = yield* sample;
     const commands =
       sampled === null
         ? []
