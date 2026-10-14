@@ -34,6 +34,7 @@ function makeSourceThread(): OrchestrationV2AppThread {
   return {
     createdBy: "user",
     creationSource: "web",
+    role: "orchestrator",
     id: sourceThreadId,
     projectId: ProjectId.make("project:fork-snooze"),
     title: "Snoozed source",
@@ -155,6 +156,7 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
     const sourceRun = makeSourceRun("completed");
     const result = yield* planFork(sourceRun);
 
+    assert.isUndefined(result.targetThread.role);
     assert.isUndefined(result.targetThread.linkedIssue);
     assert.isUndefined(result.targetThread.repositoryOrchestration);
     assert.isNull(result.targetThread.snoozedUntil);

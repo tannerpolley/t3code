@@ -2385,7 +2385,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
-      ...(command.repositoryOrchestration === undefined ? {} : { role: "orchestrator" as const }),
       activeProviderThreadId: null,
       lineage: {
         parentThreadId: null,

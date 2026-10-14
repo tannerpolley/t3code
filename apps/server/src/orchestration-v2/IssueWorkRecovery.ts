@@ -248,7 +248,6 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         occurredAt,
         payload: {
           ...target,
-          role: "orchestrator",
           repositoryOrchestration: config,
           updatedAt: occurredAt,
         },
