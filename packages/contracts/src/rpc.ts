@@ -35,6 +35,12 @@ import {
   IssueChangesListInput,
   IssueChangeDecisionInput,
 } from "./issueChange.ts";
+import {
+  IssueInboxListResult,
+  IssueInboxMarkReadInput,
+  IssueInboxMarkReadResult,
+  IssueInboxUnread,
+} from "./issueInbox.ts";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -593,6 +599,9 @@ export const WS_METHODS = {
   issuesHandoff: "issues.handoff",
   issuesCancelRequest: "issues.cancelRequest",
   issuesRestoreRoot: "issues.restoreRoot",
+  issuesInboxList: "issues.inbox.list",
+  issuesInboxMarkRead: "issues.inbox.markRead",
+  issuesInboxSubscribeUnread: "issues.inbox.subscribeUnread",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -1106,6 +1115,22 @@ const WsIssuesRestoreRootRpc = Rpc.make(WS_METHODS.issuesRestoreRoot, {
 const WsIssuesHandoffRpc = Rpc.make(WS_METHODS.issuesHandoff, {
   payload: RepositoryHandoffInput,
   success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+const WsIssuesInboxListRpc = Rpc.make(WS_METHODS.issuesInboxList, {
+  payload: IssueRepositoryRef,
+  success: IssueInboxListResult,
+  error: IssueRpcError,
+});
+const WsIssuesInboxMarkReadRpc = Rpc.make(WS_METHODS.issuesInboxMarkRead, {
+  payload: IssueInboxMarkReadInput,
+  success: IssueInboxMarkReadResult,
+  error: IssueRpcError,
+});
+const WsIssuesInboxSubscribeUnreadRpc = Rpc.make(WS_METHODS.issuesInboxSubscribeUnread, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(IssueInboxUnread),
+  stream: true,
   error: IssueRpcError,
 });
 
@@ -2133,6 +2158,9 @@ const forkWsRpcs = [
   WsIssueChangesListRpc,
   WsIssueChangesDecideRpc,
   WsIssueChangesSubscribeRpc,
+  WsIssuesInboxListRpc,
+  WsIssuesInboxMarkReadRpc,
+  WsIssuesInboxSubscribeUnreadRpc,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(
@@ -2357,4 +2385,7 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issueChangesList,
   WS_METHODS.issueChangesDecide,
   WS_METHODS.issueChangesSubscribe,
+  WS_METHODS.issuesInboxList,
+  WS_METHODS.issuesInboxMarkRead,
+  WS_METHODS.issuesInboxSubscribeUnread,
 );

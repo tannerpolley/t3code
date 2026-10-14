@@ -130,6 +130,7 @@ describe("fork migration ledger", () => {
           { migration_id: 12, name: "UsageLimitSwitchRecovery" },
           { migration_id: 13, name: "SidebarLayout" },
           { migration_id: 14, name: "EndedRunOpenTurnItems" },
+          { migration_id: 15, name: "IssueInbox" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

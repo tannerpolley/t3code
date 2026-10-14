@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { markInboxNoted, pendingInboxNote } from "../issues/IssueInboxRules.ts";
 
 const encodeRecordJson = Schema.encodeSync(Schema.fromJsonString(InlineShellRunRecord));
 const encodeRecord = (record: InlineShellRunRecord) =>
@@ -152,8 +153,21 @@ export const layer = Layer.effect(
             wrap(input.threadId),
           );
           const selected = selectInlineShellContext(records, counts[0]?.count ?? 0);
+          // A repository orchestrator's next turn also carries one line about unread inbox events.
+          const inbox = yield* pendingInboxNote(sql, input.threadId).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Issue inbox note unavailable", { cause }).pipe(
+                Effect.as({ ids: [] as ReadonlyArray<number>, text: "" }),
+              ),
+            ),
+          );
           const result = yield* send(
-            selected.text ? `${selected.text}\n\n${input.text}` : input.text,
+            [inbox.text, selected.text, input.text].filter((part) => part !== "").join("\n\n"),
+          );
+          yield* markInboxNoted(sql, inbox.ids, input.deliveryId).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Issue inbox note was sent but not recorded", { cause }),
+            ),
           );
           if (selected.ids.length > 0) {
             const now = yield* DateTime.now;

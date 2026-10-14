@@ -1,0 +1,70 @@
+import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
+
+export default Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  // One watcher cursor per managed repository. `watched_since` bounds which new issues count as opened.
+  yield* sql`CREATE TABLE issue_inbox_repositories (
+    host TEXT NOT NULL,
+    repository_id TEXT NOT NULL,
+    watched_since TEXT NOT NULL,
+    issues_since TEXT NOT NULL,
+    comments_since TEXT NOT NULL,
+    events_after INTEGER,
+    issues_etag TEXT,
+    comments_etag TEXT,
+    events_etag TEXT,
+    PRIMARY KEY (host, repository_id)
+  ) WITHOUT ROWID`;
+  // Last seen title and body per issue, for edit detection and once-only receiver labels.
+  yield* sql`CREATE TABLE issue_inbox_issues (
+    host TEXT NOT NULL,
+    repository_id TEXT NOT NULL,
+    issue_number INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    cross_project INTEGER NOT NULL,
+    external_source TEXT,
+    labeled INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (host, repository_id, issue_number)
+  ) WITHOUT ROWID`;
+  yield* sql`CREATE TABLE issue_inbox_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT NOT NULL,
+    repository_id TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    event_key TEXT NOT NULL,
+    issue_number INTEGER NOT NULL,
+    issue_title TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    author TEXT,
+    source_project TEXT,
+    tagged INTEGER NOT NULL,
+    high_priority INTEGER NOT NULL,
+    needs_triage INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    snippet TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    read_at TEXT,
+    noted_by TEXT,
+    UNIQUE (host, repository_id, event_key)
+  )`;
+  yield* sql`CREATE INDEX issue_inbox_events_unread ON issue_inbox_events(host, repository_id, event_id) WHERE read_at IS NULL`;
+  // Durable digest outbox: written before dispatch, retried until delivered.
+  yield* sql`CREATE TABLE issue_inbox_digests (
+    digest_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT NOT NULL,
+    repository_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    delivered_at TEXT
+  )`;
+  yield* sql`CREATE INDEX issue_inbox_digests_repository ON issue_inbox_digests(host, repository_id, created_at)`;
+  // Same-project t3_issue_post writes carry no marker; these receipts mark them as the repository's own.
+  yield* sql`CREATE TABLE issue_inbox_own_writes (
+    host TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    item TEXT NOT NULL,
+    PRIMARY KEY (host, repository, item)
+  ) WITHOUT ROWID`;
+});

@@ -1,4 +1,5 @@
 import * as IssueLinks from "../../issues/IssueLinks.ts";
+import * as IssueInbox from "../../issues/IssueInbox.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -590,6 +591,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
     Effect.provide(
       layerOrchestratorToolkit.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
+        Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -630,6 +632,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
     Effect.provide(
       layerOrchestratorToolkit.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
+        Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -706,6 +709,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
       Effect.provide(
         layerOrchestratorToolkit.pipe(
           Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
+          Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(
@@ -811,6 +815,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
     Effect.provide(
       layerOrchestratorToolkit.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
+        Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(

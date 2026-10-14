@@ -58,6 +58,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesCancelRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesRestoreRoot]: AuthOrchestrationOperateScope,
+  [WS_METHODS.issuesInboxMarkRead]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

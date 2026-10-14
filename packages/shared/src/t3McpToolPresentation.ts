@@ -152,6 +152,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   link_issue: tool(["Link", "Linking", "Linked", "an issue"], "issue-work"),
   unlink_issue: tool(["Unlink", "Unlinking", "Unlinked", "an issue"], "issue-work"),
   propose_issue_change: tool(["Propose", "Proposing", "Proposed", "an issue change"], "issue-work"),
+  t3_issue_post: tool(["Post", "Posting", "Posted", "to a GitHub issue"], "issue-work"),
+  t3_issue_inbox: tool(["Read", "Reading", "Read", "the issue inbox"], "issue-work"),
   task_status: tool(["Get", "Getting", "Got", "delegated task status"], "task-status"),
   task_cancel: tool(
     ["Cancel", "Canceling", "Requested cancellation of", "delegated task"],

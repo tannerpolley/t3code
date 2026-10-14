@@ -745,6 +745,21 @@ export class IssueService extends Context.Service<
       readonly marker: string;
       readonly body: string;
     }) => Effect.Effect<{ readonly commentId: string }, IssueReadError>;
+    /**
+     * One verified REST call below `repos/{owner}/{name}/`, for the issue inbox. With
+     * `ifNoneMatch`, an unchanged answer is a free 304 with an empty body.
+     */
+    readonly repositoryRest: (input: {
+      readonly host: string;
+      readonly repository: string;
+      readonly path: string;
+      readonly method?: "POST";
+      readonly body?: unknown;
+      readonly ifNoneMatch?: string;
+    }) => Effect.Effect<
+      { readonly status: number; readonly body: string; readonly etag: string | null },
+      IssueReadError
+    >;
   }
 >()("t3/issues/IssueService") {}
 
@@ -1741,7 +1756,42 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       );
     },
   );
+  const repositoryRest: IssueService["Service"]["repositoryRest"] = Effect.fn(
+    "IssueService.repositoryRest",
+  )(function* (input) {
+    const scope = yield* resolveScope("detail", input);
+    const response = yield* verified(
+      scope,
+      api
+        .rest({
+          host: scope.host,
+          operation: "issues.inbox",
+          path: `repos/${encodeRepositoryPath(scope.repository)}/${input.path}`,
+          ...(input.method === undefined ? {} : { method: input.method }),
+          ...(input.body === undefined ? {} : { body: input.body }),
+          ...(input.ifNoneMatch === undefined ? {} : { ifNoneMatch: input.ifNoneMatch }),
+          maxResponseBytes: LIST_MAX_OUTPUT_BYTES,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            mapGitHubError(
+              "detail",
+              error,
+              input.method === undefined ? undefined : { tracksOutcome: false },
+            ),
+          ),
+        ),
+    );
+    if (response.truncated)
+      return yield* readError(
+        "detail",
+        "invalid-response",
+        "GitHub returned a truncated response.",
+      );
+    return { status: response.status, body: response.body, etag: response.headers["etag"] ?? null };
+  });
   return IssueService.of({
+    repositoryRest,
     readChangeState,
     createIssue,
     updateBody: (input) => patchIssue(input, { body: input.body }),

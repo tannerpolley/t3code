@@ -2,6 +2,7 @@ import * as InlineShellStore from "../terminal/InlineShellStore.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import * as IssueInbox from "../issues/IssueInbox.ts";
 import * as EventStoreCompaction from "./EventStoreCompaction.ts";
 import * as DontAskModeWorker from "./DontAskModeWorker.ts";
 import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorker.ts";
@@ -316,6 +317,9 @@ const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.laye
   ),
 );
 const layerIssueChangesProvided = IssueChangeService.layer.pipe(Layer.provide(EffectOutbox.layer));
+const layerIssueInboxProvided = IssueInbox.layer.pipe(
+  Layer.provide(Layer.merge(layerProjectService, layerThreadManagementProvided)),
+);
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -378,6 +382,7 @@ export const layerProduction = Layer.mergeAll(
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
   IssueWorkStore.layer,
+  layerIssueInboxProvided,
   IssueWorkService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -388,6 +393,7 @@ export const layerProduction = Layer.mergeAll(
         IdAllocator.layer,
         layerProviderAdapterRegistryProvided,
         layerEventSinkProvided,
+        layerIssueInboxProvided,
       ),
     ),
   ),

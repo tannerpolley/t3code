@@ -233,6 +233,9 @@ const RPC_AGGREGATES = {
   [WS_METHODS.issueChangesList]: "issues",
   [WS_METHODS.issueChangesDecide]: "issues",
   [WS_METHODS.issueChangesSubscribe]: "issues",
+  [WS_METHODS.issuesInboxList]: "issues",
+  [WS_METHODS.issuesInboxMarkRead]: "issues",
+  [WS_METHODS.issuesInboxSubscribeUnread]: "issues",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

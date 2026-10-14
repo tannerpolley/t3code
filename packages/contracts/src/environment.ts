@@ -118,6 +118,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   issueWork: Schema.optionalKey(Schema.Boolean),
   issueChanges: Schema.optionalKey(Schema.Boolean),
   issueMilestones: Schema.optionalKey(Schema.Boolean),
+  /** Server records external issue activity for repository orchestrators. */
+  issueInbox: Schema.optionalKey(Schema.Boolean),
   /** Server understands canonical inline context links plus their message context records.
       Absent on servers from before inline context shipped, which drop the records and forward
       the links as literal text -- so a client must serialize context the legacy way for them. */

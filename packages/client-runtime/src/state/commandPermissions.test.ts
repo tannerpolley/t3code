@@ -150,13 +150,17 @@ describe("command permissions", () => {
       ),
   );
 
-  it.effect("requires the destination operate grant for issue ownership recovery", () =>
+  it.effect("requires the destination operate grant for issue recovery and inbox writes", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* setup;
         registry.set(sessions(env), AsyncResult.success(grant(true)));
         registry.set(sessions(other), AsyncResult.success(grant(false)));
-        for (const method of [WS_METHODS.issuesCancelRequest, WS_METHODS.issuesRestoreRoot]) {
+        for (const method of [
+          WS_METHODS.issuesCancelRequest,
+          WS_METHODS.issuesRestoreRoot,
+          WS_METHODS.issuesInboxMarkRead,
+        ]) {
           const recovery = createCommandPermissions(runtime, method);
           expect(registry.get(recovery.permissionAtom(env))).toBe(true);
           yield* recovery.authorize(registry, env);

@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import * as SidebarLayout from "./sidebarLayout.ts";
 import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
+import * as IssueInbox from "./issues/IssueInbox.ts";
 import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
 import * as IssueService from "./issues/IssueService.ts";
 import * as IssueWorkService from "./issues/IssueWorkService.ts";
@@ -30,6 +31,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const issueWork = yield* IssueWorkService.IssueWorkService;
       const issueChanges = yield* IssueChangeService.IssueChangeService;
       const sidebarLayout = yield* SidebarLayout.SidebarLayoutService;
+      const inbox = yield* IssueInbox.IssueInbox;
       return {
         [WS_METHODS.sidebarLayoutUpdate]: (input) => sidebarLayout.update(input),
         [WS_METHODS.subscribeSidebarLayout]: () => sidebarLayout.stream,
@@ -67,6 +69,9 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
         [WS_METHODS.issuesRepositories]: () => issues.repositories(),
         [WS_METHODS.issuesList]: (input) => roadmap.list(input),
         [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
+        [WS_METHODS.issuesInboxList]: (input) => inbox.list(input),
+        [WS_METHODS.issuesInboxMarkRead]: (input) => inbox.markRead(input),
+        [WS_METHODS.issuesInboxSubscribeUnread]: () => inbox.unread,
       };
     }),
   );
