@@ -4,6 +4,7 @@ import {
   type ProjectReadFileResult,
   type ScopedProjectRef,
   WS_METHODS,
+  T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,7 @@ import {
   type EnvironmentRpcSuccess,
   request,
   requestGuarded,
+  getInitialServerConfig,
 } from "../rpc/client.ts";
 import type { EnvironmentProject } from "./models.ts";
 import {
@@ -100,6 +102,24 @@ export function createProjectEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { projectId: string } }) =>
       JSON.stringify([environmentId, input.projectId]),
   };
+  const readT3ProjectFile = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:projects:read-t3-project-file",
+    tag: WS_METHODS.projectsReadT3ProjectFile,
+    execute: (input) =>
+      getInitialServerConfig().pipe(
+        Effect.orElseSucceed(() => null),
+        Effect.flatMap((config) =>
+          config?.environment.capabilities.optionalT3ProjectFile === true
+            ? request(WS_METHODS.projectsReadT3ProjectFile, input)
+            : request(WS_METHODS.projectsReadFile, {
+                ...input,
+                relativePath: T3_PROJECT_FILE_NAME,
+              }),
+        ),
+      ),
+    staleTimeMs: 30_000,
+    idleTtlMs: 5 * 60_000,
+  });
   return {
     fileMetadata: fileMetadata.metadata,
     fileMetadataThread: fileMetadata.retainThread,
@@ -148,6 +168,7 @@ export function createProjectEnvironmentAtoms<R, E>(
           (result, isCurrent) => fileMetadata.rememberFile(input.cwd, result, isCurrent),
         ),
     }),
+    readT3ProjectFile,
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),
     create: createEnvironmentCommand(runtime, {
@@ -220,8 +241,11 @@ export function createProjectEnvironmentAtoms<R, E>(
         ),
       onSuccess: ({ environmentId, input }, registry, result) =>
         Effect.sync(() => {
-          for (const path of writtenFilePaths(input, result))
-            fileMetadata.refreshPath(environmentId, path, registry);
+          const paths = writtenFilePaths(input, result);
+          for (const path of paths) fileMetadata.refreshPath(environmentId, path, registry);
+          if (paths.has(resolveWorkspaceFilePath(T3_PROJECT_FILE_NAME, input.cwd))) {
+            registry.refresh(readT3ProjectFile({ environmentId, input: { cwd: input.cwd } }));
+          }
         }),
     }),
   };

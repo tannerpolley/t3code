@@ -69,6 +69,7 @@ import {
   type ProjectMutation,
   ProjectListEntriesError,
   ProjectReadFileError,
+  T3_PROJECT_FILE_NAME,
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
@@ -194,6 +195,7 @@ import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -1303,6 +1305,7 @@ const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const projectFileLoader = yield* T3ProjectFileLoader.T3ProjectFileLoader;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2683,6 +2686,19 @@ const layerWsRpc = (
                 new ProjectReadFileError({
                   ...input,
                   ...projectFileFailureContext(cause),
+                  cause,
+                }),
+            ),
+          ),
+        [WS_METHODS.projectsReadT3ProjectFile]: (input) =>
+          projectFileLoader.readFile(input.cwd).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectReadFileError({
+                  cwd: input.cwd,
+                  relativePath: T3_PROJECT_FILE_NAME,
+                  failure:
+                    cause.operation === "decode" ? "invalid_project_file" : "operation_failed",
                   cause,
                 }),
             ),

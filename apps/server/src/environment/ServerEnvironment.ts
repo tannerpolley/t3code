@@ -234,6 +234,7 @@ export const make = Effect.gen(function* () {
       worktreesDirectory: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
+      optionalT3ProjectFile: true,
       projectProviderInstanceOverrides: true,
       threadSnooze: true,
       environmentThemes: true,

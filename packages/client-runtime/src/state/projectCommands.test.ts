@@ -5,6 +5,7 @@ import {
   ProjectId,
   ThreadId,
   type AuthSessionState,
+  type ExecutionEnvironmentCapabilities,
   type ScopedProjectRef,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -40,7 +41,11 @@ const PROJECT = {
   workspaceRoot: "/scratch",
 } as EnvironmentProject;
 
-const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
+const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* (
+  capabilities: Pick<ExecutionEnvironmentCapabilities, "optionalT3ProjectFile"> = {
+    optionalT3ProjectFile: true,
+  },
+) {
   const metadataRequests: string[][] = [];
   const file = { byteLength: 5 };
   const readResponse = { wait: Effect.void as Effect.Effect<void> };
@@ -48,18 +53,39 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
     target: { environmentId: ENVIRONMENT_ID },
     session: yield* SubscriptionRef.make(
       Option.some({
+        initialConfig: Effect.succeed({ environment: { capabilities } } as never),
         client: {
           [WS_METHODS.projectsEnsureScratch]: () => Effect.succeed({ projectId: PROJECT_ID }),
-          [WS_METHODS.projectsReadFile]: () =>
+          [WS_METHODS.projectsReadFile]: (input: { relativePath: string }) =>
             Effect.gen(function* () {
               const byteLength = file.byteLength;
               yield* readResponse.wait;
-              return { relativePath: "foo", byteLength, contents: "old", truncated: false };
+              return {
+                relativePath: input.relativePath,
+                byteLength,
+                contents: input.relativePath === "t3.json" ? '{ "scripts": [] }' : "old",
+                truncated: false,
+              };
             }),
-          [WS_METHODS.projectsWriteFile]: () =>
+          ...(capabilities.optionalT3ProjectFile === true
+            ? {
+                [WS_METHODS.projectsReadT3ProjectFile]: () =>
+                  Effect.succeed(
+                    file.byteLength === 5
+                      ? null
+                      : {
+                          relativePath: "t3.json",
+                          byteLength: 10,
+                          contents: '{ "scripts": [] }',
+                          truncated: false,
+                        },
+                  ),
+              }
+            : {}),
+          [WS_METHODS.projectsWriteFile]: (input: { relativePath: string }) =>
             Effect.sync(() => {
               file.byteLength = 10;
-              return { relativePath: "foo" };
+              return { relativePath: input.relativePath.replace(/^\.\//, "") };
             }),
           [WS_METHODS.filesystemGetMetadata]: (input: { paths: string[] }) =>
             Effect.sync(() => {
@@ -126,6 +152,45 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
 });
 
 describe("writeFile metadata", () => {
+  it.effect("reads t3.json on older servers without the optional-read capability", () =>
+    Effect.gen(function* () {
+      for (const capabilities of [{}, { optionalT3ProjectFile: false }]) {
+        const h = yield* makeHarness(capabilities);
+        const result = yield* AtomRegistry.getResult(
+          h.registry,
+          h.commands.readT3ProjectFile({
+            environmentId: ENVIRONMENT_ID,
+            input: { cwd: "/repo" },
+          }),
+          { suspendOnWaiting: true },
+        );
+        expect(result).toMatchObject({ relativePath: "t3.json", contents: '{ "scripts": [] }' });
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refreshes cached absence after writing t3.json", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const atom = h.commands.readT3ProjectFile({
+        environmentId: ENVIRONMENT_ID,
+        input: { cwd: "/repo" },
+      });
+      const read = () => AtomRegistry.getResult(h.registry, atom, { suspendOnWaiting: true });
+      const before = yield* read();
+      expect(before).toBeNull();
+      const result = yield* Effect.promise(() =>
+        h.commands.writeFile.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { cwd: "/repo", relativePath: "./t3.json", contents: '{ "scripts": [] }' },
+        }),
+      );
+      expect(result._tag).toBe("Success");
+      const after = yield* read();
+      expect(after).toMatchObject({ relativePath: "t3.json", contents: '{ "scripts": [] }' });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reuses a current file read without another metadata request", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

@@ -19,6 +19,7 @@ const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
+export const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 
 export const ProjectScriptIcon = Schema.Literals([
   "play",
@@ -450,6 +451,7 @@ export const ProjectReadFileResult = Schema.Struct({
 export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
 
 export const ProjectFileFailure = Schema.Literals([
+  "invalid_project_file",
   "workspace_path_outside_root",
   "resolved_path_outside_root",
   "path_not_file",

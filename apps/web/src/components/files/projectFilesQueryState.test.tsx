@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -34,6 +35,7 @@ const projectMocks = vi.hoisted(() => ({
   listEntries: vi.fn(),
   optimisticFile: vi.fn(),
   readFile: vi.fn(),
+  readT3ProjectFile: vi.fn(),
 }));
 
 const atomHooks = vi.hoisted(() => ({
@@ -137,6 +139,7 @@ async function flushEffects(): Promise<void> {
 
 describe("project query refresh", () => {
   beforeEach(() => {
+    projectMocks.readT3ProjectFile.mockImplementation((args) => projectMocks.readFile(args));
     authorizationMocks.sessionAtom = Atom.make(
       AsyncResult.success({ authenticated: true, scopes: [AuthFilesystemReadScope] }),
     );
@@ -145,6 +148,62 @@ describe("project query refresh", () => {
     projectMocks.optimisticFile.mockReset();
     projectMocks.readFile.mockReset();
     reactHooks.reset();
+  });
+
+  it("settles an absent optional project file without exposing a read error", () => {
+    const registry = AtomRegistry.make();
+    atomHooks.registry = registry;
+    const missing = new ProjectReadFileError({
+      cwd: "/repo",
+      relativePath: "t3.json",
+      failure: "operation_failed",
+      operation: "realpath-target",
+    });
+    projectMocks.readFile.mockReturnValue(Atom.make(AsyncResult.fail(missing)));
+    projectMocks.readT3ProjectFile.mockReturnValue(Atom.make(AsyncResult.success(null)));
+    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
+    try {
+      expect(useProjectFileQuery(environmentId, "/repo", "t3.json", true, true)).toMatchObject({
+        data: null,
+        error: null,
+        readError: null,
+        isPending: false,
+      });
+      expect(useProjectFileQuery(environmentId, "/repo", "t3.json").readError).toBe(missing);
+    } finally {
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
+
+  it("keeps malformed project files invalid even when a valid read was cached", () => {
+    const registry = AtomRegistry.make();
+    atomHooks.registry = registry;
+    const error = new ProjectReadFileError({
+      cwd: "/repo",
+      relativePath: "t3.json",
+      failure: "invalid_project_file",
+    });
+    projectMocks.readT3ProjectFile.mockReturnValue(
+      Atom.make(
+        AsyncResult.fail(error, {
+          previousSuccess: Option.some(
+            AsyncResult.success(file('{ "scripts": [{ "name": "Old", "command": "old" }] }')),
+          ),
+        }),
+      ),
+    );
+    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
+    try {
+      expect(useT3ProjectFileState(environmentId, "/repo")).toEqual({
+        status: "invalid",
+        file: null,
+        scripts: [],
+      });
+    } finally {
+      registry.dispose();
+      atomHooks.registry = null;
+    }
   });
 
   it("does not query or expose optimistic file contents without read permission", () => {

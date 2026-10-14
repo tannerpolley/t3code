@@ -30,6 +30,7 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
                 member.environmentId,
                 member.workspaceRoot,
                 T3_PROJECT_FILE_NAME,
+                true,
               ),
             );
             if (result.waiting) continue;

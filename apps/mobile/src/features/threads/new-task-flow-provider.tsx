@@ -20,7 +20,6 @@ import {
   DEFAULT_SERVER_SETTINGS,
   MessageId,
   repositoryGroupingKeyOf,
-  T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
@@ -507,9 +506,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject !== null && selectedProject.workspaceRoot !== "" && fileAccess.isPending;
   const t3ProjectFileQuery = useEnvironmentQuery(
     canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
-      ? projectEnvironment.readFile({
+      ? projectEnvironment.readT3ProjectFile({
           environmentId: selectedProject.environmentId,
-          input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
+          input: { cwd: selectedProject.workspaceRoot },
         })
       : null,
   );
