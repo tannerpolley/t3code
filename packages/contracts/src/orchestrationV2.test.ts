@@ -25,6 +25,7 @@ import {
 import { StoredProjectIcon } from "./project.ts";
 import {
   OrchestrationV2AppThreadJson,
+  OrchestrationV2UserInputQuestion,
   OrchestrationV2DelegatedCompletionCohort,
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2NotificationSource,
@@ -49,6 +50,20 @@ import {
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
+
+const decodeLegacyUserInputQuestion = Schema.decodeUnknownSync(OrchestrationV2UserInputQuestion);
+
+it("ignores the removed secret flag in persisted user-input questions", () => {
+  const question = decodeLegacyUserInputQuestion({
+    id: "legacy",
+    header: "Choice",
+    question: "Choose",
+    options: [],
+    isSecret: true,
+  });
+  expect(question).not.toHaveProperty("isSecret");
+  expect(question.question).toBe("Choose");
+});
 
 const decodePendingBackgroundTask = Schema.decodeSync(OrchestrationV2PendingBackgroundTask);
 

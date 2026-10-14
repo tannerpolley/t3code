@@ -572,6 +572,72 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect.each(["codex", "claudeAgent"])(
+    "preserves implemented proposals when a cached adapter supersedes them (%s)",
+    (driver) =>
+      Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const threadEvent = yield* threadCreatedEvent(yield* DateTime.now);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+        });
+        const plan: OrchestrationV2PlanArtifact = {
+          id: PlanId.make("plan:implemented"),
+          threadId: threadEvent.threadId,
+          runId: null,
+          nodeId: NodeId.make("node:implemented"),
+          kind: "proposed_plan",
+          status: "active",
+          markdown: "# Implement this plan",
+        };
+        const ingest = (proposal: OrchestrationV2PlanArtifact) =>
+          ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: threadEvent.threadId,
+            event: {
+              type: "plan.updated",
+              driver: ProviderDriverKind.make(driver),
+              plan: proposal,
+            },
+          });
+        yield* eventSink.write({ events: [threadEvent] });
+        yield* ingest(plan);
+        // Implement updates persisted state without updating the adapter's cached proposal.
+        yield* eventSink.write({
+          events: [
+            {
+              ...threadEvent,
+              id: yield* idAllocator.allocate.event({ threadId: threadEvent.threadId }),
+              type: "plan.updated",
+              payload: { ...plan, status: "completed" },
+              nodeId: plan.nodeId,
+            },
+          ],
+        });
+        yield* ingest({ ...plan, status: "superseded", markdown: "Stale adapter copy" });
+        const nextPlan = { ...plan, id: PlanId.make("plan:next") };
+        yield* ingest(nextPlan);
+        const plans = (yield* projectionStore.getThreadProjection(threadEvent.threadId)).plans;
+        assert.equal(plans.find((candidate) => candidate.id === plan.id)?.status, "completed");
+        const implemented = plans.find((candidate) => candidate.id === plan.id);
+        assert.equal(implemented?.kind, "proposed_plan");
+        if (implemented?.kind === "proposed_plan")
+          assert.equal(implemented.markdown, plan.markdown);
+        assert.equal(plans.find((candidate) => candidate.id === nextPlan.id)?.status, "active");
+        // A proposal that was never implemented still supersedes normally.
+        yield* ingest({ ...nextPlan, status: "superseded" });
+        assert.equal(
+          (yield* projectionStore.getPlan(plan.threadId, nextPlan.id))?.status,
+          "superseded",
+        );
+      }),
+  );
+
   it.effect("carries plan-step durations through consecutive and restarted ingestion", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse("2026-09-07T00:00:00.000Z"));

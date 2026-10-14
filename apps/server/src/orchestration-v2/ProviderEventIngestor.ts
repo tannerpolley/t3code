@@ -686,9 +686,16 @@ export const layer: Layer.Layer<
             const occurredAt = yield* DateTime.now;
             const plan = input.event.plan;
             const previous =
-              plan.kind === "todo_list"
+              plan.kind === "todo_list" || plan.status === "superseded"
                 ? yield* projections.getPlan(plan.threadId, plan.id)
                 : undefined;
+            // Adapters cache proposals, but Implement completes them in persisted state.
+            if (
+              plan.kind === "proposed_plan" &&
+              plan.status === "superseded" &&
+              previous?.status === "completed"
+            )
+              return [];
             const payload =
               plan.kind === "todo_list"
                 ? withPlanStepDurations(

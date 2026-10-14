@@ -128,6 +128,7 @@ describe("ProviderRuntimeEvent", () => {
         questions: [
           {
             id: "sandbox_mode",
+            isSecret: true,
             header: "Sandbox",
             question: "Which mode should be used?",
             options: [
@@ -151,6 +152,7 @@ describe("ProviderRuntimeEvent", () => {
     }
     expect(parsed.payload.questions[0]?.id).toBe("sandbox_mode");
     expect(parsed.payload.questions[0]?.options).toHaveLength(2);
+    expect(parsed.payload.questions[0]).not.toHaveProperty("isSecret");
   });
 
   it("decodes user-input.resolved with answer map", () => {

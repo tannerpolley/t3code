@@ -650,14 +650,14 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(
-  ["claudeAgent", "codex"].flatMap((driver) =>
-    (["missing session", "completed", "failed", "cancelled"] as const).map((providerState) => ({
-      driver,
-      providerState,
-    })),
-  ),
-)(
+it.effect.each([
+  ...(["missing session", "completed", "failed", "cancelled"] as const).map((providerState) => ({
+    driver: "claudeAgent",
+    providerState,
+  })),
+  // Codex interrupts the child's turn and returns no confirmed task outcome.
+  { driver: "codex", providerState: "missing session" as const },
+])(
   "a native child Stop only settles confirmed provider evidence and preserves its owner and sibling (%s)",
   ({ driver, providerState }) =>
     Effect.gen(function* () {

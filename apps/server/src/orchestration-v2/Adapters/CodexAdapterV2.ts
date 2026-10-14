@@ -637,7 +637,6 @@ export function codexUserInputQuestions(
     multiSelect: false,
     // A question without options still needs a text answer.
     allowCustomAnswer: !question.options?.length || question.isOther === true,
-    ...(question.isSecret === undefined ? {} : { isSecret: question.isSecret }),
   }));
 }
 
@@ -1916,7 +1915,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // Streamed plan text per plan item, dropped when the item completes.
         const planDeltas = new Map<string, string>();
         const latestProposedPlans = new Map<ThreadId, OrchestrationV2PlanArtifact>();
-        const stoppedCommandItemsByTurn = new Map<string, Set<string>>();
+        // Keep stopped item snapshots until the session ends: completion can arrive
+        // after the turn context is released, and repeated frames must not revive it.
+        const stoppedCommandItemsByTurn = new Map<
+          string,
+          Map<string, OrchestrationV2TurnItem | null>
+        >();
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingCodexRuntimeRequest>(),
@@ -2243,8 +2247,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (yield* turnHasRetainedBackgroundWork(nativeTurnId)) {
               return;
             }
-            if (!(yield* Ref.get(activeTurns)).has(nativeTurnId))
-              stoppedCommandItemsByTurn.delete(nativeTurnId);
             yield* Ref.update(settledTurns, (current) => {
               if (!current.has(nativeTurnId)) {
                 return current;
@@ -2346,6 +2348,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ? {}
                   : { output: tracked.aggregatedOutput }),
               };
+              if (nativeItemId !== undefined) {
+                const stopped = stoppedCommandItemsByTurn.get(nativeTurnId) ?? new Map();
+                stopped.set(tracked.id, turnItem);
+                stoppedCommandItemsByTurn.set(nativeTurnId, stopped);
+              }
               yield* emitProviderEvent({
                 type: "node.updated",
                 driver: CODEX_PROVIDER,
@@ -4920,7 +4927,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/completed", (payload) =>
           Effect.gen(function* () {
-            if (stoppedCommandItemsByTurn.get(payload.turnId)?.has(payload.item.id)) return;
+            const stopped = stoppedCommandItemsByTurn.get(payload.turnId)?.get(payload.item.id);
+            if (stopped === null) return;
+            if (stopped !== undefined && payload.item.type === "commandExecution") {
+              // Enrich the stopped card, but never wake the agent or change its terminal status.
+              const turnItem = {
+                ...stopped,
+                updatedAt: yield* DateTime.now,
+                ...(payload.item.aggregatedOutput == null
+                  ? {}
+                  : { output: payload.item.aggregatedOutput }),
+                ...(payload.item.exitCode == null ? {} : { exitCode: payload.item.exitCode }),
+              };
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem,
+              });
+              yield* commandOutputLogs.remove(turnItem.threadId, payload.item.id);
+              // Only the tombstone remains; full output belongs in the projection.
+              stoppedCommandItemsByTurn.get(payload.turnId)?.set(payload.item.id, null);
+              return;
+            }
             if (payload.item.type === "contextCompaction")
               // The notification callback runs on the input reader. Let it read
               // the injection response while the session-scoped request waits.
@@ -6136,7 +6164,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const retainSettledContext =
                 input.status === "completed" &&
                 (yield* turnHasRetainedBackgroundWork(input.nativeTurnId));
-              if (!retainSettledContext) stoppedCommandItemsByTurn.delete(input.nativeTurnId);
               if (retainSettledContext) {
                 yield* Ref.update(settledTurns, (current) => {
                   const updated = new Map(current);
@@ -7483,9 +7510,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // Natural completion may have won the race with the terminate response.
               if (!(yield* Ref.get(runningCommandItemsByTurn)).get(turnId)?.has(stopInput.taskId))
                 return;
-              const stopped = stoppedCommandItemsByTurn.get(turnId) ?? new Set<string>();
-              stopped.add(stopInput.taskId);
-              stoppedCommandItemsByTurn.set(turnId, stopped);
               // The terminate response confirms Stop even when no item/completed follows.
               yield* terminalizeRunningCommandItems(
                 stoppedContext,
@@ -7495,7 +7519,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 stopInput.taskId,
               );
               yield* clearRunningCommandItem(turnId, stopInput.taskId);
-              yield* commandOutputLogs.remove(stoppedContext.projectionThreadId, stopInput.taskId);
               yield* releaseSettledTurnIfIdle(turnId);
             }).pipe(
               Effect.mapError(

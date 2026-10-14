@@ -86,7 +86,7 @@ closes it without sending anything to Codex. This requires a Codex version that
 supports async questions.
 
 Codex native option questions select one answer. When a question permits another
-answer, you can type your own; secret answers are masked while you enter them.
+answer, you can type your own.
 For questions that need several selections, agents use T3 Code's shared question
 tool when it is available.
 

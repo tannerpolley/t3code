@@ -102,22 +102,20 @@ describe("Codex context usage compatibility", () => {
 });
 
 describe("CodexAdapterV2 native question mapping", () => {
-  it("preserves other-answer and secret flags without inventing multi-selection", () => {
+  it("preserves other-answer support without inventing multi-selection", () => {
     const question = {
       id: "choice",
       header: "Choice",
       question: "Choose a branch",
       options: [{ label: "main", description: "Default branch" }],
     };
-    const [choice, other, secret, freeText] = CodexAdapterV2.codexUserInputQuestions([
+    const [choice, other, freeText] = CodexAdapterV2.codexUserInputQuestions([
       question,
       { ...question, isOther: true },
-      { ...question, isOther: true, isSecret: true },
       { ...question, options: null, isOther: false },
     ]);
     assert.equal(choice?.allowCustomAnswer, false);
     assert.equal(other?.allowCustomAnswer, true);
-    assert.equal(secret?.isSecret, true);
     assert.equal(freeText?.allowCustomAnswer, true);
     assert.equal(choice?.multiSelect, false);
     assert.deepEqual(choice?.options, question.options);
@@ -4909,6 +4907,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const stopped = yield* Deferred.make<void>();
+        const outputCaptured = yield* Deferred.make<void>();
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario: "codex-bg-stop-one",
@@ -4928,13 +4927,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 label: "terminate-background-command",
                 frame: { id: 4, result: { terminated: true } },
               },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                    item: {
+                      ...backgroundCommandItem("completed"),
+                      status: "failed",
+                      exitCode: 130,
+                    },
+                  },
+                },
+              },
             ],
           }),
           (event) =>
             event.type === "turn_item.updated" &&
             event.turnItem.type === "command_execution" &&
             event.turnItem.status === "interrupted"
-              ? Deferred.succeed(stopped, undefined).pipe(Effect.asVoid)
+              ? Deferred.succeed(event.turnItem.output ? outputCaptured : stopped, undefined).pipe(
+                  Effect.asVoid,
+                )
               : Effect.void,
         );
         yield* harness.runtime.startTurn(
@@ -4958,6 +4974,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* stop({ providerThread: harness.providerThread, taskId: BG_COMMAND_ITEM });
         yield* Deferred.await(stopped);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* Deferred.await(outputCaptured);
+        const completed = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.output !== undefined,
+        );
+        assert.equal(completed?.type, "turn_item.updated");
+        if (
+          completed?.type !== "turn_item.updated" ||
+          completed.turnItem.type !== "command_execution"
+        )
+          return yield* Effect.die("Expected stopped command output.");
+        assert.equal(completed.turnItem.status, "interrupted");
+        assert.equal(completed.turnItem.output, "CODEX_BG_WAKE_DONE\n");
+        assert.equal(completed.turnItem.exitCode, 130);
+        assert.lengthOf(harness.continuationRequests, 0);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -5067,10 +5100,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               ? [event.turnItem]
               : [],
           );
-          assert.equal(
-            commands.findLast((item) => item.nativeItemRef?.nativeId === BG_COMMAND_ITEM)?.status,
-            "interrupted",
+          const stoppedCommand = commands.findLast(
+            (item) => item.nativeItemRef?.nativeId === BG_COMMAND_ITEM,
           );
+          assert.equal(stoppedCommand?.status, "interrupted");
+          assert.equal(stoppedCommand?.output, "CODEX_BG_WAKE_DONE\n");
+          assert.equal(stoppedCommand?.exitCode, 130);
           assert.equal(
             commands.findLast((item) => item.nativeItemRef?.nativeId === "sibling-command")?.status,
             "completed",
