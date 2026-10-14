@@ -32,11 +32,13 @@ export function isSocketBusAddress(address: string | undefined): address is stri
 // Electron's Linux tray is a StatusNotifierItem. With no host to show it (GNOME
 // without the AppIndicator extension, for one) the icon silently never appears,
 // so ask over a fresh connection, closed again whatever the answer.
-async function isStatusNotifierHostRegistered(
+export async function isStatusNotifierHostRegistered(
   address: string,
   signal: AbortSignal,
 ): Promise<boolean> {
   const { Message, sessionBus } = await import("dbus-next");
+  // A timeout during the import aborts before any connection exists; the listener below would never fire.
+  if (signal.aborted) return false;
   const bus = sessionBus({ busAddress: address });
   signal.addEventListener("abort", () => bus.disconnect());
   try {

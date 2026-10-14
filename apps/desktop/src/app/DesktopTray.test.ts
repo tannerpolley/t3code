@@ -225,6 +225,15 @@ describe("DesktopTray", () => {
     }).pipe(Effect.provide(tray.layer), Effect.scoped);
   });
 
+  it("opens no connection when the check timed out while dbus-next was loading", async () => {
+    const before = fake.busAddresses.length;
+    const aborted = AbortSignal.abort();
+    expect(
+      await DesktopTray.isStatusNotifierHostRegistered("unix:path=/run/user/1000/bus", aborted),
+    ).toBe(false);
+    expect(fake.busAddresses.length).toBe(before);
+  });
+
   it.each([
     ["unix:path=/run/user/1000/bus", true],
     ["unix:abstract=/tmp/dbus-x,guid=0123", true],
