@@ -562,8 +562,8 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
-  // Fork: per-thread weekly-limit estimates follow provider limit refreshes.
-  WeeklyLimitEstimates.layerUpdater,
+  // Fork: publish current weekly-limit factors with provider snapshots.
+  WeeklyLimitEstimates.layer,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,

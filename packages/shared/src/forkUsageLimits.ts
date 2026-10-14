@@ -115,7 +115,12 @@ export function weeklyLimitPercentPerUsd(input: {
   readonly timeZone: string;
 }): number | null {
   const { window } = input;
-  if (window.resetsAt === undefined || window.windowDurationMins === undefined) return null;
+  if (
+    window.resetsAt === undefined ||
+    window.windowDurationMins === undefined ||
+    isUsageWindowStale(window, input.nowMs)
+  )
+    return null;
   const startMs = Math.min(
     Date.parse(window.resetsAt) - window.windowDurationMins * 60_000,
     input.nowMs,

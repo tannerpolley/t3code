@@ -1,134 +1,86 @@
-/**
- * WeeklyLimitEstimates — how much of a provider's weekly limit a thread has spent, for the
- * sidebar's usage cell.
- *
- * Providers report only a whole account's weekly percent. The Usage page already prices the
- * scanned transcripts like the API would, so the window's reported percent over its priced cost
- * gives a "percent per dollar" factor for each provider instance. A thread's own tokens, priced
- * the same way, times that factor is its estimated share. The factor refreshes when provider
- * limits do, at most every few minutes; thread summaries read the latest one when their own usage
- * changes.
- *
- * @module usage/WeeklyLimitEstimates
- */
-import {
-  UsageDay,
-  type ServerProvider,
-  type UsageProviderKind,
-  type UsageTokenTotals,
-} from "@t3tools/contracts";
-import { weeklyLimitPercentPerUsd } from "@t3tools/shared/forkUsageLimits";
+/** Current per-instance weekly factors, published through provider snapshots rather than threads. */
+import { UsageDay, type ServerProvider, type UsageProviderKind } from "@t3tools/contracts";
+import { isUsageWindowStale, weeklyLimitPercentPerUsd } from "@t3tools/shared/forkUsageLimits";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { backfillThreadUsageCosts } from "../orchestration-v2/ThreadUsageSummary.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
-import { type TokenPricer, UsageService } from "./UsageService.ts";
+import { UsageService } from "./UsageService.ts";
 
-/** What a thread's estimate needs: the shared pricer and each instance's factor. */
-export interface WeeklyLimitEstimateInputs {
-  readonly priceTokens: TokenPricer;
-  /** Percent of each provider instance's weekly limit that one dollar of usage spends. */
-  readonly percentPerUsd: ReadonlyMap<string, number>;
-}
-
-// ponytail: one process-wide default, so the projection store and the updater share it without
-// new layer wiring; a test overrides it with its own value.
-const sharedEstimates: { current: WeeklyLimitEstimateInputs | null } = { current: null };
-
-export class WeeklyLimitEstimates extends Context.Reference<{
-  current: WeeklyLimitEstimateInputs | null;
-}>("t3/usage/WeeklyLimitEstimates", { defaultValue: () => sharedEstimates }) {}
-
-/** One model's tokens on one provider instance across a thread's turns. */
-export interface ThreadModelTokens {
-  readonly instanceId: string;
-  readonly model: string;
-  readonly totals: UsageTokenTotals;
-}
-
-/**
- * A thread's API-equivalent cost on its current provider instance and the share of that
- * instance's weekly limit it spent. Undefined without inputs, without tokens on the instance, or
- * when any of its models has no price, since a partial cost would understate the share. The share
- * is left out while the instance's factor is unknown.
- */
-export function threadWeeklyLimitEstimate(
-  rows: readonly ThreadModelTokens[],
-  instanceId: string,
-  inputs: WeeklyLimitEstimateInputs | null,
-): { readonly costUsd: number; readonly weeklyLimitPercent?: number } | undefined {
-  if (inputs === null) return undefined;
-  let costUsd = 0;
-  let priced = false;
-  for (const row of rows) {
-    if (row.instanceId !== instanceId) continue;
-    const cost = inputs.priceTokens(row.model, row.totals);
-    if (cost === null) return undefined;
-    costUsd += cost;
-    priced = true;
+export class WeeklyLimitEstimates extends Context.Service<
+  WeeklyLimitEstimates,
+  {
+    readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
+    readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
   }
-  if (!priced) return undefined;
-  const factor = inputs.percentPerUsd.get(instanceId);
-  return factor === undefined ? { costUsd } : { costUsd, weeklyLimitPercent: costUsd * factor };
-}
+>()("t3/usage/WeeklyLimitEstimates") {}
 
-/** Drivers whose weekly limit and transcripts the estimate covers. */
 const ESTIMATED_PROVIDERS: Partial<Record<string, UsageProviderKind>> = {
   codex: "codex",
   claudeAgent: "claude",
 };
-/** Limits refresh often while clients focus; each estimate refresh rescans a week of history. */
-const MIN_REFRESH_INTERVAL_MS = 5 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 
 function weeklyWindows(snapshots: ReadonlyArray<ServerProvider>) {
   return snapshots.flatMap((provider) => {
     const kind = ESTIMATED_PROVIDERS[provider.driver];
     const window = provider.usageLimits?.windows.find((entry) => entry.kind === "weekly");
-    return kind === undefined || window === undefined
+    // Scans aggregate accounts by kind. Without account attribution, even an instance that
+    // cannot report its own window could contaminate the denominator of another account.
+    return kind === undefined ||
+      window === undefined ||
+      snapshots.filter((p) => p.driver === provider.driver).length !== 1
       ? []
-      : [{ instanceId: provider.instanceId, kind, window }];
+      : [
+          {
+            instanceId: provider.instanceId,
+            kind,
+            window,
+            key: JSON.stringify([
+              provider.auth,
+              provider.usageLimits?.credentialFingerprint,
+              window,
+            ]),
+          },
+        ];
   });
 }
 
-/** Recomputes the factors when Codex or Claude weekly limits change, from an incremental scan. */
-export const layerUpdater = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const providers = yield* ProviderRegistry;
-    const usage = yield* UsageService;
-    const estimates = yield* WeeklyLimitEstimates;
-    let lastRefreshMs = Number.NEGATIVE_INFINITY;
+type Factors = ReadonlyMap<string, { readonly key: string; readonly percentPerUsd: number }>;
 
-    const refresh = Effect.fn("WeeklyLimitEstimates.refresh")(function* (
-      snapshots: ReadonlyArray<ServerProvider>,
-    ) {
-      const windows = weeklyWindows(snapshots);
-      const nowMs = yield* Clock.currentTimeMillis;
-      // ponytail: a change inside the interval waits for the next limits refresh to be counted.
-      if (windows.length === 0 || nowMs - lastRefreshMs < MIN_REFRESH_INTERVAL_MS) return;
-      lastRefreshMs = nowMs;
+const make = Effect.gen(function* () {
+  const providers = yield* ProviderRegistry;
+  const usage = yield* UsageService;
+  const factors = yield* SubscriptionRef.make<Factors>(new Map());
+  // Complete the upgrade before clients can load their initial shell snapshot.
+  yield* backfillThreadUsageCosts;
+
+  const refresh = Effect.gen(function* () {
+    const snapshots = yield* providers.getProviders;
+    const windows = weeklyWindows(snapshots);
+    const nowMs = yield* Clock.currentTimeMillis;
+    const next = new Map<string, { readonly key: string; readonly percentPerUsd: number }>();
+    if (windows.length > 0) {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const day = (ms: number) =>
-        UsageDay.make(
-          new Intl.DateTimeFormat("en-CA", {
-            timeZone,
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-          }).format(ms),
-        );
-      // A weekly window can open just before local midnight eight days ago.
+      const formatter = new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+      const day = (ms: number) => UsageDay.make(formatter.format(ms));
       const summary = yield* usage.readSummary({
         sinceDay: day(nowMs - 8 * DAY_MS),
         untilDay: day(nowMs),
         timeZone,
       });
-      const priceTokens = yield* usage.tokenPricer;
-      const percentPerUsd = new Map<string, number>();
-      for (const { instanceId, kind, window } of windows) {
+      for (const { instanceId, kind, window, key } of windows) {
         const factor = weeklyLimitPercentPerUsd({
           window,
           buckets: summary.buckets,
@@ -136,33 +88,62 @@ export const layerUpdater = Layer.effectDiscard(
           nowMs,
           timeZone,
         });
-        if (factor !== null) percentPerUsd.set(instanceId, factor);
+        if (factor !== null) next.set(instanceId, { key, percentPerUsd: factor });
       }
-      estimates.current = { priceTokens, percentPerUsd };
-    });
-    const refreshLogged = (snapshots: ReadonlyArray<ServerProvider>) =>
-      refresh(snapshots).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("usage.weekly-limit-estimates.refresh-failed", { cause }),
-        ),
-      );
+    }
+    yield* SubscriptionRef.set(factors, next);
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("usage.weekly-limit-estimates.refresh-failed", { cause }),
+    ),
+  );
 
-    yield* providers.getProviders.pipe(Effect.flatMap(refreshLogged), Effect.forkScoped);
-    yield* providers.streamChanges.pipe(
-      // Only a new reading of a Codex or Claude weekly limit changes the factors.
-      Stream.map((snapshots) => ({
-        snapshots,
-        key: JSON.stringify(
-          weeklyWindows(snapshots).map(({ instanceId, window }) => [
-            instanceId,
-            window.usedPercent,
-            window.resetsAt,
-          ]),
-        ),
-      })),
-      Stream.changesWith((left, right) => left.key === right.key),
-      Stream.runForEach(({ snapshots }) => refreshLogged(snapshots)),
-      Effect.forkScoped,
-    );
-  }),
-);
+  // Always read the latest registry snapshot. A reset inside the interval is applied on the
+  // next tick even if the provider never changes that reading again.
+  yield* refresh.pipe(Effect.repeat(Schedule.spaced("5 minutes")), Effect.forkScoped);
+
+  const decorate = (snapshots: ReadonlyArray<ServerProvider>, current: Factors, nowMs: number) => {
+    const windows = weeklyWindows(snapshots);
+    return snapshots.map((provider) => {
+      const weekly = windows.find((entry) => entry.instanceId === provider.instanceId);
+      const factor = current.get(provider.instanceId);
+      if (
+        weekly === undefined ||
+        factor?.key !== weekly.key ||
+        isUsageWindowStale(weekly.window, nowMs)
+      )
+        return provider;
+      return {
+        ...provider,
+        usageLimits: {
+          ...provider.usageLimits!,
+          windows: provider.usageLimits!.windows.map((window) =>
+            window === weekly.window
+              ? { ...window, weeklyLimitPercentPerUsd: factor.percentPerUsd }
+              : window,
+          ),
+        },
+      };
+    });
+  };
+  return WeeklyLimitEstimates.of({
+    getProviders: Effect.gen(function* () {
+      return decorate(
+        yield* providers.getProviders,
+        yield* SubscriptionRef.get(factors),
+        yield* Clock.currentTimeMillis,
+      );
+    }),
+    streamChanges: Stream.zipLatestWith(
+      Stream.concat(Stream.fromEffect(providers.getProviders), providers.streamChanges),
+      SubscriptionRef.changes(factors),
+      (snapshots, current) => ({ snapshots, current }),
+    ).pipe(
+      Stream.mapEffect(({ snapshots, current }) =>
+        Clock.currentTimeMillis.pipe(Effect.map((nowMs) => decorate(snapshots, current, nowMs))),
+      ),
+    ),
+  });
+});
+
+export const layer = Layer.effect(WeeklyLimitEstimates, make);

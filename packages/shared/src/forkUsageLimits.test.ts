@@ -65,5 +65,10 @@ describe("weeklyLimitPercentPerUsd", () => {
     expect(factor({ ...weekly, resetsAt: undefined }, [bucket(2, 10)])).toBeNull();
     expect(factor(weekly, [bucket(2, 0, false)])).toBeNull();
     expect(factor(weekly, [])).toBeNull();
+    expect(
+      factor({ ...weekly, resetsAt: DateTime.formatIso(DateTime.makeUnsafe(NOW)) }, [
+        bucket(2, 10),
+      ]),
+    ).toBeNull();
   });
 });
