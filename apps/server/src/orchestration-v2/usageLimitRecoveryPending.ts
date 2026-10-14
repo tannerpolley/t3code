@@ -15,6 +15,8 @@ import * as DateTime from "effect/DateTime";
 import { isSnoozed } from "./ThreadSettlementService.ts";
 
 export const USAGE_LIMIT_SWITCH_HOLD_MS = 2 * 60 * 1_000;
+// Six scheduler ticks after the deadline tolerate a delayed sweep without scanning old failures.
+export const USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS = 30_000;
 export const USAGE_LIMIT_SWITCH_RESUME_PREFIX = "limit-switch-resume:";
 export const usageLimitSwitchMessageId = (threadId: ThreadId, runId: RunId) =>
   MessageId.make(`${USAGE_LIMIT_SWITCH_RESUME_PREFIX}${threadId}:${runId}`);

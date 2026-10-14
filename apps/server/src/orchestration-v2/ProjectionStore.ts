@@ -5,7 +5,11 @@ import {
   deriveThreadUsageSummary,
   refreshThreadUsageSummary,
 } from "./ThreadUsageSummary.ts";
-import { USAGE_LIMIT_SWITCH_RESUME_PREFIX } from "./usageLimitRecoveryPending.ts";
+import {
+  USAGE_LIMIT_SWITCH_RESUME_PREFIX,
+  USAGE_LIMIT_SWITCH_HOLD_MS,
+  USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS,
+} from "./usageLimitRecoveryPending.ts";
 import { IssueWorkCancelled, IssueWorkRequested } from "@t3tools/contracts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -445,6 +449,16 @@ export interface ProjectionStoreV2Shape {
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
+  readonly getRecentUsageLimitChildren: (
+    now: DateTime.Utc,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly runId: RunId }>,
+    ProjectionStoreV2Error
+  >;
+  readonly isUsageLimitFailureReleased: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly switchProvider?: boolean;
@@ -3850,6 +3864,46 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    const isUsageLimitFailureReleased = Effect.fn("ProjectionStore.isUsageLimitFailureReleased")(
+      function* (threadId: ThreadId, runId: RunId) {
+        const rows = yield* sql`SELECT 1 FROM orchestration_v2_projection_context_transfers
+        WHERE source_thread_id = ${threadId} AND type = 'subagent_result'
+          AND json_extract(payload_json, '$.sourcePoint.runId') = ${runId} LIMIT 1`;
+        return rows.length > 0;
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const getRecentUsageLimitChildren = Effect.fn("ProjectionStore.getRecentUsageLimitChildren")(
+      function* (now: DateTime.Utc) {
+        const since = DateTime.makeUnsafe(
+          DateTime.toEpochMillis(now) -
+            USAGE_LIMIT_SWITCH_HOLD_MS -
+            USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS,
+        );
+        const rows = yield* sql<{ readonly thread_id: string; readonly run_id: string }>`
+        SELECT DISTINCT failure.thread_id, failure.run_id
+        FROM orchestration_v2_projection_runs AS failure INDEXED BY orchestration_v2_limit_failures_recent
+        CROSS JOIN orchestration_v2_projection_threads child ON child.thread_id = failure.thread_id
+        CROSS JOIN orchestration_v2_projection_subagents task ON task.child_thread_id = failure.thread_id
+        WHERE failure.status = 'failed' AND failure.completed_at >= ${DateTime.formatIso(since)}
+          AND failure.completed_at <= ${DateTime.formatIso(now)}
+          AND task.subagent_id = COALESCE(json_extract(failure.payload_json, '$.delegatedTaskId'), json_extract(child.payload_json, '$.forkedFrom.nodeId'))
+          AND json_extract(task.payload_json, '$.origin') = 'app_owned'
+          AND json_extract(task.payload_json, '$.result') IS NULL
+          AND EXISTS (SELECT 1 FROM orchestration_v2_projection_turn_items error
+            WHERE error.run_id = failure.run_id AND error.type = 'error'
+              AND error.node_id IS json_extract(failure.payload_json, '$.rootNodeId')
+              AND json_extract(error.payload_json, '$.failure.class') = 'usage_limit')
+      `;
+        return rows.map((row) => ({
+          threadId: ThreadId.make(row.thread_id),
+          runId: RunId.make(row.run_id),
+        }));
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
         // Indexed latest-run and root-error lookups avoid reading run histories,
@@ -3923,6 +3977,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE continuation.thread_id = t.thread_id
                   AND json_extract(continuation.payload_json, '$.userMessageId') = ${USAGE_LIMIT_SWITCH_RESUME_PREFIX} || t.thread_id || ':' || r.run_id
               )
+              AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_context_transfers delivered
+                WHERE delivered.source_thread_id = t.thread_id AND delivered.type = 'subagent_result'
+                  AND json_extract(delivered.payload_json, '$.sourcePoint.runId') = r.run_id)
               AND t.provider_instance_id IN (SELECT value FROM json_each(${encodeRecoveryInstanceIds(options.switchProviderInstanceIds ?? [])}))
               AND (
                 json_extract(t.payload_json, '$.autoProviderSwitch.runId') IS NOT r.run_id
@@ -6542,6 +6599,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPendingRoutedRequestThreadIds,
       getPlan,
       getProviderControlContext,
+      getRecentUsageLimitChildren,
+      isUsageLimitFailureReleased,
       getLimitRecoveryCandidates,
       getRecoveryThreadIds,
       getUnreadableThreadIds,
@@ -6740,6 +6799,54 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 settledAt: thread.settledAt,
                 pullRequests: thread.pullRequests ?? [],
               })),
+          ),
+        ),
+      getRecentUsageLimitChildren: (now) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()].flatMap((projection) => {
+              const parent =
+                projection.thread.lineage.parentThreadId === null
+                  ? undefined
+                  : state.projections.get(projection.thread.lineage.parentThreadId);
+              return projection.runs
+                .filter(
+                  (run) =>
+                    run.status === "failed" &&
+                    run.completedAt !== null &&
+                    DateTime.toEpochMillis(run.completedAt) <= DateTime.toEpochMillis(now) &&
+                    DateTime.toEpochMillis(run.completedAt) >=
+                      DateTime.toEpochMillis(now) -
+                        USAGE_LIMIT_SWITCH_HOLD_MS -
+                        USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS &&
+                    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit" &&
+                    parent?.subagents.some(
+                      (task) =>
+                        task.childThreadId === projection.thread.id &&
+                        task.origin === "app_owned" &&
+                        task.result === null &&
+                        task.id ===
+                          (run.delegatedTaskId ??
+                            (projection.thread.forkedFrom?.type === "node"
+                              ? projection.thread.forkedFrom.nodeId
+                              : undefined)),
+                    ),
+                )
+                .map((run) => ({ threadId: projection.thread.id, runId: run.id }));
+            }),
+          ),
+        ),
+      isUsageLimitFailureReleased: (threadId, runId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()].some((projection) =>
+              projection.contextTransfers.some(
+                (transfer) =>
+                  transfer.type === "subagent_result" &&
+                  transfer.sourceThreadId === threadId &&
+                  transfer.sourcePoint.runId === runId,
+              ),
+            ),
           ),
         ),
       getLimitRecoveryCandidates: (options) =>

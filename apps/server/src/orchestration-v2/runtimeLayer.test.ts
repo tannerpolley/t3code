@@ -7000,6 +7000,11 @@ it.effect.each([
         usageLimitRecovery: "off",
       });
       yield* switchWorker.sweep;
+      assert.isNull(
+        (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result,
+        "Off does no per-tick child recovery",
+      );
+      yield* orchestrator.recoverDelegatedTask(childThreadId, original.id);
       yield* assertFailed;
       return;
     }
@@ -7065,6 +7070,44 @@ it.effect.each([
         yield* (yield* UsageLimitProviderSwitchWorker.UsageLimitProviderSwitchWorker).sweep;
       }).pipe(Effect.provide(workers));
       yield* assertFailed;
+      const released = yield* orchestrator.getThreadProjection(childThreadId);
+      const automatic = released.runs.find(
+        (run) =>
+          run.userMessageId ===
+          MessageId.make(`limit-switch-resume:${childThreadId}:${original.id}`),
+      );
+      if (scenario === "starting-timeout") assert.equal(automatic?.status, "interrupted");
+      else if (scenario === "managed-queued" || scenario === "managed-held")
+        assert.equal(automatic?.status, "cancelled");
+      else
+        assert.isUndefined(automatic, "a released failure must not dispatch a late continuation");
+      assert.lengthOf(
+        yield* (yield* ProjectionStore.ProjectionStoreV2).getRecentUsageLimitChildren(
+          yield* DateTime.now,
+        ),
+        0,
+        "delivered children leave the bounded query",
+      );
+      const attempted = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${childThreadId}:late-continuation`),
+          threadId: childThreadId,
+          messageId: MessageId.make(`${childThreadId}:late-continuation`),
+          automaticProviderContinuationOfRunId: original.id,
+          text: "Continue where you left off.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "server",
+        })
+        .pipe(Effect.result);
+      assert.equal(attempted._tag, "Failure");
+      yield* switchWorker.recover(childThreadId);
+      assert.lengthOf(
+        (yield* orchestrator.getThreadProjection(childThreadId)).runs,
+        released.runs.length,
+      );
       const after = yield* orchestrator.getThreadEventSequence(childThreadId);
       yield* switchWorker.sweep;
       yield* assertFailed;
@@ -7092,6 +7135,19 @@ it.effect.each([
     yield* TestClock.adjust(USAGE_LIMIT_SWITCH_HOLD_MS);
     yield* switchWorker.sweep;
     assert.isNull((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result);
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    assert.include(
+      (yield* projectionStore.getRecentUsageLimitChildren(yield* DateTime.now)).map(
+        (candidate) => candidate.threadId,
+      ),
+      childThreadId,
+    );
+    yield* TestClock.adjust("31 seconds");
+    assert.lengthOf(
+      yield* projectionStore.getRecentUsageLimitChildren(yield* DateTime.now),
+      0,
+      "old failures are outside the indexed window",
+    );
     const completedAt = yield* DateTime.now;
     yield* sink.write({
       commandId: CommandId.make(`${childThreadId}:success`),

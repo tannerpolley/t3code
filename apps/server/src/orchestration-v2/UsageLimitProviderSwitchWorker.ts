@@ -55,6 +55,11 @@ const make = Effect.gen(function* () {
         isSnoozed(shell, nowMs)
       )
         return;
+      if (
+        shell.lineage.parentThreadId !== null &&
+        (yield* projections.isUsageLimitFailureReleased(threadId, shell.latestRunId))
+      )
+        return;
       const identity = `${threadId}:${shell.latestRunId}`;
       let marker =
         shell.autoProviderSwitch?.runId === shell.latestRunId
@@ -175,11 +180,12 @@ const make = Effect.gen(function* () {
     ),
   );
   const sweep = Effect.gen(function* () {
-    // Release bounded holds independently of provider readiness, snooze, or changed settings.
-    yield* orchestrator.recoverDelegatedTasks;
     if ((yield* settings.getSettings).usageLimitRecovery !== "switch") return;
+    const now = yield* DateTime.now;
+    for (const child of yield* projections.getRecentUsageLimitChildren(now))
+      yield* orchestrator.recoverDelegatedTask(child.threadId, child.runId);
     const candidates = yield* projections.getLimitRecoveryCandidates({
-      now: yield* DateTime.now,
+      now,
       autoResume: false,
       snooze: false,
       switchProvider: true,

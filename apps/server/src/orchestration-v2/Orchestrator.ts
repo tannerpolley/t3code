@@ -157,6 +157,7 @@ import { usageLimitQueuedRunEvents } from "./usageLimitQueuedRuns.ts";
 import {
   usageLimitRecoveryPending,
   usageLimitSwitchResultRun,
+  usageLimitSwitchMessageId,
 } from "./usageLimitRecoveryPending.ts";
 import { delegatedRequestOwner } from "./DelegatedRequestRouting.ts";
 
@@ -1519,6 +1520,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               payload: { ...run, queueHeld: true },
             })),
         );
+        return;
+      }
+      const marker = projection.thread.autoProviderSwitch;
+      if (
+        marker &&
+        queuedRun.userMessageId === usageLimitSwitchMessageId(threadId, marker.runId) &&
+        (yield* projectionStore
+          .isUsageLimitFailureReleased(threadId, marker.runId)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))))
+      ) {
+        yield* dispatchWithReceiptEffect({
+          type: "queued-run.cancel",
+          commandId: CommandId.make(`limit-switch-withdraw:${queuedRun.id}`),
+          threadId,
+          runId: queuedRun.id,
+        });
         return;
       }
       const rootNodeId = queuedRun.rootNodeId;
@@ -4966,7 +4983,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const source = latestExecutedRun(projection.runs);
         const shell = threadShellFromProjection(projection);
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        const released =
+          projection.thread.lineage.parentThreadId !== null &&
+          (yield* projectionStore
+            .isUsageLimitFailureReleased(
+              command.threadId,
+              command.automaticProviderContinuationOfRunId,
+            )
+            .pipe(mapDispatchError(command)));
         if (
+          released ||
           source?.id !== command.automaticProviderContinuationOfRunId ||
           source.status !== "failed" ||
           latestRootProviderFailure(source, projection.turnItems)?.class !== "usage_limit" ||
@@ -12738,6 +12764,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
+  const withdrawReleasedUsageLimitContinuation = (threadId: ThreadId) =>
+    threadDispatch.withLock(
+      threadId,
+      Effect.gen(function* () {
+        const { thread, runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+        const marker = thread.autoProviderSwitch;
+        if (
+          !marker ||
+          thread.lineage.parentThreadId === null ||
+          !(yield* projectionStore.isUsageLimitFailureReleased(threadId, marker.runId))
+        )
+          return;
+        const continuation = runs.find(
+          (run) => run.userMessageId === usageLimitSwitchMessageId(threadId, marker.runId),
+        );
+        if (
+          !continuation ||
+          continuation.startedAt !== null ||
+          !["queued", "preparing", "starting"].includes(continuation.status)
+        )
+          return;
+        yield* dispatchWithReceiptEffect({
+          type: continuation.status === "queued" ? "queued-run.cancel" : "run.interrupt",
+          commandId: CommandId.make(`limit-switch-withdraw:${continuation.id}`),
+          threadId,
+          runId: continuation.id,
+        });
+      }),
+    );
+
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
@@ -12791,6 +12847,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             Effect.provideService(IssueReadSnapshots, parentReads),
           ),
         );
+        yield* withdrawReleasedUsageLimitContinuation(threadId);
       }
       yield* promoteOtherIssueQueues(threadId);
     }).pipe(
@@ -12890,6 +12947,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               const parentThreadId = thread?.lineage.parentThreadId;
               if (parentThreadId === undefined || parentThreadId === null) return;
               yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
+              yield* withdrawReleasedUsageLimitContinuation(threadId);
             }).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Failed to recover terminal app-owned subagent", {
@@ -13009,6 +13067,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentThreadId,
         finalizeAppOwnedSubagent(threadId, { settledContinuationOf: sourceRunId }),
       );
+      yield* withdrawReleasedUsageLimitContinuation(threadId);
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Failed to recover delegated task after restart", {

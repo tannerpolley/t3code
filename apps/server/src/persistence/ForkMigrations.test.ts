@@ -125,7 +125,10 @@ describe("fork migration ledger", () => {
       );
       assert.deepStrictEqual(
         yield* sql`SELECT migration_id, name FROM ${sql(FORK_MIGRATIONS_TABLE)} WHERE migration_id > 10 ORDER BY migration_id`,
-        [{ migration_id: 11, name: "ThreadUsageSummary" }],
+        [
+          { migration_id: 11, name: "ThreadUsageSummary" },
+          { migration_id: 12, name: "UsageLimitSwitchRecovery" },
+        ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));
       assert.deepStrictEqual(yield* runMigrations(), []);

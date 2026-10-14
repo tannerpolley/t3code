@@ -223,6 +223,8 @@ it.effect(
           getIssueCommentReceipt: () => Effect.succeed(null),
           apply: () => Effect.void,
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
+          getRecentUsageLimitChildren: () => Effect.succeed([]),
+          isUsageLimitFailureReleased: () => Effect.succeed(false),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
           readShellSnapshot: () => Effect.die("unused readShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
