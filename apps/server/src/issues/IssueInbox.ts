@@ -145,7 +145,7 @@ export const make = Effect.gen(function* () {
     SELECT o.host, o.repository_id, o.repository, o.root_thread_id
     FROM orchestration_v2_projection_repository_orchestration o
     JOIN orchestration_v2_projection_threads t ON t.thread_id = o.root_thread_id
-    WHERE t.deleted_at IS NULL AND t.archived_at IS NULL
+    WHERE t.deleted_at IS NULL AND t.archived_at IS NULL AND o.paused = 0
   `.pipe(
     Effect.map((rows) =>
       rows.map((row): Watcher.WatchedRepository => ({

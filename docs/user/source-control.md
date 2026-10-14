@@ -334,8 +334,9 @@ two minutes T3 records new issues and comments, closes and reopens, label and mi
 and title renames made by another project's agents or by you on GitHub. Edits to issue and comment
 text are not tracked. Its own agents' writes and bots are left out. If T3 was offline long enough
 to miss more than one catch-up can read, the inbox says so once; check the repository on GitHub.
-External issues get the `external` and `priority: high` labels, plus `from:<project>` when another
-project's agent wrote them. T3 labels each issue once, so a label you remove stays removed.
+Issues another project's agent opens get the `external`, `priority: high` and `from:<project>`
+labels; issues you open yourself get none. T3 labels each issue once, so a label you remove stays
+removed. A paused repository's inbox is not read or labeled until you resume it, then it catches up.
 
 The orchestrator reads unread events in one line at the start of its next turn. Untagged events
 wait for that turn and never start one. Tagged events also wake an idle orchestrator with a short

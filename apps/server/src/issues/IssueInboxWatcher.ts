@@ -153,12 +153,8 @@ interface ReceiptRow {
   readonly finished_at: number;
 }
 
-/** The labels an external issue gets; `source` is empty when no project is named. */
-const receiverLabels = (source: string) => [
-  EXTERNAL_LABEL,
-  HIGH_PRIORITY_LABEL,
-  ...(source === "" ? [] : [fromLabel(source)]),
-];
+/** The labels an issue from another project gets, naming that project. */
+const receiverLabels = (source: string) => [EXTERNAL_LABEL, HIGH_PRIORITY_LABEL, fromLabel(source)];
 
 // GitHub's own timestamp shape, so cursors compare as strings with GitHub's.
 export const isoSeconds = (millis: number) =>
@@ -311,8 +307,9 @@ export const make = Effect.gen(function* () {
       );
       const inserts: NewEvent[] = [];
       const issueRows = new Map<number, IssueRow>();
-      // Classifies an issue as external once, from its opening or a foreign marker in its body,
-      // and makes it due for any missing receiver labels then. Later label removals stay removed.
+      // Classifies an issue as another project's once, from the marker its opening or body carries,
+      // and makes it due for any missing receiver labels then. An issue someone opened by hand is
+      // external activity but names no project, so it gets no labels. Later removals stay removed.
       const noteIssue = (
         issue: {
           readonly number: number;
@@ -325,10 +322,7 @@ export const make = Effect.gen(function* () {
         const previous = issueRows.get(issue.number) ?? known.get(issue.number);
         const marker = foreignMarker(issue.body ?? "", repositoryKey);
         const source =
-          previous?.external_source ??
-          (openedExternally !== null
-            ? (openedExternally.sourceProject ?? "")
-            : (marker?.project ?? null));
+          previous?.external_source ?? openedExternally?.sourceProject ?? marker?.project ?? null;
         issueRows.set(issue.number, {
           issue_number: issue.number,
           title: issue.title,
@@ -585,7 +579,7 @@ export const make = Effect.gen(function* () {
       const pending = yield* sql<{ issue_number: number; external_source: string }>`
         SELECT issue_number, external_source FROM issue_inbox_issues
         WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId}
-          AND external_source IS NOT NULL AND labeled = 0
+          AND external_source IS NOT NULL AND external_source <> '' AND labeled = 0
       `;
       for (const row of pending) {
         const labels = receiverLabels(row.external_source);

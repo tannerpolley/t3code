@@ -309,7 +309,7 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("labels each external issue once and never relabels it", () =>
+it.effect("labels each issue from another project once and never relabels it", () =>
   Effect.gen(function* () {
     const { inbox, github } = yield* setup();
     github.data.issues = [issue(5, `New\n${amineMarker}`), issue(7, "By hand")];
@@ -318,15 +318,24 @@ it.effect("labels each external issue once and never relabels it", () =>
       github.requests.filter((request) => /^issues\/\d+\/labels$/u.test(request.path));
     assert.deepEqual(
       labelWrites().map((request) => [request.path, request.body]),
-      [
-        ["issues/5/labels", { labels: ["external", "priority: high", "from:amine"] }],
-        ["issues/7/labels", { labels: ["external", "priority: high"] }],
-      ],
+      [["issues/5/labels", { labels: ["external", "priority: high", "from:amine"] }]],
     );
     // The owner removes a label later; the next update does not put it back.
     github.data.issues = [issue(5, `New\n${amineMarker}`, { updated_at: at(4) })];
     yield* nextPoll(inbox);
-    assert.equal(labelWrites().length, 2);
+    assert.equal(labelWrites().length, 1);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a paused repository is not read, labeled or digested", () =>
+  Effect.gen(function* () {
+    const { inbox, github } = yield* setup();
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE orchestration_v2_projection_repository_orchestration SET paused = 1`;
+    const before = github.requests.length;
+    github.data.issues = [issue(5, `New\n${amineMarker}`)];
+    yield* nextPoll(inbox);
+    assert.equal(github.requests.length, before);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
