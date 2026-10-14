@@ -1,3 +1,4 @@
+import * as Stream from "effect/Stream";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
@@ -100,6 +101,73 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
 });
 
 it.layer(layerTest)("ProjectService", (it) => {
+  it.effect(
+    "places and expands at creation, retains membership after repository enrichment, and supports removal",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const service = yield* ProjectService.ProjectService;
+        const enrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+        const changes = yield* enrichment.subscribeChanges;
+        yield* settings.updateSettings({
+          sidebarLayoutMutation: { type: "add", section: { id: "personal", name: "Personal" } },
+        });
+        const projectId = ProjectId.make("sidebar-clone");
+        const completed = yield* Stream.fromSubscription(changes).pipe(
+          Stream.filter(
+            (change) =>
+              change.workspaceRoot === "/work/sidebar-clone" &&
+              change.enrichment.repositoryIdentity !== null,
+          ),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* service.create({
+          projectId,
+          commandId: CommandId.make("sidebar-create"),
+          title: "Clone",
+          workspaceRoot: "/work/sidebar-clone",
+          sectionId: "personal",
+          sidebarExpanded: true,
+        });
+        assert.deepEqual(
+          (yield* settings.getSettings).sidebarLayout?.sidebarProjectSections[0]?.projectKeys,
+          [projectId],
+        );
+        assert.isTrue((yield* settings.getSettings).sidebarLayout?.projectExpandedById[projectId]);
+        yield* Fiber.join(completed);
+        assert.isNotNull(Option.getOrThrow(yield* service.getById(projectId)).repositoryIdentity);
+        assert.deepEqual(
+          (yield* settings.getSettings).sidebarLayout?.sidebarProjectSections[0]?.projectKeys,
+          [projectId],
+        );
+        yield* service.update({
+          projectId,
+          commandId: CommandId.make("sidebar-remove"),
+          sectionId: null,
+          sidebarExpanded: false,
+        });
+        assert.deepEqual(
+          (yield* settings.getSettings).sidebarLayout?.sidebarProjectSections[0]?.projectKeys,
+          [],
+        );
+        assert.isFalse((yield* settings.getSettings).sidebarLayout?.projectExpandedById[projectId]);
+        const invalid = yield* service
+          .create({
+            projectId: ProjectId.make("invalid-section-project"),
+            commandId: CommandId.make("sidebar-invalid"),
+            title: "Invalid",
+            workspaceRoot: "/work/invalid",
+            sectionId: "missing",
+          })
+          .pipe(Effect.flip);
+        assert.equal(invalid._tag, "ProjectOperationError");
+        assert.isTrue(
+          Option.isNone(yield* service.getById(ProjectId.make("invalid-section-project"))),
+        );
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
   it.effect("creates, updates, resolves, snapshots, and soft-deletes projects", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;

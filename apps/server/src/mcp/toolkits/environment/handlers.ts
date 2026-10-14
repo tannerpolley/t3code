@@ -23,6 +23,7 @@ export function preferences(settings: ServerSettings) {
   } = settings;
   const characters = Array.from(sourceControlWritingStyle.customInstructions);
   return {
+    ...(settings.sidebarLayout === undefined ? {} : { sidebarLayout: settings.sidebarLayout }),
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
     enableProviderUpdateChecks,

@@ -83,6 +83,8 @@ export interface ProjectCloneHooks {
     readonly title: string;
     readonly workspaceRoot: string;
     readonly createdAt: string;
+    readonly sectionId?: string | null;
+    readonly sidebarExpanded?: boolean;
   }) => Effect.Effect<void, OrchestrationDispatchCommandError>;
   /** Runs after a successful clone so cached repository identity and git status refresh. */
   readonly onCloned: (input: {
@@ -319,6 +321,10 @@ export const make = Effect.gen(function* () {
             title: input.title,
             workspaceRoot: prepared.destinationPath,
             createdAt: input.createdAt,
+            ...(input.sectionId === undefined ? {} : { sectionId: input.sectionId }),
+            ...(input.sidebarExpanded === undefined
+              ? {}
+              : { sidebarExpanded: input.sidebarExpanded }),
           });
           yield* publish;
           yield* launch(input.projectId);

@@ -1,10 +1,25 @@
+export {
+  setSidebarOtherProjectsExpanded,
+  addSidebarProjectSection,
+  renameSidebarProjectSection,
+  setSidebarProjectSectionColor,
+  setSidebarProjectSectionFolderIcons,
+  deleteSidebarProjectSection,
+  setSidebarProjectSectionExpanded,
+  moveProjectToSidebarProjectSection,
+  reorderSidebarProjectSectionProjects,
+  reorderSidebarProjectSections,
+  setProjectExpanded,
+  reorderProjects,
+} from "@t3tools/shared/sidebarLayout";
+import type { SidebarLayoutMutation } from "@t3tools/contracts";
 import { Debouncer } from "@tanstack/react-pacer";
 import { ProjectIconColor, type PullRequestMergeMethod } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 import { randomUUID } from "./lib/utils";
-import { organizeSectionsByFolder, type FolderOrganizedProject } from "./sidebarSectionFolders";
+import { type FolderOrganizedProject } from "./sidebarSectionFolders";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 // Version 1 stored card visibility, not folder expansion.
@@ -22,15 +37,10 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v1",
 ] as const;
 
-export interface SidebarProjectSection {
-  id: string;
-  name: string;
-  projectKeys: string[];
-  collapsed: boolean;
-  color?: ProjectIconColor;
-  parentId?: string;
-  folderIcons?: boolean;
-}
+export type SidebarProjectSection = Omit<
+  import("@t3tools/contracts").SidebarProjectSection,
+  "projectKeys"
+> & { projectKeys: string[] };
 
 const isProjectIconColor = Schema.is(ProjectIconColor);
 export type SidebarMode = "projects" | "activity";
@@ -98,7 +108,8 @@ export interface UiBranchPickerState {
 }
 
 export interface UiState
-  extends UiProjectState,
+  extends
+    UiProjectState,
     UiThreadState,
     UiEndpointState,
     UiPullRequestState,
@@ -358,18 +369,13 @@ export function persistState(state: UiState): void {
     return;
   }
   try {
-    const projectExpandedById = Object.fromEntries(
-      Object.entries(state.projectExpandedById).filter(
-        ([key]) => key !== LEGACY_PROJECT_EXPANSION_DEFAULT_KEY,
-      ),
-    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
-        projectExpandedById,
-        projectOrder: state.projectOrder,
-        sidebarProjectSections: state.sidebarProjectSections,
-        sidebarOtherProjectsExpanded: state.sidebarOtherProjectsExpanded,
+        projectExpandedById: legacySidebarLayout.projectExpandedById,
+        projectOrder: legacySidebarLayout.projectOrder,
+        sidebarProjectSections: legacySidebarLayout.sidebarProjectSections,
+        sidebarOtherProjectsExpanded: legacySidebarLayout.sidebarOtherProjectsExpanded,
         sidebarMode: state.sidebarMode,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
@@ -493,177 +499,6 @@ export function setSidebarMode(state: UiState, mode: SidebarMode): UiState {
   return state.sidebarMode === mode ? state : { ...state, sidebarMode: mode };
 }
 
-export function setSidebarOtherProjectsExpanded(state: UiState, expanded: boolean): UiState {
-  return state.sidebarOtherProjectsExpanded === expanded
-    ? state
-    : { ...state, sidebarOtherProjectsExpanded: expanded };
-}
-
-export function addSidebarProjectSection(
-  state: UiState,
-  section: Pick<SidebarProjectSection, "id" | "name" | "parentId">,
-): UiState {
-  const id = section.id.trim();
-  const name = normalizeSidebarProjectSectionName(section.name);
-  if (!id || !name || state.sidebarProjectSections.some((candidate) => candidate.id === id)) {
-    return state;
-  }
-  const parent =
-    section.parentId === undefined
-      ? undefined
-      : state.sidebarProjectSections.find((candidate) => candidate.id === section.parentId);
-  if (section.parentId !== undefined && (!parent || parent.parentId !== undefined)) return state;
-  return {
-    ...state,
-    sidebarProjectSections: [
-      ...state.sidebarProjectSections,
-      { id, name, projectKeys: [], collapsed: false, ...(parent ? { parentId: parent.id } : {}) },
-    ],
-  };
-}
-
-export function renameSidebarProjectSection(
-  state: UiState,
-  sectionId: string,
-  name: string,
-): UiState {
-  const nextName = normalizeSidebarProjectSectionName(name);
-  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
-  if (!nextName || !section || section.name === nextName) return state;
-  return {
-    ...state,
-    sidebarProjectSections: state.sidebarProjectSections.map((candidate) =>
-      candidate.id === sectionId ? { ...candidate, name: nextName } : candidate,
-    ),
-  };
-}
-
-export function setSidebarProjectSectionColor(
-  state: UiState,
-  sectionId: string,
-  color: ProjectIconColor | null,
-): UiState {
-  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
-  if (!section || (section.color ?? null) === color) return state;
-  return {
-    ...state,
-    sidebarProjectSections: state.sidebarProjectSections.map((candidate) => {
-      if (candidate.id !== sectionId) return candidate;
-      const { color: _color, ...rest } = candidate;
-      return color === null ? rest : { ...rest, color };
-    }),
-  };
-}
-
-export function setSidebarProjectSectionFolderIcons(
-  state: UiState,
-  sectionId: string,
-  folderIcons: boolean,
-): UiState {
-  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
-  if (!section || (section.folderIcons === true) === folderIcons) return state;
-  return {
-    ...state,
-    sidebarProjectSections: state.sidebarProjectSections.map((candidate) => {
-      if (candidate.id !== sectionId) return candidate;
-      const { folderIcons: _previous, ...rest } = candidate;
-      return folderIcons ? { ...rest, folderIcons: true } : rest;
-    }),
-  };
-}
-
-export function deleteSidebarProjectSection(state: UiState, sectionId: string): UiState {
-  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
-  if (!section) return state;
-  const sidebarProjectSections = state.sidebarProjectSections.flatMap((candidate) => {
-    if (candidate.id === sectionId || candidate.parentId === sectionId) return [];
-    if (candidate.id === section.parentId) {
-      return [{ ...candidate, projectKeys: [...candidate.projectKeys, ...section.projectKeys] }];
-    }
-    return [candidate];
-  });
-  return { ...state, sidebarProjectSections };
-}
-
-export function setSidebarProjectSectionExpanded(
-  state: UiState,
-  sectionId: string,
-  expanded: boolean,
-): UiState {
-  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
-  if (!section || section.collapsed === !expanded) return state;
-  return {
-    ...state,
-    sidebarProjectSections: state.sidebarProjectSections.map((candidate) =>
-      candidate.id === sectionId ? { ...candidate, collapsed: !expanded } : candidate,
-    ),
-  };
-}
-
-export function moveProjectToSidebarProjectSection(
-  state: UiState,
-  projectKey: string,
-  sectionId: string | null,
-): UiState {
-  const currentSection = state.sidebarProjectSections.find((section) =>
-    section.projectKeys.includes(projectKey),
-  );
-  if (
-    currentSection?.id === sectionId ||
-    (sectionId !== null &&
-      !state.sidebarProjectSections.some((section) => section.id === sectionId))
-  ) {
-    return state;
-  }
-  if (!currentSection && sectionId === null) return state;
-  return {
-    ...state,
-    sidebarProjectSections: state.sidebarProjectSections.map((section) => ({
-      ...section,
-      projectKeys:
-        section.id === sectionId
-          ? [...section.projectKeys.filter((key) => key !== projectKey), projectKey]
-          : section.projectKeys.filter((key) => key !== projectKey),
-    })),
-  };
-}
-
-export function reorderSidebarProjectSectionProjects(
-  state: UiState,
-  sectionId: string,
-  projectKeys: readonly string[],
-): UiState {
-  const section = state.sidebarProjectSections.find((candidate) => candidate.id === sectionId);
-  if (!section) return state;
-  const requested = new Set(projectKeys);
-  const allowed = new Set(section.projectKeys);
-  const nextProjectKeys = [
-    ...new Set(projectKeys.filter((key) => allowed.has(key))),
-    ...section.projectKeys.filter((key) => !requested.has(key)),
-  ];
-  if (nextProjectKeys.every((key, index) => key === section.projectKeys[index])) return state;
-  return {
-    ...state,
-    sidebarProjectSections: state.sidebarProjectSections.map((candidate) =>
-      candidate.id === sectionId ? { ...candidate, projectKeys: nextProjectKeys } : candidate,
-    ),
-  };
-}
-
-export function reorderSidebarProjectSections(
-  state: UiState,
-  sectionIds: readonly string[],
-): UiState {
-  const requested = new Set(sectionIds);
-  const byId = new Map(state.sidebarProjectSections.map((section) => [section.id, section]));
-  const nextIds = [
-    ...new Set(sectionIds.filter((id) => byId.has(id))),
-    ...state.sidebarProjectSections.map((section) => section.id).filter((id) => !requested.has(id)),
-  ];
-  if (nextIds.every((id, index) => id === state.sidebarProjectSections[index]?.id)) return state;
-  return { ...state, sidebarProjectSections: nextIds.map((id) => byId.get(id)!) };
-}
-
 export function setLineageDetailsExpanded(
   state: UiState,
   keys: readonly string[],
@@ -733,69 +568,11 @@ export function resolveProjectExpanded(
   return projectExpandedById[LEGACY_PROJECT_EXPANSION_DEFAULT_KEY] ?? true;
 }
 
-export function setProjectExpanded(
-  state: UiState,
-  projectIds: string | readonly string[],
-  expanded: boolean,
-): UiState {
-  const ids = typeof projectIds === "string" ? [projectIds] : projectIds;
-  const nextEntries = ids.filter((projectId) => state.projectExpandedById[projectId] !== expanded);
-  if (nextEntries.length === 0) {
-    return state;
-  }
-  const projectExpandedById = { ...state.projectExpandedById };
-  for (const projectId of nextEntries) {
-    projectExpandedById[projectId] = expanded;
-  }
-  return {
-    ...state,
-    projectExpandedById,
-  };
+let sendSidebarMutation: (mutation: SidebarLayoutMutation) => Promise<boolean> = async () => false;
+export function configureSidebarLayoutActions(send: typeof sendSidebarMutation): void {
+  sendSidebarMutation = send;
 }
-
-export function reorderProjects(
-  state: UiState,
-  currentProjectOrder: readonly string[],
-  draggedProjectIds: readonly string[],
-  targetProjectIds: readonly string[],
-): UiState {
-  if (draggedProjectIds.length === 0) {
-    return state;
-  }
-  const draggedSet = new Set(draggedProjectIds);
-  const targetSet = new Set(targetProjectIds);
-  if (draggedProjectIds.every((id) => targetSet.has(id))) {
-    return state;
-  }
-
-  const originalTargetIndex = currentProjectOrder.findIndex((id) => targetSet.has(id));
-  if (originalTargetIndex < 0) {
-    return state;
-  }
-
-  const projectOrder = [...currentProjectOrder];
-
-  const removed: string[] = [];
-  let draggedBeforeTarget = 0;
-  for (let i = projectOrder.length - 1; i >= 0; i--) {
-    if (draggedSet.has(projectOrder[i]!)) {
-      removed.unshift(projectOrder.splice(i, 1)[0]!);
-      if (i < originalTargetIndex) {
-        draggedBeforeTarget++;
-      }
-    }
-  }
-  if (removed.length === 0) {
-    return state;
-  }
-
-  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
-  projectOrder.splice(insertIndex, 0, ...removed);
-  return {
-    ...state,
-    projectOrder,
-  };
-}
+export const legacySidebarLayout = readPersistedState();
 
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
@@ -810,7 +587,7 @@ interface UiStateStore extends UiState {
     projects: readonly FolderOrganizedProject[],
     root: string,
     onlyUnsorted?: boolean,
-  ) => void;
+  ) => Promise<boolean>;
   renameSidebarProjectSection: (sectionId: string, name: string) => void;
   setSidebarProjectSectionColor: (sectionId: string, color: ProjectIconColor | null) => void;
   setSidebarProjectSectionFolderIcons: (sectionId: string, folderIcons: boolean) => void;
@@ -846,42 +623,33 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setSidebarProjectScopeKey(state, projectKey)),
   setSidebarMode: (mode) => set((state) => setSidebarMode(state, mode)),
   setSidebarOtherProjectsExpanded: (expanded) =>
-    set((state) => setSidebarOtherProjectsExpanded(state, expanded)),
+    sendSidebarMutation({ type: "otherExpanded", expanded }),
   addSidebarProjectSection: (name, parentId) =>
-    set((state) =>
-      addSidebarProjectSection(state, {
+    sendSidebarMutation({
+      type: "add",
+      section: {
         id: randomUUID(),
-        name,
+        name: name.trim().slice(0, 80),
         ...(parentId === undefined ? {} : { parentId }),
-      }),
-    ),
-  organizeSidebarSectionsByFolder: (projects, root, onlyUnsorted = false) =>
-    set((state) => {
-      const organized = organizeSectionsByFolder({
-        sections: state.sidebarProjectSections,
-        projects,
-        root,
-        makeId: randomUUID,
-        onlyUnsorted,
-      });
-      return organized.changed ? { ...state, sidebarProjectSections: organized.sections } : state;
+      },
     }),
+  organizeSidebarSectionsByFolder: (projects, root, onlyUnsorted = false) =>
+    sendSidebarMutation({ type: "organize", projects, root, onlyUnsorted }),
   renameSidebarProjectSection: (sectionId, name) =>
-    set((state) => renameSidebarProjectSection(state, sectionId, name)),
+    sendSidebarMutation({ type: "rename", sectionId, name: name.trim().slice(0, 80) }),
   setSidebarProjectSectionColor: (sectionId, color) =>
-    set((state) => setSidebarProjectSectionColor(state, sectionId, color)),
+    sendSidebarMutation({ type: "color", sectionId, color }),
   setSidebarProjectSectionFolderIcons: (sectionId, folderIcons) =>
-    set((state) => setSidebarProjectSectionFolderIcons(state, sectionId, folderIcons)),
-  deleteSidebarProjectSection: (sectionId) =>
-    set((state) => deleteSidebarProjectSection(state, sectionId)),
+    sendSidebarMutation({ type: "folderIcons", sectionId, folderIcons }),
+  deleteSidebarProjectSection: (sectionId) => sendSidebarMutation({ type: "delete", sectionId }),
   setSidebarProjectSectionExpanded: (sectionId, expanded) =>
-    set((state) => setSidebarProjectSectionExpanded(state, sectionId, expanded)),
+    sendSidebarMutation({ type: "sectionExpanded", sectionId, expanded }),
   moveProjectToSidebarProjectSection: (projectKey, sectionId) =>
-    set((state) => moveProjectToSidebarProjectSection(state, projectKey, sectionId)),
+    sendSidebarMutation({ type: "move", projectKeys: [projectKey], sectionId }),
   reorderSidebarProjectSectionProjects: (sectionId, projectKeys) =>
-    set((state) => reorderSidebarProjectSectionProjects(state, sectionId, projectKeys)),
+    sendSidebarMutation({ type: "sectionProjectsOrder", sectionId, projectKeys }),
   reorderSidebarProjectSections: (sectionIds) =>
-    set((state) => reorderSidebarProjectSections(state, sectionIds)),
+    sendSidebarMutation({ type: "sectionsOrder", sectionIds }),
   setLineageDetailsExpanded: (keys, expanded) =>
     set((state) => setLineageDetailsExpanded(state, keys, expanded)),
   setLineageAgentsClearedAt: (key, clearedAt) =>
@@ -892,11 +660,18 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setBranchPickerGroupCollapsed: (group, collapsed) =>
     set((state) => setBranchPickerGroupCollapsed(state, group, collapsed)),
   setProjectExpanded: (projectIds, expanded) =>
-    set((state) => setProjectExpanded(state, projectIds, expanded)),
+    sendSidebarMutation({
+      type: "projectExpanded",
+      projectKeys: typeof projectIds === "string" ? [projectIds] : projectIds,
+      expanded,
+    }),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
-    set((state) =>
-      reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
-    ),
+    sendSidebarMutation({
+      type: "projectsOrder",
+      currentProjectOrder,
+      draggedProjectIds,
+      targetProjectIds,
+    }),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

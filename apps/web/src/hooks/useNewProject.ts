@@ -1,4 +1,8 @@
-import { currentAddProjectSection, placeAddedProject } from "../projectSectionPlacement";
+import {
+  currentAddProjectSection,
+  setAddProjectSection,
+  sectionPlacementInput,
+} from "../projectSectionPlacement";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   getNewProjectRepository,
@@ -87,7 +91,7 @@ export function useNewProject() {
       const sectionId = currentAddProjectSection();
       const result = await createNew({
         environmentId: input.environmentId,
-        input: { name: input.name },
+        input: { name: input.name, ...sectionPlacementInput(input.environmentId, sectionId) },
       });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
@@ -124,7 +128,7 @@ export function useNewProject() {
       }
 
       const projectRef = scopeProjectRef(input.environmentId, projectId);
-      placeAddedProject(projectRef, sectionId);
+      setAddProjectSection(null);
       // Drafts key off the project's stored path, so wait for the create event
       // to reach the store before opening one.
       const project = await waitForProject(projectRef).catch((error: unknown) => {

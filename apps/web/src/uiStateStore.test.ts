@@ -417,7 +417,7 @@ describe("uiStateStore persistence", () => {
     vi.unstubAllGlobals();
   });
 
-  it("persists raw UI preferences including thread visit markers", () => {
+  it("persists window preferences without saving server layout projections", () => {
     const state = makeUiState({
       projectExpandedById: {
         logical: false,
@@ -444,10 +444,8 @@ describe("uiStateStore persistence", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(persisted).toEqual({
-      projectExpandedById: {
-        logical: false,
-      },
-      projectOrder: ["physical-b", "physical-a"],
+      projectExpandedById: {},
+      projectOrder: [],
       sidebarProjectSections: [],
       sidebarOtherProjectsExpanded: true,
       sidebarMode: "activity",
@@ -471,6 +469,8 @@ describe("uiStateStore persistence", () => {
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
+      projectExpandedById: {},
+      projectOrder: [],
     });
   });
 

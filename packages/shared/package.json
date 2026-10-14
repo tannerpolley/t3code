@@ -502,6 +502,14 @@
     "./inlineShell": {
       "types": "./src/inlineShell.ts",
       "import": "./src/inlineShell.ts"
+    },
+    "./sidebarLayout": {
+      "types": "./src/sidebarLayout.ts",
+      "import": "./src/sidebarLayout.ts"
+    },
+    "./sidebarSectionFolders": {
+      "types": "./src/sidebarSectionFolders.ts",
+      "import": "./src/sidebarSectionFolders.ts"
     }
   },
   "scripts": {

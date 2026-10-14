@@ -62,6 +62,23 @@ folder. Move a project between sections by dragging its row or choosing a sectio
 from its menu. Removing a project clears its saved conversations after confirmation
 and keeps its files on disk.
 
+Sections, their order and nesting, project placement, and section and project
+expansion are shared by every web or desktop window connected to the same
+environment. Changes appear in the other windows immediately. Projects remain in
+their section when a clone finishes or you change project grouping. Each
+environment owns its sections; place a project in a section on its own environment.
+
+After upgrading, the first connected window with a saved layout imports it when
+the environment has no shared layout yet. If two windows have different saved
+layouts, the first accepted layout wins; the other window adopts it. Later windows
+cannot overwrite it, even after you remove every section. Your Projects/Activity
+choice, project filter, grouping preferences, and other thread view preferences
+remain local to each window.
+
+Agents can read section IDs from the environment and place a project when creating
+or updating it. Ask an agent to put a new project in a named section and expand it;
+placement is saved as part of creating the project.
+
 In **Settings → Customizations**, **Organize by folder** builds sections and subsections
 from a root folder, and **Keep projects organized by folder** places new, unsorted
 projects there; projects you move by hand stay where you put them. The same page

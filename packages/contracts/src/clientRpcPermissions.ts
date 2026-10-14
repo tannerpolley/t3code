@@ -1,7 +1,12 @@
+import { ProviderInstanceMutation } from "./providerInstance.ts";
+import { ServerSettingsPatch, requiredScopesForServerSettingsPatch } from "./settings.ts";
+import { ProjectCreateNewInput } from "./project.ts";
+import { ProjectCloneStartInput } from "./projectClone.ts";
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
   AuthOrchestrationOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthTerminalOperateScope,
   AuthSourceControlWriteScope,
@@ -12,6 +17,8 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
+  [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
   [WS_METHODS.terminalRunInline]: AuthTerminalOperateScope,
   [WS_METHODS.terminalWrite]: AuthTerminalOperateScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
@@ -57,11 +64,39 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
+const decodeSettingsUpdate = Schema.decodeUnknownSync(
+  Schema.Struct({
+    patch: ServerSettingsPatch,
+    providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+  }),
+);
+const decodeCloneStart = Schema.decodeUnknownSync(ProjectCloneStartInput);
+const decodeCreateNew = Schema.decodeUnknownSync(ProjectCreateNewInput);
 
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.serverUpdateSettings && input !== undefined) {
+    const payload = decodeSettingsUpdate(input);
+    const scopes = requiredScopesForServerSettingsPatch(payload.patch);
+    if (payload.providerInstanceMutation === undefined) return scopes;
+    return Object.values(payload.patch).every((value) => value === undefined)
+      ? [AuthProvidersManageScope]
+      : [...new Set([...scopes, AuthProvidersManageScope])];
+  }
+  if (method === WS_METHODS.projectCloneStart && input !== undefined) {
+    const payload = decodeCloneStart(input);
+    return payload.sectionId !== undefined || payload.sidebarExpanded !== undefined
+      ? [AuthSourceControlWriteScope, AuthSettingsWriteScope]
+      : [AuthSourceControlWriteScope];
+  }
+  if (method === WS_METHODS.projectsCreateNew && input !== undefined) {
+    const payload = decodeCreateNew(input);
+    return payload.sectionId !== undefined || payload.sidebarExpanded !== undefined
+      ? [AuthOrchestrationOperateScope, AuthSettingsWriteScope]
+      : [AuthOrchestrationOperateScope];
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)

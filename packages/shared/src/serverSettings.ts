@@ -1,3 +1,4 @@
+import { applySidebarLayoutMutation } from "./sidebarLayout.ts";
 import type { ModelPreferences } from "@t3tools/contracts/settings";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
@@ -413,6 +414,7 @@ export function applyServerSettingsPatch(
   const patch = translateLegacyProjectOverridePatch(current, recoveryPatch);
   const selectionPatch = patch.textGenerationModelSelection;
   const {
+    sidebarLayoutMutation,
     migrateModelPreferences,
     setModelFavorites,
     setModelsHidden,
@@ -518,9 +520,14 @@ export function applyServerSettingsPatch(
       },
     };
   }
+  const sidebarLayout =
+    sidebarLayoutMutation === undefined
+      ? current.sidebarLayout
+      : applySidebarLayoutMutation(current.sidebarLayout, sidebarLayoutMutation);
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacementsBase = {
     ...next,
+    ...(sidebarLayout === undefined ? {} : { sidebarLayout }),
     favorites,
     providerModelPreferences: nextModelPreferences,
     ...(worktreeCleanupPatch === undefined

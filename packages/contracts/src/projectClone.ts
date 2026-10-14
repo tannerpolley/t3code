@@ -58,6 +58,8 @@ export const ProjectCloneListEvent = Schema.Array(ProjectCloneSnapshot);
 export type ProjectCloneListEvent = typeof ProjectCloneListEvent.Type;
 
 export const ProjectCloneStartInput = Schema.Struct({
+  sectionId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  sidebarExpanded: Schema.optionalKey(Schema.Boolean),
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   createdAt: IsoDateTime,

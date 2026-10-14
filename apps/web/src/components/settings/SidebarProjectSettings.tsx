@@ -1,3 +1,4 @@
+import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import { buildProjectGroups, selectProjectGroupingSettings } from "../../logicalProject";
 import {
   useClientSettings,
@@ -15,6 +16,7 @@ import { searchableSetting } from "./settingsSearch";
 /** The primary environment's folder root, shared by manual organization and new section projects. */
 export function SidebarProjectSettings() {
   const projects = useProjects();
+  const canWrite = useSidebarLayoutPermission();
   const groupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectFolderRoot = usePrimarySettings((settings) => settings.projectFolderRoot);
   const addProjectBaseDirectory = usePrimarySettings(
@@ -24,7 +26,7 @@ export function SidebarProjectSettings() {
   const folderRoot =
     projectFolderRoot || (addProjectBaseDirectory.startsWith("/") ? addProjectBaseDirectory : "");
 
-  const organize = () => {
+  const organize = async () => {
     if (!folderRoot.startsWith("/")) {
       toastManager.add({
         type: "error",
@@ -35,13 +37,14 @@ export function SidebarProjectSettings() {
       return;
     }
     const groups = buildProjectGroups({ projects, settings: groupingSettings });
-    useUiStateStore.getState().organizeSidebarSectionsByFolder(
+    const success = await useUiStateStore.getState().organizeSidebarSectionsByFolder(
       groups.map((group) => ({
         projectKey: group.key,
         workspaceRoots: group.members.map((member) => member.project.workspaceRoot),
       })),
       folderRoot,
     );
+    if (!success) return;
     toastManager.add({
       type: "success",
       title: "Sections organized",
@@ -72,7 +75,12 @@ export function SidebarProjectSettings() {
             spellCheck={false}
             value={projectFolderRoot}
           />
-          <Button disabled={folderRoot.length === 0} onClick={organize} size="sm" variant="outline">
+          <Button
+            disabled={!canWrite || folderRoot.length === 0}
+            onClick={() => void organize()}
+            size="sm"
+            variant="outline"
+          >
             Organize
           </Button>
         </div>

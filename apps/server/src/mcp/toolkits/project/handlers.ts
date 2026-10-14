@@ -240,7 +240,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           });
         const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
         const created = yield* folders
-          .createNamedProject({ name: input.title })
+          .createNamedProject({
+            name: input.title,
+            ...(input.sectionId === undefined ? {} : { sectionId: input.sectionId }),
+            ...(input.sidebarExpanded === undefined
+              ? {}
+              : { sidebarExpanded: input.sidebarExpanded }),
+          })
           .pipe(
             Effect.mapError(
               (error) =>

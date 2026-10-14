@@ -176,6 +176,8 @@ export const Project = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
+  /** True after the initial repository probe, including a non-Git workspace. */
+  repositoryIdentityResolved: Schema.optionalKey(Schema.Boolean),
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   projectIcon: Schema.optional(Schema.NullOr(ReceivedProjectIcon)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
@@ -206,6 +208,9 @@ export const ProjectChange = Schema.Union([
 export type ProjectChange = typeof ProjectChange.Type;
 
 export const ProjectCreatePayload = Schema.Struct({
+  sectionId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  sidebarExpanded: Schema.optionalKey(Schema.Boolean),
+
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
@@ -215,6 +220,9 @@ export const ProjectCreatePayload = Schema.Struct({
 export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
 
 export const ProjectUpdatePayload = Schema.Struct({
+  sectionId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  sidebarExpanded: Schema.optionalKey(Schema.Boolean),
+
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
@@ -535,6 +543,9 @@ export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
 
 /** A project started from just a name, in a new folder the server makes. */
 export const ProjectCreateNewInput = Schema.Struct({
+  sectionId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  sidebarExpanded: Schema.optionalKey(Schema.Boolean),
+
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
 });
 export type ProjectCreateNewInput = typeof ProjectCreateNewInput.Type;

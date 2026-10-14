@@ -148,6 +148,8 @@ import {
 import {
   currentAddProjectSection,
   placeAddedProject,
+  sectionPlacementInput,
+  sectionTarget,
   setAddProjectSection,
 } from "../projectSectionPlacement";
 import { useProjectFolderAppearance } from "../projectFolderAppearance";
@@ -972,7 +974,10 @@ function OpenCommandPaletteDialog(props: {
       }) ?? null,
     [addProjectEnvironmentOptions, environments],
   );
-  const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
+  const browseEnvironmentId =
+    addProjectEnvironmentId ??
+    sectionTarget(currentAddProjectSection())?.[0] ??
+    defaultAddProjectEnvironmentId;
   const canCreateProject = useEnvironmentScope(browseEnvironmentId, AuthOrchestrationOperateScope);
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
@@ -2499,7 +2504,7 @@ function OpenCommandPaletteDialog(props: {
         cwd,
       );
       if (existing) {
-        placeAddedProject(scopeProjectRef(existing.environmentId, existing.id), sectionId);
+        await placeAddedProject(scopeProjectRef(existing.environmentId, existing.id), sectionId);
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
@@ -2547,6 +2552,7 @@ function OpenCommandPaletteDialog(props: {
         environmentId: input.environmentId,
         input: {
           projectId,
+          ...sectionPlacementInput(input.environmentId, sectionId),
           title: inferProjectTitleFromPath(cwd),
           workspaceRoot: cwd,
           createWorkspaceRootIfMissing: true,
@@ -2567,7 +2573,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
-      placeAddedProject(scopeProjectRef(input.environmentId, projectId), sectionId);
+      setAddProjectSection(null);
       const navigationResult = await settlePromise(() =>
         handleNewThread(scopeProjectRef(input.environmentId, projectId)),
       );
@@ -2822,6 +2828,7 @@ function OpenCommandPaletteDialog(props: {
       environmentId: addProjectCloneFlow.environmentId,
       input: {
         projectId,
+        ...sectionPlacementInput(addProjectCloneFlow.environmentId, sectionId),
         title: inferProjectTitleFromPath(destinationPath),
         createdAt: new Date().toISOString(),
         remoteUrl: addProjectCloneFlow.remoteUrl,
@@ -2842,7 +2849,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     const projectRef = scopeProjectRef(addProjectCloneFlow.environmentId, projectId);
-    placeAddedProject(projectRef, sectionId);
+    setAddProjectSection(null);
     setOpen(false);
     // The create event usually lands before this call returns; give the shell
     // stream a moment so the draft opens with its project resolved instead of

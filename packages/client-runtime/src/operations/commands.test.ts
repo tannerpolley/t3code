@@ -159,6 +159,8 @@ describe("V2 environment commands", () => {
         title: "Project",
         workspaceRoot: "/workspace/project",
         createWorkspaceRootIfMissing: true,
+        sectionId: "personal",
+        sidebarExpanded: true,
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(projects).toEqual([
@@ -169,6 +171,8 @@ describe("V2 environment commands", () => {
           title: "Project",
           workspaceRoot: "/workspace/project",
           createWorkspaceRootIfMissing: true,
+          sectionId: "personal",
+          sidebarExpanded: true,
         },
       ]);
     }).pipe(Effect.provide(layerTestCrypto)),

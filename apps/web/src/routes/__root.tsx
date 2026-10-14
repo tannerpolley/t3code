@@ -1,3 +1,4 @@
+import { SidebarLayoutSync } from "../components/SidebarLayoutSync";
 import { PermissionUpdateNotice } from "../components/PermissionUpdateNotice";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -199,6 +200,7 @@ function RootRouteView() {
           <FontAppearanceSync />
           <ProviderAuthCallbackCoordinator />
           <CustomSnoozeDialogHost />
+          <SidebarLayoutSync />
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -219,11 +221,14 @@ function RootRouteView() {
   }
 
   const appShell = (
-    <CommandPalette>
-      <AppSidebarLayout>
-        <Outlet />
-      </AppSidebarLayout>
-    </CommandPalette>
+    <>
+      <SidebarLayoutSync />
+      <CommandPalette>
+        <AppSidebarLayout>
+          <Outlet />
+        </AppSidebarLayout>
+      </CommandPalette>
+    </>
   );
 
   // FirstRunGate holds back everything below it — including EventRouter,

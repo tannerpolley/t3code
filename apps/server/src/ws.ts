@@ -742,6 +742,7 @@ const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
               project: {
                 ...project,
                 repositoryIdentity: enrichment.repositoryIdentity,
+                repositoryIdentityResolved: enrichment.repositoryIdentityResolved,
               },
               repositoryIdentityResolved: enrichment.repositoryIdentityResolved,
             })),
@@ -1086,7 +1087,13 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           const snapshotSequence = yield* applicationEvents.latestApplicationSequence;
           const changedProjects = (yield* projects.listShells()).flatMap((project) =>
             identities.has(project.workspaceRoot)
-              ? [{ ...project, repositoryIdentity: identities.get(project.workspaceRoot) ?? null }]
+              ? [
+                  {
+                    ...project,
+                    repositoryIdentity: identities.get(project.workspaceRoot) ?? null,
+                    repositoryIdentityResolved: true,
+                  },
+                ]
               : [],
           );
           return shellStreamItemFromEnrichmentRefresh({
@@ -2613,6 +2620,10 @@ const layerWsRpc = (
                     projectId: project.projectId,
                     title: project.title,
                     workspaceRoot: project.workspaceRoot,
+                    ...(project.sectionId === undefined ? {} : { sectionId: project.sectionId }),
+                    ...(project.sidebarExpanded === undefined
+                      ? {}
+                      : { sidebarExpanded: project.sidebarExpanded }),
                     createWorkspaceRootIfMissing: true,
                   })
                   .pipe(

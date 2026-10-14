@@ -5,9 +5,6 @@ import {
   authScopeRequiredResponse,
   AssetCreateUrlInput,
   AuthAccessReadScope,
-  ServerSettingsPatch,
-  ProviderInstanceMutation,
-  requiredScopesForServerSettingsPatch,
   requiredScopesForProjectMutation,
   ProjectMutation,
   AuthSettingsWriteScope,
@@ -255,20 +252,8 @@ export const rpcAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
     ...authScopeRequiredResponse(requiredScope),
   });
 
-const SettingsUpdate = Schema.Struct({
-  patch: ServerSettingsPatch,
-  providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
-});
-
-const requiredScopesForSettingsUpdate = (payload: unknown) => {
-  const input = Schema.decodeUnknownSync(SettingsUpdate)(payload);
-  const scopes = requiredScopesForServerSettingsPatch(input.patch);
-  if (input.providerInstanceMutation === undefined) return scopes;
-  // An atomic provider mutation carries an empty patch unless it also changes settings.
-  return Object.values(input.patch).every((value) => value === undefined)
-    ? [AuthProvidersManageScope]
-    : [...new Set([...scopes, AuthProvidersManageScope])];
-};
+const requiredScopesForSettingsUpdate = (payload: unknown) =>
+  clientRpcRequiredScopes(WS_METHODS.serverUpdateSettings, payload);
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 

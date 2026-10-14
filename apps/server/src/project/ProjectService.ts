@@ -99,6 +99,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "list-threads",
       "delete-thread",
       "dispatch-project-command",
+      "sidebar-layout",
     ]),
     projectId: Schema.optional(ProjectId),
     workspaceRoot: Schema.optional(Schema.String),
@@ -174,6 +175,7 @@ export const make = Effect.gen(function* () {
     title: row.title,
     workspaceRoot: row.workspaceRoot,
     repositoryIdentity: enrichment?.repositoryIdentity ?? null,
+    repositoryIdentityResolved: enrichment?.repositoryIdentityResolved ?? false,
     faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
@@ -342,8 +344,63 @@ export const make = Effect.gen(function* () {
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
   });
 
+  const checkSection = (sectionId: string | null | undefined, projectId: ProjectId) =>
+    sectionId == null
+      ? Effect.void
+      : serverSettings.getSettings.pipe(
+          Effect.flatMap((settings) =>
+            settings.sidebarLayout?.sidebarProjectSections.some(
+              (section) => section.id === sectionId,
+            )
+              ? Effect.void
+              : Effect.fail(
+                  new ProjectOperationError({
+                    operation: "sidebar-layout",
+                    projectId,
+                    cause: "Section not found.",
+                  }),
+                ),
+          ),
+          Effect.mapError((cause) =>
+            cause._tag === "ProjectOperationError"
+              ? cause
+              : new ProjectOperationError({ operation: "sidebar-layout", projectId, cause }),
+          ),
+        );
+  const placeProject = (input: ProjectCreateInput | ProjectUpdateInput) => {
+    if (input.sectionId === undefined && input.sidebarExpanded === undefined) return Effect.void;
+    return serverSettings
+      .updateSettings({
+        sidebarLayoutMutation:
+          input.sectionId === undefined
+            ? {
+                type: "projectExpanded",
+                projectKeys: [input.projectId],
+                expanded: input.sidebarExpanded!,
+              }
+            : {
+                type: "move",
+                projectKeys: [input.projectId],
+                sectionId: input.sectionId,
+                ...(input.sidebarExpanded === undefined ? {} : { expanded: input.sidebarExpanded }),
+              },
+      })
+      .pipe(
+        Effect.asVoid,
+        Effect.mapError(
+          (cause) =>
+            new ProjectOperationError({
+              operation: "sidebar-layout",
+              projectId: input.projectId,
+              cause,
+            }),
+        ),
+      );
+  };
+
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
+      yield* checkSection(input.sectionId, input.projectId);
       const workspaceRoot = yield* normalizeWorkspaceRoot({
         projectId: input.projectId,
         workspaceRoot: input.workspaceRoot,
@@ -357,6 +414,7 @@ export const make = Effect.gen(function* () {
         workspaceRoot,
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       });
+      yield* placeProject(input);
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
@@ -368,6 +426,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(existing)) {
         return yield* new ProjectNotFoundError({ projectId: input.projectId });
       }
+      yield* checkSection(input.sectionId, input.projectId);
       const previousRoot = existing.value.workspaceRoot;
       const workspaceRoot =
         input.workspaceRoot === undefined
@@ -393,6 +452,7 @@ export const make = Effect.gen(function* () {
           : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       });
+      yield* placeProject(input);
       if (workspaceRoot !== previousRoot) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
@@ -550,6 +610,7 @@ export const make = Effect.gen(function* () {
       Effect.map((enrichment) => ({
         ...shell,
         repositoryIdentity: enrichment.repositoryIdentity,
+        repositoryIdentityResolved: enrichment.repositoryIdentityResolved,
       })),
     );
 

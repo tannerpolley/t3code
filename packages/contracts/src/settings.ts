@@ -1,3 +1,4 @@
+import { SidebarLayout, SidebarLayoutMutation } from "./sidebarLayout.ts";
 import {
   ThreadRole,
   resolveThreadRole,
@@ -1391,6 +1392,7 @@ export const UsageLimitRecoveryMode = Schema.Literals(["off", "wait", "switch"])
 export type UsageLimitRecoveryMode = typeof UsageLimitRecoveryMode.Type;
 
 export const ServerSettings = Schema.Struct({
+  sidebarLayout: Schema.optionalKey(SidebarLayout),
   issueUpkeepRequiresApproval: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1818,6 +1820,7 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  sidebarLayoutMutation: Schema.optionalKey(SidebarLayoutMutation),
   issueUpkeepRequiresApproval: Schema.optionalKey(Schema.Boolean),
   dontAskMode: Schema.optionalKey(Schema.Boolean),
   // Whole-list replacement: roles are ordered and edited as one list.
@@ -2014,12 +2017,19 @@ export function requiredScopesForServerSettingsPatch(
 export function requiredScopesForProjectMutation(
   mutation: ProjectMutation,
 ): ReadonlyArray<AuthEnvironmentScope> {
-  if (mutation.type === "project.delete" || mutation.scripts === undefined) {
+  if (
+    mutation.type === "project.delete" ||
+    (mutation.scripts === undefined &&
+      mutation.sectionId === undefined &&
+      mutation.sidebarExpanded === undefined)
+  ) {
     return [AuthOrchestrationOperateScope];
   }
   return [
     AuthOrchestrationOperateScope,
-    ...requiredScopesForServerSettingsPatch({ defaultProjectScripts: mutation.scripts }),
+    ...requiredScopesForServerSettingsPatch(
+      mutation.scripts === undefined ? {} : { defaultProjectScripts: mutation.scripts },
+    ),
   ];
 }
 

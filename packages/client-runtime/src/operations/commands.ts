@@ -15,6 +15,7 @@ import {
   type OrchestrationV2CreationSource,
   type PlanId,
   type ProjectId,
+  type ProjectMutation,
   type ProjectIconOverride,
   type ProjectScript,
   type ProviderApprovalDecision,
@@ -42,6 +43,8 @@ interface CommandMetadata {
 }
 
 export interface CreateProjectInput extends CommandMetadata {
+  readonly sectionId?: string | null;
+  readonly sidebarExpanded?: boolean;
   readonly projectId: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string;
@@ -51,6 +54,8 @@ export interface CreateProjectInput extends CommandMetadata {
 }
 
 export interface UpdateProjectInput extends CommandMetadata {
+  readonly sectionId?: string | null;
+  readonly sidebarExpanded?: boolean;
   readonly projectId: ProjectId;
   readonly title?: string;
   readonly workspaceRoot?: string;
@@ -312,32 +317,7 @@ const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(f
 });
 
 const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
-  mutation:
-    | {
-        readonly type: "project.create";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
-        readonly title: string;
-        readonly workspaceRoot: string;
-        readonly createWorkspaceRootIfMissing?: boolean;
-        readonly defaultModelSelection?: ModelSelection | null;
-        readonly scripts?: ReadonlyArray<ProjectScript>;
-      }
-    | {
-        readonly type: "project.update";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
-        readonly title?: string;
-        readonly workspaceRoot?: string;
-        readonly defaultModelSelection?: ModelSelection | null;
-        readonly scripts?: ReadonlyArray<ProjectScript>;
-      }
-    | {
-        readonly type: "project.delete";
-        readonly commandId: CommandId;
-        readonly projectId: ProjectId;
-        readonly force?: boolean;
-      },
+  mutation: ProjectMutation,
 ) {
   return yield* request(WS_METHODS.projectsMutate, mutation);
 });
@@ -358,6 +338,8 @@ export const createProject = Effect.fn("EnvironmentCommands.createProject")(func
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+    ...(input.sectionId === undefined ? {} : { sectionId: input.sectionId }),
+    ...(input.sidebarExpanded === undefined ? {} : { sidebarExpanded: input.sidebarExpanded }),
   });
 });
 
@@ -380,6 +362,8 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
       ? {}
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+    ...(input.sectionId === undefined ? {} : { sectionId: input.sectionId }),
+    ...(input.sidebarExpanded === undefined ? {} : { sidebarExpanded: input.sidebarExpanded }),
   });
 });
 

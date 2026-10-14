@@ -63,6 +63,47 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect(
+    "guards shared sidebar settings and create-with-section against the destination grants",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          registry.mount(sessions(other));
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          registry.set(
+            sessions(other),
+            AsyncResult.success({
+              ...grant(true),
+              permissions: [AuthOrchestrationOperateScope, AuthSettingsWriteScope],
+            }),
+          );
+          const settings = createCommandPermissions(runtime, WS_METHODS.serverUpdateSettings);
+          const input = {
+            patch: {
+              sidebarLayoutMutation: { type: "add", section: { id: "work", name: "Work" } },
+            },
+          };
+          expect(registry.get(settings.permissionAtom(env, input))).toBe(false);
+          expect(
+            (yield* settings.authorize(registry, env, input).pipe(Effect.flip)).requiredPermission,
+          ).toBe(AuthSettingsWriteScope);
+          expect(registry.get(settings.permissionAtom(other, input))).toBe(true);
+          yield* settings.authorize(registry, other, input);
+          const create = createCommandPermissions(runtime, WS_METHODS.projectsCreateNew);
+          const placed = { name: "New project", sectionId: "work", sidebarExpanded: true };
+          expect(registry.get(create.permissionAtom(env, placed))).toBe(false);
+          expect(registry.get(create.permissionAtom(other, placed))).toBe(true);
+          yield* create.authorize(registry, other, placed);
+          registry.set(sessions(other), AsyncResult.success(grant(true)));
+          expect(
+            (yield* settings.authorize(registry, other, input).pipe(Effect.flip))
+              .requiredPermission,
+          ).toBe(AuthSettingsWriteScope);
+        }),
+      ),
+  );
+
   it.effect("requires the destination operate grant for issue ownership recovery", () =>
     Effect.scoped(
       Effect.gen(function* () {

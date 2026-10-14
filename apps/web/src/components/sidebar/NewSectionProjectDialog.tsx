@@ -1,3 +1,5 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -7,9 +9,9 @@ import {
 import { useState, type FormEvent } from "react";
 
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { newProjectId } from "../../lib/utils";
-import { placeAddedProject } from "../../projectSectionPlacement";
+import { sectionPlacementInput, sectionTarget } from "../../projectSectionPlacement";
 import { projectFolderNameProblem, sectionFolderPath } from "../../sectionProjectPath";
 import { waitForProject } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -48,9 +50,12 @@ export function NewSectionProjectDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const { target } = props;
-  const environmentId = usePrimaryEnvironmentId();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const environmentId = sectionTarget(target.sectionId)?.[0] ?? primaryEnvironmentId;
+  const canWrite = useSidebarLayoutPermission(target.sectionId);
   // The same root Organize by folder reads, falling back to where Add project starts.
-  const root = usePrimarySettings(
+  const root = useEnvironmentSettings(
+    environmentId ?? EnvironmentId.make("unavailable"),
     (settings) => settings.projectFolderRoot || settings.addProjectBaseDirectory,
   );
   const folder = sectionFolderPath(
@@ -70,13 +75,14 @@ export function NewSectionProjectDialog(props: {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (environmentId === null || path === null || problem !== null || busy) return;
+    if (!canWrite || environmentId === null || path === null || problem !== null || busy) return;
     setBusy(true);
     const projectId = newProjectId();
     const created = await createProject({
       environmentId,
       input: {
         projectId,
+        ...sectionPlacementInput(environmentId, target.sectionId),
         title: name.trim(),
         workspaceRoot: path,
         createWorkspaceRootIfMissing: true,
@@ -96,7 +102,6 @@ export function NewSectionProjectDialog(props: {
       return;
     }
     const projectRef = scopeProjectRef(environmentId, projectId);
-    placeAddedProject(projectRef, target.sectionId);
     if (initGit) {
       const initialized = await initRepository({ environmentId, input: { cwd: path } });
       if (initialized._tag === "Failure" && !isAtomCommandInterrupted(initialized)) {
@@ -152,7 +157,10 @@ export function NewSectionProjectDialog(props: {
             <Button onClick={() => props.onOpenChange(false)} type="button" variant="outline">
               Cancel
             </Button>
-            <Button disabled={folder === null || problem !== null || busy} type="submit">
+            <Button
+              disabled={!canWrite || folder === null || problem !== null || busy}
+              type="submit"
+            >
               Create
             </Button>
           </DialogFooter>

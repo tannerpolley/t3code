@@ -302,3 +302,24 @@ describe("parseGitCloneProgressLine", () => {
     expect(parseGitCloneProgressLine("fatal: repository not found")).toBeNull();
   });
 });
+
+it.effect("passes section placement to project creation before cloning finishes", () => {
+  const harness = makeHarness({ clone: () => Effect.never });
+  return Effect.gen(function* () {
+    const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+    let placed: unknown;
+    yield* tracker.start(
+      { ...startInput, sectionId: "apps", sidebarExpanded: true },
+      {
+        ...harness.hooks,
+        createProject: (input) =>
+          Effect.sync(() => {
+            placed = input;
+          }),
+      },
+    );
+    expect(placed).toMatchObject({ projectId, sectionId: "apps", sidebarExpanded: true });
+    expect((yield* tracker.get(projectId))?.phase).toBe("running");
+    yield* tracker.cancel(projectId);
+  }).pipe(Effect.provide(harness.layer));
+});

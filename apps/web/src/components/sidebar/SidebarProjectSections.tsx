@@ -1,3 +1,4 @@
+import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import {
   formatModelSelectionEffort,
   shortModelSelectionEffort,
@@ -88,10 +89,7 @@ import {
   useProjectFolderAppearance,
 } from "../../projectFolderAppearance";
 import { openCommandPalette } from "../../commandPaletteBus";
-import {
-  resolveProjectPlacements,
-  useProjectSectionPlacements,
-} from "../../projectSectionPlacement";
+
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { SidebarThreadSummary } from "../../types";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
@@ -311,22 +309,6 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       true,
     );
   }, [autoOrganize, folderRoot, organizeByFolder, projects]);
-  const placements = useProjectSectionPlacements((store) => store.placements);
-  const resolvePlacement = useProjectSectionPlacements((store) => store.resolve);
-
-  // A project added from a section's Add project joins it as soon as it appears, and again if
-  // its key changes before its repository identity settles.
-  useEffect(() => {
-    const { moves, resolved } = resolveProjectPlacements({
-      placements,
-      projects,
-      sections,
-      now: Date.now(),
-    });
-    for (const move of moves) moveProject(move.projectKey, move.sectionId);
-    for (const refKey of resolved) resolvePlacement(refKey);
-  }, [moveProject, placements, projects, resolvePlacement, sections]);
-
   const projectByKey = useMemo(
     () => new Map(projects.map((project) => [project.projectKey, project] as const)),
     [projects],
@@ -782,6 +764,7 @@ function SortableSectionHeader(props: {
   readonly onSetExpanded: (sectionId: string, expanded: boolean) => void;
 }) {
   const { section } = props;
+  const canWrite = useSidebarLayoutPermission(section.custom ? section.id : null);
   const setSectionColor = useUiStateStore((store) => store.setSidebarProjectSectionColor);
   const setSectionFolderIcons = useUiStateStore(
     (store) => store.setSidebarProjectSectionFolderIcons,
@@ -792,7 +775,7 @@ function SortableSectionHeader(props: {
       sectionId: section.id,
     } satisfies SectionDragData,
     // Only top-level sections reorder; subsections keep the order they were made in.
-    disabled: !section.custom || section.parentId !== undefined,
+    disabled: !canWrite || !section.custom || section.parentId !== undefined,
     id: sectionDragId(section.id),
   });
   const {
@@ -805,7 +788,7 @@ function SortableSectionHeader(props: {
     transition,
   } = sortable;
   const { codexStyle } = props;
-  const draggable = section.custom && section.parentId === undefined;
+  const draggable = canWrite && section.custom && section.parentId === undefined;
   const expanded = !section.collapsed;
 
   return (
@@ -833,7 +816,7 @@ function SortableSectionHeader(props: {
           codexStyle ? "gap-2 text-2xs font-semibold uppercase tracking-wide" : "gap-1.5 text-xs",
         )}
         onClick={() => {
-          props.onSetExpanded(section.id, !expanded);
+          if (canWrite) props.onSetExpanded(section.id, !expanded);
         }}
         type="button"
       >
@@ -984,12 +967,14 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
 }) {
   const { project, codexStyle } = props;
+  const canWrite = useSidebarLayoutPermission(null, project.environmentId);
   const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef } = useSortable({
     data: {
       type: "project",
       sectionId: props.sectionId,
     } satisfies ProjectDragData,
     id: project.projectKey,
+    disabled: !canWrite,
   });
   const otherSections = props.sections.filter(
     (section) => section.custom && section.id !== props.sectionId,
@@ -1015,7 +1000,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             props.selected && "bg-sidebar-row-selected text-sidebar-foreground",
           )}
           onClick={() => {
-            props.onToggleProject(project.projectKey, !props.isProjectExpanded);
+            if (canWrite) props.onToggleProject(project.projectKey, !props.isProjectExpanded);
           }}
         >
           {codexStyle ? (
@@ -1109,6 +1094,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                     {otherSections.map((section) => (
                       <MenuItem
                         key={section.id}
+                        disabled={!canWrite}
                         onClick={() => props.onMoveProject(project.projectKey, section.id)}
                       >
                         {section.parentId === undefined
@@ -1119,7 +1105,10 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                     {props.sectionId !== null ? (
                       <>
                         <MenuSeparator />
-                        <MenuItem onClick={() => props.onMoveProject(project.projectKey, null)}>
+                        <MenuItem
+                          disabled={!canWrite}
+                          onClick={() => props.onMoveProject(project.projectKey, null)}
+                        >
                           Other projects
                         </MenuItem>
                       </>
@@ -1472,13 +1461,16 @@ export function ProjectSectionDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const { target } = props;
+  const canWrite = useSidebarLayoutPermission(
+    target.kind === "rename" ? target.id : (target.parent?.id ?? null),
+  );
   const addSection = useUiStateStore((store) => store.addSidebarProjectSection);
   const renameSection = useUiStateStore((store) => store.renameSidebarProjectSection);
   const [name, setName] = useState(target.kind === "rename" ? target.name : "");
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed || !canWrite) return;
     if (target.kind === "create") addSection(trimmed, target.parent?.id);
     else renameSection(target.id, trimmed);
     props.onOpenChange(false);
@@ -1513,7 +1505,7 @@ export function ProjectSectionDialog(props: {
             <Button onClick={() => props.onOpenChange(false)} type="button" variant="outline">
               Cancel
             </Button>
-            <Button disabled={name.trim().length === 0} type="submit">
+            <Button disabled={!canWrite || name.trim().length === 0} type="submit">
               Save
             </Button>
           </DialogFooter>

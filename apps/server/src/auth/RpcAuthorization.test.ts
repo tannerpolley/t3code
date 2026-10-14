@@ -5,6 +5,8 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  CommandId,
   ProviderInstanceId,
   ThreadId,
   AuthOrchestrationOperateScope,
@@ -453,4 +455,46 @@ it.effect("denies manual cleanup before the handler without settings permission"
     });
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "requires settings permission for project sidebar placement before invoking its handler",
+  () =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.projectsMutate> =>
+            tag !== WS_METHODS.projectsMutate,
+        ),
+      );
+      let handled = false;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.projectsMutate, () =>
+              Effect.sync(() => {
+                handled = true;
+                throw new Error("Unexpected handler call");
+              }),
+            ),
+            RpcAuthorization.layer([AuthOrchestrationOperateScope]),
+          ),
+        ),
+      );
+      const projectId = ProjectId.make("placed");
+      expect(
+        yield* client[WS_METHODS.projectsMutate]({
+          type: "project.create",
+          projectId,
+          commandId: CommandId.make("placed"),
+          title: "Placed",
+          workspaceRoot: "/work/placed",
+          sectionId: "apps",
+          sidebarExpanded: true,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(handled).toBe(false);
+    }).pipe(Effect.scoped),
 );
