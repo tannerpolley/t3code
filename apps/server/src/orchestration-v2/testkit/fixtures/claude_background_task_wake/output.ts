@@ -1,4 +1,5 @@
 import { assert } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import type { OrchestrationV2ThreadProjection, ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
@@ -78,16 +79,29 @@ export function assertClaudeBackgroundTaskWakeOutput(
   assert.deepEqual(projection.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
 
   // The roster names the command, and the timeline says it finished.
-  const rosterTask = result.domainEvents
+  const rosterTasks = result.domainEvents
     .flatMap((event) =>
       event.type === "provider-thread.updated" ? (event.payload.pendingBackgroundTasks ?? []) : [],
     )
-    .find((task) => task.taskId === BACKGROUND_TASK_ID);
-  assert.deepEqual(rosterTask, {
+    .filter((task) => task.taskId === BACKGROUND_TASK_ID);
+  // The first roster precedes task_started; later snapshots include the Bash command.
+  assert.isAbove(rosterTasks.length, 1);
+  assert.deepEqual(rosterTasks[0], {
     taskId: BACKGROUND_TASK_ID,
     description: "Background sleep test",
     kind: "command",
+    startedAt: DateTime.makeUnsafe(2),
   });
+  for (const task of rosterTasks.slice(1)) {
+    assert.deepEqual(task, {
+      taskId: BACKGROUND_TASK_ID,
+      description: "Background sleep test",
+      kind: "command",
+      startedAt: DateTime.makeUnsafe(2),
+      commandKind: "shell",
+      command: "sleep 8 && echo BG_DONE",
+    });
+  }
   assert.deepEqual(backgroundNotifications(projection), [
     {
       summary: 'Command "Background sleep test" finished',

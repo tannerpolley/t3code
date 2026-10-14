@@ -1,4 +1,5 @@
 import { assert } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
@@ -43,6 +44,9 @@ export function assertClaudeBackgroundMonitorWakeOutput(
       taskId: MONITOR_TASK_ID,
       description: "Background monitor test",
       kind: "monitor",
+      startedAt: DateTime.makeUnsafe(2),
+      commandKind: "watcher",
+      command: "sleep 8 && echo MONITOR_DONE",
     });
   }
   assert.deepEqual(projection.providerThreads[0]?.pendingBackgroundTasks ?? [], []);

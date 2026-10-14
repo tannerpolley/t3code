@@ -1008,6 +1008,10 @@ function layerClaudeProviderAdapterRegistryReplay(
         layerServerConfig,
       ),
     ),
+    // Replay authentication guidance must not inherit the operator's Claude profile.
+    Layer.provide(
+      Layer.succeed(HostProcess.Environment, { ...process.env, CLAUDE_CONFIG_DIR: undefined }),
+    ),
   );
 }
 

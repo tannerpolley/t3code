@@ -14,7 +14,9 @@ export function materializeReplayTranscriptRuntimeInstructions(
         ? "Grok"
         : runtime.driver === "acpRegistry"
           ? "acpRegistry"
-          : undefined;
+          : runtime.driver === "muse"
+            ? "Muse Code"
+            : undefined;
   if (harness === undefined) return transcript;
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
 
@@ -34,6 +36,54 @@ export function materializeReplayTranscriptRuntimeInstructions(
         return frame.message.endsWith(instructions)
           ? entry
           : { ...entry, frame: { ...frame, message: `${frame.message}\n\n${instructions}` } };
+      }
+      if (
+        runtime.driver === "muse" &&
+        "method" in frame &&
+        frame.method === "turn/start" &&
+        "params" in frame &&
+        typeof frame.params === "object" &&
+        frame.params !== null &&
+        "input" in frame.params &&
+        Array.isArray(frame.params.input)
+      ) {
+        const parts: ReadonlyArray<unknown> = frame.params.input;
+        const firstPart = parts[0];
+        if (
+          typeof firstPart !== "object" ||
+          firstPart === null ||
+          !("type" in firstPart) ||
+          firstPart.type !== "text" ||
+          !("text" in firstPart) ||
+          typeof firstPart.text !== "string" ||
+          !firstPart.text.startsWith("<runtime_info>")
+        ) {
+          return entry;
+        }
+        return {
+          ...entry,
+          frame: {
+            ...frame,
+            params: {
+              ...frame.params,
+              input: [
+                {
+                  ...firstPart,
+                  text: buildRuntimeInstructions({
+                    harness,
+                    model: runtime.model,
+                    reasoningEffort:
+                      "reasoningEffort" in frame.params &&
+                      typeof frame.params.reasoningEffort === "string"
+                        ? frame.params.reasoningEffort
+                        : undefined,
+                  }),
+                },
+                ...parts.slice(1),
+              ],
+            },
+          },
+        };
       }
       if (
         "method" in frame &&
