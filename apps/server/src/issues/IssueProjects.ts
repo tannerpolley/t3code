@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
+import type { IssueRepositoryRef, IssueSummary, IssueRef } from "@t3tools/contracts";
 import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 
 const PageInfo = Schema.Struct({
@@ -25,6 +25,20 @@ const ProjectItem = Schema.Struct({
   status: Schema.NullOr(FieldValue),
   priority: Schema.NullOr(FieldValue),
 });
+const RelatedIssue = Schema.Struct({
+  number: Schema.Int,
+  state: Schema.Literals(["OPEN", "CLOSED"]),
+  repository: Schema.Struct({ nameWithOwner: Schema.String }),
+});
+const Blockers = Schema.Struct({
+  nodes: Schema.Array(Schema.NullOr(RelatedIssue)),
+  pageInfo: PageInfo,
+});
+const PullRequestRef = Schema.Struct({
+  __typename: Schema.optional(Schema.String),
+  number: Schema.optional(Schema.Int),
+  repository: Schema.optional(Schema.Struct({ nameWithOwner: Schema.String })),
+});
 const Response = Schema.Struct({
   errors: Schema.optional(
     Schema.Array(
@@ -39,11 +53,35 @@ const Response = Schema.Struct({
       Schema.Struct({
         issue: Schema.NullOr(
           Schema.Struct({
-            projectItems: Schema.NullOr(
-              Schema.Struct({
-                nodes: Schema.NullOr(Schema.Array(Schema.NullOr(ProjectItem))),
-                pageInfo: PageInfo,
-              }),
+            parent: Schema.optional(Schema.NullOr(RelatedIssue)),
+            blockedBy: Schema.optional(Schema.NullOr(Blockers)),
+            closedByPullRequestsReferences: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  nodes: Schema.Array(Schema.NullOr(PullRequestRef)),
+                }),
+              ),
+            ),
+            timelineItems: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  nodes: Schema.Array(
+                    Schema.NullOr(
+                      Schema.Struct({
+                        source: Schema.optional(Schema.NullOr(PullRequestRef)),
+                      }),
+                    ),
+                  ),
+                }),
+              ),
+            ),
+            projectItems: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  nodes: Schema.NullOr(Schema.Array(Schema.NullOr(ProjectItem))),
+                  pageInfo: PageInfo,
+                }),
+              ),
             ),
           }),
         ),
@@ -54,7 +92,15 @@ const Response = Schema.Struct({
 const decodeResponse = Schema.decodeEffect(Schema.fromJsonString(Response));
 
 type IssueProject = NonNullable<IssueSummary["projects"]>[number];
-type ProjectPage = { readonly number: number; readonly cursor: string | null };
+type ListMetadata = Pick<
+  IssueSummary,
+  "projects" | "blockedBy" | "parent" | "relationshipsComplete" | "pullRequestRefs"
+>;
+type ProjectPage = {
+  readonly number: number;
+  readonly cursor: string | null | undefined;
+  readonly blockerCursor: string | null | undefined;
+};
 
 const ITEM_FIELDS = `project { id title }
   status: fieldValueByName(name: "Status") {
@@ -70,26 +116,60 @@ const ITEM_FIELDS = `project { id title }
   }`;
 
 /** Optional metadata read inside IssueService's verified credential, batched across each list page. */
-export const readIssueProjects = Effect.fn("IssueService.readIssueProjects")(
+export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetadata")(
   function* (scope: IssueRepositoryRef, numbers: readonly number[]) {
     const api = yield* GitHubApi.GitHubApi;
     const projects = new Map<number, Map<string, IssueProject>>();
+    const metadata = new Map<number, ListMetadata>();
+    const blockers = new Map<number, Map<string, NonNullable<IssueSummary["blockedBy"]>[number]>>();
     const unavailable = new Set<number>();
-    const pending: ProjectPage[] = numbers.map((number) => ({ number, cursor: null }));
+    const pending: ProjectPage[] = numbers.map((number) => ({
+      number,
+      cursor: null,
+      blockerCursor: null,
+    }));
     const [owner, name] = scope.repository.split("/");
     while (pending.length > 0) {
       const batch = pending.splice(0, 100);
       const variables: Record<string, string | number | null> = { owner: owner!, name: name! };
       const declarations = ["$owner: String!", "$name: String!"];
       const selections = batch.map((page, index) => {
-        declarations.push(`$cursor${index}: String`, `$number${index}: Int!`);
-        variables[`cursor${index}`] = page.cursor;
+        declarations.push(`$number${index}: Int!`);
+        if (page.cursor !== undefined) {
+          declarations.push(`$cursor${index}: String`);
+          variables[`cursor${index}`] = page.cursor;
+        }
+        if (page.blockerCursor !== undefined) {
+          declarations.push(`$blocker${index}: String`);
+          variables[`blocker${index}`] = page.blockerCursor;
+        }
         variables[`number${index}`] = page.number;
         return `p${index}: repository(owner: $owner, name: $name) {
         issue(number: $number${index}) {
-          projectItems(first: 20, after: $cursor${index}, includeArchived: false) {
+          parent { number state repository { nameWithOwner } }
+          ${
+            page.blockerCursor === undefined
+              ? ""
+              : `blockedBy(first: 100, after: $blocker${index}) {
+            nodes { number state repository { nameWithOwner } }
+            pageInfo { hasNextPage endCursor }
+          }`
+          }
+          closedByPullRequestsReferences(first: 25, includeClosedPrs: true) {
+            nodes { number repository { nameWithOwner } }
+          }
+          timelineItems(last: 100, itemTypes: [CROSS_REFERENCED_EVENT]) {
+            nodes { ... on CrossReferencedEvent {
+              source { __typename ... on PullRequest { number repository { nameWithOwner } } }
+            } }
+          }
+          ${
+            page.cursor === undefined
+              ? ""
+              : `projectItems(first: 20, after: $cursor${index}, includeArchived: false) {
             pageInfo { hasNextPage endCursor }
             nodes { ${ITEM_FIELDS} }
+          }`
           }
         }
       }`;
@@ -103,18 +183,78 @@ export const readIssueProjects = Effect.fn("IssueService.readIssueProjects")(
         acceptPartialData: true,
       });
       const response = yield* decodeResponse(body);
-      const failedAliases = new Set(response.errors?.map((error) => error.path?.[0]));
+      const failedFields = (alias: string, field: string) =>
+        response.errors?.some(
+          (error) =>
+            error.path === undefined ||
+            (error.path[0] === alias && (error.path.length < 3 || error.path[2] === field)),
+        ) ?? false;
       for (const [index, page] of batch.entries()) {
-        if (failedAliases.has(`p${index}`)) {
+        const alias = `p${index}`;
+        const node = response.data[alias]?.issue;
+        if (failedFields(alias, "projectItems")) {
           unavailable.add(page.number);
           projects.delete(page.number);
         }
-        if (unavailable.has(page.number)) continue;
-        const connection = response.data[`p${index}`]?.issue?.projectItems;
-        if (connection?.pageInfo.hasNextPage && connection.pageInfo.endCursor !== null) {
-          if (connection.pageInfo.endCursor === page.cursor)
-            return new Map<number, IssueProject[]>();
-          pending.push({ number: page.number, cursor: connection.pageInfo.endCursor });
+        const connection = unavailable.has(page.number) ? null : node?.projectItems;
+        const blocked = node?.blockedBy;
+        const ref = (number: number, repository: string): IssueRef => ({
+          host: scope.host,
+          repository,
+          number,
+        });
+        const issueBlockers = blockers.get(page.number) ?? new Map();
+        for (const blocker of blocked?.nodes ?? []) {
+          if (blocker === null) continue;
+          const identity = ref(blocker.number, blocker.repository.nameWithOwner);
+          issueBlockers.set(`${identity.repository.toLowerCase()}#${identity.number}`, {
+            ...identity,
+            state: blocker.state === "OPEN" ? "open" : "closed",
+          });
+        }
+        blockers.set(page.number, issueBlockers);
+        const prs = new Map<string, IssueRef>();
+        for (const pr of [
+          ...(node?.closedByPullRequestsReferences?.nodes ?? []),
+          ...(node?.timelineItems?.nodes ?? []).map((event) =>
+            event?.source?.__typename === "PullRequest" ? event.source : null,
+          ),
+        ]) {
+          if (pr?.number === undefined || pr.repository === undefined) continue;
+          const identity = ref(pr.number, pr.repository.nameWithOwner);
+          prs.set(`${identity.repository.toLowerCase()}#${identity.number}`, identity);
+        }
+        const previous = metadata.get(page.number);
+        metadata.set(page.number, {
+          blockedBy: [...issueBlockers.values()],
+          parent:
+            node?.parent == null
+              ? null
+              : ref(node.parent.number, node.parent.repository.nameWithOwner),
+          relationshipsComplete:
+            previous?.relationshipsComplete !== false &&
+            node?.parent !== undefined &&
+            (page.blockerCursor === undefined ||
+              (blocked != null && blocked.nodes.every((node) => node !== null))) &&
+            !failedFields(alias, "blockedBy") &&
+            !failedFields(alias, "parent"),
+          pullRequestRefs: [...prs.values()],
+        });
+        const nextProject = connection?.pageInfo.hasNextPage
+          ? connection.pageInfo.endCursor
+          : undefined;
+        const nextBlocker = blocked?.pageInfo.hasNextPage ? blocked.pageInfo.endCursor : undefined;
+        if (
+          (connection?.pageInfo.hasNextPage &&
+            (nextProject === null || nextProject === page.cursor)) ||
+          (blocked?.pageInfo.hasNextPage &&
+            (nextBlocker === null || nextBlocker === page.blockerCursor))
+        ) {
+          metadata.set(page.number, { ...metadata.get(page.number), relationshipsComplete: false });
+          continue;
+        }
+        if (nextProject !== undefined || nextBlocker !== undefined) {
+          pending.push({ number: page.number, cursor: nextProject, blockerCursor: nextBlocker });
         }
         for (const item of connection?.nodes ?? []) {
           if (!item?.project?.id || !item.project.title.trim()) continue;
@@ -136,8 +276,16 @@ export const readIssueProjects = Effect.fn("IssueService.readIssueProjects")(
         }
       }
     }
-    return new Map([...projects].map(([number, values]) => [number, [...values.values()]]));
+    return new Map(
+      numbers.map((number) => [
+        number,
+        {
+          ...metadata.get(number),
+          projects: [...(projects.get(number)?.values() ?? [])],
+        } satisfies ListMetadata,
+      ]),
+    );
   },
-  // Project scope, access and availability must never prevent the underlying issue list from loading.
-  Effect.orElseSucceed(() => new Map<number, IssueProject[]>()),
+  // Optional metadata must never prevent the underlying issue list from loading.
+  Effect.orElseSucceed(() => new Map<number, ListMetadata>()),
 );

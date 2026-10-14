@@ -31,7 +31,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
-import { readIssueProjects } from "./IssueProjects.ts";
+import { readIssueListMetadata } from "./IssueProjects.ts";
 
 const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 // A detail read carries up to DETAIL_COMMENT_LIMIT comment bodies of up to 64 KiB each.
@@ -1291,7 +1291,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 milestonePage === null
                   ? Effect.succeed({ items: [], nextPage: null })
                   : listMilestonePage(scope, state, milestonePage),
-                readIssueProjects(
+                readIssueListMetadata(
                   scope,
                   issueResult.items.map((issue) => issue.number),
                 ).pipe(Effect.provideService(GitHubApi.GitHubApi, api)),
@@ -1316,7 +1316,8 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               fetchedAt: DateTime.formatIso(yield* DateTime.now),
               issues: issueResult.items.map((issue) => ({
                 ...issue,
-                projects: projects.get(issue.number) ?? [],
+                ...projects.get(issue.number),
+                projects: projects.get(issue.number)?.projects ?? [],
               })),
               milestones: milestoneResult.items,
               nextCursor,

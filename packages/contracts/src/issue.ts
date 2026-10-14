@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString, ThreadId } from "./baseSchemas.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 
 const IssueNumber = Schema.Int.check(
@@ -71,6 +71,31 @@ export const IssueSummary = Schema.Struct({
             rank: Schema.NullOr(NonNegativeInt),
           }),
         ),
+      }),
+    ),
+  ),
+  /** Native GitHub relationships; absent on older servers or inaccessible reads. */
+  blockedBy: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        ...IssueRef.fields,
+        state: Schema.Literals(["open", "closed"]),
+      }),
+    ),
+  ),
+  parent: Schema.optional(Schema.NullOr(IssueRef)),
+  relationshipsComplete: Schema.optional(Schema.Boolean),
+  /** Closing and timeline PR references, read with the list's metadata batch. */
+  pullRequestRefs: Schema.optional(Schema.Array(IssueRef)),
+  liveWork: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        threadId: ThreadId,
+        title: Schema.String,
+        branch: Schema.NullOr(Schema.String),
+        worktreePath: Schema.NullOr(Schema.String),
+        pullRequests: Schema.Array(Schema.String),
+        status: Schema.Literals(["working", "waiting_on_you", "idle"]),
       }),
     ),
   ),

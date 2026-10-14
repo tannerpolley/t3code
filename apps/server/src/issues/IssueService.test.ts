@@ -1268,3 +1268,161 @@ it.effect("a denied recovery read does not turn an uncertain create into a rejec
     assert.equal(harness.calls.filter((call) => call.method === "POST").length, 1);
   }),
 );
+
+it.effect(
+  "batches native parents, closed and external blockers, and PR references with Project fields",
+  () =>
+    Effect.gen(function* () {
+      const related = (number: number, state = "OPEN", repository = REPOSITORY) => ({
+        number,
+        state,
+        repository: { nameWithOwner: repository },
+      });
+      const node = (blockedBy: unknown, parent: unknown = null) => ({
+        parent,
+        blockedBy,
+        projectItems: projectConnection([]),
+        closedByPullRequestsReferences: {
+          nodes: [{ number: 20, repository: { nameWithOwner: REPOSITORY } }],
+        },
+        timelineItems: {
+          nodes: [
+            {
+              source: {
+                __typename: "Issue",
+                number: 99,
+                repository: { nameWithOwner: REPOSITORY },
+              },
+            },
+            {
+              source: {
+                __typename: "PullRequest",
+                number: 21,
+                repository: { nameWithOwner: "other/repo" },
+              },
+            },
+          ],
+        },
+      });
+      const harness = makeHarness({
+        responses: [
+          httpResponse([rawIssue(7), rawIssue(8)]),
+          httpResponse([]),
+          httpResponse({
+            data: {
+              p0: {
+                issue: node(
+                  projectConnection([related(1), related(2, "CLOSED")], "next-blocker"),
+                  related(9),
+                ),
+              },
+              p1: { issue: node(projectConnection([])) },
+            },
+          }),
+          httpResponse({
+            data: {
+              p0: {
+                issue: node(projectConnection([related(3, "OPEN", "other/repo")]), related(9)),
+              },
+            },
+          }),
+        ],
+      });
+      const result = yield* (yield* service(harness)).list(listInput);
+      assert.deepEqual(result.issues[0]?.parent, { ...listInput, number: 9 });
+      assert.deepEqual(result.issues[0]?.blockedBy, [
+        { ...listInput, number: 1, state: "open" },
+        { ...listInput, number: 2, state: "closed" },
+        { ...listInput, repository: "other/repo", number: 3, state: "open" },
+      ]);
+      assert.equal(result.issues[0]?.relationshipsComplete, true);
+      assert.deepEqual(result.issues[0]?.pullRequestRefs, [
+        { ...listInput, number: 20 },
+        { ...listInput, repository: "other/repo", number: 21 },
+      ]);
+      assert.deepEqual(result.issues[1]?.blockedBy, []);
+      assert.equal(harness.calls.length, 4);
+      const first = yield* decodeProjectRequest(harness.calls[2]!.body!);
+      assert.deepEqual([first.variables.number0, first.variables.number1], [7, 8]);
+      assert.include(first.query, "blockedBy(first: 100");
+      const second = yield* decodeProjectRequest(harness.calls[3]!.body!);
+      assert.equal(second.variables.blocker0, "next-blocker");
+      assert.equal(second.variables.number0, 7);
+    }),
+);
+
+it.effect(
+  "preserves native relationships when Project access fails and marks partial blockers unavailable",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        responses: [
+          httpResponse([rawIssue(7), rawIssue(8)]),
+          httpResponse([]),
+          httpResponse({
+            errors: [
+              { path: ["p0", "issue", "projectItems"] },
+              { path: ["p1", "issue", "blockedBy"] },
+            ],
+            data: {
+              p0: { issue: { parent: null, blockedBy: projectConnection([]), projectItems: null } },
+              p1: { issue: { parent: null, blockedBy: null, projectItems: projectConnection([]) } },
+            },
+          }),
+        ],
+      });
+      const result = yield* (yield* service(harness)).list(listInput);
+      assert.equal(result.issues[0]?.relationshipsComplete, true);
+      assert.deepEqual(result.issues[0]?.projects, []);
+      assert.equal(result.issues[1]?.relationshipsComplete, false);
+    }),
+);
+
+it.effect(
+  "finishes Project and blocker pagination independently without restarting an exhausted connection",
+  () =>
+    Effect.gen(function* () {
+      const connection = (nodes: unknown[], cursor: string | null = null) =>
+        projectConnection(nodes, cursor);
+      const blocked = (number: number) => ({
+        number,
+        state: "OPEN",
+        repository: { nameWithOwner: REPOSITORY },
+      });
+      const answer = (projectCursor: string | null, blockerCursor: string | null, number: number) =>
+        httpResponse({
+          data: {
+            p0: {
+              issue: {
+                parent: null,
+                projectItems: connection([projectItem("project", "Project")], projectCursor),
+                blockedBy: connection([blocked(number)], blockerCursor),
+              },
+            },
+          },
+        });
+      const harness = makeHarness({
+        responses: [
+          httpResponse([rawIssue(7)]),
+          httpResponse([]),
+          answer("project-next", "block-next", 1),
+          answer(null, "block-last", 2),
+          httpResponse({
+            data: { p0: { issue: { parent: null, blockedBy: connection([blocked(3)]) } } },
+          }),
+        ],
+      });
+      const result = yield* (yield* service(harness)).list(listInput);
+      assert.equal(harness.calls.length, 5);
+      assert.deepEqual(
+        result.issues[0]?.blockedBy?.map((issue) => issue.number),
+        [1, 2, 3],
+      );
+      assert.equal(result.issues[0]?.relationshipsComplete, true);
+      assert.equal(result.issues[0]?.projects?.length, 1);
+      const last = yield* decodeProjectRequest(harness.calls[4]!.body!);
+      assert.notInclude(last.query, "projectItems(");
+      assert.equal(last.variables.blocker0, "block-last");
+      assert.notProperty(last.variables, "cursor0");
+    }),
+);
