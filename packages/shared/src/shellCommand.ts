@@ -236,6 +236,7 @@ export function shellCommandWaitPids(command: string): Array<number> | null {
 
 /** What a background shell mostly runs; `shell` when nothing more specific is recognized. */
 export type ShellCommandKind =
+  | "server"
   | "python"
   | "pytest"
   | "bash"
@@ -421,11 +422,38 @@ function programKind(
     const flag = args.findIndex((arg) => /^-[a-z]*c[a-z]*$/.test(arg));
     return flag < 0 || args[flag + 1] === undefined ? "bash" : nested(args[flag + 1]!);
   }
+  // Listen flags alone also occur on finite clients and build scripts.
+  if (
+    !args.some((arg) => arg === "--help" || arg === "--version") &&
+    (["uvicorn", "gunicorn", "http.server"].includes(name) ||
+      (name === "vite" && !["build", "optimize"].includes(args[0] ?? "")) ||
+      (["next", "astro"].includes(name) && ["dev", "start", "preview"].includes(args[0] ?? "")) ||
+      (name === "flask" && skipOptions(args, new Set(["--app", "-A"]))[0] === "run") ||
+      (name === "jupyter" && ["lab", "notebook"].includes(args[0] ?? "")) ||
+      (name === "quarto" && args[0] === "preview") ||
+      (name === "hugo" && args[0] === "server") ||
+      (name === "mkdocs" && args[0] === "serve") ||
+      (name === "node" && /^--watch(?:-path)?(?:=|$)/.test(args[0] ?? "")) ||
+      (["npm", "pnpm", "yarn", "bun", "vp", "vpr"].includes(name) &&
+        /^(?:run\s+)?(?:dev|serve|preview|start)$/.test(
+          args.slice(0, args[0] === "run" ? 2 : 1).join(" "),
+        )))
+  ) {
+    return "server";
+  }
+  if (["npx", "bunx"].includes(name)) {
+    const runs = programKind(skipOptions(args, "p"), nested);
+    return runs === "server" || runs === "watcher" ? runs : (PROGRAM_KINDS[name] ?? null);
+  }
+  if (["npm", "pnpm", "yarn", "bun"].includes(name) && args[0] === "exec") {
+    const runs = programKind(skipOptions(args.slice(1), ""), nested);
+    return runs === "server" || runs === "watcher" ? runs : (PROGRAM_KINDS[name] ?? null);
+  }
   if (PROGRAM_KINDS[name] !== undefined && args.some((arg) => /^--watch(?:=|$)/.test(arg))) {
     return "watcher";
   }
   if (name === "python" && args[0] === "-m" && args[1] !== undefined) {
-    return PROGRAM_KINDS[args[1]] === "pytest" ? "pytest" : "python";
+    return programKind(args.slice(1), nested) ?? "python";
   }
   if (
     name === "kill" &&
@@ -462,9 +490,9 @@ function programKind(
 }
 
 /**
- * The kind of program a background shell's command mostly runs: the first command this
- * recognizes, looking through wrappers (`nohup`, `setsid`, `timeout`, `nice`, env assignments,
- * `bash -lc '…'`), paths (`.venv/bin/python`) and runners (`python -m pytest`, `uv run`). A
+ * The kind of program a background shell's command mostly runs: a recognized server, otherwise
+ * the first command this recognizes, looking through wrappers (`nohup`, `setsid`, `timeout`,
+ * `nice`, env assignments, `bash -lc '…'`), paths (`.venv/bin/python`) and runners (`python -m pytest`, `uv run`). A
  * command that watches a file or polls a process (`while kill -0 123; do sleep 20; done`) is a
  * watcher. Sleeping alone, including inside a finite loop, does not imply watching.
  */
@@ -472,6 +500,7 @@ export function classifyShellCommand(command: string): ShellCommandKind {
   const weak: Array<ShellCommandKind> = [];
   let hasPollingLoop = false;
   const scan = (source: string): ShellCommandKind | null => {
+    let firstKind: ShellCommandKind | null = null;
     for (const words of shellCommandWords(source)) {
       if (
         (words[0] === "while" || words[0] === "until") &&
@@ -483,10 +512,11 @@ export function classifyShellCommand(command: string): ShellCommandKind {
       }
       const kind = programKind(words, scan);
       if (kind === null || kind === "shell") continue;
-      if (!WEAK_KINDS.includes(kind)) return kind;
-      weak.push(kind);
+      if (kind === "server") return kind;
+      if (!WEAK_KINDS.includes(kind)) firstKind ??= kind;
+      else weak.push(kind);
     }
-    return null;
+    return firstKind;
   };
   return (
     scan(command) ??
