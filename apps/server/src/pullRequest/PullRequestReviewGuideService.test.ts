@@ -643,7 +643,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           Effect.retry(Schedule.spaced("20 millis")),
         );
         const observed = yield* Effect.raceFirst(Deferred.await(seen), failedRun);
-        assert.include(observed.input.cwd, `${repositories.workspace}/.worktrees/review-guide-`);
+        assert.include(observed.input.cwd, `${repositories.workspace}/.worktrees/detached-`);
         assert.strictEqual(observed.head, repositories.headSha);
         assert.strictEqual(observed.changed, "feature.txt");
         assert.strictEqual(observed.input.baseBranch, "stack-base");

@@ -3204,7 +3204,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             yield* fs.readFileString(exclude),
             "# preserve existing rules\nlocal.txt\n.worktrees/\n",
           );
-          assert.equal(yield* fs.readFileString(path.join(cwd, ".worktrees", ".ignore")), "*\n");
+          assert.equal(yield* fs.readFileString(path.join(cwd, ".worktrees", ".ignore")), "/*\n");
           assert.equal(yield* fs.exists(path.join(cwd, ".gitignore")), false);
           assert.equal(yield* git(cwd, ["status", "--porcelain"]), "");
         }),

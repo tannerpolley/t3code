@@ -120,7 +120,15 @@ export function WorktreesDirectoryRow() {
 }
 
 export function WorktreeLocationLink() {
-  const { search } = useSettingsScope();
+  const { connectedEnvironments, search } = useSettingsScope();
+  // Same gate as the Storage row it links to.
+  if (
+    connectedEnvironments.some(
+      (environment) =>
+        environment.serverConfig?.environment.capabilities.worktreesDirectory !== true,
+    )
+  )
+    return null;
   return (
     <SettingsRow
       title="Worktree location"

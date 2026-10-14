@@ -3453,7 +3453,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }),
         ),
       );
-      directoryName = `review-guide-${id}`;
+      directoryName = `detached-${id}`;
     }
     let worktreePath = input.path;
     if (worktreePath == null) {

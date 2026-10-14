@@ -32,8 +32,9 @@ export const excludeProjectWorktrees = Effect.fn("GitVcsDriver.excludeProjectWor
     `${PROJECT_WORKTREES_FOLDER}/`,
   ).pipe(
     Effect.andThen(
-      // fff's native index/watcher reads .ignore but not .git/info/exclude.
-      appendRule(path.join(repositoryRoot, PROJECT_WORKTREES_FOLDER, ".ignore"), "*"),
+      // fff's native index/watcher reads .ignore but not .git/info/exclude. Anchored, so ripgrep
+      // run inside a worktree (which reads parent .ignore files) still searches that checkout.
+      appendRule(path.join(repositoryRoot, PROJECT_WORKTREES_FOLDER, ".ignore"), "/*"),
     ),
     Effect.mapError(
       (cause) =>
