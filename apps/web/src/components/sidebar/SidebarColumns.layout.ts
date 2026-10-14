@@ -26,7 +26,14 @@ export function generateSidebarColumnLayoutCss() {
   const visible = (hidden: ReadonlySet<string>) => entries.filter(([name]) => !hidden.has(name));
   const template = (hidden: ReadonlySet<string>) =>
     visible(hidden)
-      .map(([name]) => (name === "name" ? "minmax(0, 1fr)" : `var(--sidebar-${name}-width)`))
+      .map(([name]) =>
+        name === "name"
+          ? "minmax(0, 1fr)"
+          : name === "caret"
+            ? // A row pulled out of its list indent (the outdent) keeps its caret where the indent put it.
+              "calc(var(--sidebar-caret-width) + max(0px, var(--sidebar-thread-outdent, 0px) - var(--sidebar-thread-lead)))"
+            : `var(--sidebar-${name}-width)`,
+      )
       .join(" ");
   // The lead is the caret column's offset from the row start, past usage and the depth bar.
   const leadingTracks = entries.slice(
@@ -53,7 +60,7 @@ export function generateSidebarColumnLayoutCss() {
     const boundary = threshold(hidden);
     hidden.add(column);
     const leadRule = leadingTracks.some(([name]) => name === column)
-      ? `  .sidebar-caret-toggle { --sidebar-thread-lead: ${lead(hidden)}; }\n`
+      ? `  .sidebar-thread-columns, .sidebar-caret-toggle { --sidebar-thread-lead: ${lead(hidden)}; }\n`
       : "";
     css += `@container sidebar-columns (width < ${boundary}) {\n  .sidebar-thread-columns { grid-template-columns: ${template(hidden)}; }\n  .sidebar-thread-${column} { display: none; }\n${leadRule}}\n`;
   }

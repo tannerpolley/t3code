@@ -372,7 +372,7 @@ The Activity view keeps its cards. To title rows by role (Orchestrator, Implemen
 instead of thread name, set **Thread row title** to **Role** there; hover a role to see the
 thread's name. Threads without a role keep their name.
 
-For Codex and Claude, the number at the start of each row shows tokens used by the
+For Codex and Claude, the number at the sidebar's left edge shows tokens used by the
 latest turn, such as **48k**. Hover it for input, cached input, output, context
 fill, and the thread's reported total. Cached input is included in input, rather
 than added twice. Partial usage is marked in the tooltip; unavailable usage shows

@@ -9,7 +9,16 @@
   font-weight: normal;
 }
 @utility sidebar-caret-toggle {
-  inset-inline-start: calc(0.125rem + var(--sidebar-thread-lead, 0px));
+  inset-inline-start: calc(
+    0.125rem + max(var(--sidebar-thread-lead, 0px), var(--sidebar-thread-outdent, 0px))
+  );
+}
+/*
+ * Projects thread rows reach back over their section and project indents (the outdent) to the
+ * list's start, so usage sits at one x for every thread; the caret column absorbs the indent.
+ */
+@utility sidebar-thread-outdent {
+  margin-inline-start: calc(-1 * var(--sidebar-thread-outdent, 0px));
 }
 /* Depth shows as a bar instead of an indent: none at the top level, then light, medium, strong. */
 @utility sidebar-thread-bar {

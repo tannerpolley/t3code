@@ -79,6 +79,7 @@ import {
   useCallback,
   useMemo,
   useState,
+  type CSSProperties,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -687,7 +688,17 @@ const ProjectSection = memo(function ProjectSection(props: {
         section={props.section}
       />
       {expanded ? (
-        <ul className={props.codexStyle ? "ps-3" : "ms-3 border-sidebar-border/60 border-s ps-1"}>
+        <ul
+          className={props.codexStyle ? "ps-3" : "ms-3 border-sidebar-border/60 border-s ps-1"}
+          // How far this section's projects sit in from the list, for thread rows to reach back.
+          style={
+            props.codexStyle
+              ? ({
+                  "--sidebar-section-indent": isSubsection ? "1.5rem" : "0.75rem",
+                } as CSSProperties)
+              : undefined
+          }
+        >
           {props.subsections.map((subsection) => (
             <ProjectSection key={subsection.id} {...props} section={subsection} subsections={[]} />
           ))}
@@ -1114,6 +1125,13 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             codexStyle && "sidebar-columns-container",
             codexStyle ? "ps-6" : "ms-5 border-sidebar-border/60 border-s ps-2",
           )}
+          style={
+            codexStyle
+              ? ({
+                  "--sidebar-thread-outdent": "calc(var(--sidebar-section-indent, 0px) + 1.5rem)",
+                } as CSSProperties)
+              : undefined
+          }
         >
           {props.threads.map((thread) => (
             <SidebarProjectThreadRow
@@ -1209,7 +1227,7 @@ const SidebarProjectThreadRow = memo(
     const roleLabels = useSidebarRoleLabels();
     return (
       <li
-        className="relative list-none"
+        className={cn("relative list-none", props.codexStyle && "sidebar-thread-outdent")}
         data-thread-item={activeThreadKey}
         data-sidebar-thread-key={activeThreadKey}
       >
