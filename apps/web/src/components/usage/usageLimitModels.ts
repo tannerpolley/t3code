@@ -1,5 +1,8 @@
 import type { UsageBucket, UsageProviderKind } from "@t3tools/contracts";
 import type { LimitPool, LimitPoolWindow } from "@t3tools/shared/usageLimits";
+import { dayStartMs, weighLimitWindow } from "@t3tools/shared/forkUsageLimits";
+
+export { dayStartMs };
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -20,24 +23,6 @@ export interface WindowAttribution {
   readonly models: readonly WindowModelShare[];
   /** Per period key (`hourStart` or `day`), points of the limit per model, aligned to `models`. */
   readonly periods: ReadonlyMap<string, readonly number[]>;
-}
-
-/** UTC instant of local midnight for a `YYYY-MM-DD` day. */
-export function dayStartMs(day: string, timeZone: string): number {
-  const utcMidnight = Date.parse(`${day}T00:00:00Z`);
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).formatToParts(utcMidnight);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    Number(parts.find((entry) => entry.type === type)?.value ?? 0);
-  const wall = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"));
-  return utcMidnight - (wall - utcMidnight);
 }
 
 /** The `YYYY-MM-DD` day an instant falls on in the time zone. */
@@ -251,61 +236,11 @@ export function attributeWindow(input: {
   readonly usedPercent: number;
   readonly timeZone: string;
 }): WindowAttribution | null {
-  const entries: {
-    model: string;
-    period: string;
-    cost: number;
-    tokens: number;
-    priced: boolean;
-  }[] = [];
-  const dayStarts = new Map<string, number>();
-  for (const bucket of input.buckets) {
-    if (bucket.provider !== input.provider) continue;
-    let start: number;
-    let length: number;
-    if (bucket.hourStart !== undefined) {
-      start = Date.parse(bucket.hourStart);
-      length = HOUR_MS;
-    } else {
-      start = dayStarts.get(bucket.day) ?? dayStartMs(bucket.day, input.timeZone);
-      dayStarts.set(bucket.day, start);
-      length = DAY_MS;
-    }
-    // Everything in a bucket happened before now, so a bucket still open ends at now.
-    const end = Math.min(start + length, input.nowMs);
-    if (!(end > start)) continue;
-    // ponytail: assumes even spending within a bucket; hourly data for long windows needs a wider server window.
-    const inside = Math.max(0, end - Math.max(start, input.startMs)) / (end - start);
-    if (inside === 0) continue;
-    const t = bucket.totals;
-    const tokens =
-      t.uncachedInputTokens + t.cachedInputTokens + t.cacheCreationTokens + t.outputTokens;
-    entries.push({
-      model: bucket.model,
-      period: bucket.hourStart ?? bucket.day,
-      cost: bucket.costUsd * inside,
-      tokens: tokens * inside,
-      priced: bucket.unpricedRecords < bucket.records,
-    });
-  }
-
-  let pricedCost = 0;
-  let pricedTokens = 0;
-  for (const entry of entries) {
-    if (!entry.priced) continue;
-    pricedCost += entry.cost;
-    pricedTokens += entry.tokens;
-  }
-  const costPerToken = pricedTokens > 0 ? pricedCost / pricedTokens : 0;
-  const weightOf = (entry: (typeof entries)[number]) =>
-    costPerToken === 0 ? entry.tokens : entry.priced ? entry.cost : entry.tokens * costPerToken;
+  const { entries, total } = weighLimitWindow(input);
 
   const byModel = new Map<string, number>();
-  let total = 0;
   for (const entry of entries) {
-    const weight = weightOf(entry);
-    byModel.set(entry.model, (byModel.get(entry.model) ?? 0) + weight);
-    total += weight;
+    byModel.set(entry.model, (byModel.get(entry.model) ?? 0) + entry.weight);
   }
   if (total <= 0) return null;
 
@@ -324,7 +259,7 @@ export function attributeWindow(input: {
   const periods = new Map<string, number[]>();
   for (const entry of entries) {
     const index = indexOf(entry.model);
-    const points = toPercent(weightOf(entry));
+    const points = toPercent(entry.weight);
     percents[index] = (percents[index] ?? 0) + points;
     tokens[index] = (tokens[index] ?? 0) + entry.tokens;
     const row = periods.get(entry.period) ?? names.map(() => 0);

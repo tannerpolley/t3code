@@ -11,9 +11,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { threadWeeklyLimitEstimate, WeeklyLimitEstimates } from "../usage/WeeklyLimitEstimates.ts";
+
 import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
+  UsageTokenTotals,
 } from "@t3tools/contracts";
 
 export class DeferThreadUsageSummary extends Context.Reference<boolean>(
@@ -48,6 +51,7 @@ export function deriveThreadUsageSummary(
   turn: OrchestrationV2ProviderTurn | undefined,
   providerThread: OrchestrationV2ProviderThread | undefined,
   threadTokens: number | undefined,
+  weeklyLimit?: { readonly costUsd: number; readonly weeklyLimitPercent?: number },
 ): StoredThreadUsageSummary | undefined {
   if (!turn || !providerThread || !["codex", "claudeAgent"].includes(providerThread.driver))
     return undefined;
@@ -78,6 +82,26 @@ export function deriveThreadUsageSummary(
     ...(threadTokens === undefined ? {} : { threadTokens }),
     ...(context?.usedTokens === undefined ? {} : { contextTokens: context.usedTokens }),
     ...(context?.maxTokens == null ? {} : { contextWindow: context.maxTokens }),
+    ...weeklyLimit,
+  };
+}
+
+/** Prompt tokens a turn reports include its cache reads and writes; pricing splits them out. */
+function turnTotals(row: {
+  readonly input_tokens: number;
+  readonly cached_input_tokens: number;
+  readonly cache_creation_tokens: number;
+  readonly output_tokens: number;
+}): UsageTokenTotals {
+  return {
+    uncachedInputTokens: Math.max(
+      0,
+      row.input_tokens - row.cached_input_tokens - row.cache_creation_tokens,
+    ),
+    cachedInputTokens: row.cached_input_tokens,
+    cacheCreationTokens: row.cache_creation_tokens,
+    outputTokens: row.output_tokens,
+    reasoningTokens: 0,
   };
 }
 const decodeTurn = Schema.decodeUnknownEffect(
@@ -106,13 +130,54 @@ const refresh = Effect.fnUntraced(function* (threadId: ThreadId) {
     ORDER BY pt.started_at DESC, pt.ordinal DESC, pt.provider_turn_id DESC LIMIT 1
   `;
   const row = rows[0];
+  const estimates = (yield* WeeklyLimitEstimates).current;
+  // Each run's model, so a thread that switched models prices every part at its own rate.
+  const modelTokens =
+    row === undefined || estimates === null
+      ? []
+      : yield* sql<{
+          readonly instance_id: string;
+          readonly model: string;
+          readonly input_tokens: number;
+          readonly cached_input_tokens: number;
+          readonly cache_creation_tokens: number;
+          readonly output_tokens: number;
+        }>`
+          SELECT json_extract(r.payload_json, '$.modelSelection.instanceId') AS instance_id,
+            json_extract(r.payload_json, '$.modelSelection.model') AS model,
+            SUM(COALESCE(json_extract(pt.payload_json, '$.turnTokenUsage.inputTokens'), 0)) AS input_tokens,
+            SUM(COALESCE(json_extract(pt.payload_json, '$.turnTokenUsage.cachedInputTokens'), 0)) AS cached_input_tokens,
+            SUM(COALESCE(json_extract(pt.payload_json, '$.turnTokenUsage.cacheCreationTokens'), 0)) AS cache_creation_tokens,
+            SUM(COALESCE(json_extract(pt.payload_json, '$.turnTokenUsage.outputTokens'), 0)) AS output_tokens
+          FROM orchestration_v2_projection_provider_turns pt
+          JOIN orchestration_v2_projection_provider_threads p ON p.provider_thread_id = pt.provider_thread_id
+          JOIN orchestration_v2_projection_threads t ON t.thread_id = pt.thread_id
+          JOIN orchestration_v2_projection_run_attempts a ON a.attempt_id = pt.run_attempt_id
+          JOIN orchestration_v2_projection_runs r ON r.run_id = a.run_id
+          WHERE pt.thread_id = ${threadId}
+            AND p.driver IN ('codex', 'claudeAgent')
+            AND (p.owner_node_id IS NULL OR p.provider_thread_id = t.active_provider_thread_id)
+          GROUP BY instance_id, model
+        `;
+  const providerThread = row === undefined ? undefined : yield* decodeThread(row.provider_json);
   const summary =
     row === undefined
       ? undefined
       : deriveThreadUsageSummary(
           yield* decodeTurn(row.turn_json),
-          yield* decodeThread(row.provider_json),
+          providerThread,
           row.thread_tokens ?? undefined,
+          providerThread === undefined
+            ? undefined
+            : threadWeeklyLimitEstimate(
+                modelTokens.map((tokens) => ({
+                  instanceId: tokens.instance_id,
+                  model: tokens.model,
+                  totals: turnTotals(tokens),
+                })),
+                providerThread.providerInstanceId,
+                estimates,
+              ),
         );
   if (summary === undefined) {
     yield* sql`DELETE FROM orchestration_v2_projection_thread_usage WHERE thread_id = ${threadId}`;

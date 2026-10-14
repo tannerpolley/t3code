@@ -169,6 +169,7 @@ import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAcco
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as WeeklyLimitEstimates from "./usage/WeeklyLimitEstimates.ts";
 import * as ThreadWorkspaceService from "./orchestration-v2/ThreadWorkspaceService.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -561,6 +562,8 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+  // Fork: per-thread weekly-limit estimates follow provider limit refreshes.
+  WeeklyLimitEstimates.layerUpdater,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
