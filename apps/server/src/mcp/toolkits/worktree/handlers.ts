@@ -7,7 +7,6 @@ import * as Effect from "effect/Effect";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import * as ThreadWorkspaceService from "../../../orchestration-v2/ThreadWorkspaceService.ts";
 import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 import { WorktreeToolkit } from "./tools.ts";
 
@@ -47,17 +46,8 @@ const handlers = {
   t3_worktree_return_to_root: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
-      if (!scope.capabilities.has("worktree"))
-        return yield* new OrchestratorMcpFailure({
-          code: "capability_denied",
-          message: "This credential cannot move a thread's worktree binding.",
-        });
-      const caller = yield* McpInvocationContext.requireThreadScope(scope, "Worktree return");
-      const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
-      return yield* workspace.returnToRoot(caller.thread.threadId, input, {
-        createdBy: "agent",
-        creationSource: "mcp",
-      });
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
+      return yield* service.returnToRoot(scope, input);
     }),
   ),
   t3_worktree_status: McpToolAccess.readsAsCaller(() =>

@@ -656,8 +656,6 @@ export const BranchToolbar = memo(function BranchToolbar({
         }
         return;
       }
-      onActiveThreadBranchOverrideChange?.(result.value.branch);
-      onEnvModeChange("local");
     } finally {
       setReturningToRoot(false);
     }

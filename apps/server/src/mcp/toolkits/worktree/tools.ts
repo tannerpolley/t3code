@@ -16,7 +16,6 @@ import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import { Tool, Toolkit } from "effect/ai";
 
-import * as ThreadWorkspaceService from "../../../orchestration-v2/ThreadWorkspaceService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 
@@ -51,7 +50,7 @@ const WorktreeReturnToRootTool = Tool.make("t3_worktree_return_to_root", {
   success: WorktreeReturnToRootResult,
   failure: WorktreeToolFailure,
   failureMode: "return",
-  dependencies: [...dependencies, ThreadWorkspaceService.ThreadWorkspaceService],
+  dependencies,
 })
   .annotate(Tool.Title, "Move thread to main checkout")
   .annotate(Tool.Readonly, false)

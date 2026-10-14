@@ -7,6 +7,8 @@ import {
   type WorktreeMcpHandoffResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
+  type WorktreeReturnToRootInput,
+  type WorktreeReturnToRootResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -32,6 +34,10 @@ export class WorktreeMcpService extends Context.Service<
       scope: McpInvocationScope,
       input: WorktreeMcpHandoffInput,
     ) => Effect.Effect<WorktreeMcpHandoffResult, WorktreeMcpFailure>;
+    readonly returnToRoot: (
+      scope: McpInvocationScope,
+      input: WorktreeReturnToRootInput,
+    ) => Effect.Effect<WorktreeReturnToRootResult, WorktreeMcpFailure>;
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
@@ -450,7 +456,18 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return WorktreeMcpService.of({ handoff, status });
+  const returnToRoot: WorktreeMcpService["Service"]["returnToRoot"] = Effect.fn(
+    "WorktreeMcpService.returnToRoot",
+  )(function* (callerScope, input) {
+    yield* requireCapability(callerScope);
+    const scope = yield* requireThreadScope(callerScope);
+    return yield* workspace.returnToRoot(scope.thread.threadId, input, {
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+  });
+
+  return WorktreeMcpService.of({ handoff, returnToRoot, status });
 });
 
 export const layer: Layer.Layer<
