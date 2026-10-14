@@ -4871,10 +4871,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "plan") {
-              yield* planDeltas.append({
+              // Tracked even without text, so a turn that ends early still ends this item.
+              yield* planDeltas.track({
                 turnId: payload.turnId,
                 itemId: payload.item.id,
-                delta: payload.item.text,
+                text: payload.item.text,
               });
               const artifacts = yield* buildProposedPlanArtifacts({
                 context,

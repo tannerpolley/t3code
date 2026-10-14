@@ -17,6 +17,12 @@ export interface ProviderTextDeltaCoalescer {
     readonly itemId: string;
     readonly delta: string;
   }) => Effect.Effect<void>;
+  /** Registers an item whose text the caller already emitted, so flushTurn still ends it. */
+  readonly track: (input: {
+    readonly turnId: string;
+    readonly itemId: string;
+    readonly text: string;
+  }) => Effect.Effect<void>;
   readonly complete: (input: {
     readonly turnId: string;
     readonly itemId: string;
@@ -128,6 +134,17 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
                 }
               }),
             ),
+      track: ({ turnId, itemId, text }) =>
+        flushLock.withPermit(
+          Ref.update(buffered, (current) =>
+            new Map(current).set(providerTextBufferKey(turnId, itemId), {
+              turnId,
+              itemId,
+              text,
+              dirty: false,
+            }),
+          ),
+        ),
       complete: ({ turnId, itemId, finalText, emitEmpty = true }) =>
         flushLock.withPermit(
           Effect.gen(function* () {

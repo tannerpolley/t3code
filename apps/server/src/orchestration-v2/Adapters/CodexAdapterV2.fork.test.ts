@@ -178,6 +178,75 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each(["failed", "interrupted"] as const)(
+    "ends a plan that started without text when its turn is %s",
+    (status) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = `empty-plan-thread-${status}`;
+          const nativeTurnId = `empty-plan-turn-${status}`;
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: `empty-plan-${status}`,
+              entries: [
+                ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Make a plan." }),
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "item/started",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      startedAtMs: 1782622441000,
+                      item: { type: "plan", id: "empty-plan", text: "" },
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turn: makeCodexReplayTurn({ id: nativeTurnId, status }),
+                    },
+                  },
+                },
+              ],
+            }),
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`empty-plan-${status}`),
+              text: "Make a plan.",
+            }),
+          );
+          yield* harness.firstTerminal;
+          const plans = harness.events.flatMap((event) =>
+            event.type === "plan.updated" ? [event.plan] : [],
+          );
+          assert.deepEqual(
+            plans.map((plan) => plan.status),
+            ["draft", "superseded"],
+          );
+          const items = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "proposed_plan"
+              ? [event.turnItem]
+              : [],
+          );
+          assert.equal(items.at(-1)?.streaming, false);
+          assert.equal(items.at(-1)?.status, "interrupted");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("includes the native command and reason in a command approval request", () =>
     Effect.scoped(
       Effect.gen(function* () {
