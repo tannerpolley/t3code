@@ -1,6 +1,5 @@
 import { findRecordedWorktreeSetup, resolveVisibleWorktreeSetup } from "./ChatView.logic";
 import {
-  shouldLoadIssueChanges,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   threadShellHasStarted,
@@ -2180,44 +2179,4 @@ describe("waitForRevertedMessage", () => {
     await settled;
     vi.useRealTimers();
   });
-});
-
-it("loads issue changes only for repository roots and linked issue workers", () => {
-  const ordinary = makeThreadProjectionFixture().thread;
-  expect(shouldLoadIssueChanges(undefined)).toBe(false);
-  expect(shouldLoadIssueChanges(ordinary)).toBe(false);
-  expect(
-    shouldLoadIssueChanges({
-      ...ordinary,
-      linkedIssue: {
-        host: "github.com",
-        repository: "acme/repo",
-        repositoryId: "1",
-        id: "7",
-        nodeId: "I_7",
-        number: 7,
-        title: "Task",
-        url: "https://github.com/acme/repo/issues/7",
-      },
-    }),
-  ).toBe(true);
-  expect(
-    shouldLoadIssueChanges({
-      ...ordinary,
-      repositoryOrchestration: {
-        host: "github.com",
-        repository: "acme/repo",
-        repositoryId: "1",
-        projectId: ordinary.projectId,
-        launchCommandId: CommandId.make("root-start"),
-        revision: 1,
-        paused: false,
-        workerLimit: 4,
-        publishStatusComments: true,
-        publishCloseoutComments: true,
-        milestones: [],
-        suspendedIssues: [],
-      },
-    }),
-  ).toBe(true);
 });

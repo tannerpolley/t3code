@@ -9,6 +9,9 @@ import {
   type IssueChangeBaseline,
   type IssueChangeDecisionInput,
   type IssueChangesListInput,
+  type OrchestrationV2UserInputQuestion,
+  type ProviderUserInputAnswers,
+  type RuntimeRequestResponder,
   type ThreadId,
   type ThreadLinkedIssue,
   type AuthEnvironmentScope,
@@ -26,12 +29,19 @@ import * as IssueService from "./IssueService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import { issueChangeAnswerDecision, issueChangeQuestion } from "./IssueChangeQuestion.ts";
 
 // Actor authority is supplied by the authenticated transport, never decoded from a proposal.
+// Don't ask mode answers for an away user and may only decline.
 type Actor = {
-  readonly kind: "user" | "agent";
+  readonly kind: "user" | "agent" | "dont_ask_mode";
   readonly subject: string;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+};
+/** An answer to the approval question; respondedBy is set when someone other than the user answered. */
+export type ApprovalAnswer = {
+  readonly answers: ProviderUserInputAnswers;
+  readonly respondedBy?: RuntimeRequestResponder | undefined;
 };
 export class IssueChangeService extends Context.Service<
   IssueChangeService,
@@ -43,6 +53,14 @@ export class IssueChangeService extends Context.Service<
     readonly decide: (
       input: IssueChangeDecisionInput,
       actor: Actor,
+    ) => Effect.Effect<IssueChange, IssueChangeError>;
+    /**
+     * Asks the requesting thread's user about a pending change and applies their answer.
+     * `ask` returns null when the question was dismissed or could not be asked.
+     */
+    readonly requestApproval: (
+      change: IssueChange,
+      ask: (question: OrchestrationV2UserInputQuestion) => Effect.Effect<ApprovalAnswer | null>,
     ) => Effect.Effect<IssueChange, IssueChangeError>;
     readonly list: (
       input: IssueChangesListInput,
@@ -294,10 +312,15 @@ const make = Effect.gen(function* () {
 
   const decide: IssueChangeService["Service"]["decide"] = Effect.fn("IssueChangeService.decide")(
     function* (input, actor) {
-      if (actor.kind !== "user" || !actor.scopes.includes("orchestration:operate"))
+      const declinedWhileAway = actor.kind === "dont_ask_mode" && input.decision === "rejected";
+      if (
+        !declinedWhileAway &&
+        (actor.kind !== "user" || !actor.scopes.includes("orchestration:operate"))
+      )
         return yield* new IssueChangeError({
           code: "forbidden",
-          message: "Only the user with operate scope can decide an issue change.",
+          message:
+            "Only the user with operate scope can decide an issue change; Don't ask mode can only decline.",
         });
       yield* sql
         .withTransaction(
@@ -329,7 +352,7 @@ const make = Effect.gen(function* () {
                 return yield* invalid("This proposal already has a final decision.");
               return;
             }
-            yield* sql`UPDATE issue_changes SET decision = ${input.decision}, decided_by = ${actor.subject}, status = ${input.decision === "approved" ? "queued" : "rejected"}, result = ${input.decision === "rejected" ? "Rejected by the user." : null} WHERE change_id = ${input.id} AND decision = 'pending'`;
+            yield* sql`UPDATE issue_changes SET decision = ${input.decision}, decided_by = ${actor.subject}, status = ${input.decision === "approved" ? "queued" : "rejected"}, result = ${input.decision !== "rejected" ? null : declinedWhileAway ? "Declined by Don't ask mode while the user was away." : "Rejected by the user."} WHERE change_id = ${input.id} AND decision = 'pending'`;
             if (input.decision === "approved") yield* enqueue(change);
           }),
         )
@@ -340,6 +363,34 @@ const make = Effect.gen(function* () {
       return result;
     },
   );
+
+  const requestApproval: IssueChangeService["Service"]["requestApproval"] = Effect.fn(
+    "IssueChangeService.requestApproval",
+  )(function* (change, ask) {
+    if (change.decision !== "pending") return change;
+    const answer = yield* ask(issueChangeQuestion(change));
+    const decision = answer === null ? null : issueChangeAnswerDecision(answer.answers);
+    if (answer === null || decision === null)
+      return {
+        ...change,
+        result:
+          "The user has not decided. The change stays pending until they approve or decline it in the issue's detail view; do not ask them about it yourself.",
+      };
+    // Answering a question needs the same operate scope as deciding through the issue view.
+    const actor: Actor =
+      answer.respondedBy === undefined
+        ? { kind: "user", subject: "question", scopes: ["orchestration:operate"] }
+        : answer.respondedBy === "dont_ask_mode"
+          ? { kind: "dont_ask_mode", subject: "dont-ask-mode", scopes: [] }
+          : { kind: "agent", subject: answer.respondedBy, scopes: [] };
+    // A refused or already-final decision leaves the stored change as the answer.
+    return yield* decide({ id: change.id, decision }, actor).pipe(
+      Effect.catchIf(
+        (error) => error.code === "forbidden" || error.code === "invalid-request",
+        () => get(change.id),
+      ),
+    );
+  });
 
   const execute: IssueChangeService["Service"]["execute"] = (id) =>
     executionLock.withPermit(
@@ -534,6 +585,7 @@ const make = Effect.gen(function* () {
   return IssueChangeService.of({
     propose,
     decide,
+    requestApproval,
     execute,
     subscribe: (input) =>
       Stream.unwrap(

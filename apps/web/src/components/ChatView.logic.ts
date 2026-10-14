@@ -12,7 +12,6 @@ import {
   type MessageId,
   type ModelSelection,
   type OrchestrationV2ProjectedTurnItem,
-  type OrchestrationV2ThreadProjection,
   type PreviewAnnotationPayload,
   type ProviderInteractionMode,
   ProviderDriverKind,
@@ -1345,14 +1344,4 @@ export function restorePlanFollowUpComposer(input: {
     prompt: input.snapshot.prompt,
     detectTrigger: true,
   });
-}
-
-/** Issue upkeep belongs only to repository roots and linked issue workers. */
-export function shouldLoadIssueChanges(
-  thread:
-    | Pick<OrchestrationV2ThreadProjection["thread"], "linkedIssue" | "repositoryOrchestration">
-    | null
-    | undefined,
-) {
-  return thread != null && (thread.linkedIssue != null || thread.repositoryOrchestration != null);
 }

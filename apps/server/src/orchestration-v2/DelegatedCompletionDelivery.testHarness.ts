@@ -313,6 +313,7 @@ const seedChildWaitingOnUser = (input: {
   readonly completionWake?: "always" | "settled_only";
   /** A Codex async question, answered by message, survives a restart. */
   readonly answeredByMessage?: boolean;
+  readonly requestId?: RuntimeRequestId;
 }) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -323,7 +324,8 @@ const seedChildWaitingOnUser = (input: {
     const runId = RunId.make(`run:child-question-${input.name}`);
     const taskId = NodeId.make(`node:child-question-${input.name}-task`);
     const requestNodeId = NodeId.make(`node:child-question-${input.name}-request`);
-    const requestId = RuntimeRequestId.make(`request:child-question-${input.name}`);
+    const requestId =
+      input.requestId ?? RuntimeRequestId.make(`request:child-question-${input.name}`);
     yield* seedParentWithTerminalTask({
       threadId: parentThreadId,
       projectId: ProjectId.make(`project:child-question-${input.name}`),

@@ -84,6 +84,41 @@ export const IssueChange = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type IssueChange = typeof IssueChange.Type;
+
+/** One-line summary of a change, shared by its approval question and the issue's change history. */
+export function issueChangeTitle(change: Pick<IssueChange, "operation">): string {
+  const op = change.operation;
+  switch (op.type) {
+    case "body":
+      return `Edit #${op.number} body`;
+    case "state":
+      return `${op.state === "closed" ? "Close" : "Reopen"} #${op.number}`;
+    case "milestone":
+      return `Move #${op.number} to ${op.milestoneNumber === null ? "no milestone" : `milestone #${op.milestoneNumber}`}`;
+    case "split":
+      return `Split #${op.number} into ${op.issues.length} sub-issues`;
+    case "create":
+      return `Create issue: ${op.title}`;
+    case "sub_issue":
+      return `${op.action === "add" ? "Add" : "Remove"} #${op.childNumber} ${op.action === "add" ? "under" : "from"} #${op.number}`;
+  }
+}
+
+/** The exact change the user approves: the state move, the authorship note, then the diff or operation. */
+export function issueChangePreview(
+  change: Pick<IssueChange, "operation" | "baseline" | "t3AuthoredBody" | "diff">,
+): string {
+  return [
+    change.operation.type === "state"
+      ? `State: ${change.baseline?.state} → ${change.operation.state}`
+      : null,
+    change.t3AuthoredBody ? "Current body matches the last body written by T3." : null,
+    change.diff ?? JSON.stringify(change.operation, null, 2),
+  ]
+    .filter((part) => part !== null)
+    .join("\n\n");
+}
+
 export const IssueChangesListInput = Schema.Union([
   Schema.Struct({ threadId: ThreadId }),
   IssueRef,

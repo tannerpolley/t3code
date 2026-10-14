@@ -1,4 +1,5 @@
 import { delegatedRequestWakeCommand } from "./DelegatedRequestWake.ts";
+import { issueChangeQuestionCommandId } from "../issues/IssueChangeQuestion.ts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import { assert, it } from "@effect/vitest";
 import {
@@ -359,6 +360,42 @@ it.layer(layerTest)("delegated request routing", (it) => {
         yield* endParentRuns(answeredChild.parentThreadId, "completed");
         assert.isFalse(yield* ownerCanSee(answeredChild));
       }
+    }),
+  );
+
+  it.effect("shows an issue change approval to the owner at once and refuses agent answers", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      // A blocking wait keeps the parent active, which would hide a routed request.
+      const child = yield* seedChildWaitingOnUser({
+        name: "issue-change",
+        requestKind: "user_input",
+        completionWake: "settled_only",
+        requestId: RuntimeRequestId.make(
+          `${issueChangeQuestionCommandId("change-1", "ask-1")}:user-input`,
+        ),
+      });
+      assert.isTrue(yield* ownerCanSee(child));
+      for (const callerThreadId of [child.parentThreadId, child.childThreadId]) {
+        const refused = yield* threads
+          .respondToPendingRequest({
+            ...child,
+            threadId: child.childThreadId,
+            callerThreadId,
+            commandId: CommandId.make(`command:issue-change-answer:${callerThreadId}`),
+            answers: { q1: "Yes" },
+          })
+          .pipe(Effect.flip);
+        assert.equal(
+          refused._tag === "ThreadManagementPendingRequestError" ? refused.reason : refused._tag,
+          "user-only",
+        );
+      }
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(child.childThreadId)).runtimeRequests[0]?.status,
+        "pending",
+      );
     }),
   );
 

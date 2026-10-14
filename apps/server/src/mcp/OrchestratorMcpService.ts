@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2UserInputQuestion,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesResult,
   type OrchestratorMcpCreateThreadsInput,
@@ -75,6 +76,7 @@ import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
+import { issueChangeQuestionCommandId } from "../issues/IssueChangeQuestion.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
@@ -1759,8 +1761,31 @@ const make = Effect.gen(function* () {
           yield* issueWork.value
             .assertCurrentCaller(scope.thread.threadId)
             .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+        const { threadId, providerSessionId } = scope.thread;
+        const change = yield* issueChanges.value
+          .propose(threadId, input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+        // A pending change asks the user in this thread, as t3_request_user_input does.
+        const ask = (question: OrchestrationV2UserInputQuestion) =>
+          Effect.gen(function* () {
+            const shell = yield* threadManagement.getThreadShell(threadId);
+            if (shell?.activeRunId == null) return null;
+            const result = yield* threadManagement.requestUserInput({
+              thread: { ...shell, activeRunId: shell.activeRunId },
+              mcpCredentialId: providerSessionId,
+              commandId: issueChangeQuestionCommandId(change.id, yield* crypto.randomUUIDv4),
+              questions: [question],
+            });
+            return result.type === "answered" ? result : null;
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not ask about an issue change", { cause }).pipe(
+                Effect.as(null),
+              ),
+            ),
+          );
         return yield* issueChanges.value
-          .propose(scope.thread.threadId, input)
+          .requestApproval(change, ask)
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       }),
     requestRepositoryHandoff: (scope, input) =>

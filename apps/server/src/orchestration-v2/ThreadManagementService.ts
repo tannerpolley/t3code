@@ -32,6 +32,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   RunId,
   RuntimeRequestId,
+  type RuntimeRequestResponder,
   type ScheduledTaskId,
   ThreadId,
   type TurnItemId,
@@ -56,6 +57,7 @@ import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { isDelegatedDescendant } from "./DelegatedRequestRouting.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { isIssueChangeQuestion } from "../issues/IssueChangeQuestion.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -195,7 +197,12 @@ export interface ThreadManagementUserInputInput {
 }
 
 export type ThreadManagementUserInputResult =
-  | { readonly type: "answered"; readonly answers: ProviderUserInputAnswers }
+  | {
+      readonly type: "answered";
+      readonly answers: ProviderUserInputAnswers;
+      /** Set when Don't ask mode or an orchestrator answered instead of the user. */
+      readonly respondedBy?: RuntimeRequestResponder | undefined;
+    }
   | { readonly type: "session_not_active" }
   /** Dismissed, interrupted, or its run or session ended. */
   | { readonly type: "dismissed" }
@@ -204,7 +211,7 @@ export type ThreadManagementUserInputResult =
 export class ThreadManagementPendingRequestError extends Schema.TaggedError<ThreadManagementPendingRequestError>()(
   "ThreadManagementPendingRequestError",
   {
-    reason: Schema.Literals(["not-found", "invalid-response", "outside-descendants"]),
+    reason: Schema.Literals(["not-found", "invalid-response", "outside-descendants", "user-only"]),
     threadId: ThreadId,
     requestId: RuntimeRequestId,
   },
@@ -212,9 +219,11 @@ export class ThreadManagementPendingRequestError extends Schema.TaggedError<Thre
   override get message() {
     return this.reason === "outside-descendants"
       ? "An orchestrator may answer or approve only requests in its own delegated descendant subtree."
-      : this.reason === "not-found"
-        ? "The pending question or approval was not found."
-        : "Pass answers for a question, or an accept/decline decision for an approval.";
+      : this.reason === "user-only"
+        ? "Only the user can answer an issue change approval. Leave it to them."
+        : this.reason === "not-found"
+          ? "The pending question or approval was not found."
+          : "Pass answers for a question, or an accept/decline decision for an approval.";
   }
 }
 
@@ -1093,11 +1102,25 @@ const make = Effect.gen(function* () {
       );
     const event = Option.getOrUndefined(resolution)?.event;
     if (event?.type !== "runtime-request.updated") return { type: "stream_ended" } as const;
-    return event.payload.status === "resolved" &&
-      event.payload.decision === undefined &&
-      event.payload.answers !== undefined
-      ? ({ type: "answered", answers: event.payload.answers } as const)
-      : ({ type: "dismissed" } as const);
+    if (
+      event.payload.status !== "resolved" ||
+      event.payload.decision !== undefined ||
+      event.payload.answers === undefined
+    )
+      return { type: "dismissed" } as const;
+    // Only the question's turn item records who answered; it commits with the resolution.
+    const { turnItems } = yield* orchestrator.getThreadRecords(thread.id, ["turnItems"], {
+      turnItemRunId: thread.activeRunId,
+      turnItemTypes: ["user_input_request"],
+    });
+    const item = turnItems.find(
+      (candidate) => candidate.type === "user_input_request" && candidate.requestId === requestId,
+    );
+    return {
+      type: "answered",
+      answers: event.payload.answers,
+      respondedBy: item?.type === "user_input_request" ? item.respondedBy : undefined,
+    } as const;
   });
   const respondToPendingRequest: ThreadManagementServiceShape["respondToPendingRequest"] =
     Effect.fn("orchestrationV2.threadManagement.respondToPendingRequest")(function* (input) {
@@ -1113,6 +1136,7 @@ const make = Effect.gen(function* () {
         request.kind === "dynamic_tool_call"
       )
         return yield* fail("not-found");
+      if (isIssueChangeQuestion(request.id)) return yield* fail("user-only");
       const question = request.kind === "user_input";
       if (
         question

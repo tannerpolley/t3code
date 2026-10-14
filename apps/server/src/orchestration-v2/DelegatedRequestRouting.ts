@@ -12,6 +12,7 @@ import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentP
 import * as Effect from "effect/Effect";
 
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
+import { isIssueChangeQuestion } from "../issues/IssueChangeQuestion.ts";
 
 type Threads<E> = {
   readonly getThreadShell: (
@@ -93,10 +94,12 @@ export const routeDelegatedRequests = (
       events,
       (event) =>
         Effect.gen(function* () {
+          // An issue change approval is the user's alone, so the owner sees it at once.
           if (
             event.type !== "runtime-request.updated" ||
             event.payload.status !== "pending" ||
-            !runtimeRequestNeedsUser(event.payload.kind)
+            !runtimeRequestNeedsUser(event.payload.kind) ||
+            isIssueChangeQuestion(event.payload.id)
           )
             return event;
           const existing = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);

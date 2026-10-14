@@ -296,7 +296,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             error._tag === "ThreadManagementPendingRequestError"
               ? new OrchestratorMcpFailure({
                   code:
-                    error.reason === "outside-descendants"
+                    error.reason === "outside-descendants" || error.reason === "user-only"
                       ? "capability_denied"
                       : "invalid_request",
                   message: error.message,

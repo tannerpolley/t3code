@@ -1,8 +1,10 @@
-import type {
-  EnvironmentId,
-  IssueChange,
-  IssueChangeDecisionInput,
-  IssueChangesListInput,
+import {
+  issueChangePreview,
+  issueChangeTitle,
+  type EnvironmentId,
+  type IssueChange,
+  type IssueChangeDecisionInput,
+  type IssueChangesListInput,
 } from "@t3tools/contracts";
 import { useState } from "react";
 import { useServerConfigs } from "~/state/entities";
@@ -11,29 +13,13 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { Button } from "../ui/button";
 
-function title(change: IssueChange) {
-  const op = change.operation;
-  switch (op.type) {
-    case "body":
-      return `Edit #${op.number} body`;
-    case "state":
-      return `${op.state === "closed" ? "Close" : "Reopen"} #${op.number}`;
-    case "milestone":
-      return `Move #${op.number} to ${op.milestoneNumber === null ? "no milestone" : `milestone #${op.milestoneNumber}`}`;
-    case "split":
-      return `Split #${op.number} into ${op.issues.length} sub-issues`;
-    case "create":
-      return `Create issue: ${op.title}`;
-    case "sub_issue":
-      return `${op.action === "add" ? "Add" : "Remove"} #${op.childNumber} ${op.action === "add" ? "under" : "from"} #${op.number}`;
-  }
-}
-
-/** The same durable decision cards appear beside the requesting thread and issue. */
+/**
+ * An issue's change history. Agents ask about pending changes in their thread; one whose
+ * question was dismissed, or that predates those questions, can still be decided here.
+ */
 export function IssueChangeCards(props: {
   environmentId: EnvironmentId;
   input: IssueChangesListInput;
-  compact?: boolean;
 }) {
   const configs = useServerConfigs();
   if (configs.get(props.environmentId)?.environment.capabilities.issueChanges !== true) return null;
@@ -43,11 +29,9 @@ export function IssueChangeCards(props: {
 function Cards({
   environmentId,
   input,
-  compact = false,
 }: {
   environmentId: EnvironmentId;
   input: IssueChangesListInput;
-  compact?: boolean;
 }) {
   const query = useEnvironmentQuery(issueEnvironment.changes({ environmentId, input }));
   const decide = useAtomCommand(issueEnvironment.decideChange, { reportFailure: false });
@@ -65,7 +49,7 @@ function Cards({
   };
   const card = (change: IssueChange) => (
     <article key={change.id} className="rounded-lg border border-border bg-background p-3 text-xs">
-      <p className="font-medium">{title(change)}</p>
+      <p className="font-medium">{issueChangeTitle(change)}</p>
       <p className="mt-1 text-muted-foreground" role="status">
         {change.decision === "pending"
           ? "Waiting for your approval"
@@ -74,18 +58,8 @@ function Cards({
       </p>
       <details className="mt-2" open={change.decision === "pending"}>
         <summary className="cursor-pointer">Exact change preview</summary>
-        {change.operation.type === "state" ? (
-          <p className="my-2">
-            State: {change.baseline?.state} → {change.operation.state}
-          </p>
-        ) : null}
-        {change.t3AuthoredBody ? (
-          <p className="my-2 text-muted-foreground">
-            Current body matches the last body written by T3.
-          </p>
-        ) : null}
         <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2 font-mono">
-          {change.diff ?? JSON.stringify(change.operation, null, 2)}
+          {issueChangePreview(change)}
         </pre>
         {Object.entries(change.completedSteps).map(([step, result]) => (
           <p key={step} className="mt-1">
@@ -119,7 +93,7 @@ function Cards({
             disabled={responding !== null}
             onClick={() => void respond(change.id, "rejected")}
           >
-            Reject
+            Decline
           </Button>
         </div>
       ) : null}
@@ -167,7 +141,7 @@ function Cards({
       ) : null}
       <div className="space-y-2">{actionable.map(card)}</div>
       {decided.length > 0 ? (
-        <details className="mt-2" open={!compact && actionable.length === 0}>
+        <details className="mt-2" open={actionable.length === 0}>
           <summary className="cursor-pointer text-xs text-muted-foreground">
             Issue change results ({decided.length})
           </summary>

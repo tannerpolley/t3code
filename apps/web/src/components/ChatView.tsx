@@ -8,7 +8,6 @@ import {
   automaticProviderSwitchBannerItem,
   usageLimitRecoveryBannerItem,
 } from "./chat/UsageLimitRecoveryBanner";
-import { IssueChangeCards } from "./issues/IssueChangeCards";
 import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
@@ -23,7 +22,6 @@ import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/q
 import {
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
-  shouldLoadIssueChanges,
   peekRememberedThreadTimeline,
   rememberReadyThreadTimeline,
   resolveThreadSwitchTimeline,
@@ -11863,14 +11861,6 @@ export default function ChatView(props: ChatViewProps) {
                         />
                       </div>
                     </div>
-                  ) : null}
-                  {activeThreadId !== null &&
-                  shouldLoadIssueChanges(serverProjection?.thread ?? activeThread) ? (
-                    <IssueChangeCards
-                      environmentId={environmentId}
-                      input={{ threadId: activeThreadId }}
-                      compact
-                    />
                   ) : null}
                   <div
                     ref={draftHeroTransition.composerAnchorRef}
