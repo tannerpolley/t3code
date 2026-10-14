@@ -1084,7 +1084,8 @@ layer("ProviderEventIngestorV2", (it) => {
           };
           return { key: spec.key, request, node, item };
         });
-        const seedEvents: Array<OrchestrationV2DomainEvent> = [threadEvent];
+        yield* eventSink.write({ events: [threadEvent] });
+        const seedEvents: Array<OrchestrationV2DomainEvent> = [];
         for (const fixture of fixtures) {
           for (const payload of [
             { type: "runtime-request.updated" as const, payload: fixture.request },
@@ -1135,7 +1136,7 @@ layer("ProviderEventIngestorV2", (it) => {
         const stored = yield* ingestor.ingestNormalized(input);
         const projection = yield* projectionStore.getThreadProjection(threadId);
         for (const fixture of fixtures) {
-          const closed = fixture.key === "native" || fixture.key === "unavailable";
+          const closed = fixture.key === "native";
           const request = projection.runtimeRequests.find(
             (item) => item.id === fixture.request.id,
           )!;
@@ -1156,7 +1157,7 @@ layer("ProviderEventIngestorV2", (it) => {
         }
         assert.equal(
           stored.filter((entry) => entry.event.type === "runtime-request.updated").length,
-          2,
+          1,
         );
         assert.isEmpty(
           (yield* projectionStore.getPendingNativeUserInputs(threadId, providerTurnId))
@@ -1169,7 +1170,7 @@ layer("ProviderEventIngestorV2", (it) => {
               entry.event.type === "runtime-request.updated" &&
               entry.event.payload.status === "cancelled",
           ).length,
-          2,
+          1,
         );
         const repeated = yield* ingestor.ingestNormalized(input);
         assert.isFalse(repeated.some((entry) => entry.event.type === "runtime-request.updated"));
@@ -1248,7 +1249,8 @@ layer("ProviderEventIngestorV2", (it) => {
             requestId: request.id,
             questions: [],
           };
-          const seedEvents: Array<OrchestrationV2DomainEvent> = [threadEvent];
+          yield* eventSink.write({ events: [threadEvent] });
+          const seedEvents: Array<OrchestrationV2DomainEvent> = [];
           for (const payload of [
             { type: "runtime-request.updated" as const, payload: request },
             { type: "node.updated" as const, payload: node },

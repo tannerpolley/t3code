@@ -198,7 +198,6 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     Schema.Literals(["inherit", "worktree"]).annotate({
       description:
         "Managed issue workers always get a new issue worktree cut from the default branch; this argument applies only to other tasks. For other tasks, defaults to worktree for Implementor, inherit for Orchestrator, Reviewer, Investigator and Checker. Legacy general also inherits. inherit keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's branch, or the branch its checkout is on (local commits; uncommitted changes are not copied), with the project's setup script run before the child starts. Explicit workspace always overrides the role default.",
-
     }),
   ),
 });

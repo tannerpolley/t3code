@@ -2289,7 +2289,6 @@ const make = Effect.gen(function* () {
           return yield* failure(
             "orchestration_error",
             "Issue-managed delegation is unavailable on this server.",
-
           );
         const result = yield* linkedIssue !== undefined && Option.isSome(issueWork)
           ? issueWork.value

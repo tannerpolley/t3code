@@ -3195,7 +3195,7 @@ describe("managed issue work", () => {
         creationSource: "web",
       });
       const root = yield* threads.getThreadProjection(starts[0].rootThreadId);
-      assert.isUndefined(root.thread.role);
+      assert.equal(root.thread.role, "orchestrator");
       assert.equal(root.messages.length, 1);
       assert.equal((yield* issues.workStatus(input)).status, "queued_preparing");
       assert.equal((yield* issues.workStatus(input)).projectId, projectId);
@@ -7388,6 +7388,7 @@ describe("fresh-thread repository handoff", () => {
         const nextId = moved.rootThreadId!;
         assert.notEqual(nextId, rootId);
         const oldParentMessages = (yield* texts(oldParent)).length;
+        const rootMessages = (yield* texts(nextId)).length;
 
         yield* threads.dispatch({
           type: "issue.work.start",
@@ -7401,7 +7402,7 @@ describe("fresh-thread repository handoff", () => {
         });
         yield* service.reconcile(nextId);
         assert.lengthOf(yield* texts(oldParent), oldParentMessages);
-        assert.isFalse((yield* texts(nextId)).some((text) => text.startsWith("Start issue #1")));
+        assert.lengthOf(yield* texts(nextId), rootMessages);
 
         const newParent = (yield* (yield* IssueWorkStore.IssueWorkStore).currentIssueOwner(
           linked(1),
