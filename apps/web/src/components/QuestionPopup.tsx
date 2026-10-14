@@ -29,6 +29,7 @@ import {
 } from "./QuestionPopup.logic";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
+import { Input } from "./ui/input";
 import { useSettledQuestions } from "./useSettledQuestions";
 
 let previousQuestions: ReadonlyArray<PendingQuestion> = [];
@@ -144,6 +145,7 @@ function QuestionPopupCard({
     ? derivePendingUserInputProgress(prompt.questions, answers, questionIndex)
     : null;
   const activeQuestion = progress?.activeQuestion ?? null;
+  const AnswerInput = activeQuestion?.isSecret ? Input : Textarea;
 
   const onAdvance = () => {
     if (!prompt || !progress || !canRespond || !progress.canAdvance || inFlight.current) return;
@@ -202,9 +204,9 @@ function QuestionPopupCard({
           />
         ) : null}
         {progress && activeQuestion && activeQuestion.allowCustomAnswer !== false ? (
-          <Textarea
+          <AnswerInput
             className="mt-2"
-            rows={2}
+            {...(activeQuestion.isSecret ? { type: "password", autoComplete: "off" } : { rows: 2 })}
             placeholder="Or type your own answer"
             aria-label="Your own answer"
             value={progress.customAnswer}

@@ -15,6 +15,11 @@ export function projectPendingUserInputAnswer(
   });
 }
 
+/** Compact previews must not reveal a secret answer. */
+export function pendingUserInputAnswerPreview(answer: string, isSecret?: boolean): string {
+  return answer && isSecret ? "••••••••" : answer;
+}
+
 export interface PendingUserInputDraftAnswer {
   selectedOptionValues?: string[];
   customAnswer?: string;

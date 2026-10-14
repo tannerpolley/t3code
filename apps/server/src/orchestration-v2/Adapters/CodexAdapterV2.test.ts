@@ -101,6 +101,29 @@ describe("Codex context usage compatibility", () => {
   });
 });
 
+describe("CodexAdapterV2 native question mapping", () => {
+  it("preserves other-answer and secret flags without inventing multi-selection", () => {
+    const question = {
+      id: "choice",
+      header: "Choice",
+      question: "Choose a branch",
+      options: [{ label: "main", description: "Default branch" }],
+    };
+    const [choice, other, secret, freeText] = CodexAdapterV2.codexUserInputQuestions([
+      question,
+      { ...question, isOther: true },
+      { ...question, isOther: true, isSecret: true },
+      { ...question, options: null, isOther: false },
+    ]);
+    assert.equal(choice?.allowCustomAnswer, false);
+    assert.equal(other?.allowCustomAnswer, true);
+    assert.equal(secret?.isSecret, true);
+    assert.equal(freeText?.allowCustomAnswer, true);
+    assert.equal(choice?.multiSelect, false);
+    assert.deepEqual(choice?.options, question.options);
+  });
+});
+
 describe("CodexAdapterV2 file change approvals", () => {
   it("keeps the reason, grant root, all file operations, and renamed paths", () => {
     const fileChanges = {

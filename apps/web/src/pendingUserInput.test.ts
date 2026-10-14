@@ -5,6 +5,7 @@ import { threadContextRecord, threadContextReference } from "./lib/composerConte
 
 import {
   buildPendingUserInputAnswers,
+  pendingUserInputAnswerPreview,
   carryDisplacedCustomAnswerIntoPrompt,
   countAnsweredPendingUserInputQuestions,
   derivePendingUserInputProgress,
@@ -14,6 +15,14 @@ import {
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
 } from "./pendingUserInput";
+
+describe("pendingUserInputAnswerPreview", () => {
+  it("masks secret previews while leaving ordinary answers and empty placeholders unchanged", () => {
+    expect(pendingUserInputAnswerPreview("private answer", true)).toBe("••••••••");
+    expect(pendingUserInputAnswerPreview("main")).toBe("main");
+    expect(pendingUserInputAnswerPreview("", true)).toBe("");
+  });
+});
 
 describe("projectPendingUserInputAnswer", () => {
   const record = threadContextRecord(

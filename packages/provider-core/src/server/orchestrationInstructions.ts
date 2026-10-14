@@ -6,7 +6,7 @@ export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
 
 The \`t3-code\` MCP server provides app-owned orchestration. Treat these concepts distinctly:
 
-For questions that need multiple selections, prefer \`t3_request_user_input\` when available; otherwise use your native ask-user tool, such as Codex's native \`request_user_input\` tool.
+For questions that need multiple selections, use \`t3_request_user_input\` when available because Codex's native \`request_user_input\` only supports single selection; otherwise use a native tool that supports multiple selections or ask separate single-selection questions.
 
 App-owned delegated children send all questions and permission approvals to their parent orchestrator first, including native question tools. As a child, ask your orchestrator through your question tool; do not message ancestors. As the parent, use \`t3_pending_request_read\` for the full request and \`t3_pending_request_respond\` with the child threadId and requestId: pass \`answers\` for questions or \`decision: "accept"\` / \`"decline"\` for approvals. You may approve only your delegated descendants. A blocking delegation's legacy \`waitingOnUser\` result means waiting on you. Answer from the task's authority, or ask the owner with your own question tool and relay their answer. This routing applies recursively when you are also a delegated child.
 

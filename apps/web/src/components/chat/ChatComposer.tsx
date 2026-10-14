@@ -86,6 +86,7 @@ import {
   formatAssistantCitationForComposer,
   replaceTextRange,
 } from "../../composer-logic";
+import { Input } from "../ui/input";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
 import {
@@ -1114,7 +1115,10 @@ import {
   stepComposerPromptHistory,
   type ComposerPromptHistoryPosition,
 } from "./composerPromptHistory";
-import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
+import {
+  pendingUserInputAnswerPreview,
+  type PendingUserInputDraftAnswer,
+} from "../../pendingUserInput";
 import type {
   LatestProposedPlanState,
   PendingApproval,
@@ -1585,6 +1589,7 @@ export interface ChatComposerProps {
       initialAnswer?: string | undefined;
       multiSelect?: boolean | undefined;
       allowCustomAnswer?: boolean | undefined;
+      isSecret?: boolean | undefined;
     } | null;
   } | null;
   activePendingResolvedAnswers: Record<string, unknown> | null;
@@ -1839,7 +1844,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const pendingUserInputs = holdingUserInput ? [] : incomingPendingUserInputs;
   const activePendingProgress = holdingUserInput ? null : incomingPendingProgress;
   const activePendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
-  const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
+  const isLiteralPendingAnswer =
+    activePendingProgress?.activeQuestion?.initialAnswer !== undefined ||
+    activePendingProgress?.activeQuestion?.isSecret === true;
   // Opening a running thread resyncs for a few frames. Show the sync row, and
   // hide the tasks row for it, only when the sync lasts. Logic that depends on
   // the real phase keeps reading `props.threadSyncPhase`.
@@ -6930,7 +6937,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               onClick={expandMobileComposer}
                               aria-label="Write custom answer"
                             >
-                              {activePendingProgress?.customAnswer || "Write custom answer"}
+                              {pendingUserInputAnswerPreview(
+                                activePendingProgress?.customAnswer ?? "",
+                                activePendingProgress?.activeQuestion?.isSecret,
+                              ) || "Write custom answer"}
                             </button>
                           ) : null}
                           {activePendingProgress?.activeQuestion?.multiSelect ? (
@@ -7040,8 +7050,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   {activePendingProgress
                     ? isChoiceOnlyPendingQuestion
                       ? "Choose an option above"
-                      : activePendingProgress.customAnswer ||
-                        "Type your own answer, or leave this blank to use the selected option"
+                      : pendingUserInputAnswerPreview(
+                          activePendingProgress.customAnswer,
+                          activePendingProgress.activeQuestion?.isSecret,
+                        ) || "Type your own answer, or leave this blank to use the selected option"
                     : prompt.trim() ||
                       (showProviderUnavailable
                         ? "Enable a provider in Settings"
@@ -7544,79 +7556,100 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </Dialog>
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
-                  <ComposerPromptEditor
-                    ariaLabel="Message"
-                    suggestionListId={composerSuggestionListId}
-                    activeSuggestionId={
-                      composerSuggestionListVisible && activeComposerMenuItem
-                        ? composerSuggestionOptionId(
-                            composerSuggestionListId,
-                            activeComposerMenuItem.id,
-                          )
-                        : undefined
-                    }
-                    editorRef={composerEditorRef}
-                    richTextEnabled={settings.composerRichTextEnabled}
-                    literalText={isLiteralPendingAnswer}
-                    isPathQueryActive={() =>
-                      resolveActiveComposerTrigger().trigger?.kind === "path"
-                    }
-                    value={
-                      isComposerApprovalState
-                        ? ""
-                        : activePendingProgress
-                          ? activePendingProgress.customAnswer
-                          : prompt
-                    }
-                    cursor={composerCursor}
-                    contextRecords={composerContextRecords}
-                    buildContextClipboardFragment={buildContextClipboardFragment}
-                    importContextFragment={importContextFragment}
-                    skills={selectedProviderSkills}
-                    containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
-                    className={cn(
-                      showMobilePendingAnswerActions && "max-sm:pb-12",
-                      isComposerResting &&
-                        "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
-                      isComposerApprovalState && "min-h-10",
-                    )}
-                    placeholderClassName={cn(
-                      isComposerResting &&
-                        "flex items-center overflow-hidden whitespace-nowrap leading-8",
-                    )}
-                    onChange={onPromptChange}
-                    onVisibleSelectionChange={expandComposerForEditorChange}
-                    onCommandKeyDown={onComposerCommandKey}
-                    onPageScrollKeyDown={onPageScrollKeyDown}
-                    onPageScrollKeyUp={onPageScrollKeyUp}
-                    onPageScrollRelease={onPageScrollRelease}
-                    onCitationSubmitAndSend={submitCitationAndSend}
-                    onPaste={onComposerPaste}
-                    placeholder={
-                      isComposerApprovalState
-                        ? "Resolve this approval request to continue"
-                        : activePendingProgress
-                          ? isChoiceOnlyPendingQuestion
-                            ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
-                                : phase === "disconnected"
-                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
-                    }
-                    disabled={
-                      isConnecting ||
-                      isComposerApprovalState ||
-                      projectSelectionRequired ||
-                      isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
-                    }
-                  />
+                  {activePendingProgress?.activeQuestion?.isSecret ? (
+                    <Input
+                      type="password"
+                      autoComplete="off"
+                      aria-label="Secret answer"
+                      value={activePendingProgress.customAnswer}
+                      disabled={
+                        isConnecting || activePendingIsResponding || isChoiceOnlyPendingQuestion
+                      }
+                      onChange={(event) => {
+                        const value = event.currentTarget.value;
+                        const cursor = event.currentTarget.selectionStart ?? value.length;
+                        onPromptChange(value, cursor, cursor, true, []);
+                      }}
+                      onKeyDown={(event) => {
+                        if (onComposerCommandKey(event.key, event.nativeEvent))
+                          event.preventDefault();
+                      }}
+                    />
+                  ) : (
+                    <ComposerPromptEditor
+                      ariaLabel="Message"
+                      suggestionListId={composerSuggestionListId}
+                      activeSuggestionId={
+                        composerSuggestionListVisible && activeComposerMenuItem
+                          ? composerSuggestionOptionId(
+                              composerSuggestionListId,
+                              activeComposerMenuItem.id,
+                            )
+                          : undefined
+                      }
+                      editorRef={composerEditorRef}
+                      richTextEnabled={settings.composerRichTextEnabled}
+                      literalText={isLiteralPendingAnswer}
+                      isPathQueryActive={() =>
+                        resolveActiveComposerTrigger().trigger?.kind === "path"
+                      }
+                      value={
+                        isComposerApprovalState
+                          ? ""
+                          : activePendingProgress
+                            ? activePendingProgress.customAnswer
+                            : prompt
+                      }
+                      cursor={composerCursor}
+                      contextRecords={composerContextRecords}
+                      buildContextClipboardFragment={buildContextClipboardFragment}
+                      importContextFragment={importContextFragment}
+                      skills={selectedProviderSkills}
+                      containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
+                      className={cn(
+                        showMobilePendingAnswerActions && "max-sm:pb-12",
+                        isComposerResting &&
+                          "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
+                        isComposerApprovalState && "min-h-10",
+                      )}
+                      placeholderClassName={cn(
+                        isComposerResting &&
+                          "flex items-center overflow-hidden whitespace-nowrap leading-8",
+                      )}
+                      onChange={onPromptChange}
+                      onVisibleSelectionChange={expandComposerForEditorChange}
+                      onCommandKeyDown={onComposerCommandKey}
+                      onPageScrollKeyDown={onPageScrollKeyDown}
+                      onPageScrollKeyUp={onPageScrollKeyUp}
+                      onPageScrollRelease={onPageScrollRelease}
+                      onCitationSubmitAndSend={submitCitationAndSend}
+                      onPaste={onComposerPaste}
+                      placeholder={
+                        isComposerApprovalState
+                          ? "Resolve this approval request to continue"
+                          : activePendingProgress
+                            ? isChoiceOnlyPendingQuestion
+                              ? "Choose an option above"
+                              : "Type your own answer, or leave this blank to use the selected option"
+                            : showPlanFollowUpPrompt && activeProposedPlan
+                              ? "Add feedback to refine the plan, or leave this blank to implement it"
+                              : projectSelectionRequired
+                                ? "Choose a project above to start a thread"
+                                : showProviderUnavailable
+                                  ? "Enable a provider in Settings to send a message"
+                                  : phase === "disconnected"
+                                    ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                    : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                      }
+                      disabled={
+                        isConnecting ||
+                        isComposerApprovalState ||
+                        projectSelectionRequired ||
+                        isChoiceOnlyPendingQuestion ||
+                        activePendingIsResponding
+                      }
+                    />
+                  )}
                 </ComposerContextActionsContext>
                 {isComposerResting ? collapsedComposerImagePreviews : null}
                 {showMobilePendingAnswerActions ? (

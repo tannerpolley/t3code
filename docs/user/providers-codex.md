@@ -85,6 +85,11 @@ If you do not want to answer, dismiss the question from its panel. Dismissing
 closes it without sending anything to Codex. This requires a Codex version that
 supports async questions.
 
+Codex native option questions select one answer. When a question permits another
+answer, you can type your own; secret answers are masked while you enter them.
+For questions that need several selections, agents use T3 Code's shared question
+tool when it is available.
+
 ## Approve app access
 
 Codex tools can request access to another app. Respond to the named app's request

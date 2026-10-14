@@ -491,6 +491,8 @@ export const UserInputQuestion = Schema.Struct({
   question: TrimmedNonEmptyStringSchema,
   options: Schema.Array(UserInputQuestionOption),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
+  /** Mask the custom answer while it is being entered. */
+  isSecret: Schema.optional(Schema.Boolean),
   /** Editable initial text. Answers preserve whitespace and allow an empty string when present. */
   initialAnswer: Schema.optional(Schema.String),
   multiSelect: Schema.optional(Schema.Boolean).pipe(

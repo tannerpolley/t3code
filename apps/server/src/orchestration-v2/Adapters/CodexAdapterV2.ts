@@ -622,6 +622,25 @@ function answerValueToStrings(value: unknown): ReadonlyArray<string> {
   return [JSON.stringify(value)];
 }
 
+export function codexUserInputQuestions(
+  questions: ReadonlyArray<CodexSchema.ToolRequestUserInputParams__ToolRequestUserInputQuestion>,
+) {
+  return questions.map((question, index) => ({
+    id: nonEmptyText(question.id, `question-${index + 1}`),
+    header: nonEmptyText(question.header, "Question"),
+    question: nonEmptyText(question.question, "Choose an answer."),
+    options:
+      question.options?.map((option, optionIndex) => ({
+        label: nonEmptyText(option.label, `Option ${optionIndex + 1}`),
+        description: nonEmptyText(option.description, option.label),
+      })) ?? [],
+    multiSelect: false,
+    // A question without options still needs a text answer.
+    allowCustomAnswer: !question.options?.length || question.isOther === true,
+    ...(question.isSecret === undefined ? {} : { isSecret: question.isSecret }),
+  }));
+}
+
 function toCodexUserInputAnswers(
   answers: ProviderUserInputAnswers,
   allowedQuestionIds: ReadonlySet<string>,
@@ -4233,16 +4252,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `Provider thread ${input.context.providerThread.id} is missing a provider session id.`,
               );
             }
-            const questions = input.questions.map((question, index) => ({
-              id: nonEmptyText(question.id, `question-${index + 1}`),
-              header: nonEmptyText(question.header, "Question"),
-              question: nonEmptyText(question.question, "Choose an answer."),
-              options:
-                question.options?.map((option, optionIndex) => ({
-                  label: nonEmptyText(option.label, `Option ${optionIndex + 1}`),
-                  description: nonEmptyText(option.description, option.label),
-                })) ?? [],
-            }));
+            const questions = codexUserInputQuestions(input.questions);
             const nodeId = idAllocator.derive.nodeFromProviderItem({
               driver: CODEX_PROVIDER,
               nativeItemId: input.nativeItemId,
@@ -5099,6 +5109,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 questions: payload.item.questions.map((question, index) => ({
                   id: String(index),
                   header: "Question",
+                  isOther: true,
                   question: question.title,
                   options: (question.options ?? []).map((label) => ({ label, description: "" })),
                 })),
