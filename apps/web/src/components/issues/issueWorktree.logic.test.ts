@@ -1,15 +1,7 @@
 import { EnvironmentId, ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { findIssueProject, issueWorktreeBranchName } from "./issueWorktree.logic";
-
-describe("issueWorktreeBranchName", () => {
-  it("slugs the title into one git-safe segment", () => {
-    expect(issueWorktreeBranchName(42, "Fix: the `Sidebar` / folders!")).toBe(
-      "issue-42-fix-the-sidebar-folders",
-    );
-  });
-});
+import { findIssueProject } from "./issueWorktree.logic";
 
 describe("findIssueProject", () => {
   const environmentId = EnvironmentId.make("local");

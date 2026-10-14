@@ -179,7 +179,7 @@ describe("delegate_task isolation", () => {
           const worktree = harness.createWorktree.mock.calls[0]![0];
           assert.equal(worktree.cwd, "/repo");
           assert.equal(worktree.refName, "parent-local-commit");
-          assert.match(worktree.newRefName ?? "", /^t3\/parser-[0-9a-f]{8}$/);
+          assert.equal(worktree.newRefName, "parser");
           const preparing = yield* threads.getThreadProjection(task.childThreadId);
           assert.equal(preparing.thread.worktreePath, "/repo-worktrees/feature");
           assert.equal(preparing.thread.branch, worktree.newRefName);

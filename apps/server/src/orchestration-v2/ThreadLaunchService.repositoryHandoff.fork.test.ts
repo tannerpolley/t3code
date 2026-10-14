@@ -418,7 +418,7 @@ describe("fresh-thread repository handoff", () => {
         );
         assert.lengthOf(created, 1);
         assert.equal(created[0]!.refName, "trunk");
-        assert.match(created[0]!.newRefName!, /^t3\/issue-9-[0-9a-f]{32}$/);
+        assert.equal(created[0]!.newRefName, "issue-9-issue-9");
         assert.notEqual(created[0]!.newRefName, "trunk");
         assert.equal(yield* store.issueOwner(linked(9)), task.childThreadId);
         const child = yield* threads.getThreadRecords(task.childThreadId, ["runs"]);

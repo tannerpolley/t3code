@@ -3497,8 +3497,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
-    const targetBranch = input.newRefName ?? input.refName;
-    let directoryName = targetBranch;
+    let newRefName = input.newRefName;
+    let directoryName = options?.directoryName ?? newRefName ?? input.refName;
     if (options?.detached) {
       const id = yield* crypto.randomUUIDv4().pipe(
         Effect.mapError(
@@ -3520,15 +3520,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         options?.worktreesDirectory === PROJECT_LOCAL_WORKTREES
           ? (yield* listWorktreePaths(input.cwd))[0]
           : undefined;
-      const resolvedPath = resolveWorktreePath(
-        options?.worktreesDirectory ?? "",
-        worktreesDir,
-        path,
-        yield* HostProcess.HomeDirectory,
-        input.cwd,
-        directoryName,
-        repositoryRoot,
-      );
+      const home = yield* HostProcess.HomeDirectory;
+      const resolve = (name: string) =>
+        resolveWorktreePath(
+          options?.worktreesDirectory ?? "",
+          worktreesDir,
+          path,
+          home,
+          input.cwd,
+          name,
+          repositoryRoot,
+        );
+      let resolvedPath = resolve(directoryName);
+      if (options?.uniqueName && newRefName !== undefined) {
+        const baseDirectory = directoryName;
+        const baseRefName = newRefName;
+        const suffixBranch = options.directoryName === undefined;
+        for (let suffix = 2; resolvedPath !== null; suffix += 1) {
+          const taken =
+            (yield* fileSystem.exists(resolvedPath).pipe(Effect.orElseSucceed(() => false))) ||
+            (suffixBranch && (yield* branchExists(input.cwd, newRefName)));
+          if (!taken) break;
+          // ponytail: linear probe; past 100 copies of one name, let git report the clash.
+          if (suffix > 100) break;
+          directoryName = `${baseDirectory}-${suffix}`;
+          if (suffixBranch) newRefName = `${baseRefName}-${suffix}`;
+          resolvedPath = resolve(directoryName);
+        }
+      }
       if (resolvedPath === null) {
         return yield* new GitCommandError({
           operation: "GitVcsDriver.createWorktree",
@@ -3551,8 +3570,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     const args = options?.detached
       ? ["worktree", "add", "--detach", worktreePath, input.refName]
-      : input.newRefName
-        ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
+      : newRefName
+        ? ["worktree", "add", "-b", newRefName, worktreePath, input.refName]
         : ["worktree", "add", worktreePath, input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
@@ -3657,13 +3676,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    if (input.newRefName && input.baseRefName) {
+    if (newRefName && input.baseRefName) {
       // A checkout can start at a commit or tag, but a PR must target a branch.
       const baseBranch = yield* resolveBranchName(input.cwd, input.baseRefName);
       if (baseBranch) {
         yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
           "config",
-          `branch.${input.newRefName}.gh-merge-base`,
+          `branch.${newRefName}.gh-merge-base`,
           baseBranch,
         ]);
       }
@@ -3672,7 +3691,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return {
       worktree: {
         path: worktreePath,
-        refName: targetBranch,
+        refName: newRefName ?? input.refName,
       },
     };
   });

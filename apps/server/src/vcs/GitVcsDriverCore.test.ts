@@ -3404,6 +3404,38 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("suffixes a unique worktree name past taken branches and folders", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const local = path.join(cwd, ".worktrees");
+        const create = (newRefName: string, directoryName?: string) =>
+          driver.createWorktree(
+            { cwd, path: null, refName: initialBranch, newRefName },
+            {
+              worktreesDirectory: PROJECT_LOCAL_WORKTREES,
+              uniqueName: true,
+              ...(directoryName ? { directoryName } : {}),
+            },
+          );
+        // `issue-7-fix` is a branch without a folder; `issue-7-fix-2` is a stray folder.
+        yield* git(cwd, ["branch", "issue-7-fix"]);
+        yield* fs.makeDirectory(path.join(local, "issue-7-fix-2"), { recursive: true });
+        const created = yield* create("issue-7-fix");
+        assert.equal(created.worktree.refName, "issue-7-fix-3");
+        assert.equal(created.worktree.path, path.join(local, "issue-7-fix-3"));
+        assert.equal((yield* create("issue-7-fix")).worktree.refName, "issue-7-fix-4");
+
+        // A separate folder name is checked only as a folder; the branch stays exact.
+        const temporary = yield* create("t3/deadbeef", "issue-7-fix-3");
+        assert.equal(temporary.worktree.refName, "t3/deadbeef");
+        assert.equal(temporary.worktree.path, path.join(local, "issue-7-fix-3-2"));
+      }),
+    );
+
     it.effect("creates worktrees under the configured worktrees directory", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

@@ -24,7 +24,7 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import { agentWorktreeName } from "@t3tools/shared/git";
 import {
   OrchestratorCommandRejectedError,
   OrchestratorCommandPreviouslyRejectedError,
@@ -437,8 +437,10 @@ export const layer = Layer.effect(
         const baseRef = yield* launch
           .readDefaultBranch({ commandId: command.commandId, projectId: config.projectId })
           .pipe(Effect.mapError(mapError));
-        const suffix = (yield* randomUuidV4).replaceAll("-", "");
-        worktree = { baseRef, branch: `t3/issue-${command.issue.number}-${suffix}` };
+        worktree = {
+          baseRef,
+          branch: agentWorktreeName(command.issue.title, command.issue.number),
+        };
       }
       const dispatched = yield* threads
         .dispatch({

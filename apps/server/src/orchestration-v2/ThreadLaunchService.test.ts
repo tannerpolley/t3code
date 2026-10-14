@@ -909,6 +909,11 @@ it.effect("names the worktree itself when the client provides no branch", () =>
         harness.createWorktree.mock.calls[0]?.[0]?.newRefName ?? "",
         /^t3\/[0-9a-f]{8}$/u,
       );
+      // The folder takes the thread title, not the temporary branch.
+      assert.deepInclude(harness.createWorktree.mock.calls[0]?.[1], {
+        uniqueName: true,
+        directoryName: "new-thread",
+      });
       yield* waitUntil(() =>
         threads
           .getThreadProjection(launched.threadId)

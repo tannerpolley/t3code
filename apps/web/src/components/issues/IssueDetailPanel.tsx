@@ -34,7 +34,8 @@ import { sanitizeNewRefName } from "../BranchToolbar.logic";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useProjects, useThreadShell } from "~/state/entities";
-import { findIssueProject, issueWorktreeBranchName } from "./issueWorktree.logic";
+import { findIssueProject } from "./issueWorktree.logic";
+import { agentWorktreeName } from "@t3tools/shared/git";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
@@ -259,7 +260,7 @@ function StartInWorktree({
   if (branch === null) {
     return (
       <Button
-        onClick={() => setBranch(issueWorktreeBranchName(issue.number, issue.title))}
+        onClick={() => setBranch(agentWorktreeName(issue.title, issue.number))}
         size="xs"
         variant="outline"
       >

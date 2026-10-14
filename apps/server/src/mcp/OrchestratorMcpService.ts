@@ -2192,13 +2192,11 @@ const make = Effect.gen(function* () {
           linkedIssue === undefined
             ? yield* resolveDelegatedWorkspace({
                 task: input,
-                commandId,
                 isRetry: isRetryOfAcceptedDelegation,
                 checkout: requireProject(parent.thread.projectId).pipe(
                   Effect.map((project) => parent.thread.worktreePath ?? project.workspaceRoot),
                 ),
                 gitDriver,
-                crypto,
               })
             : {};
         const withNote = (result: OrchestratorMcpDelegateTaskResult) =>

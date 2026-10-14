@@ -358,6 +358,13 @@ describe("managed issue work", () => {
         taskEvent.event.payload.childThreadId === null
       )
         return yield* Effect.die("No issue worker");
+      // Preparation runs in the background; read the worker once it has its worktree.
+      yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker)
+        .stream(taskEvent.event.payload.childThreadId)
+        .pipe(
+          Stream.filter((snapshot) => snapshot?.phase === "done"),
+          Stream.runHead,
+        );
       const child = yield* threads.getThreadProjection(taskEvent.event.payload.childThreadId);
       assert.deepEqual(child.thread.linkedIssue, issue);
       assert.equal(child.thread.role, "implementor");

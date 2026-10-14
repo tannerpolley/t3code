@@ -160,6 +160,14 @@ export interface CreateWorktreeOptions {
   readonly worktreesDirectory?: string;
   /** Disposable review checkouts use a unique folder without creating a branch. */
   readonly detached?: boolean;
+  /** Folder name when it should differ from the new branch, such as a temporary branch. */
+  readonly directoryName?: string;
+  /**
+   * Add `-2`, `-3`, ... until neither the new branch nor the folder exists. The
+   * suffix goes on the folder, and on the branch unless `directoryName` names
+   * the folder. The result reports the name used.
+   */
+  readonly uniqueName?: boolean;
 }
 
 export interface GitCommitProgress {

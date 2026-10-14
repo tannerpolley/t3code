@@ -32,6 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import {
+  agentWorktreeName,
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
@@ -112,6 +113,8 @@ type PreparationInput = Pick<
    * records the workspace, and a branch rename may still be running.
    */
   readonly reusedWorktree?: { readonly baseRef: string };
+  /** Names the worktree folder when the branch is temporary. */
+  readonly threadTitle?: string;
 };
 
 export interface ThreadLaunchPreparationInput {
@@ -490,6 +493,12 @@ const make = Effect.gen(function* () {
               path: null,
             },
             {
+              // A temporary branch is renamed later, so its folder takes the
+              // thread title instead of the random name.
+              uniqueName: true,
+              ...(isTemporaryWorktreeBranch(branch!) && input.threadTitle
+                ? { directoryName: agentWorktreeName(input.threadTitle) }
+                : {}),
               progress: {
                 onWorktreeClaimed: (path) =>
                   Effect.sync(() => {
@@ -865,6 +874,7 @@ const make = Effect.gen(function* () {
                 },
               }),
           ...reuse,
+          threadTitle: current.thread.title,
         },
         threadId,
         runId,

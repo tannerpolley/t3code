@@ -1,15 +1,12 @@
 import {
-  type CommandId,
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpFailure,
   resolveThreadRole,
   type ThreadRole,
 } from "@t3tools/contracts";
-import { WORKTREE_BRANCH_PREFIX, sanitizeBranchFragment } from "@t3tools/shared/git";
-import type * as Crypto from "effect/Crypto";
+import { agentWorktreeName } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
-import * as Hex from "effect/encoding/Hex";
 import * as Option from "effect/Option";
 
 import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -25,12 +22,10 @@ import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
  */
 export const resolveDelegatedWorkspace = (input: {
   readonly task: OrchestratorMcpDelegateTaskInput;
-  readonly commandId: CommandId;
   readonly isRetry: boolean;
   /** The parent's checkout; resolved only when the child gets a worktree. */
   readonly checkout: Effect.Effect<string, OrchestratorMcpFailure>;
   readonly gitDriver: GitVcsDriver.GitVcsDriver["Service"];
-  readonly crypto: Crypto.Crypto;
 }): Effect.Effect<
   {
     readonly workspaceStrategy?: OrchestrationV2ThreadLaunchWorkspaceStrategy;
@@ -51,11 +46,8 @@ export const resolveDelegatedWorkspace = (input: {
       .resolveCommit({ cwd: yield* input.checkout, revision: "HEAD" })
       .pipe(Effect.option);
     if (Option.isSome(base)) {
-      const digest = yield* input.crypto
-        .digest("SHA-256", new TextEncoder().encode(input.commandId))
-        .pipe(Effect.orDie);
-      // Fixed by the command id so a retry never cuts a second branch.
-      const branch = `${WORKTREE_BRANCH_PREFIX}/${sanitizeBranchFragment((task.title ?? task.task).slice(0, 40))}-${Hex.encode(digest).slice(0, 8)}`;
+      // Provisioning adds `-2`, `-3` when the name is taken.
+      const branch = agentWorktreeName(task.title ?? task.task);
       return {
         workspaceStrategy: {
           type: "worktree",
