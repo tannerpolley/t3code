@@ -1,7 +1,7 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { CornerDownRightIcon, GitBranchIcon } from "lucide-react";
+import { CornerDownRightIcon } from "lucide-react";
 import { useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -43,6 +43,7 @@ import {
   type BackgroundWorkTaskRow,
 } from "./SidebarBackgroundWork.logic";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
+import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type NestedWorkToggle = {
@@ -67,21 +68,6 @@ export type SidebarBackgroundWorkRowsProps = {
     position: { readonly x: number; readonly y: number },
   ) => void;
 };
-
-/**
- * Marks a child thread that works in its own worktree, with the lineage hover card's branch icon.
- * With `name`, hovering the icon names the worktree; without it, the row's own tooltip does.
- */
-export function ChildWorktreeIcon(props: { readonly name?: string }) {
-  const icon = <GitBranchIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />;
-  if (!props.name) return icon;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>{icon}</TooltipTrigger>
-      <TooltipPopup side="right">Worktree: {props.name}</TooltipPopup>
-    </Tooltip>
-  );
-}
 
 /** Subagent and background task rows in the sidebar's shared thread columns. */
 export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps) {
@@ -157,10 +143,8 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           props.columns && row.kind === "subagent" ? (props.nestedToggle?.(row) ?? null) : null;
         const worktree =
           row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
-        // Only the compact layout has a row tooltip to name the worktree; elsewhere the icon does.
-        const worktreeIcon = worktree ? (
-          <ChildWorktreeIcon {...(props.compact ? {} : { name: worktree })} />
-        ) : null;
+        const locationIcon =
+          row.kind === "subagent" && row.child ? <ThreadLocationIcon thread={row.child} /> : null;
         const modelLabel =
           row.kind === "subagent" && row.child
             ? resolveSidebarThreadModelLabel(row.child, provider, shortModelNames)
@@ -180,15 +164,8 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           ) : null;
         const content = props.columns ? (
           <>
-            {/* The worktree mark takes the empty caret slot unless a toggle sits over it. */}
-            {toggle ? (
-              <>
-                <SidebarCaretSlot />
-                {worktreeIcon}
-              </>
-            ) : (
-              <SidebarCaretSlot>{worktreeIcon}</SidebarCaretSlot>
-            )}
+            <SidebarCaretSlot />
+            {locationIcon}
             {icon}
             {modelLabel ? (
               // Gives way before the label, as in the thread row above it.
@@ -206,7 +183,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           </>
         ) : (
           <>
-            {worktreeIcon}
+            {locationIcon}
             {icon}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
             {usage}

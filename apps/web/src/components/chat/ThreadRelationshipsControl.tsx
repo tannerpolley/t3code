@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { ChildWorktreeIcon } from "../sidebar/SidebarBackgroundWorkRows";
+import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { BackgroundWorkTaskList } from "./BackgroundWorkTaskList";
 import {
   childWorktreeLabel,
@@ -769,7 +769,11 @@ export function ThreadRelationshipsPanel(props: {
                   );
                   const relationshipContent = (
                     <>
-                      {worktree ? <ChildWorktreeIcon /> : null}
+                      {node?.thread ? (
+                        <ThreadLocationIcon
+                          thread={{ ...node.thread, environmentId: props.environmentId }}
+                        />
+                      ) : null}
                       <ThreadRelationshipIcon
                         driver={isSubagent && !isParent ? providerDriver : undefined}
                         provider={provider}
