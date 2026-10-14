@@ -14,12 +14,14 @@ import {
   ProviderTurnId,
   ThreadId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import ThreadUsageMigration from "../persistence/ForkMigrations/011_ThreadUsageSummary.ts";
@@ -29,7 +31,10 @@ import {
   deriveThreadUsageSummary,
   backfillThreadUsageCosts,
   refreshThreadUsageSummary,
+  ThreadUsagePricer,
 } from "./ThreadUsageSummary.ts";
+import * as EventSink from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { UsageService, type TokenPricer } from "../usage/UsageService.ts";
@@ -547,42 +552,85 @@ it.layer(layer)("usage recovery and agreement", (it) => {
   );
 });
 
+const usageEvents = (
+  appThread = thread,
+  providerThread = provider,
+  providerTurn = turn,
+): ReadonlyArray<OrchestrationV2DomainEvent> => [
+  {
+    id: EventId.make(`${appThread.id}-created`),
+    type: "thread.created",
+    threadId: appThread.id,
+    occurredAt: now,
+    payload: appThread,
+  },
+  {
+    id: EventId.make(`${appThread.id}-provider`),
+    type: "provider-thread.updated",
+    driver: providerThread.driver,
+    threadId: appThread.id,
+    occurredAt: now,
+    payload: providerThread,
+  },
+  {
+    id: EventId.make(`${appThread.id}-turn`),
+    type: "provider-turn.updated",
+    driver: providerThread.driver,
+    threadId: appThread.id,
+    occurredAt: now,
+    payload: providerTurn,
+  },
+];
 const seedUsage = (appThread = thread, providerThread = provider, providerTurn = turn) =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
-    yield* store.apply({
-      id: EventId.make(`${appThread.id}-created`),
-      type: "thread.created",
-      threadId: appThread.id,
-      occurredAt: now,
-      payload: appThread,
-    });
-    yield* store.apply({
-      id: EventId.make(`${appThread.id}-provider`),
-      type: "provider-thread.updated",
-      driver: providerThread.driver,
-      threadId: appThread.id,
-      occurredAt: now,
-      payload: providerThread,
-    });
-    yield* store.apply({
-      id: EventId.make(`${appThread.id}-turn`),
-      type: "provider-turn.updated",
-      driver: providerThread.driver,
-      threadId: appThread.id,
-      occurredAt: now,
-      payload: providerTurn,
-    });
+    for (const event of usageEvents(appThread, providerThread, providerTurn))
+      yield* store.apply(event);
   });
-const withPricer = (pricer: TokenPricer) =>
-  Effect.provideService(
-    UsageService,
-    UsageService.of({
-      tokenPricer: Effect.succeed(pricer),
-      refreshRates: Effect.die("unused"),
-      readSummary: () => Effect.die("unused"),
+const usageServiceWith = (tokenPricer: UsageService["Service"]["tokenPricer"]) =>
+  UsageService.of({
+    tokenPricer,
+    refreshRates: Effect.die("unused"),
+    readSummary: () => Effect.die("unused"),
+  });
+const withPricer =
+  (pricer: TokenPricer) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(ThreadUsagePricer, pricer),
+      Effect.provideService(UsageService, usageServiceWith(Effect.succeed(pricer))),
+    );
+
+const sinkLayer = EventSink.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
+      Layer.provideMerge(SqlitePersistence.layerMemory),
+    ),
+  ),
+);
+it.layer(sinkLayer)("event writes that refresh usage", (it) => {
+  // Pricing reads settings, whose reload queries the database writer; waiting
+  // for it inside a write transaction deadlocked every write on 2026-10-14.
+  it.effect("price outside the write transaction", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const pricedInTransaction: Array<boolean> = [];
+      const tokenPricer = Effect.serviceOption(sql.transactionService).pipe(
+        Effect.map((transaction): TokenPricer => {
+          pricedInTransaction.push(Option.isSome(transaction));
+          return (_model, totals) => totals.outputTokens / 1000;
+        }),
+      );
+      yield* sink
+        .write({ events: usageEvents(thread, provider, { ...turn, status: "completed" }) })
+        .pipe(Effect.provideService(UsageService, usageServiceWith(tokenPricer)));
+      assert.deepEqual(pricedInTransaction, [false]);
+      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 8);
     }),
   );
+});
 
 it.layer(layer)("thread cost estimates", (it) => {
   it.effect("backfills a completed thread without a new turn and does not persist a percent", () =>

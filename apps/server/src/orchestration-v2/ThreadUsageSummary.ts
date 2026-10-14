@@ -5,6 +5,7 @@ import {
   ProviderTurnId,
   ProviderOptionSelections,
   type ProviderInstanceId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -18,7 +19,7 @@ import {
 } from "@t3tools/shared/model";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { UsageService } from "../usage/UsageService.ts";
+import { UsageService, type TokenPricer } from "../usage/UsageService.ts";
 
 import type {
   OrchestrationV2ProviderThread,
@@ -29,6 +30,18 @@ import type {
 export class DeferThreadUsageSummary extends Context.Reference<boolean>(
   "t3/sidebar/DeferThreadUsageSummary",
   { defaultValue: () => false },
+) {}
+
+/**
+ * Prices the usage summaries a projection write refreshes. Pricing reads
+ * settings and the rate table, which can wait on fibers that need the database
+ * writer, so `withThreadUsagePricer` resolves it before the write transaction
+ * opens. Without one, as in projection replay, a summary keeps its tokens and
+ * the startup backfill adds its cost.
+ */
+export class ThreadUsagePricer extends Context.Reference<TokenPricer | undefined>(
+  "t3/sidebar/ThreadUsagePricer",
+  { defaultValue: () => undefined },
 ) {}
 
 export const StoredThreadUsageSummary = Schema.Struct({
@@ -145,9 +158,7 @@ const refresh = Effect.fnUntraced(function* (threadId: ThreadId) {
     ORDER BY pt.started_at DESC, pt.ordinal DESC, pt.provider_turn_id DESC LIMIT 1
   `;
   const row = rows[0];
-  // Projection replay also runs without pricing services; startup fills those costs once.
-  const usage = yield* Effect.serviceOption(UsageService);
-  const priceTokens = Option.isSome(usage) ? yield* usage.value.tokenPricer : undefined;
+  const priceTokens = yield* ThreadUsagePricer;
   const modelTokens =
     row === undefined || priceTokens === undefined
       ? []
@@ -248,6 +259,32 @@ export const refreshThreadUsageSummary = (threadId: ThreadId) =>
       Effect.logWarning("Skipping unreadable thread usage summary", { threadId }),
     ),
   );
+
+const resolveThreadUsagePricer = Effect.gen(function* () {
+  const usage = yield* Effect.serviceOption(UsageService);
+  if (Option.isNone(usage)) return undefined;
+  return yield* usage.value.tokenPricer.pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Thread usage stays unpriced", { cause }).pipe(Effect.as(undefined)),
+    ),
+  );
+});
+
+/** The projection cases in ProjectionStore that refresh a thread's usage summary. */
+const refreshesThreadUsage = (event: OrchestrationV2DomainEvent) =>
+  event.type === "provider-turn.updated" ||
+  (event.type === "provider-thread.updated" && event.payload.appThreadId !== null);
+
+/** Runs `write`, which takes the database writer, with the pricer its events' usage refreshes need. */
+export const withThreadUsagePricer = <A, E, R>(
+  events: ReadonlyArray<OrchestrationV2DomainEvent>,
+  write: Effect.Effect<A, E, R>,
+) =>
+  events.some(refreshesThreadUsage)
+    ? Effect.flatMap(resolveThreadUsagePricer, (pricer) =>
+        Effect.provideService(write, ThreadUsagePricer, pricer),
+      )
+    : write;
 /** Replay batches materialize once per thread, rather than once per historical turn event. */
 export const refreshAllThreadUsageSummaries = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -265,5 +302,10 @@ export const backfillThreadUsageCosts = Effect.gen(function* () {
     SELECT thread_id FROM orchestration_v2_projection_thread_usage
     WHERE CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.costVersion') END IS NULL
   `;
-  for (const thread of threads) yield* refreshThreadUsageSummary(thread.thread_id);
+  if (threads.length === 0) return;
+  const pricer = yield* resolveThreadUsagePricer;
+  for (const thread of threads)
+    yield* refreshThreadUsageSummary(thread.thread_id).pipe(
+      Effect.provideService(ThreadUsagePricer, pricer),
+    );
 });
