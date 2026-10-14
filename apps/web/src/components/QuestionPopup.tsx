@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import type { RuntimeRequestId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -192,6 +193,15 @@ function QuestionPopupCard({
         {prompt ? (
           <ComposerPendingUserInputPanel
             pendingUserInputs={[prompt]}
+            cwd={
+              project
+                ? projectScriptCwd({
+                    project: { cwd: project.workspaceRoot },
+                    worktreePath: thread?.worktreePath ?? null,
+                  })
+                : undefined
+            }
+            threadRef={threadRef}
             respondingRequestIds={responding || !canRespond ? [requestId] : []}
             answers={answers}
             questionIndex={questionIndex}

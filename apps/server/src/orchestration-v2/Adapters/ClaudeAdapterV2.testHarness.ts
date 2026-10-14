@@ -36,6 +36,12 @@ const CLAUDE_TEST_MODEL_SELECTION = {
   model: "claude-sonnet-4-6",
   options: [{ id: "effort", value: "ultrathink" }],
 } satisfies ModelSelection;
+// Thinking is a launch flag, so switching to this selection needs a new process.
+const CLAUDE_TEST_RESTART_MODEL_SELECTION = {
+  ...CLAUDE_TEST_MODEL_SELECTION,
+  model: "claude-haiku-4-5-20251001",
+  options: [{ id: "thinking", value: false }],
+} satisfies ModelSelection;
 
 const CLAUDE_TEST_RUNTIME_POLICY = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
@@ -209,6 +215,12 @@ const makeResultFrame = (input: {
   readonly apiErrorStatus?: number;
   // null omits the field, as the CLI does on a zero-turn result.
   readonly terminalReason?: SDKResultMessage["terminal_reason"] | null;
+  readonly usage?: {
+    readonly input_tokens: number;
+    readonly output_tokens: number;
+    readonly cache_creation_input_tokens: number;
+    readonly cache_read_input_tokens: number;
+  };
 }) =>
   claudeSdkFrame({
     type: "result",
@@ -220,7 +232,7 @@ const makeResultFrame = (input: {
     result: input.result,
     stop_reason: "end_turn",
     total_cost_usd: 0,
-    usage: {
+    usage: input.usage ?? {
       input_tokens: 1,
       output_tokens: 1,
       cache_creation_input_tokens: 0,
@@ -325,6 +337,8 @@ const makeWakeHarnessWithOptions = (options?: {
     const offeredMessages: Array<SDKUserMessage> = [];
     const stoppedTaskIds: Array<string> = [];
     const permissionModeChanges: Array<string> = [];
+    // setModel and applyFlagSettings calls on the first process, in order.
+    const liveSelectionChanges: Array<unknown> = [];
     const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
       [];
     const continuationReceipts =
@@ -376,6 +390,7 @@ const makeWakeHarnessWithOptions = (options?: {
                     offeredMessages.push(message);
                   }),
                 setModel: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
                 stopTask: options?.stopTask ?? (() => Effect.void),
                 interrupt: Effect.void,
@@ -405,7 +420,14 @@ const makeWakeHarnessWithOptions = (options?: {
                 Effect.sync(() => {
                   offeredMessages.push(message);
                 }),
-              setModel: () => Effect.void,
+              setModel: (model) =>
+                Effect.sync(() => {
+                  liveSelectionChanges.push({ model });
+                }),
+              applyFlagSettings: (settings) =>
+                Effect.sync(() => {
+                  liveSelectionChanges.push(settings);
+                }),
               setPermissionMode: (mode) =>
                 Effect.sync(() => {
                   permissionModeChanges.push(mode);
@@ -485,6 +507,7 @@ const makeWakeHarnessWithOptions = (options?: {
         return uuid;
       },
       permissionModeChanges,
+      liveSelectionChanges,
       stoppedTaskIds,
       continuationRequests,
       continuationReceipts,
@@ -515,6 +538,7 @@ const providerThreadRosterEvents = (
 export {
   awaitUntil,
   CLAUDE_TEST_MODEL_SELECTION,
+  CLAUDE_TEST_RESTART_MODEL_SELECTION,
   CLAUDE_TEST_RUNTIME_POLICY,
   claudeSdkFrame,
   DEFAULT_CLAUDE_SETTINGS,

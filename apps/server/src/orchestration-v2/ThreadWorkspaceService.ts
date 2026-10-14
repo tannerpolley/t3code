@@ -137,7 +137,7 @@ const make = Effect.gen(function* () {
         code: "invalid_request",
         message: `Project workspace '${projectWorkspaceRoot}' is not a git repository.`,
       });
-    const uuid = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const uuid = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     const continuation = yield* bind({
       command: {
         type: "thread.metadata.update",

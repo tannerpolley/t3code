@@ -1,9 +1,10 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it, vi } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   CommandId,
   EnvironmentId,
+  GitCommandError,
   MessageId,
   ProviderDriverKind,
   ThreadId,
@@ -17,6 +18,7 @@ import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcp from "../mcp/OrchestratorMcpService.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import {
@@ -26,7 +28,7 @@ import {
   projectId,
 } from "./ThreadLaunchService.testHarness.ts";
 
-describe("delegate_task workspace", () => {
+describe("delegate_task isolation", () => {
   const parentThreadId = ThreadId.make("thread:delegate-parent");
   const scope: McpInvocationScope = {
     environmentId: EnvironmentId.make("environment:delegate"),
@@ -55,6 +57,29 @@ describe("delegate_task workspace", () => {
     skills: [],
   };
 
+  // The commit the parent's checkout is on; null means it has none (outside git).
+  const checkoutHead = (initial: string | null = "parent-local-commit") => {
+    let head = initial;
+    const resolveCommit = vi.fn((_input: { readonly cwd: string; readonly revision: string }) =>
+      head === null
+        ? Effect.fail(
+            new GitCommandError({
+              operation: "resolveCommit",
+              command: "git",
+              cwd: _input.cwd,
+              detail: "not a git repository",
+            }),
+          )
+        : Effect.succeed({ commitSha: head }),
+    );
+    return {
+      resolveCommit,
+      moveTo: (commit: string | null) => {
+        head = commit;
+      },
+    };
+  };
+
   const withDelegatingParent = <A, E>(
     harness: ReturnType<typeof makeHarness>,
     body: (
@@ -68,6 +93,7 @@ describe("delegate_task workspace", () => {
       branch: "feature/parent",
       worktreePath: "/repo-worktrees/parent",
     },
+    head: ReturnType<typeof checkoutHead> = checkoutHead(),
   ) =>
     Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -106,6 +132,7 @@ describe("delegate_task workspace", () => {
               harness.layer,
               ProviderAdapterRegistry.layerFromAdapters([adapter]),
               NodeCrypto.layer,
+              Layer.mock(GitVcsDriver.GitVcsDriver)({ resolveCommit: head.resolveCommit }),
               Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
               Layer.mock(SecretRequests.SecretRequests)({}),
             ),
@@ -115,10 +142,10 @@ describe("delegate_task workspace", () => {
     );
 
   it.effect.each([
-    { workspace: "worktree" },
+    { isolation: "worktree" },
     { role: "implementation" },
     { role: "implementor" },
-    { role: "checker", workspace: "worktree" },
+    { role: "checker", isolation: "worktree" },
   ] as const)("prepares an isolated child before its first turn (%j)", (workspaceChoice) =>
     Effect.gen(function* () {
       const setupEntered = yield* Deferred.make<string>();
@@ -149,7 +176,7 @@ describe("delegate_task workspace", () => {
           assert.equal(yield* Deferred.await(setupEntered), "/repo-worktrees/feature");
           const worktree = harness.createWorktree.mock.calls[0]![0];
           assert.equal(worktree.cwd, "/repo");
-          assert.equal(worktree.refName, "feature/parent");
+          assert.equal(worktree.refName, "parent-local-commit");
           assert.match(worktree.newRefName ?? "", /^t3\/parser-[0-9a-f]{8}$/);
           const preparing = yield* threads.getThreadProjection(task.childThreadId);
           assert.equal(preparing.thread.worktreePath, "/repo-worktrees/feature");
@@ -186,8 +213,8 @@ describe("delegate_task workspace", () => {
     { role: "reviewer" },
     { role: "investigator" },
     { role: "orchestrator" },
-    { role: "implementation", workspace: "inherit" },
-    { role: "test", workspace: "inherit" },
+    { role: "implementation", isolation: "shared" },
+    { role: "test", isolation: "shared" },
   ] as const)("keeps a child in the parent's checkout (%j)", (workspaceChoice) => {
     const harness = makeHarness({ providers: [codexProvider] });
     return withDelegatingParent(harness, (service) =>
@@ -206,45 +233,14 @@ describe("delegate_task workspace", () => {
     );
   });
 
-  // A thread started in the project root records no branch; its checkout says where it is.
+  // A thread started in the project root records no worktree; the project root is its checkout.
   const rootParent = { branch: null, worktreePath: null };
-  const checkoutStatus = (refName: string | null) => ({
-    isRepo: true,
-    hasPrimaryRemote: false,
-    isDefaultRef: refName === "main",
-    refName,
-    hasWorkingTreeChanges: false,
-    workingTree: { files: [], insertions: 0, deletions: 0 },
-  });
-  const rootCheckoutStatus = (refName: string | null) => () =>
-    Effect.succeed(checkoutStatus(refName));
-  // A checkout whose status is cached until invalidated, like the git service's.
-  const switchableCheckout = (initial: string | null) => {
-    let head = initial;
-    let cached: string | null | undefined;
-    return {
-      localStatus: () =>
-        Effect.sync(() => {
-          if (cached === undefined) cached = head;
-          return checkoutStatus(cached);
-        }),
-      invalidateLocalStatus: () =>
-        Effect.sync(() => {
-          cached = undefined;
-        }),
-      switchTo: (refName: string | null) => {
-        head = refName;
-      },
-    };
-  };
 
   it.effect.each(["implementation", "implementor"] as const)(
-    "cuts a root thread's %s child from the branch its checkout is on",
+    "cuts a root thread's %s child from the commit the project root is on",
     (role) => {
-      const harness = makeHarness({
-        providers: [codexProvider],
-        localStatus: rootCheckoutStatus("main"),
-      });
+      const harness = makeHarness({ providers: [codexProvider] });
+      const head = checkoutHead();
       return withDelegatingParent(
         harness,
         (service) =>
@@ -259,21 +255,19 @@ describe("delegate_task workspace", () => {
               Stream.filter((snapshot) => snapshot?.phase === "done"),
               Stream.runHead,
             );
-            assert.equal(harness.localStatus.mock.calls[0]?.[0]?.cwd, "/repo");
+            assert.deepEqual(head.resolveCommit.mock.calls, [[{ cwd: "/repo", revision: "HEAD" }]]);
             const worktree = harness.createWorktree.mock.calls[0]![0];
             assert.equal(worktree.cwd, "/repo");
-            assert.equal(worktree.refName, "main");
+            assert.equal(worktree.refName, "parent-local-commit");
           }),
         rootParent,
+        head,
       );
     },
   );
 
-  it.effect("keeps a defaulted child in a detached checkout and says so", () => {
-    const harness = makeHarness({
-      providers: [codexProvider],
-      localStatus: rootCheckoutStatus(null),
-    });
+  it.effect("keeps a defaulted child in a checkout without a commit and says so", () => {
+    const harness = makeHarness({ providers: [codexProvider] });
     return withDelegatingParent(
       harness,
       (service) =>
@@ -290,57 +284,32 @@ describe("delegate_task workspace", () => {
           assert.equal(child.runs[0]?.status, "starting");
         }),
       rootParent,
+      checkoutHead(null),
     );
   });
 
-  it.effect("rejects an explicit worktree from a detached checkout", () => {
-    const harness = makeHarness({
-      providers: [codexProvider],
-      localStatus: rootCheckoutStatus(null),
-    });
+  it.effect("rejects an explicit worktree from a checkout without a commit", () => {
+    const harness = makeHarness({ providers: [codexProvider] });
     return withDelegatingParent(
       harness,
       (service) =>
         Effect.gen(function* () {
           const error = yield* service
-            .delegateTask(scope, { task: "Implement the parser", workspace: "worktree" })
+            .delegateTask(scope, { task: "Implement the parser", isolation: "worktree" })
             .pipe(Effect.flip);
           assert.equal(error.code, "invalid_request");
-          assert.include(error.message, "detached HEAD");
+          assert.equal(error.message, "Unable to resolve the parent checkout commit.");
         }),
       rootParent,
+      checkoutHead(null),
     );
   });
 
-  it.effect("cuts the child from a branch switched to just before delegating", () => {
-    const checkout = switchableCheckout("main");
-    const harness = makeHarness({ providers: [codexProvider], ...checkout });
-    return withDelegatingParent(
-      harness,
-      (service) =>
-        Effect.gen(function* () {
-          const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-          yield* harness.localStatus({ cwd: "/repo" });
-          checkout.switchTo("feature/switched");
-          const task = yield* service.delegateTask(scope, {
-            task: "Implement the parser",
-            role: "implementation",
-          });
-          yield* tracker.stream(task.childThreadId).pipe(
-            Stream.filter((snapshot) => snapshot?.phase === "done"),
-            Stream.runHead,
-          );
-          assert.equal(harness.createWorktree.mock.calls[0]![0].refName, "feature/switched");
-        }),
-      rootParent,
-    );
-  });
-
-  it.effect.each([{ role: "implementation" }, { workspace: "worktree" }] as const)(
-    "keeps an accepted worktree child when a retry finds the checkout detached (%j)",
+  it.effect.each([{ role: "implementation" }, { isolation: "worktree" }] as const)(
+    "keeps an accepted worktree child when a retry finds no commit (%j)",
     (workspaceChoice) => {
-      const checkout = switchableCheckout("main");
-      const harness = makeHarness({ providers: [codexProvider], ...checkout });
+      const harness = makeHarness({ providers: [codexProvider] });
+      const head = checkoutHead();
       return withDelegatingParent(
         harness,
         (service) =>
@@ -356,7 +325,7 @@ describe("delegate_task workspace", () => {
               Stream.filter((snapshot) => snapshot?.phase === "done"),
               Stream.runHead,
             );
-            checkout.switchTo(null);
+            head.moveTo(null);
             const retried = yield* service.delegateTask(scope, request);
             assert.equal(retried.taskId, task.taskId);
             assert.isUndefined(retried.workspaceNote);
@@ -364,6 +333,7 @@ describe("delegate_task workspace", () => {
             assert.equal(harness.createWorktree.mock.calls.length, 1);
           }),
         rootParent,
+        head,
       );
     },
   );

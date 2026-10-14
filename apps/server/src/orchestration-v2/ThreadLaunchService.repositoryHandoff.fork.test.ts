@@ -37,6 +37,7 @@ import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as OrchestratorMcp from "../mcp/OrchestratorMcpService.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -240,6 +241,8 @@ describe("fresh-thread repository handoff", () => {
       ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
       Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
       Layer.mock(SecretRequests.SecretRequests)({}),
+      // Managed issue workers never read the caller's checkout commit.
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     );
     const { wrapStore } = options;
     const service = IssueWorkService.layer.pipe(
@@ -370,8 +373,8 @@ describe("fresh-thread repository handoff", () => {
     );
 
   const originalLeadId = ThreadId.make("original-existing-lead");
-  it.effect.each([{}, { workspace: "inherit" }, { workspace: "worktree" }] as const)(
-    "delegate_task starts an unstarted issue in the repository worktree regardless of caller workspace (%j)",
+  it.effect.each([{}, { isolation: "shared" }, { isolation: "worktree" }] as const)(
+    "delegate_task starts an unstarted issue in the repository worktree regardless of caller isolation (%j)",
     (choice) => {
       const created: Array<
         Parameters<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]>[0]

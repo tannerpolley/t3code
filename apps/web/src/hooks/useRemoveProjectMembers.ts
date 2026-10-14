@@ -14,7 +14,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { releaseProjectDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import type { SidebarProjectGroupMember, SidebarProjectSnapshot } from "../sidebarProjectGrouping";
-import { useThreadShells } from "../state/entities";
+import { useThreadShells, waitForProjectRemoval } from "../state/entities";
 import { projectEnvironment } from "../state/projects";
 import { readEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -109,6 +109,7 @@ export function useRemoveProjectMembers(): (input: RemoveProjectMembersInput) =>
           return;
         }
         const projectRef = scopeProjectRef(member.environmentId, member.id);
+        await waitForProjectRemoval(projectRef);
         releaseProjectDraftUploads(
           projectRef,
           memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),

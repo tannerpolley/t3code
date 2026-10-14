@@ -840,7 +840,15 @@ it.effect(
             runtimeMode: "full-access",
             interactionMode: "default",
             completionWake: "always",
-            ...(withWorktree ? { worktree: { baseRef: "main", branch: "issue-worker" } } : {}),
+            ...(withWorktree
+              ? {
+                  workspaceStrategy: {
+                    type: "worktree" as const,
+                    baseRef: "main",
+                    branch: "issue-worker",
+                  },
+                }
+              : {}),
             createdBy: "agent",
             creationSource: "mcp",
           });
@@ -1399,11 +1407,7 @@ it.effect.each(["reactor-first", "retry-first"] as const)(
           threadId: launched.threadId,
           runId: failed.runs[0]!.id,
         };
-        const recover = launches.prepareDeferredRun({
-          ...retry,
-          projectId,
-          workspaceStrategy: failed.runs[0]!.workspacePreparation!,
-        });
+        const recover = launches.prepareRun(retry);
         if (order === "reactor-first") {
           yield* threads.dispatch({ type: "prepared-run.retry", ...retry });
           yield* recover;

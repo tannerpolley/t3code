@@ -155,7 +155,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         assert.deepEqual(
           plans.map((plan) => plan.status),
-          ["draft", "draft", "active", "superseded", "active", "draft", "superseded"],
+          // The delta flushes with the completion, so it adds no draft of its own.
+          ["draft", "active", "superseded", "active", "draft", "superseded"],
         );
         const items = harness.events.flatMap((event) =>
           event.type === "turn_item.updated" && event.turnItem.type === "proposed_plan"

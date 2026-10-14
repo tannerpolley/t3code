@@ -38,6 +38,7 @@ import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failu
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { threadDispatchLockKey } from "./IssueWorkDispatch.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
+import { boundFileChangeForStorage } from "./WireProjection.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -634,6 +635,9 @@ export const layer: Layer.Layer<
               }),
             ];
           case "node.updated":
+            // Adapters send an unchanged node again with each text delta. Compare with the
+            // stored node, not the last one sent, because the server also writes nodes.
+            if (yield* projections.isNodeStored(input.event.node)) return [];
             return [
               yield* makeDomainEvent(input, {
                 type: "node.updated",
@@ -668,7 +672,9 @@ export const layer: Layer.Layer<
               yield* makeDomainEvent(input, {
                 type: "turn-item.updated",
                 threadId: input.event.turnItem.threadId,
-                payload: stripUnservedToolOutputImageBytes(input.event.turnItem),
+                payload: boundFileChangeForStorage(
+                  stripUnservedToolOutputImageBytes(input.event.turnItem),
+                ),
                 runId: input.event.turnItem.runId,
                 nodeId: input.event.turnItem.nodeId,
               }),

@@ -67,6 +67,7 @@ describe("ClaudeAdapterV2 fetched model catalog", () => {
                   offer: () => Effect.void,
                   stopTask: () => Effect.void,
                   setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
                   setPermissionMode: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,

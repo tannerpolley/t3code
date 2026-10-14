@@ -30,6 +30,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import {
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
@@ -113,7 +114,7 @@ type PreparationInput = Pick<
   readonly reusedWorktree?: { readonly baseRef: string };
 };
 
-export interface ThreadLaunchRetryInput {
+export interface ThreadLaunchPreparationInput {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
   readonly runId: RunId;
@@ -185,18 +186,6 @@ export class ThreadLaunchService extends Context.Service<
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
     ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
     /**
-     * Prepares the workspace of a run its caller already created with
-     * `defer_start`, then releases the run, exactly as `launch` does. A run
-     * that is no longer preparing, or whose preparation is already in flight,
-     * is left alone, so retries are safe.
-     */
-    readonly prepareDeferredRun: (
-      input: Pick<PreparationInput, "commandId" | "projectId" | "workspaceStrategy"> & {
-        readonly threadId: ThreadId;
-        readonly runId: RunId;
-      },
-    ) => Effect.Effect<void, ThreadLaunchError>;
-    /**
      * The branch a thread's checkout is on right now: its worktree, else the
      * project root. Null on a detached HEAD or outside git.
      */
@@ -210,13 +199,20 @@ export class ThreadLaunchService extends Context.Service<
       readonly projectId: ProjectId;
     }) => Effect.Effect<string, ThreadLaunchError>;
     /** Dispatches prepared-run.retry and prepares the run's workspace again. */
-    readonly retryPreparation: (input: ThreadLaunchRetryInput) => Effect.Effect<
+    readonly retryPreparation: (input: ThreadLaunchPreparationInput) => Effect.Effect<
       Orchestrator.OrchestratorV2DispatchResult,
       // Dispatches prepared-run.retry, a command the enablement chokepoint
       // never gates; the type stays accurate anyway.
       | Orchestrator.OrchestratorV2Error
       | ThreadManagement.ThreadManagementProviderInstanceDisabledError
     >;
+    /**
+     * Prepares the workspace of a run its caller already created with
+     * `defer_start`, then releases the run, exactly as `launch` does. A run
+     * that is no longer preparing, or whose preparation is already in flight,
+     * is left alone, so retries are safe. A failure fails the run.
+     */
+    readonly prepareRun: (input: ThreadLaunchPreparationInput) => Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
@@ -351,6 +347,7 @@ const make = Effect.gen(function* () {
     let createdWorktreePath: string | null = null;
     let setupTerminalId: string | null = null;
     let workspaceRecorded = false;
+    let runReleased = false;
     if (input.workspaceStrategy.type === "worktree") {
       yield* setupTracker.begin({
         threadId,
@@ -657,7 +654,15 @@ const make = Effect.gen(function* () {
             threadId,
             runId,
           })
-          .pipe(Effect.mapError(mapError(input, "release-run", threadId)));
+          .pipe(
+            Effect.mapError(mapError(input, "release-run", threadId)),
+            Effect.tap(() =>
+              Effect.sync(() => {
+                runReleased = true;
+              }),
+            ),
+            Effect.uninterruptible,
+          );
       }
       yield* setupTracker.stageStatus(threadId, "agent", "done");
       yield* awaitAsyncSetup;
@@ -671,14 +676,15 @@ const make = Effect.gen(function* () {
             cancelled ? "cancelled" : "failed",
             cancelled ? null : failureDetail(Cause.squash(cause)),
           );
-          // A cancelled setup leaves nothing behind. A failed one keeps a worktree
-          // the thread recorded, so a retry reuses it, and removes one it never
-          // recorded, which a retry would otherwise duplicate.
-          if (tracked && createdWorktreePath && (cancelled || !workspaceRecorded)) {
-            if (setupTerminalId)
-              yield* terminals
-                .close({ threadId, terminalId: setupTerminalId, deleteHistory: true })
-                .pipe(Effect.ignore);
+          if (cancelled && setupTerminalId)
+            yield* terminals
+              .close({ threadId, terminalId: setupTerminalId, deleteHistory: true })
+              .pipe(Effect.ignore);
+          if (
+            tracked &&
+            createdWorktreePath &&
+            ((cancelled && !runReleased) || !workspaceRecorded)
+          ) {
             const removedPath = createdWorktreePath;
             // The thread forgets the worktree only once it is gone; a failed
             // removal leaves the directory for the user to clean up rather than
@@ -768,7 +774,33 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     runId: RunId | null,
   ) {
-    yield* prepareInBackground(input, threadId, runId).pipe(
+    const preparation = Effect.gen(function* () {
+      const prepare = prepareInBackground(input, threadId, runId);
+      if (
+        runId === null ||
+        (input.workspaceStrategy.type !== "worktree" && input.reusedWorktree === undefined)
+      ) {
+        return yield* prepare;
+      }
+      const afterSequence = yield* threads.getThreadEventSequence(threadId);
+      const projection = yield* threads.getThreadRecords(threadId, ["runs"]);
+      if (projection.runs.find((run) => run.id === runId)?.status !== "preparing") return;
+      const interruption = threads
+        .streamStoredEventsFrom({ threadId, afterSequence, eventType: "run.updated" })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.id === runId &&
+              (stored.event.payload.status === "interrupted" ||
+                stored.event.payload.status === "cancelled"),
+          ),
+          Stream.runHead,
+          Effect.flatMap((event) => (Option.isSome(event) ? Effect.interrupt : Effect.never)),
+        );
+      yield* Effect.raceFirst(prepare, interruption);
+    });
+    yield* preparation.pipe(
       Effect.onError((cause) =>
         failPreparedRun(
           input,
@@ -1056,19 +1088,9 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const retryPreparation: ThreadLaunchService["Service"]["retryPreparation"] = Effect.fn(
-    "ThreadLaunchService.retryPreparation",
+  const prepareRun: ThreadLaunchService["Service"]["prepareRun"] = Effect.fn(
+    "ThreadLaunchService.prepareRun",
   )(function* (input) {
-    const dispatched = yield* threads.dispatch({
-      type: "prepared-run.retry",
-      commandId: input.commandId,
-      threadId: input.threadId,
-      runId: input.runId,
-    });
-    // A replayed retry finds the run already past preparation, or prepared by
-    // the attempt that first reserved this command.
-    // From here the run is preparing again; anything that stops preparation
-    // from being scheduled must fail it, or it would wait in preparing forever.
     const scheduled = yield* Effect.gen(function* () {
       const projection = yield* threads.getThreadRecords(input.threadId, ["runs"], {
         runIds: [input.runId],
@@ -1089,6 +1111,18 @@ const make = Effect.gen(function* () {
     if (Exit.isFailure(scheduled)) {
       yield* failPreparedRun(input, input.threadId, input.runId, Cause.squash(scheduled.cause));
     }
+  });
+
+  const retryPreparation: ThreadLaunchService["Service"]["retryPreparation"] = Effect.fn(
+    "ThreadLaunchService.retryPreparation",
+  )(function* (input) {
+    const dispatched = yield* threads.dispatch({
+      type: "prepared-run.retry",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      runId: input.runId,
+    });
+    yield* prepareRun(input);
     return dispatched;
   });
 
@@ -1118,7 +1152,6 @@ const make = Effect.gen(function* () {
   return ThreadLaunchService.of({
     launch,
     checkWorktreeBase,
-    prepareDeferredRun: (input) => ensurePreparation(input, input.threadId, input.runId),
     readCheckoutBranch,
     readDefaultBranch: Effect.fn("ThreadLaunchService.readDefaultBranch")(function* (input) {
       const project = yield* projects
@@ -1131,6 +1164,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(mapError(input, "read-branch")));
     }),
     retryPreparation,
+    prepareRun,
   });
 });
 

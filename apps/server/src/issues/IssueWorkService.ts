@@ -447,7 +447,7 @@ export const layer = Layer.effect(
             ? {}
             : command.type === "issue.work.start"
               ? { issueWorktree: worktree }
-              : { worktree }),
+              : { workspaceStrategy: { type: "worktree" as const, ...worktree } }),
         })
         .pipe(
           Effect.mapError((cause) => (isProviderDisabledError(cause) ? cause : mapError(cause))),
@@ -464,15 +464,11 @@ export const layer = Layer.effect(
             candidate.status === "preparing" && candidate.workspacePreparation !== undefined,
         );
         if (run?.workspacePreparation !== undefined)
-          yield* launch
-            .prepareDeferredRun({
-              commandId: run.workspacePreparationCommandId ?? command.commandId,
-              projectId: config.projectId,
-              threadId: child.thread.id,
-              runId: run.id,
-              workspaceStrategy: run.workspacePreparation,
-            })
-            .pipe(Effect.mapError(mapError));
+          yield* launch.prepareRun({
+            commandId: run.workspacePreparationCommandId ?? command.commandId,
+            threadId: child.thread.id,
+            runId: run.id,
+          });
       }
       return dispatched;
     });
@@ -772,16 +768,12 @@ export const layer = Layer.effect(
             .getThreadRecords(threadId, ["runs"], { runIds: [shell.activeRunId] })
             .pipe(Effect.mapError(mapError))).runs[0];
           if (run?.status === "preparing" && run.workspacePreparation !== undefined)
-            yield* launch
-              .prepareDeferredRun({
-                commandId:
-                  run.workspacePreparationCommandId ?? CommandId.make(`issue-prepare:${run.id}`),
-                projectId: shell.projectId,
-                threadId,
-                runId: run.id,
-                workspaceStrategy: run.workspacePreparation,
-              })
-              .pipe(Effect.mapError(mapError));
+            yield* launch.prepareRun({
+              commandId:
+                run.workspacePreparationCommandId ?? CommandId.make(`issue-prepare:${run.id}`),
+              threadId,
+              runId: run.id,
+            });
         }
         if (draining) return yield* drainHandoff(rootThreadId);
         // Once an ancestor has a durable thread, deliver its selected sub-issues there.

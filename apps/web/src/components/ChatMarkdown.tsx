@@ -71,6 +71,7 @@ import {
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
+import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -114,7 +115,7 @@ import {
 } from "../markdown-math";
 import {
   artifactTemplateFromHastProperties,
-  renderCodexFileCitationsAsMarkdown,
+  renderCodexInlineDirectivesAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { markdownImageUnavailableLabel } from "./markdownImageState";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
@@ -1332,13 +1333,15 @@ function expandableMarkdownImageProps(
 function ChatMarkdownMediaUnavailableLabel(props: {
   readonly alt: string;
   readonly kind?: "image" | "video" | undefined;
+  /** Why the media is unavailable, when the cause is known. */
+  readonly detail?: string | undefined;
 }) {
   const label = props.kind === "video" ? "Video unavailable" : "Image unavailable";
   return (
     // Find indexes no image text, so this fallback must not highlight either.
     <span data-thread-find-ignore className="inline-flex items-center gap-1.5">
       <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-      {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
+      {[label, props.alt, props.detail].filter(Boolean).join(" · ")}
     </span>
   );
 }
@@ -1652,7 +1655,12 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   const unavailableLabel = markdownImageUnavailableLabel({
     path: path ?? props.originalUrl ?? props.alt,
     sourceFailed: assetUrl._tag === "Failure" && fallbackSrc === undefined,
-    reason: assetUrl._tag === "Failure" ? assetUrl.reason : undefined,
+    reason:
+      assetUrl._tag !== "Failure"
+        ? undefined
+        : assetUrl.reason === "missing-file-access"
+          ? MISSING_FILE_ACCESS_MESSAGE
+          : assetUrl.reason,
     kind: props.kind,
   });
   if (unavailableLabel) {
@@ -2451,7 +2459,7 @@ function useChatMarkdownState({
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
-    for (const href of extractMarkdownLinkHrefs(renderCodexFileCitationsAsMarkdown(text))) {
+    for (const href of extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))) {
       if (parseComposerContextHref(href)) continue;
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;

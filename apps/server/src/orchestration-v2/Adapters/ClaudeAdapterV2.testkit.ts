@@ -246,6 +246,12 @@ type ClaudeOutboundFrame =
   | ClaudeQueryOpenFrame
   | ClaudePromptOfferFrame
   | ClaudeQuerySetModelFrame
+  | {
+      readonly type: "query.apply_flag_settings";
+      readonly settings: Parameters<
+        ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"]
+      >[0];
+    }
   | ClaudeQuerySetPermissionModeFrame
   | { readonly type: "query.stop_task"; readonly taskId: string }
   | ClaudeQueryInterruptFrame
@@ -818,6 +824,13 @@ function makeReplayQueryRunner(
             assertNextOutboundFrame({
               type: "query.set_model",
               model,
+            });
+          }),
+        applyFlagSettings: (settings) =>
+          replayEffect(() => {
+            assertNextOutboundFrame({
+              type: "query.apply_flag_settings",
+              settings,
             });
           }),
         setPermissionMode: (mode) =>
@@ -1593,7 +1606,7 @@ async function recordClaudeStreamingQuery(input: {
         text: prompt,
         uuid: await Effect.runPromise(
           Crypto.Crypto.pipe(
-            Effect.flatMap((crypto) => crypto.randomUUIDv4),
+            Effect.flatMap((crypto) => crypto.randomUUIDv4()),
             Effect.filterOrFail(ClaudeAdapterV2.isClaudePromptUuid),
             Effect.provide(NodeServices.layer),
           ),

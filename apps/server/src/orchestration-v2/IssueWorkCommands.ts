@@ -217,7 +217,9 @@ export function makeIssueWorkCommands({
         runtimeMode: recipient.runtimeMode,
         interactionMode: recipient.interactionMode,
         completionWake: "always",
-        ...(command.issueWorktree === undefined ? {} : { worktree: command.issueWorktree }),
+        ...(command.issueWorktree === undefined
+          ? {}
+          : { workspaceStrategy: { type: "worktree" as const, ...command.issueWorktree } }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
       },
@@ -369,11 +371,11 @@ export function makeIssueWorkCommands({
   // A child with its own worktree has no checkout until its deferred run's
   // preparation binds one; it never borrows the parent's.
   const childWorkspaceFields = (request: DelegatedTaskRequest) =>
-    request.worktree === undefined
+    request.workspaceStrategy === undefined
       ? request.issue === undefined
         ? {}
         : { branch: null, worktreePath: null }
-      : { branch: request.worktree.branch, worktreePath: null };
+      : { branch: request.workspaceStrategy.branch ?? null, worktreePath: null };
 
   const cancel = (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "issue.work.cancel" }>,

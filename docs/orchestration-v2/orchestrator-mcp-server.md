@@ -227,7 +227,7 @@ type DelegateTaskInput = {
   clientRequestId?: string;
   runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
   interactionMode?: "inherit" | "plan" | "default";
-  workspace?: "inherit" | "worktree";
+  isolation?: "shared" | "worktree";
 };
 ```
 
@@ -253,24 +253,25 @@ a distinct `clientRequestId` per round, stable across retries of that round.
 conversations; it does not reopen a completed task. There is no task-level follow-up
 API for preserving the same reviewer session.
 
-An `inherit` child works in the parent's checkout. A `worktree` child gets its
+A `shared` child works in the parent's checkout. A `worktree` child gets its
 own worktree, for children that edit code in parallel: its first run starts in
 `preparing`, and the same preparation `t3_thread_launch` uses creates a branch
-from the parent's branch (or, for a thread in the project root, the branch its
-checkout is on; local commits only), binds the child, runs the project's setup
-script, and releases the run. Only `implementor` defaults to `worktree`;
-Orchestrator, Reviewer, Investigator and Checker inherit the caller's checkout.
-Checker reviews the builder's existing checkout. Explicit `workspace` overrides
-the role default. Legacy role names remain accepted: `implementation` maps to
-Implementor, `research`/`design` to Investigator, `review` to Reviewer, and `test`
-to Checker. Legacy `general` maps to Implementor but keeps its inherited
-workspace default. Implementor has Fast and Thorough model profiles; pass a
-profile's Target JSON as `target` and `implementor` as `role`. Without a branch, a defaulted
-worktree falls back to `inherit` with a `workspaceNote`, and an explicit one
-fails. The branch name derives from the title and the delegate command id, so a
-retry with the same `clientRequestId` keeps the accepted decision. A preparation
-failure fails the child's run, which the user can retry. Nothing merges the
-branch back or removes the worktree automatically.
+from the commit the parent's checkout is on (local commits only; uncommitted
+edits are not copied), binds the child, runs the project's setup script, and
+releases the run. Only `implementor` defaults to `worktree`; Orchestrator,
+Reviewer, Investigator and Checker share the caller's checkout. Checker reviews
+the builder's existing checkout. Explicit `isolation` overrides the role
+default. Legacy role names remain accepted: `implementation` maps to
+Implementor, `research`/`design` to Investigator, `review` to Reviewer, and
+`test` to Checker. Legacy `general` maps to Implementor but keeps the shared
+default. Implementor has Fast and Thorough model profiles; pass a profile's
+Target JSON as `target` and `implementor` as `role`. When the checkout has no
+commit to branch from, a defaulted worktree falls back to `shared` with a
+`workspaceNote`, and an explicit one fails. The branch name derives from the
+title and the delegate command id, so a retry with the same `clientRequestId`
+keeps the accepted decision. A preparation failure fails the child's run,
+which the user can retry. Nothing merges the branch back or removes the
+worktree automatically.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command

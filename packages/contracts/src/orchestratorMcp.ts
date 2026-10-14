@@ -181,6 +181,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     description:
       "Thread role: orchestrator, implementor, reviewer, investigator or checker. Legacy role names remain accepted. Fast and Thorough Implementor profiles select model targets, not separate thread roles.",
   }),
+  isolation: Schema.optional(
+    Schema.Literals(["shared", "worktree"]).annotate({
+      description:
+        "Managed issue workers always get a new issue worktree cut from the default branch; this argument applies only to other tasks. For other tasks, defaults to worktree for Implementor and shared for Orchestrator, Reviewer, Investigator and Checker; legacy general also shares. shared keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's current local commit (uncommitted edits are not copied), with the project's setup script run before the child starts. Explicit isolation always overrides the role default.",
+    }),
+  ),
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:
@@ -192,14 +198,13 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
       "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-  runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
-  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
-  workspace: Schema.optional(
-    Schema.Literals(["inherit", "worktree"]).annotate({
+  runtimeMode: Schema.optional(
+    OrchestratorMcpRuntimeMode.annotate({
       description:
-        "Managed issue workers always get a new issue worktree cut from the default branch; this argument applies only to other tasks. For other tasks, defaults to worktree for Implementor, inherit for Orchestrator, Reviewer, Investigator and Checker. Legacy general also inherits. inherit keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's branch, or the branch its checkout is on (local commits; uncommitted changes are not copied), with the project's setup script run before the child starts. Explicit workspace always overrides the role default.",
+        "Defaults to inherit; omit it unless the user asks for a supervised child. A narrower mode is not a read-only switch: on most providers, approval-required and auto-accept-edits pause the child at each action that needs approval until a person approves it in the child's thread, which this thread cannot do. To limit what the child does, say so in the task. A mode ranked above this thread's is rejected; that ranking does not promise the child's provider permissions are narrower than this thread's.",
     }),
   ),
+  interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
@@ -223,7 +228,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     .pipe(Schema.withDecodingDefault(Effect.succeed(null)))
     .annotate({
       description:
-        "The child's checkout; null means the project root. A workspace=worktree child reports null until its worktree is ready.",
+        "The child's checkout; null means the project root. An isolation=worktree child reports null until its worktree is ready.",
     }),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
