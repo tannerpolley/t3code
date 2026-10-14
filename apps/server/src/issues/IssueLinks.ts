@@ -15,7 +15,8 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
-import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import { legacyThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
+import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const key = (issue: IssueRef) =>
   `${issue.host.toLowerCase()}/${issue.repository.toLowerCase()}#${issue.number}`;
@@ -105,43 +106,16 @@ const make = Effect.gen(function* () {
     const candidates =
       issueNumbers.length === 0
         ? []
-        : yield* sql<{ thread_id: string }>`
-      WITH RECURSIVE linked(thread_id) AS (
-        SELECT t.thread_id FROM orchestration_v2_projection_threads t
-        WHERE t.deleted_at IS NULL AND t.archived_at IS NULL AND (
-          t.thread_id IN ${sql.in(rows.filter((row) => issueNumbers.includes(row.issue_number)).map((row) => row.thread_id))}
-          OR (
-            lower(json_extract(t.payload_json, '$.linkedIssue.host')) = ${host}
-            AND lower(json_extract(t.payload_json, '$.linkedIssue.repository')) = ${repository}
-            AND json_extract(t.payload_json, '$.linkedIssue.number') IN ${sql.in(issueNumbers)}
-          )
-          ${
-            prRefs.length === 0
-              ? sql``
-              : sql`OR EXISTS (
-            SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') pr
-            JOIN json_each(${prRefsJson}) ref
-              ON lower(json_extract(pr.value, '$.host')) = lower(json_extract(ref.value, '$.host'))
-              AND lower(json_extract(pr.value, '$.repository')) = lower(json_extract(ref.value, '$.repository'))
-              AND json_extract(pr.value, '$.number') = json_extract(ref.value, '$.number')
-            WHERE json_extract(pr.value, '$.source') IS NOT 'stack-dismissed'
-          ) OR (
-            json_extract(t.payload_json, '$.pullRequests') IS NULL AND EXISTS (
-              SELECT 1 FROM json_each(${prRefsJson}) ref
-              WHERE lower(json_extract(t.payload_json, '$.linkedPullRequest.repository')) = lower(json_extract(ref.value, '$.repository'))
-                AND lower(json_extract(t.payload_json, '$.linkedPullRequest.url')) LIKE 'https://' || lower(json_extract(ref.value, '$.host')) || '/%'
-                AND json_extract(t.payload_json, '$.linkedPullRequest.number') = json_extract(ref.value, '$.number')
-            )
-          )`
-          }
-        )
-        UNION
-        SELECT child.thread_id FROM orchestration_v2_projection_threads child
-        JOIN linked ON json_extract(child.payload_json, '$.lineage.parentThreadId') = linked.thread_id
-        WHERE child.deleted_at IS NULL AND child.archived_at IS NULL
-      )
-      SELECT thread_id FROM linked ORDER BY thread_id
-    `.pipe(Effect.mapError(storageError));
+        : yield* issueWorkThreadIds(
+            sql,
+            list.repository,
+            issueNumbers,
+            rows
+              .filter((row) => issueNumbers.includes(row.issue_number))
+              .map((row) => row.thread_id),
+            prRefsJson,
+            prRefs.length > 0,
+          ).pipe(Effect.mapError(storageError));
     const shells = yield* Effect.forEach(candidates, ({ thread_id }) =>
       projections.getThreadShell(ThreadId.make(thread_id)),
     ).pipe(Effect.mapError(storageError));
@@ -165,15 +139,29 @@ const make = Effect.gen(function* () {
         refs.add(issue.number);
         issuesByPr.set(key(pr), refs);
       }
+    // Shells may expose observed PR arrays instead of the legacy owned link. Read the owned
+    // link from the selected projection rows; observed PRs must never associate issue work.
+    const ownedPrByThread = new Map(
+      candidates.flatMap((row) =>
+        row.pr_repository === null || row.pr_number === null || row.pr_url === null
+          ? []
+          : [
+              [
+                row.thread_id,
+                { repository: row.pr_repository, number: row.pr_number, url: row.pr_url },
+              ] as const,
+            ],
+      ),
+    );
     for (const thread of threads) {
       if (thread.linkedIssue !== undefined) {
         const number = issues.get(key(thread.linkedIssue));
         if (number !== undefined) add(thread.id, number);
       }
-      for (const pr of threadPullRequestsOf(thread)) {
-        if (pr.source === "stack-dismissed") continue;
-        for (const number of issuesByPr.get(key(pr)) ?? []) add(thread.id, number);
-      }
+      const pr = ownedPrByThread.get(thread.id);
+      if (pr !== undefined)
+        for (const number of issuesByPr.get(key(legacyThreadPullRequestKey(pr))) ?? [])
+          add(thread.id, number);
     }
     // Delegated and native child shells inherit associations from their ancestors. A visited set
     // bounds corrupt lineage; each selected shell is read once, never per issue.
@@ -190,14 +178,13 @@ const make = Effect.gen(function* () {
       }
       if (refs.size === 0) continue;
       const state = workState(thread);
+      const ownedPr = ownedPrByThread.get(thread.id);
       const item = {
         threadId: thread.id,
         title: thread.title,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
-        pullRequests: threadPullRequestsOf(thread)
-          .filter((pr) => pr.source !== "stack-dismissed")
-          .map((pr) => pr.url),
+        pullRequests: ownedPr === undefined ? [] : [ownedPr.url],
         status: state,
       };
       for (const number of refs) {

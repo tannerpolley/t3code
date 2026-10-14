@@ -15,6 +15,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as IssueLinks from "./IssueLinks.ts";
+import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const ref = { host: "github.com", repository: "owner/repo", number: 13 };
 const threadId = ThreadId.make("ordinary-builder");
@@ -192,8 +193,28 @@ it.effect(
     };
     const unrelated = {
       ...pr,
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "owner/repo",
+          number: 42,
+          url: "https://github.com/owner/repo/pull/42",
+          source: "manual" as const,
+          linkedAt: "2026-10-13T00:00:00Z",
+          snapshot: null,
+          stack: null,
+        },
+      ],
       id: ThreadId.make("unrelated-pr"),
       linkedPullRequest: { ...pr.linkedPullRequest, number: 99 },
+    };
+    const foreignHost = {
+      ...pr,
+      id: ThreadId.make("foreign-host"),
+      linkedPullRequest: {
+        ...pr.linkedPullRequest,
+        url: "https://github.enterprise.test/owner/repo/pull/42",
+      },
     };
     const otherRepo = {
       ...managed,
@@ -203,6 +224,11 @@ it.effect(
     const modern = {
       ...pr,
       id: ThreadId.make("modern-pr"),
+      linkedPullRequest: {
+        ...pr.linkedPullRequest,
+        repository: "other/repo",
+        url: "https://github.com/other/repo/pull/42",
+      },
       pullRequests: [
         {
           host: "github.com",
@@ -219,12 +245,18 @@ it.effect(
     const dismissed = {
       ...modern,
       id: ThreadId.make("dismissed"),
+      linkedPullRequest: null,
       pullRequests: modern.pullRequests.map((link) => ({
         ...link,
         source: "stack-dismissed" as const,
       })),
     };
-    const unlinked = { ...pr, id: ThreadId.make("unlinked"), pullRequests: [] };
+    const unlinked = {
+      ...pr,
+      id: ThreadId.make("unlinked"),
+      linkedPullRequest: null,
+      pullRequests: [],
+    };
     const h = harness([
       root,
       child,
@@ -233,6 +265,7 @@ it.effect(
       pr,
       inactive,
       unrelated,
+      foreignHost,
       otherRepo,
       modern,
       dismissed,
@@ -259,6 +292,7 @@ it.effect(
       const first = yield* links.enrich(withPr);
       assert.deepEqual(h.lookups, [
         child.id,
+        foreignHost.id,
         grandchild.id,
         managed.id,
         modern.id,
@@ -342,3 +376,84 @@ it.effect("bounds cyclic descendant lineage without loading unrelated threads", 
     );
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect(
+  "uses indexed issue, PR candidate and descendant reads with no full thread-table scans",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`ANALYZE orchestration_v2_projection_threads`;
+      for (const hasPrRefs of [true, false]) {
+        const linkedIds = hasPrRefs ? [threadId] : [];
+        const query = issueWorkThreadIds(
+          sql,
+          ref,
+          [13],
+          linkedIds,
+          '[{"host":"github.com","repository":"owner/repo","number":42}]',
+          hasPrRefs,
+        );
+        const plan = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN ${query}`;
+        const details = plan.map((row) => row.detail).join("\n");
+        if (linkedIds.length > 0)
+          assert.include(
+            details,
+            "SEARCH explicit USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
+          );
+        else assert.notInclude(details, "explicit");
+        assert.include(
+          details,
+          "SEARCH issue_thread USING INDEX issue_roadmap_linked_issue_idx (<expr>=? AND <expr>=? AND <expr>=?)",
+        );
+        assert.include(details, "SEARCH child USING INDEX issue_roadmap_parent_idx (<expr>=?)");
+        if (hasPrRefs)
+          assert.include(
+            details,
+            "SEARCH pr_thread USING INDEX issue_roadmap_linked_pr_idx (<expr>=? AND <expr>=?)",
+          );
+        else assert.notInclude(details, "pr_thread");
+        assert.include(
+          details,
+          "SEARCH selected USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
+        );
+        assert.notInclude(query.compile()[0], "$.pullRequests");
+        for (const detail of plan.map((row) => row.detail)) {
+          if (
+            !detail.startsWith("SCAN ") ||
+            detail === "SCAN linked" ||
+            detail.includes("VIRTUAL TABLE INDEX")
+          )
+            continue;
+          assert.fail(`Unexpected scan: ${detail}\n${details}`);
+        }
+      }
+    }).pipe(
+      Effect.provide(
+        harness(
+          Array.from({ length: 50 }, (_, index) => {
+            const id = index === 0 ? threadId : ThreadId.make(`plan-${index}`);
+            const base = liveThreadShell(id);
+            return {
+              ...base,
+              lineage: { ...base.lineage, parentThreadId: index > 0 ? threadId : null },
+              linkedIssue: {
+                ...ref,
+                number: index + 1,
+                repositoryId: "repo",
+                id: `${index}`,
+                nodeId: `I_${index}`,
+                title: "Plan",
+                url: `https://github.com/owner/repo/issues/${index + 1}`,
+              },
+              linkedPullRequest: {
+                projectId: base.projectId,
+                repository: "owner/repo",
+                number: index + 1,
+                url: `https://github.com/owner/repo/pull/${index + 1}`,
+              },
+            };
+          }),
+        ).layer,
+      ),
+    ),
+);
