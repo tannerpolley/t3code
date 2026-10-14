@@ -63,25 +63,6 @@ const Response = Schema.Struct({
                 }),
               ),
             ),
-            timelineItems: Schema.optional(
-              Schema.NullOr(
-                Schema.Struct({
-                  nodes: Schema.Array(
-                    Schema.NullOr(
-                      Schema.Struct({
-                        source: Schema.optional(Schema.NullOr(PullRequestRef)),
-                      }),
-                    ),
-                  ),
-                  pageInfo: Schema.optional(
-                    Schema.Struct({
-                      hasPreviousPage: Schema.Boolean,
-                      startCursor: Schema.NullOr(Schema.String),
-                    }),
-                  ),
-                }),
-              ),
-            ),
             projectItems: Schema.optional(
               Schema.NullOr(
                 Schema.Struct({
@@ -108,7 +89,6 @@ type MetadataPage = {
   readonly cursor: string | null | undefined;
   readonly blockerCursor: string | null | undefined;
   readonly pullRequestCursor: string | null | undefined;
-  readonly timelineCursor: string | null | undefined;
 };
 
 const ITEM_FIELDS = `project { id title }
@@ -126,7 +106,7 @@ const ITEM_FIELDS = `project { id title }
 
 /** Optional metadata read inside IssueService's verified credential, batched across each list page. */
 export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetadata")(
-  function* (scope: IssueRepositoryRef, numbers: readonly number[]) {
+  function* (scope: IssueRepositoryRef, numbers: readonly number[], roadmap = false) {
     const api = yield* GitHubApi.GitHubApi;
     const projects = new Map<number, Map<string, IssueProject>>();
     const metadata = new Map<number, ListMetadata>();
@@ -136,9 +116,8 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
     const pending: MetadataPage[] = numbers.map((number) => ({
       number,
       cursor: null,
-      blockerCursor: null,
-      pullRequestCursor: null,
-      timelineCursor: null,
+      blockerCursor: roadmap ? null : undefined,
+      pullRequestCursor: roadmap ? null : undefined,
     }));
     const [owner, name] = scope.repository.split("/");
     while (pending.length > 0) {
@@ -159,14 +138,10 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
           declarations.push(`$pullRequest${index}: String`);
           variables[`pullRequest${index}`] = page.pullRequestCursor;
         }
-        if (page.timelineCursor !== undefined) {
-          declarations.push(`$timeline${index}: String`);
-          variables[`timeline${index}`] = page.timelineCursor;
-        }
         variables[`number${index}`] = page.number;
         return `p${index}: repository(owner: $owner, name: $name) {
         issue(number: $number${index}) {
-          parent { number state repository { nameWithOwner } }
+          ${roadmap ? "parent { number state repository { nameWithOwner } }" : ""}
           ${
             page.blockerCursor === undefined
               ? ""
@@ -181,16 +156,6 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
               : `closedByPullRequestsReferences(first: 100, after: $pullRequest${index}, includeClosedPrs: true) {
             nodes { number repository { nameWithOwner } }
             pageInfo { hasNextPage endCursor }
-          }`
-          }
-          ${
-            page.timelineCursor === undefined
-              ? ""
-              : `timelineItems(last: 100, before: $timeline${index}, itemTypes: [CROSS_REFERENCED_EVENT]) {
-            nodes { ... on CrossReferencedEvent {
-              source { __typename ... on PullRequest { number repository { nameWithOwner } } }
-            } }
-            pageInfo { hasPreviousPage startCursor }
           }`
           }
           ${
@@ -244,50 +209,39 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
         }
         blockers.set(page.number, issueBlockers);
         const prs = pullRequests.get(page.number) ?? new Map<string, IssueRef>();
-        for (const pr of [
-          ...(node?.closedByPullRequestsReferences?.nodes ?? []),
-          ...(node?.timelineItems?.nodes ?? []).map((event) =>
-            event?.source?.__typename === "PullRequest" ? event.source : null,
-          ),
-        ]) {
+        for (const pr of node?.closedByPullRequestsReferences?.nodes ?? []) {
           if (pr?.number === undefined || pr.repository === undefined) continue;
           const identity = ref(pr.number, pr.repository.nameWithOwner);
           prs.set(`${identity.repository.toLowerCase()}#${identity.number}`, identity);
         }
         pullRequests.set(page.number, prs);
         const previous = metadata.get(page.number);
-        metadata.set(page.number, {
-          blockedBy: [...issueBlockers.values()],
-          parent:
-            node?.parent == null
-              ? null
-              : ref(node.parent.number, node.parent.repository.nameWithOwner),
-          relationshipsComplete:
-            previous?.relationshipsComplete !== false &&
-            node?.parent !== undefined &&
-            (page.blockerCursor === undefined ||
-              (blocked != null && blocked.nodes.every((node) => node !== null))) &&
-            !failedFields(alias, "blockedBy") &&
-            !failedFields(alias, "parent"),
-          pullRequestRefs: [...prs.values()],
-        });
+        if (roadmap)
+          metadata.set(page.number, {
+            blockedBy: [...issueBlockers.values()],
+            parent:
+              node?.parent == null
+                ? null
+                : ref(node.parent.number, node.parent.repository.nameWithOwner),
+            relationshipsComplete:
+              previous?.relationshipsComplete !== false &&
+              node?.parent !== undefined &&
+              (page.blockerCursor === undefined ||
+                (blocked != null && blocked.nodes.every((node) => node !== null))) &&
+              !failedFields(alias, "blockedBy") &&
+              !failedFields(alias, "parent"),
+            pullRequestRefs: [...prs.values()],
+          });
         const nextProject = connection?.pageInfo.hasNextPage
           ? connection.pageInfo.endCursor
           : undefined;
         const nextBlocker = blocked?.pageInfo.hasNextPage ? blocked.pageInfo.endCursor : undefined;
         const closing = node?.closedByPullRequestsReferences?.pageInfo;
-        const timeline = node?.timelineItems?.pageInfo;
         const nextPullRequest =
           closing?.hasNextPage &&
           closing.endCursor !== null &&
           closing.endCursor !== page.pullRequestCursor
             ? closing.endCursor
-            : undefined;
-        const nextTimeline =
-          timeline?.hasPreviousPage &&
-          timeline.startCursor !== null &&
-          timeline.startCursor !== page.timelineCursor
-            ? timeline.startCursor
             : undefined;
         if (
           (connection?.pageInfo.hasNextPage &&
@@ -295,21 +249,23 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
           (blocked?.pageInfo.hasNextPage &&
             (nextBlocker === null || nextBlocker === page.blockerCursor))
         ) {
-          metadata.set(page.number, { ...metadata.get(page.number), relationshipsComplete: false });
+          if (roadmap)
+            metadata.set(page.number, {
+              ...metadata.get(page.number),
+              relationshipsComplete: false,
+            });
           continue;
         }
         if (
           nextProject !== undefined ||
           nextBlocker !== undefined ||
-          nextPullRequest !== undefined ||
-          nextTimeline !== undefined
+          nextPullRequest !== undefined
         ) {
           pending.push({
             number: page.number,
             cursor: nextProject,
             blockerCursor: nextBlocker,
             pullRequestCursor: nextPullRequest,
-            timelineCursor: nextTimeline,
           });
         }
         for (const item of connection?.nodes ?? []) {

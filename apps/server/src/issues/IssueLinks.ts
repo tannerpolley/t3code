@@ -5,7 +5,7 @@ import {
   type IssueLinkResult,
   type IssueListResult,
   type IssueSummary,
-  type ThreadId,
+  ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -20,6 +20,7 @@ import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 const key = (issue: IssueRef) =>
   `${issue.host.toLowerCase()}/${issue.repository.toLowerCase()}#${issue.number}`;
 const isIssueRef = Schema.is(IssueRef);
+const encodePrRefs = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(IssueRef)));
 const storageError = (cause: unknown) => new IssueLinkError({ code: "storage", cause });
 
 function target(input: IssueLinkInput): IssueRef | null {
@@ -90,17 +91,63 @@ const make = Effect.gen(function* () {
     return { issue, threadId, changed: rows.length > 0 };
   });
   const enrich: IssueLinks["Service"]["enrich"] = Effect.fn("IssueLinks.enrich")(function* (list) {
-    const [snapshot, rows] = yield* Effect.all([
-      projections.getShellSnapshot({ location: "active" }),
-      sql<{
-        issue_number: number;
-        thread_id: string;
-      }>`SELECT issue_number, thread_id FROM issue_thread_links
-        WHERE host = ${list.repository.host.toLowerCase()} AND repository = ${list.repository.repository.toLowerCase()}`,
-    ]).pipe(Effect.mapError(storageError));
-    const threads = snapshot.threads.filter(
-      (thread) => thread.deletedAt === null && thread.archivedAt === null,
-    );
+    const host = list.repository.host.toLowerCase();
+    const repository = list.repository.repository.toLowerCase();
+    const rows = yield* sql<{ issue_number: number; thread_id: string }>`
+      SELECT issue_number, thread_id FROM issue_thread_links
+      WHERE host = ${host} AND repository = ${repository}
+    `.pipe(Effect.mapError(storageError));
+    const issueNumbers = list.issues.map((issue) => issue.number);
+    const prRefs = list.issues.flatMap((issue) => issue.pullRequestRefs ?? []);
+    const prRefsJson = yield* encodePrRefs(prRefs).pipe(Effect.mapError(storageError));
+    // Only candidate IDs and their descendants leave SQLite. Shell decoding and activity reads
+    // are restricted to those threads, rather than the environment's entire active snapshot.
+    const candidates =
+      issueNumbers.length === 0
+        ? []
+        : yield* sql<{ thread_id: string }>`
+      WITH RECURSIVE linked(thread_id) AS (
+        SELECT t.thread_id FROM orchestration_v2_projection_threads t
+        WHERE t.deleted_at IS NULL AND t.archived_at IS NULL AND (
+          t.thread_id IN ${sql.in(rows.filter((row) => issueNumbers.includes(row.issue_number)).map((row) => row.thread_id))}
+          OR (
+            lower(json_extract(t.payload_json, '$.linkedIssue.host')) = ${host}
+            AND lower(json_extract(t.payload_json, '$.linkedIssue.repository')) = ${repository}
+            AND json_extract(t.payload_json, '$.linkedIssue.number') IN ${sql.in(issueNumbers)}
+          )
+          ${
+            prRefs.length === 0
+              ? sql``
+              : sql`OR EXISTS (
+            SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') pr
+            JOIN json_each(${prRefsJson}) ref
+              ON lower(json_extract(pr.value, '$.host')) = lower(json_extract(ref.value, '$.host'))
+              AND lower(json_extract(pr.value, '$.repository')) = lower(json_extract(ref.value, '$.repository'))
+              AND json_extract(pr.value, '$.number') = json_extract(ref.value, '$.number')
+            WHERE json_extract(pr.value, '$.source') IS NOT 'stack-dismissed'
+          ) OR (
+            json_extract(t.payload_json, '$.pullRequests') IS NULL AND EXISTS (
+              SELECT 1 FROM json_each(${prRefsJson}) ref
+              WHERE lower(json_extract(t.payload_json, '$.linkedPullRequest.repository')) = lower(json_extract(ref.value, '$.repository'))
+                AND lower(json_extract(t.payload_json, '$.linkedPullRequest.url')) LIKE 'https://' || lower(json_extract(ref.value, '$.host')) || '/%'
+                AND json_extract(t.payload_json, '$.linkedPullRequest.number') = json_extract(ref.value, '$.number')
+            )
+          )`
+          }
+        )
+        UNION
+        SELECT child.thread_id FROM orchestration_v2_projection_threads child
+        JOIN linked ON json_extract(child.payload_json, '$.lineage.parentThreadId') = linked.thread_id
+        WHERE child.deleted_at IS NULL AND child.archived_at IS NULL
+      )
+      SELECT thread_id FROM linked ORDER BY thread_id
+    `.pipe(Effect.mapError(storageError));
+    const shells = yield* Effect.forEach(candidates, ({ thread_id }) =>
+      projections.getThreadShell(ThreadId.make(thread_id)),
+    ).pipe(Effect.mapError(storageError));
+    const threads = shells
+      .filter((thread) => thread !== null)
+      .filter((thread) => thread.deletedAt === null && thread.archivedAt === null);
     const issues = new Map(
       list.issues.map((issue) => [key({ ...list.repository, number: issue.number }), issue.number]),
     );
@@ -129,7 +176,7 @@ const make = Effect.gen(function* () {
       }
     }
     // Delegated and native child shells inherit associations from their ancestors. A visited set
-    // bounds corrupt lineage; each shell is read once in the existing snapshot, never per issue.
+    // bounds corrupt lineage; each selected shell is read once, never per issue.
     const byId = new Map(threads.map((thread) => [thread.id, thread]));
     const work = new Map<number, NonNullable<IssueSummary["liveWork"]>[number][]>();
     for (const thread of threads) {

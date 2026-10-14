@@ -1328,7 +1328,7 @@ it.effect(
           }),
         ],
       });
-      const result = yield* (yield* service(harness)).list(listInput);
+      const result = yield* (yield* service(harness)).list({ ...listInput, roadmap: true });
       assert.deepEqual(result.issues[0]?.parent, { ...listInput, number: 9 });
       assert.deepEqual(result.issues[0]?.blockedBy, [
         { ...listInput, number: 1, state: "open" },
@@ -1336,15 +1336,15 @@ it.effect(
         { ...listInput, repository: "other/repo", number: 3, state: "open" },
       ]);
       assert.equal(result.issues[0]?.relationshipsComplete, true);
-      assert.deepEqual(result.issues[0]?.pullRequestRefs, [
-        { ...listInput, number: 20 },
-        { ...listInput, repository: "other/repo", number: 21 },
-      ]);
+      assert.deepEqual(result.issues[0]?.pullRequestRefs, [{ ...listInput, number: 20 }]);
       assert.deepEqual(result.issues[1]?.blockedBy, []);
       assert.equal(harness.calls.length, 4);
       const first = yield* decodeProjectRequest(harness.calls[2]!.body!);
       assert.deepEqual([first.variables.number0, first.variables.number1], [7, 8]);
       assert.include(first.query, "blockedBy(first: 100");
+      assert.include(first.query, "parent {");
+      assert.include(first.query, "closedByPullRequestsReferences(");
+      assert.notInclude(first.query, "timelineItems");
       const second = yield* decodeProjectRequest(harness.calls[3]!.body!);
       assert.equal(second.variables.blocker0, "next-blocker");
       assert.equal(second.variables.number0, 7);
@@ -1371,7 +1371,7 @@ it.effect(
           }),
         ],
       });
-      const result = yield* (yield* service(harness)).list(listInput);
+      const result = yield* (yield* service(harness)).list({ ...listInput, roadmap: true });
       assert.equal(result.issues[0]?.relationshipsComplete, true);
       assert.deepEqual(result.issues[0]?.projects, []);
       assert.equal(result.issues[1]?.relationshipsComplete, false);
@@ -1412,7 +1412,7 @@ it.effect(
           }),
         ],
       });
-      const result = yield* (yield* service(harness)).list(listInput);
+      const result = yield* (yield* service(harness)).list({ ...listInput, roadmap: true });
       assert.equal(harness.calls.length, 5);
       assert.deepEqual(
         result.issues[0]?.blockedBy?.map((issue) => issue.number),
@@ -1427,78 +1427,87 @@ it.effect(
     }),
 );
 
-it.effect(
-  "associates older PR references and closing PR pages without restarting completed metadata connections",
-  () =>
-    Effect.gen(function* () {
-      const pr = (number: number) => ({
-        __typename: "PullRequest",
-        number,
-        repository: { nameWithOwner: REPOSITORY },
-      });
-      const harness = makeHarness({
-        responses: [
-          httpResponse([rawIssue(7)]),
-          httpResponse([]),
-          httpResponse({
-            data: {
-              p0: {
-                issue: {
-                  parent: null,
-                  blockedBy: projectConnection([]),
-                  projectItems: projectConnection([]),
-                  closedByPullRequestsReferences: projectConnection([pr(1)], "next-pr"),
-                  timelineItems: {
-                    nodes: [{ source: pr(2) }],
-                    pageInfo: { hasPreviousPage: true, startCursor: "older-events" },
-                  },
-                },
+it.effect("paginates closing PR references without restarting completed metadata connections", () =>
+  Effect.gen(function* () {
+    const pr = (number: number) => ({ number, repository: { nameWithOwner: REPOSITORY } });
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(7)]),
+        httpResponse([]),
+        httpResponse({
+          data: {
+            p0: {
+              issue: {
+                parent: null,
+                blockedBy: projectConnection([]),
+                projectItems: projectConnection([]),
+                closedByPullRequestsReferences: projectConnection([pr(1)], "next-pr"),
               },
             },
-          }),
-          httpResponse({
-            data: {
-              p0: {
-                issue: {
-                  parent: null,
-                  closedByPullRequestsReferences: projectConnection([pr(3)]),
-                  timelineItems: {
-                    nodes: [{ source: pr(4) }],
-                    pageInfo: { hasPreviousPage: true, startCursor: "oldest-events" },
-                  },
-                },
+          },
+        }),
+        httpResponse({
+          data: {
+            p0: {
+              issue: {
+                parent: null,
+                closedByPullRequestsReferences: projectConnection([pr(3)]),
               },
             },
-          }),
-          httpResponse({
-            data: {
-              p0: {
-                issue: {
-                  parent: null,
-                  timelineItems: {
-                    nodes: [{ source: pr(5) }],
-                    pageInfo: { hasPreviousPage: false, startCursor: null },
-                  },
-                },
-              },
-            },
-          }),
-        ],
-      });
-      const result = yield* (yield* service(harness)).list(listInput);
-      assert.deepEqual(
-        result.issues[0]?.pullRequestRefs?.map((pr) => pr.number),
-        [1, 2, 3, 4, 5],
-      );
-      assert.equal(result.issues[0]?.relationshipsComplete, true);
-      assert.equal(harness.calls.length, 5);
-      const middle = yield* decodeProjectRequest(harness.calls[3]!.body!);
-      assert.equal(middle.variables.pullRequest0, "next-pr");
-      assert.equal(middle.variables.timeline0, "older-events");
-      assert.notInclude(middle.query, "projectItems(");
-      assert.notInclude(middle.query, "blockedBy(");
-      const last = yield* decodeProjectRequest(harness.calls[4]!.body!);
-      assert.notInclude(last.query, "closedByPullRequestsReferences(");
-      assert.equal(last.variables.timeline0, "oldest-events");
-    }),
+          },
+        }),
+      ],
+    });
+    const result = yield* (yield* service(harness)).list({ ...listInput, roadmap: true });
+    assert.deepEqual(
+      result.issues[0]?.pullRequestRefs?.map((pr) => pr.number),
+      [1, 3],
+    );
+    assert.equal(result.issues[0]?.relationshipsComplete, true);
+    assert.equal(harness.calls.length, 4);
+    const last = yield* decodeProjectRequest(harness.calls[3]!.body!);
+    assert.equal(last.variables.pullRequest0, "next-pr");
+    assert.notInclude(last.query, "projectItems(");
+    assert.notInclude(last.query, "blockedBy(");
+    assert.notInclude(last.query, "timelineItems");
+  }),
+);
+
+it.effect("Milestones and default page reads request only Project metadata", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(7), rawIssue(8)]),
+        httpResponse([]),
+        httpResponse({
+          data: {
+            p0: { issue: { projectItems: projectConnection([projectItem("p", "Project")]) } },
+            p1: { issue: { projectItems: projectConnection([]) } },
+          },
+        }),
+      ],
+    });
+    const result = yield* (yield* service(harness)).list(listInput);
+    assert.equal(harness.calls.length, 3);
+    const request = yield* decodeProjectRequest(harness.calls[2]!.body!);
+    assert.include(request.query, "projectItems(");
+    for (const field of [
+      "blockedBy",
+      "parent {",
+      "closedByPullRequestsReferences",
+      "timelineItems",
+    ])
+      assert.notInclude(request.query, field);
+    assert.deepEqual(Object.keys(request.variables).sort(), [
+      "cursor0",
+      "cursor1",
+      "name",
+      "number0",
+      "number1",
+      "owner",
+    ]);
+    assert.equal(result.issues[0]?.projects?.length, 1);
+    assert.notProperty(result.issues[0]!, "blockedBy");
+    assert.notProperty(result.issues[0]!, "pullRequestRefs");
+  }),
 );

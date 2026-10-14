@@ -118,6 +118,7 @@ export type IssueListState = typeof IssueListState.Type;
 export const IssueListInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   state: Schema.optional(IssueListState),
+  roadmap: Schema.optional(Schema.Boolean),
   cursor: Schema.optional(Cursor),
 });
 export type IssueListInput = typeof IssueListInput.Type;

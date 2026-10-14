@@ -1,4 +1,4 @@
-import { IssueReadError, type IssueListInput, type IssueListResult } from "@t3tools/contracts";
+import { type IssueReadError, type IssueListInput, type IssueListResult } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -21,15 +21,18 @@ export const layer = Layer.effect(
     return IssueRoadmap.of({
       list: (input) =>
         issues.list(input).pipe(
-          Effect.flatMap((list) => links.enrich(list)),
-          Effect.mapError((error) =>
-            error._tag === "IssueReadError"
-              ? error
-              : new IssueReadError({
-                  code: "upstream",
-                  operation: "list",
-                  message: error.message,
-                }),
+          Effect.flatMap((list) =>
+            input.roadmap !== true
+              ? Effect.succeed(list)
+              : links.enrich(list).pipe(
+                  Effect.orElseSucceed(() => ({
+                    ...list,
+                    issues: list.issues.map(({ pullRequestRefs: _refs, ...issue }) => ({
+                      ...issue,
+                      liveWork: [],
+                    })),
+                  })),
+                ),
           ),
         ),
     });

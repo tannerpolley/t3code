@@ -117,7 +117,15 @@ function IssueRows({
   const listState =
     issueView === "roadmap" ? "open" : issueListStateFor(issueStateFilter(preferences) ?? "open");
   const result = useAtomValue(
-    issueEnvironment.liveList({ environmentId, input: { host, repository, state: listState } }),
+    issueEnvironment.liveList({
+      environmentId,
+      input: {
+        host,
+        repository,
+        state: listState,
+        ...(issueView === "roadmap" ? { roadmap: true } : {}),
+      },
+    }),
   );
   const list = Option.getOrNull(AsyncResult.value(result));
   const [showAll, setShowAll] = useState(false);

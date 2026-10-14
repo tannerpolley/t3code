@@ -129,6 +129,7 @@ function issueListScopeKey(target: IssueListTarget): string {
     target.environmentId,
     repositoryKey(target.input.host, target.input.repository),
     target.input.state ?? "open",
+    target.input.roadmap === true,
   ]);
 }
 
@@ -250,7 +251,11 @@ export function IssueBrowser({
     capabilitiesKnown,
   } = repositories;
   const [preferences, setPreferences] = useIssueFilterPreferences();
-  const [views, setViews] = useIssueViews();
+  const [savedViews, setViews] = useIssueViews();
+  const views = useMemo<typeof savedViews>(
+    () => (variant === "panel" ? savedViews : {}),
+    [variant, savedViews],
+  );
   const stateFilter = issueStateFilter(preferences);
   const listState = issueListStateFor(stateFilter ?? "open");
   const explicitScope = search.repository !== undefined;
@@ -314,29 +319,29 @@ export function IssueBrowser({
               views[repositoryKey(target.host, target.repository)] === "roadmap"
                 ? "open"
                 : listState,
+            ...(views[repositoryKey(target.host, target.repository)] === "roadmap"
+              ? { roadmap: true }
+              : {}),
           },
         })),
     [listState, shownRepositories, stateFilter, views],
   );
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const generationRef = useRef(0);
-  const live = variant === "panel" && explicitScope;
   const listTargets = useMemo(
     () =>
       baseListTargets.flatMap((target) => {
         const state = pagingByKey[issueListScopeKey(target)];
         const cursors = new Set<string | null>([state?.cursor ?? null]);
-        if (live && !state?.refreshing) {
-          for (const cursor of state?.snapshot?.pages.keys() ?? []) cursors.add(cursor || null);
-        }
+        if (target.input.roadmap && !state?.refreshing) cursors.add(null);
         return [...cursors].map((cursor) => ({
           ...target,
           input: { ...target.input, ...(cursor === null ? {} : { cursor }) },
         }));
       }),
-    [baseListTargets, pagingByKey, live],
+    [baseListTargets, pagingByKey],
   );
-  const issueLists = useIssueLists(listTargets, live);
+  const issueLists = useIssueLists(listTargets);
   const issueErrors = useMemo(() => {
     const errors = new Map<string, IssueError>();
     for (const failure of issueLists.failures) {
@@ -602,7 +607,7 @@ export function IssueBrowser({
       ) || state?.refreshing === true;
     return (
       <>
-        {!explicitScope ? (
+        {variant === "panel" && !explicitScope ? (
           <div className="px-6 pb-2">
             <IssueViewToggle
               value={views[entry.key] ?? "milestones"}
@@ -881,7 +886,7 @@ export function IssueBrowser({
               value={query}
             />
           </InputGroup>
-          {urlRepository !== null ? (
+          {variant === "panel" && urlRepository !== null ? (
             <IssueViewToggle
               value={
                 views[repositoryKey(urlRepository.host, urlRepository.repository)] ?? "milestones"

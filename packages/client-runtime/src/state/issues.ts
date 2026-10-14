@@ -105,7 +105,7 @@ export function createIssueEnvironmentAtoms<R, E>(
       tag: WS_METHODS.issuesList,
       staleTimeMs: 30_000,
       refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
-      refreshTrigger,
+      refreshTrigger: (target) => (target.input.roadmap ? undefined : refreshTrigger(target)),
     }),
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:detail",

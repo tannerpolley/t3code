@@ -20,17 +20,31 @@ const ref = { host: "github.com", repository: "owner/repo", number: 13 };
 const threadId = ThreadId.make("ordinary-builder");
 function harness(initial: OrchestrationV2ThreadShell[]) {
   let shells = initial;
-  let snapshots = 0;
+  const lookups: string[] = [];
   const projections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
-    getThreadShell: (id) => Effect.sync(() => shells.find((thread) => thread.id === id) ?? null),
-    getShellSnapshot: () =>
+    getThreadShell: (id) =>
       Effect.sync(() => {
-        snapshots++;
-        return { schemaVersion: 2, snapshotSequence: 0, threads: shells, archivedThreads: [] };
+        lookups.push(id);
+        return shells.find((thread) => thread.id === id) ?? null;
       }),
+    getShellSnapshot: () => Effect.die("Roadmap must not read the full shell snapshot"),
   });
+  const seed = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      for (const shell of initial)
+        yield* sql`
+      INSERT INTO orchestration_v2_projection_threads(
+        thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+        created_at, updated_at, archived_at, deleted_at, payload_json
+      ) VALUES (${shell.id}, ${shell.projectId}, ${shell.title}, 'codex', 'full-access', 'default',
+        '2026-10-13', '2026-10-13', ${shell.archivedAt === null ? null : "2026-10-13"},
+        ${shell.deletedAt === null ? null : "2026-10-13"}, ${JSON.stringify(shell)})`;
+    }),
+  );
   const layer = IssueLinks.layer.pipe(
     Layer.provide(projections),
+    Layer.provide(seed),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
   return {
@@ -38,7 +52,7 @@ function harness(initial: OrchestrationV2ThreadShell[]) {
     setShells: (next: OrchestrationV2ThreadShell[]) => {
       shells = next;
     },
-    snapshotCount: () => snapshots,
+    lookups,
   };
 }
 function list(): IssueListResult {
@@ -130,7 +144,7 @@ it.effect(
 );
 
 it.effect(
-  "combines explicit, managed, PR and child work in one snapshot and clears working state on the next refresh",
+  "loads only explicitly linked, managed, closing-PR and descendant work, and refreshes live state",
   () => {
     const root = {
       ...liveThreadShell(threadId, { activeRunId: null }),
@@ -171,7 +185,59 @@ it.effect(
       linkedIssue: managed.linkedIssue,
       archivedAt: DateTime.makeUnsafe("2026-10-13T00:00:00Z"),
     };
-    const h = harness([root, child, managed, pr, inactive]);
+    const grandchild = {
+      ...child,
+      id: ThreadId.make("grandchild"),
+      lineage: { ...child.lineage, parentThreadId: child.id },
+    };
+    const unrelated = {
+      ...pr,
+      id: ThreadId.make("unrelated-pr"),
+      linkedPullRequest: { ...pr.linkedPullRequest, number: 99 },
+    };
+    const otherRepo = {
+      ...managed,
+      id: ThreadId.make("other-repo"),
+      linkedIssue: { ...managed.linkedIssue, repository: "other/repo" },
+    };
+    const modern = {
+      ...pr,
+      id: ThreadId.make("modern-pr"),
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "other/repo",
+          number: 42,
+          url: "https://github.com/other/repo/pull/42",
+          source: "manual" as const,
+          linkedAt: "2026-10-13T00:00:00Z",
+          snapshot: null,
+          stack: null,
+        },
+      ],
+    };
+    const dismissed = {
+      ...modern,
+      id: ThreadId.make("dismissed"),
+      pullRequests: modern.pullRequests.map((link) => ({
+        ...link,
+        source: "stack-dismissed" as const,
+      })),
+    };
+    const unlinked = { ...pr, id: ThreadId.make("unlinked"), pullRequests: [] };
+    const h = harness([
+      root,
+      child,
+      grandchild,
+      managed,
+      pr,
+      inactive,
+      unrelated,
+      otherRepo,
+      modern,
+      dismissed,
+      unlinked,
+    ]);
     return Effect.gen(function* () {
       const links = yield* IssueLinks.IssueLinks;
       yield* links.link(ref, threadId);
@@ -179,18 +245,36 @@ it.effect(
       const input = list();
       const withPr = {
         ...input,
-        issues: [{ ...input.issues[0]!, pullRequestRefs: [{ ...ref, number: 42 }] }],
+        issues: [
+          {
+            ...input.issues[0]!,
+            pullRequestRefs: [
+              { ...ref, number: 42 },
+              { ...ref, repository: "other/repo", number: 42 },
+            ],
+          },
+        ],
       };
+      h.lookups.length = 0;
       const first = yield* links.enrich(withPr);
-      assert.equal(h.snapshotCount(), 1);
+      assert.deepEqual(h.lookups, [
+        child.id,
+        grandchild.id,
+        managed.id,
+        modern.id,
+        threadId,
+        pr.id,
+      ]);
       assert.notProperty(first.issues[0]!, "pullRequestRefs");
       const work = first.issues[0]!.liveWork!;
       assert.deepEqual(
         work.map((item) => [item.threadId, item.status]),
         [
-          [threadId, "idle"],
           [child.id, "working"],
+          [grandchild.id, "working"],
           [managed.id, "working"],
+          [modern.id, "working"],
+          [threadId, "idle"],
           [pr.id, "working"],
         ],
       );
@@ -211,7 +295,9 @@ it.effect(
         },
       ]);
       assert.equal(
-        (yield* links.enrich(withPr)).issues[0]!.liveWork?.[1]?.status,
+        (yield* links.enrich(withPr)).issues[0]!.liveWork?.find(
+          (item) => item.threadId === child.id,
+        )?.status,
         "waiting_on_you",
       );
       h.setShells([root, { ...child, status: "completed", activeRunId: null }]);
@@ -224,3 +310,35 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect("bounds cyclic descendant lineage without loading unrelated threads", () => {
+  const childId = ThreadId.make("cycle-child");
+  const root = {
+    ...liveThreadShell(threadId),
+    lineage: {
+      rootThreadId: threadId,
+      parentThreadId: childId,
+      relationshipToParent: "subagent" as const,
+    },
+  };
+  const child = {
+    ...liveThreadShell(childId),
+    lineage: {
+      rootThreadId: threadId,
+      parentThreadId: threadId,
+      relationshipToParent: "subagent" as const,
+    },
+  };
+  const h = harness([root, child, liveThreadShell(ThreadId.make("unrelated"))]);
+  return Effect.gen(function* () {
+    const links = yield* IssueLinks.IssueLinks;
+    yield* links.link(ref, threadId);
+    h.lookups.length = 0;
+    const result = yield* links.enrich(list());
+    assert.deepEqual(h.lookups, [childId, threadId]);
+    assert.deepEqual(
+      result.issues[0]?.liveWork?.map((item) => item.threadId),
+      [childId, threadId],
+    );
+  }).pipe(Effect.provide(h.layer));
+});

@@ -1294,6 +1294,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 readIssueListMetadata(
                   scope,
                   issueResult.items.map((issue) => issue.number),
+                  input.roadmap === true,
                 ).pipe(Effect.provideService(GitHubApi.GitHubApi, api)),
               ],
               { concurrency: "unbounded" },
