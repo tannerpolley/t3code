@@ -59,6 +59,7 @@ import type {
   ProviderUsageInstance,
   TranscriptUsageFormat,
   UsageRecord,
+  UsageSpeed,
 } from "@t3tools/provider-core/server/usage";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import {
@@ -205,7 +206,11 @@ export class UsageService extends Context.Service<
   }
 >()("t3/usage/UsageService") {}
 
-export type TokenPricer = (model: string, totals: UsageTokenTotals) => number | null;
+export type TokenPricer = (
+  model: string,
+  totals: UsageTokenTotals,
+  speed?: UsageSpeed,
+) => number | null;
 
 const EMPTY_PRICING: UsagePricing = {
   status: "unavailable",
@@ -948,10 +953,10 @@ export const make = Effect.gen(function* () {
     const table = rates;
     const overrides = createOverrideRateTable(settings.usagePriceOverrides);
     const aliases = resolveModelAliases(settings.usageModelAliases);
-    const pricer: TokenPricer = (model, totals) => {
+    const pricer: TokenPricer = (model, totals, speed = "standard") => {
       const priced = priceUsage(
         table,
-        { model: aliases.get(model) ?? model, totals, speed: "standard", reportedCostUsd: null },
+        { model: aliases.get(model) ?? model, totals, speed, reportedCostUsd: null },
         overrides,
       );
       return priced.costSource === "unpriced" ? null : priced.costUsd;

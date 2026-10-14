@@ -2018,3 +2018,78 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+it.live("prices thread tokens at the same speed rates as scanned transcripts", () =>
+  Effect.gen(function* () {
+    const { home, settings } = yield* setup;
+    const sessions = NodePath.join(home, "codex", "sessions");
+    yield* Effect.promise(async () => {
+      await NodeFSP.mkdir(sessions, { recursive: true });
+      for (const tier of ["default", "priority", "ultrafast"]) {
+        const lines = [
+          { type: "session_meta", payload: { id: tier } },
+          { type: "turn_context", payload: { model: "gpt-6-astra" } },
+          {
+            type: "event_msg",
+            payload: { type: "thread_settings_applied", thread_settings: { service_tier: tier } },
+          },
+          {
+            type: "event_msg",
+            timestamp: "2026-08-01T10:00:00Z",
+            payload: {
+              type: "token_count",
+              info: {
+                last_token_usage: { input_tokens: 0, output_tokens: 10, cached_input_tokens: 0 },
+              },
+            },
+          },
+        ];
+        await NodeFSP.writeFile(
+          NodePath.join(sessions, `${tier}.jsonl`),
+          lines.map((line) => JSON.stringify(line)).join("\n") + "\n",
+        );
+      }
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* UsageService.make;
+      const summary = yield* service.readSummary(WINDOW);
+      const price = yield* service.tokenPricer;
+      const totals = {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 10,
+        reasoningTokens: 0,
+      };
+      assert.deepEqual(
+        (["standard", "fast", "ultrafast"] as const).map((speed) =>
+          price("gpt-6-astra", totals, speed),
+        ),
+        [10, 20, 60],
+      );
+      assert.equal(
+        summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+        90,
+      );
+      assert.equal(price("missing-model", totals, "fast"), null);
+    }).pipe(
+      Effect.provide(
+        layerService({
+          prefix: "usage-thread-speed",
+          home,
+          settings,
+          ratesDocument: {
+            "gpt-6-astra": {
+              input_cost_per_token: 0,
+              output_cost_per_token: 1,
+              input_cost_per_token_priority: 0,
+              output_cost_per_token_priority: 2,
+              input_cost_per_token_ultrafast: 0,
+              output_cost_per_token_ultrafast: 6,
+            },
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.scoped),
+);

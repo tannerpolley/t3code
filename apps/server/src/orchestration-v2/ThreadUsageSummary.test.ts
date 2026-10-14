@@ -1,6 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   EventId,
+  RunId,
+  RunAttemptId,
+  MessageId,
+  type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -22,9 +27,12 @@ import {
   DeferThreadUsageSummary,
   refreshAllThreadUsageSummaries,
   deriveThreadUsageSummary,
+  backfillThreadUsageCosts,
+  refreshThreadUsageSummary,
 } from "./ThreadUsageSummary.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { UsageService, type TokenPricer } from "../usage/UsageService.ts";
 
 const now = DateTime.makeUnsafe("2026-10-13T12:00:00.000Z");
 const threadId = ThreadId.make("usage-summary-thread");
@@ -535,6 +543,244 @@ it.layer(layer)("usage recovery and agreement", (it) => {
         (yield* store.getThreadShell(replayThreadId))?.usageSummary?.threadTokens,
         20 * 48_000,
       );
+    }),
+  );
+});
+
+const seedUsage = (appThread = thread, providerThread = provider, providerTurn = turn) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    yield* store.apply({
+      id: EventId.make(`${appThread.id}-created`),
+      type: "thread.created",
+      threadId: appThread.id,
+      occurredAt: now,
+      payload: appThread,
+    });
+    yield* store.apply({
+      id: EventId.make(`${appThread.id}-provider`),
+      type: "provider-thread.updated",
+      driver: providerThread.driver,
+      threadId: appThread.id,
+      occurredAt: now,
+      payload: providerThread,
+    });
+    yield* store.apply({
+      id: EventId.make(`${appThread.id}-turn`),
+      type: "provider-turn.updated",
+      driver: providerThread.driver,
+      threadId: appThread.id,
+      occurredAt: now,
+      payload: providerTurn,
+    });
+  });
+const withPricer = (pricer: TokenPricer) =>
+  Effect.provideService(
+    UsageService,
+    UsageService.of({
+      tokenPricer: Effect.succeed(pricer),
+      refreshRates: Effect.die("unused"),
+      readSummary: () => Effect.die("unused"),
+    }),
+  );
+
+it.layer(layer)("thread cost estimates", (it) => {
+  it.effect("backfills a completed thread without a new turn and does not persist a percent", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedUsage(thread, provider, { ...turn, status: "completed", completedAt: now });
+      assert.isUndefined((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd);
+      yield* sql`UPDATE orchestration_v2_projection_thread_usage SET payload_json = json_set(payload_json, '$.weeklyLimitPercent', 81) WHERE thread_id = ${threadId}`;
+      let calls = 0;
+      const price: TokenPricer = (_model, totals) => {
+        calls++;
+        return totals.outputTokens / 1000;
+      };
+      yield* backfillThreadUsageCosts.pipe(withPricer(price));
+      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 8);
+      assert.isUndefined((yield* store.getThreadShell(threadId))?.usageSummary?.weeklyLimitPercent);
+      const stored = (yield* sql<{
+        payload_json: string;
+      }>`SELECT payload_json FROM orchestration_v2_projection_thread_usage WHERE thread_id = ${threadId}`)[0]!
+        .payload_json;
+      assert.notInclude(stored, "weeklyLimitPercent");
+      const before = calls;
+      yield* backfillThreadUsageCosts.pipe(withPricer(price));
+      assert.equal(calls, before, "already priced threads are not rescanned on restart");
+    }),
+  );
+
+  it.effect("prices native Codex child turns with no run attempt using their own metadata", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const owner = NodeId.make("cost-native-node");
+      const childProvider = {
+        ...provider,
+        ownerNodeId: owner,
+        nativeMetadata: {
+          modelSelection: {
+            instanceId: providerInstanceId,
+            model: "native-model",
+            options: [{ id: "serviceTier", value: "priority" }],
+          },
+        },
+      };
+      yield* seedUsage(thread, childProvider, { ...turn, runAttemptId: null });
+      const observed: unknown[] = [];
+      yield* refreshThreadUsageSummary(threadId).pipe(
+        withPricer((model, totals, speed) => {
+          observed.push([model, totals, speed]);
+          return totals.outputTokens / 1000;
+        }),
+      );
+      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 8);
+      assert.deepEqual(observed, [
+        [
+          "native-model",
+          {
+            uncachedInputTokens: 10_000,
+            cachedInputTokens: 30_000,
+            cacheCreationTokens: 0,
+            outputTokens: 8_000,
+            reasoningTokens: 0,
+          },
+          "fast",
+        ],
+      ]);
+      // Older native records carry only the subagent model. They must still be priced.
+      const task: OrchestrationV2Subagent = {
+        id: owner,
+        threadId,
+        runId: null,
+        parentNodeId: NodeId.make("parent"),
+        origin: "provider_native",
+        createdBy: "agent",
+        driver: provider.driver,
+        providerInstanceId,
+        providerThreadId: provider.id,
+        childThreadId: threadId,
+        nativeTaskRef: null,
+        prompt: "child",
+        title: null,
+        model: "task-model",
+        status: "completed",
+        result: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      yield* store.apply({
+        id: EventId.make("native-task-model"),
+        type: "subagent.updated",
+        threadId,
+        driver: provider.driver,
+        occurredAt: now,
+        payload: task,
+      });
+      yield* store.apply({
+        id: EventId.make("native-no-metadata"),
+        type: "provider-thread.updated",
+        threadId,
+        driver: provider.driver,
+        occurredAt: now,
+        payload: { ...childProvider, nativeMetadata: null },
+      });
+      yield* refreshThreadUsageSummary(threadId).pipe(
+        withPricer((model) => (model === "task-model" ? 12 : null)),
+      );
+      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 12);
+    }),
+  );
+
+  it.effect("uses each run's recorded speed instead of the thread's current options", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      yield* seedUsage();
+      const runId = RunId.make("speed-run");
+      const attemptId = RunAttemptId.make("speed-attempt");
+      const run: OrchestrationV2Run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection: {
+          instanceId: providerInstanceId,
+          model: "priced",
+          options: [{ id: "serviceTier", value: "priority" }],
+        },
+        providerThreadId: provider.id,
+        userMessageId: MessageId.make("speed-message"),
+        rootNodeId: turn.nodeId,
+        activeAttemptId: attemptId,
+        status: "completed",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: now,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      yield* store.apply({
+        id: EventId.make("speed-run"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: run,
+      });
+      yield* store.apply({
+        id: EventId.make("speed-attempt"),
+        type: "run-attempt.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: attemptId,
+          runId,
+          attemptOrdinal: 1,
+          rootNodeId: turn.nodeId,
+          providerInstanceId,
+          providerThreadId: provider.id,
+          providerTurnId: turn.id,
+          reason: "initial",
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+      yield* store
+        .apply({
+          id: EventId.make("speed-turn"),
+          type: "provider-turn.updated",
+          threadId,
+          driver: provider.driver,
+          occurredAt: now,
+          payload: { ...turn, runAttemptId: attemptId },
+        })
+        .pipe(
+          withPricer(
+            (_model, totals, speed) => (totals.outputTokens / 1000) * (speed === "fast" ? 2 : 1),
+          ),
+        );
+      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 16);
+      for (const [options, expected] of [
+        [[{ id: "serviceTier", value: "priority" }], 16],
+        [[{ id: "serviceTier", value: "ultrafast" }], 48],
+        [[{ id: "fastMode", value: true }], 16],
+      ] as const) {
+        yield* store.apply({
+          id: EventId.make(`speed-${expected}-${options[0].id}`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...run, modelSelection: { ...run.modelSelection, options } },
+        });
+        yield* refreshThreadUsageSummary(threadId).pipe(
+          withPricer(
+            (_model, totals, speed) =>
+              (totals.outputTokens / 1000) * (speed === "ultrafast" ? 6 : speed === "fast" ? 2 : 1),
+          ),
+        );
+        assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, expected);
+      }
     }),
   );
 });
