@@ -558,8 +558,10 @@ const makeEventStore = Effect.gen(function* () {
             }
           `;
           const sequence = rows[0]?.sequence;
+          // Never coalesce subagent rows: later rows may point at their prompts.
           if (
             event.type === "turn-item.updated" &&
+            subagent === undefined &&
             input.commandId === undefined &&
             sequence !== undefined
           ) {
@@ -581,11 +583,6 @@ const makeEventStore = Effect.gen(function* () {
                   AND stream_id = ${event.threadId}
                   AND command_id IS NULL
                   AND json_extract(payload_json, '$.id') = ${event.payload.id}
-                  -- A row storing a subagent's full prompt may be another row's promptSequence anchor.
-                  AND (
-                    json_type(payload_json, '$.prompt') IS NULL
-                    OR json_type(payload_json, '$.promptSequence') = 'integer'
-                  )
                   AND EXISTS (
                     SELECT 1 FROM orchestration_events AS first_snapshot
                     WHERE first_snapshot.sequence = ${previous.first}

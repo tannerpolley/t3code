@@ -263,13 +263,14 @@ it.effect(
     }).pipe(Effect.provide(services)),
 );
 
-it.effect("compaction keeps the changed-prompt row that later subagent progress references", () =>
+it.effect("compaction trims ordinary items and leaves subagent rows whole", () =>
   Effect.gen(function* () {
     const sink = yield* EventSinkV2;
     const events = yield* EventStoreV2;
     const maintenance = yield* ProjectionMaintenanceV2;
+    const sql = yield* SqlClient.SqlClient;
     const now = yield* DateTime.now;
-    const { threadId, created } = fixture("subagent-prompt", now);
+    const { threadId, created, item } = fixture("subagent-prompt", now);
     const driver = ProviderDriverKind.make("claudeAgent");
     const subagentItem = (index: number, prompt: string): OrchestrationV2DomainEvent => ({
       id: EventId.make(`event:subagent-prompt:${index}`),
@@ -303,6 +304,10 @@ it.effect("compaction keeps the changed-prompt row that later subagent progress 
       },
     });
     yield* sink.write({ events: [created] });
+    // Completed snapshots skip append-time coalescing, so periodic compaction trims them.
+    for (const index of [0, 1, 2]) {
+      yield* sink.write({ events: [item(index, `ordinary ${index}`, "completed")] });
+    }
     // First prompt, unchanged progress, a changed prompt on resume, then progress
     // rows that point at the changed-prompt row through promptSequence.
     for (const [index, prompt] of [
@@ -316,6 +321,19 @@ it.effect("compaction keeps the changed-prompt row that later subagent progress 
     }
     yield* maintenance.compactEventStore;
 
+    const retained = yield* sql<{ id: string; count: number }>`
+      SELECT json_extract(payload_json, '$.id') AS id, COUNT(*) AS count
+      FROM orchestration_events
+      WHERE event_type = 'turn-item.updated' AND stream_id = ${threadId}
+      GROUP BY id ORDER BY id
+    `;
+    assert.deepEqual(
+      retained.map((row) => [row.id, row.count]),
+      [
+        ["item:subagent-prompt", 5],
+        ["item:subagent-prompt:a", 2],
+      ],
+    );
     const replay = yield* events.read({ threadId }).pipe(Stream.runCollect);
     const latest = replay.at(-1)?.event;
     assert.isTrue(

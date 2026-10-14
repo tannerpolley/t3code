@@ -241,8 +241,8 @@ export const layer: Layer.Layer<
     ];
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
-    // Keep subagent.updated rows and every turn-item.updated row that stores a full
-    // prompt: slimmed payloads reference their prompts through promptSequence.
+    // Keep subagent.updated and subagent turn-item.updated rows, the payloads
+    // appendAgentEvents slims: slimmed payloads reference their prompts.
     const COMPACTION_PAGE_SIZE = 500;
 
     /**
@@ -278,7 +278,6 @@ export const layer: Layer.Layer<
           readonly stream_id: string;
           readonly event_type: string;
           readonly entity_id: string | null;
-          readonly stores_full_prompt: number;
           readonly imported_legacy_thread: number;
         }>`
           SELECT
@@ -289,17 +288,16 @@ export const layer: Layer.Layer<
             event.event_type,
             CASE
               WHEN event.application_event_version = 2
-                AND event.event_type IN ('message.updated', 'node.updated', 'turn-item.updated')
+                AND (
+                  event.event_type IN ('message.updated', 'node.updated')
+                  OR (
+                    event.event_type = 'turn-item.updated'
+                    AND json_extract(event.payload_json, '$.type') <> 'subagent'
+                  )
+                )
               THEN json_extract(event.payload_json, '$.id')
               ELSE NULL
             END AS entity_id,
-            CASE
-              WHEN event.event_type = 'turn-item.updated'
-                AND json_type(event.payload_json, '$.prompt') IS NOT NULL
-                AND json_type(event.payload_json, '$.promptSequence') IS NULL
-              THEN 1
-              ELSE 0
-            END AS stores_full_prompt,
             CASE
               WHEN event.application_event_version = 1 AND event.aggregate_kind = 'thread'
               THEN EXISTS (
@@ -325,13 +323,12 @@ export const layer: Layer.Layer<
             ) {
               if (retainedThreadIds.has(row.stream_id)) obsolete.push(row.sequence);
               else retainedThreadIds.add(row.stream_id);
-            } else if (row.event_type === "turn-item.updated") {
+            } else if (row.event_type === "turn-item.updated" && row.entity_id !== null) {
               const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
               if (retainedTurnItemKeys.has(key)) {
                 const previousCandidate = olderTurnItemCandidates.get(key);
                 if (previousCandidate !== undefined) obsolete.push(previousCandidate);
-                if (row.stores_full_prompt === 1) olderTurnItemCandidates.delete(key);
-                else olderTurnItemCandidates.set(key, row.sequence);
+                olderTurnItemCandidates.set(key, row.sequence);
               } else {
                 retainedTurnItemKeys.add(key);
               }

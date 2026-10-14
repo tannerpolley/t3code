@@ -186,8 +186,6 @@ layer("OrchestrationEventStore", (it) => {
         item(2, "Writing report"),
         subagent(3, "Retrying", "Audit again."),
         item(3, "Retrying", "Audit again."),
-        // Points at item 3's new prompt, so pruning must keep item 3.
-        item(4, "Reporting", "Audit again."),
       ];
       yield* store.appendAgentEvents({ events });
 
@@ -195,19 +193,16 @@ layer("OrchestrationEventStore", (it) => {
         SELECT payload_json FROM orchestration_events
         WHERE stream_id = ${threadId} ORDER BY sequence ASC
       `;
-      // The fork prunes a streaming turn item's superseded snapshots, keeping its
-      // first and latest and any snapshot that stores a prompt.
-      const kept = events.filter((_, index) => index !== 3 && index !== 5);
       assert.deepEqual(
         stored.map((row) => row.payload_json.includes(prompt)),
-        [true, true, false, false, false, false, false],
+        [true, true, false, false, false, false, false, false],
       );
       const replayed = yield* store
         .readAgentEvents({ threadId, afterSequence })
         .pipe(Stream.runCollect);
       assert.deepEqual(
         replayed.map((entry) => entry.event),
-        kept,
+        events,
       );
       // Replay budgets measure the payloads replay decodes, not the slimmer stored rows.
       const stats = yield* store.getAgentReplayStats({
@@ -216,12 +211,12 @@ layer("OrchestrationEventStore", (it) => {
         throughSequence: yield* store.latestApplicationSequence,
         maxEvents: events.length,
       });
-      assert.isAbove(stats.rawPayloadBytes, prompt.length * 4);
+      assert.isAbove(stats.rawPayloadBytes, prompt.length * 6);
       const applicationStats = yield* store.getReplayStats({
         afterSequence,
         throughSequence: yield* store.latestApplicationSequence,
       });
-      assert.isAbove(applicationStats.rawPayloadBytes, prompt.length * 4);
+      assert.isAbove(applicationStats.rawPayloadBytes, prompt.length * 6);
     }),
   );
 
