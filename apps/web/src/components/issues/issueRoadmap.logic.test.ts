@@ -158,7 +158,7 @@ describe("live roadmap", () => {
     expect(numbers(sections[2]!.rows)).toEqual([3, 4, 2]);
     expect(sections[2]!.rows.find((row) => row.issue.number === 2)?.cycle).toBe(false);
   });
-  it("moves running and waiting work into In progress, idle links back to Ready/Blocked, and unblocks on refresh", () => {
+  it("keeps every linked thread In progress and returns an unlinked issue to Ready on refresh", () => {
     const first = issueRoadmap(
       scope,
       [],
@@ -169,7 +169,7 @@ describe("live roadmap", () => {
         issue(4, { relationshipsComplete: false }),
       ],
     );
-    expect(first.map((section) => numbers(section.rows))).toEqual([[1, 2], [3], [4]]);
+    expect(first.map((section) => numbers(section.rows))).toEqual([[1, 2, 3], [], [4]]);
     expect(
       issueLiveStatus(
         issue(1, { liveWork: [...work("idle"), ...work("waiting_on_you"), ...work("working")] }),
@@ -185,6 +185,6 @@ describe("live roadmap", () => {
         issue(4),
       ],
     );
-    expect(refreshed.map((section) => numbers(section.rows))).toEqual([[], [1, 2, 3, 4], []]);
+    expect(refreshed.map((section) => numbers(section.rows))).toEqual([[1, 2], [3, 4], []]);
   });
 });

@@ -115,7 +115,7 @@ export function issueRoadmap(
   for (const row of ordered) {
     const status = issueLiveStatus(row.issue);
     const section =
-      status === "working" || status === "waiting_on_you"
+      status !== null
         ? 0
         : openIssueBlockers(row.issue).length > 0 ||
             row.issue.relationshipsComplete === false ||
