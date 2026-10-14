@@ -54,6 +54,8 @@ export interface SettingsSearchItem {
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
+  // Its row is hidden in the macOS desktop app, where the setting has no effect.
+  readonly hiddenOnMac?: boolean;
   // Its row only renders on Windows desktop, so other desktop platforms must
   // not expose a result that points to a missing anchor.
   readonly windowsOnly?: boolean;
@@ -403,6 +405,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Time format",
     to: "/settings/general",
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
+  },
+  {
+    id: "keep-running-in-background",
+    title: "Keep running in background",
+    to: "/settings/general",
+    searchTerms: [
+      "system tray icon close window hide quit exit agents remote phone connections stay open",
+    ],
+    desktopOnly: true,
+    hiddenOnMac: true,
   },
   {
     id: "sidebar-toggle-position",
@@ -1390,6 +1402,7 @@ export function searchSettings(
       if (!isElectron && item.desktopOnly === true) return [];
       if (item.releaseChannelOnly && !isElectron && HOSTED_APP_CHANNEL === null) return [];
       if (item.macOnly && !isMacPlatform(platform)) return [];
+      if (item.hiddenOnMac && isMacPlatform(platform)) return [];
       if (item.windowsOnly && !isWindowsPlatform(platform)) return [];
 
       const title = normalizeSearchText(item.title);

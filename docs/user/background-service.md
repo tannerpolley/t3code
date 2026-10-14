@@ -3,6 +3,15 @@
 On Linux and macOS, T3 Code can run as a service for your user so you do not need
 to keep a terminal open.
 
+## Keep the desktop app running
+
+On Linux and Windows, closing the desktop app's window leaves T3 Code running in
+the system tray, so agents and remote connections keep working. Click the tray
+icon or launch T3 Code again to bring the window back, and choose **Quit** in the
+tray icon's menu to stop it. Turn this off with **Settings → General → Behavior →
+Keep running in background**. Without a system tray (on GNOME, that needs the
+AppIndicator extension), closing the window quits as before.
+
 ## Manage the service
 
 Install the `t3` CLI first ([Install T3 Code](./install.md#command-line)), then

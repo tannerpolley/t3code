@@ -666,6 +666,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
+      ...(settings.keepRunningInBackground !== DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground
+        ? ["Keep running in background"]
+        : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
       ...getChangedBrowserSettingLabels(settings),
       ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
@@ -688,6 +691,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.chatWidth,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
+      settings.keepRunningInBackground,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.confirmThreadUnpin,
@@ -849,6 +853,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
+      keepRunningInBackground: DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -2549,6 +2554,34 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+        {isElectron && !isMacPlatform(navigator.platform) ? (
+          <SettingsRow
+            {...searchableSetting("keep-running-in-background")}
+            description="Closing the window leaves T3 Code in the system tray, so agents and remote connections keep working. Quit from the tray icon. Without a system tray, closing the window quits."
+            resetAction={
+              settings.keepRunningInBackground !==
+              DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground ? (
+                <SettingResetButton
+                  label="keep running in background"
+                  onClick={() =>
+                    updateSettings({
+                      keepRunningInBackground: DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.keepRunningInBackground}
+                onCheckedChange={(checked) =>
+                  updateSettings({ keepRunningInBackground: Boolean(checked) })
+                }
+                aria-label="Keep running in background"
+              />
+            }
+          />
+        ) : null}
         <SettingsRow
           serverScoped
           settingKeys={["idleAgentSessionMinutes"]}
