@@ -254,7 +254,12 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             {locationIcon}
             {roleIcon}
             {icon}
-            <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
+            <span
+              className="min-w-0 flex-1 truncate text-foreground/85"
+              title={row.kind === "command" ? row.command : undefined}
+            >
+              {row.label}
+            </span>
             {usage}
             {props.compact ? null : (
               <span className="shrink-0 text-muted-foreground">{kindLabel}</span>

@@ -424,23 +424,38 @@ function unwrapCommand(input: Array<string>): Array<string> {
  * Null when there is none.
  */
 export function shellProgramName(command: string): string | null {
-  // A sampled `bash -c cd x && node y` has lost its quotes, so the script is the rest of the line.
-  const wrapped = /^\s*\S*\/?(?:ba|z|da|k)?sh\s+-[a-z]*c[a-z]*\s+(.+)$/s.exec(command);
-  if (wrapped !== null) {
-    const scripts = shellCommandWords(wrapped[1]!);
-    const quoted = scripts.length === 1 && scripts[0]!.length === 1;
-    const script = quoted ? scripts[0]![0]! : wrapped[1]!;
-    return shellProgramName(script);
-  }
-  for (const simple of shellCommandWords(command)) {
-    let words = unwrapCommand(simple);
-    // Claude's `eval '<command>'`; an unquoted sampled line just continues after `eval`.
-    if (words[0] === "eval") {
-      if (words.length === 2) return shellProgramName(words[1]!);
-      words = words.slice(1);
-    }
+  return programOfCommands(shellCommandWords(command));
+}
+
+// Commands that only prepare a Claude shell wrapper's environment, never the work.
+const SETUP_COMMANDS = new Set(["cd", "source", ".", "shopt", "set", "export", "unset", "true"]);
+
+/**
+ * The program of a list of simple commands: Claude's `eval` payload when there is one (its
+ * wrapper first runs `source <snapshot>`, `shopt`, `|| true`), otherwise the first command that
+ * is not setup. A `<shell> <options> <script>` (any mix of `-c`, `-l`, `-lc`) is read through to
+ * its script; an unquoted script of a sampled line arrives as the rest of the words.
+ */
+function programOfCommands(commands: ReadonlyArray<Array<string>>): string | null {
+  const unwrapped = commands.map(unwrapCommand);
+  const evalAt = unwrapped.findIndex((words) => words[0] === "eval");
+  const order = evalAt < 0 ? unwrapped.keys() : [evalAt];
+  for (const index of order) {
+    const words = unwrapped[index]!;
+    const rest = (from: number) => [words.slice(from), ...unwrapped.slice(index + 1)];
+    // A lone operand is the quoted script itself; otherwise the script's words follow inline.
+    const inner = (from: number) =>
+      words.length === from + 1 ? shellCommandWords(words[from]!) : rest(from);
+    if (words[0] === "eval") return programOfCommands(inner(1)) ?? "eval";
     const name = programName(words[0] ?? "");
-    if (name !== "" && name !== "cd") return name;
+    if (/^(ba|z|da|k)?sh$/.test(name)) {
+      let script = 1;
+      while (words[script]?.startsWith("-")) script++;
+      const hasScript = words.slice(1, script).some((word) => /^-[a-z]*c[a-z]*$/.test(word));
+      if (!hasScript || words[script] === undefined) return name;
+      return programOfCommands(inner(script)) ?? name;
+    }
+    if (name !== "" && !SETUP_COMMANDS.has(name)) return name;
   }
   return null;
 }

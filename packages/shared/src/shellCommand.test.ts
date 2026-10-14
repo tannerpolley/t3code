@@ -167,6 +167,15 @@ describe("shellProgramName", () => {
       ["/bin/bash -lc 'cd /app && FOO=1 sudo nice -n 5 cargo test'", "cargo"],
       ["/bin/bash -c cd /app && node server.js", "node"],
       ["eval 'cd /app && npm run build'", "npm"],
+      // Claude's wrapper: options before the script, setup before the eval payload.
+      [`bash -c -l "eval 'cd /app && python3 worker.py'"`, "python"],
+      [
+        "/bin/bash -c -l source /home/u/.claude/shell-snapshots/snapshot-bash-1.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && eval 'python3 worker.py --shard 2' < /dev/null && pwd -P >| /tmp/claude-cwd",
+        "python",
+      ],
+      // Assignments and execution wrappers before the shell.
+      ["FOO=1 bash -lc 'node server.js'", "node"],
+      ["nice -n 10 bash -lc 'node server.js'", "node"],
       ["", null],
     ];
     for (const [command, expected] of cases) assert.equal(shellProgramName(command), expected);
