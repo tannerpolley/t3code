@@ -64,6 +64,15 @@ export function setNotificationBadge(count: number) {
   void bridge?.setNotificationBadge?.({ count, image }).catch(() => undefined);
 }
 
+/**
+ * Brings the app forward from a desktop notification click. The desktop app may
+ * have its window hidden in the tray, where the renderer's own focus does nothing.
+ */
+export function focusAppWindow() {
+  window.focus();
+  void window.desktopBridge?.showMainWindow?.().catch(() => undefined);
+}
+
 let audioContext: AudioContext | undefined;
 const buffers = new Map<string, Promise<AudioBuffer>>();
 

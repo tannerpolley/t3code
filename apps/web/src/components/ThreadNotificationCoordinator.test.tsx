@@ -546,4 +546,23 @@ describe("thread notifications", () => {
       silent: true,
     });
   });
+
+  it("shows the desktop window, which may be hidden in the tray, when a system alert is clicked", async () => {
+    const showMainWindow = vi.fn(async () => undefined);
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), { focus: vi.fn(), desktopBridge: { showMainWindow } }),
+    );
+    state.mode = "notifications";
+    state.focused = false;
+    await render();
+    await complete();
+    const notification = state.notification.mock.results[0]?.value as EventTarget;
+    notification.dispatchEvent(new Event("click"));
+    expect(showMainWindow).toHaveBeenCalledOnce();
+    expect(state.navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "env-1", threadId: "thread-1" },
+    });
+  });
 });

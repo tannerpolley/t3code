@@ -6,6 +6,7 @@ import { getClientSettings } from "~/hooks/useSettings";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import {
+  focusAppWindow,
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
@@ -128,7 +129,7 @@ function GuideRunWatcher({ runKey, watch }: { runKey: string; watch: GuideRunWat
       const notification = new Notification(title, { body, tag: `guide:${runKey}`, silent: true });
       notification.addEventListener("click", () => {
         notification.close();
-        window.focus();
+        focusAppWindow();
         open();
       });
     } catch {

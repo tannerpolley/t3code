@@ -20,6 +20,7 @@ import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironmentIds } from "../state/environments";
 import { environmentShell } from "../state/shell";
 import {
+  focusAppWindow,
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
@@ -321,7 +322,7 @@ function EnvironmentNotifications({
         onNotification(environmentId, notification);
         notification.addEventListener("click", () => {
           notification.close();
-          window.focus();
+          focusAppWindow();
           void navigate({
             to: "/$environmentId/$threadId",
             params: { environmentId, threadId: thread.id },
