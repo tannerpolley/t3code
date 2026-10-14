@@ -19,60 +19,65 @@ export interface IssueListSnapshot {
   readonly nextCursor: string | null;
   readonly issuesComplete: boolean;
   readonly milestonesComplete: boolean;
-  readonly acceptedCursors: ReadonlySet<string>;
+  readonly pages: ReadonlyMap<string, IssueListResult>;
 }
 
-function newestIssue(left: IssueSummary | undefined, right: IssueSummary): IssueSummary {
-  return left === undefined || right.updatedAt >= left.updatedAt ? right : left;
-}
-
+/** A refreshed page replaces its rows even when GitHub's updatedAt is unchanged (local work,
+ * Project fields and dependency state can change independently of that timestamp).
+ */
 export function acceptIssueListPage(
   current: IssueListSnapshot | null,
   page: IssueListPage,
 ): IssueListSnapshot | null {
   if (current === null && page.cursor !== null) return null;
+  const cursor = page.cursor ?? "";
+  const replace = current === null || page.generation > current.generation;
   if (current !== null) {
     if (page.scopeKey !== current.scopeKey || page.generation < current.generation) return current;
-    if (page.generation > current.generation && page.cursor !== null) return current;
-    if (
-      page.generation === current.generation &&
-      (page.cursor === null
-        ? current.pageCount > 0
-        : page.cursor !== current.nextCursor || current.acceptedCursors.has(page.cursor))
-    ) {
-      return current;
+    if (replace && page.cursor !== null) return current;
+    if (!replace) {
+      const previous = current.pages.get(cursor);
+      if (previous !== undefined && page.result.fetchedAt <= previous.fetchedAt) return current;
+      if (previous === undefined && page.cursor !== current.nextCursor) return current;
     }
   }
-
-  const replace = current === null || page.cursor === null || page.generation > current.generation;
-  const previousIssues = replace ? [] : current.issues;
-  const issuesByNumber = new Map<number, IssueSummary>(
-    previousIssues.map((issue) => [issue.number, issue]),
-  );
-  for (const issue of page.result.issues) {
-    issuesByNumber.set(issue.number, newestIssue(issuesByNumber.get(issue.number), issue));
+  const pages = new Map(replace ? [] : current.pages);
+  const previous = pages.get(cursor);
+  pages.set(cursor, page.result);
+  // A changed continuation invalidates the pages after it, e.g. when the repo now fits on one page.
+  if (previous !== undefined && previous.nextCursor !== page.result.nextCursor) {
+    let after = false;
+    for (const key of pages.keys()) {
+      if (after) pages.delete(key);
+      if (key === cursor) after = true;
+    }
   }
-
-  const previousMilestones = replace ? [] : current.milestones;
-  const milestonesByNumber = new Map<number, IssueMilestone>(
-    previousMilestones.map((milestone) => [milestone.number, milestone]),
-  );
-  for (const milestone of page.result.milestones) {
-    milestonesByNumber.set(milestone.number, milestone);
+  const issuesByNumber = new Map<number, IssueSummary>();
+  const milestonesByNumber = new Map<number, IssueMilestone>();
+  for (const result of [...pages.values()].sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt))) {
+    for (const issue of result.issues) {
+      const previousIssue = issuesByNumber.get(issue.number);
+      if (previousIssue === undefined || issue.updatedAt >= previousIssue.updatedAt)
+        issuesByNumber.set(issue.number, issue);
+    }
+    for (const milestone of result.milestones) milestonesByNumber.set(milestone.number, milestone);
   }
-
+  const last = [...pages.values()].at(-1)!;
   return {
     scopeKey: page.scopeKey,
     generation: page.generation,
-    pageCount: replace ? 1 : current.pageCount + 1,
+    pageCount: pages.size,
     repository: page.result.repository,
     viewer: page.result.viewer,
-    fetchedAt: page.result.fetchedAt,
+    fetchedAt: [...pages.values()]
+      .map((result) => result.fetchedAt)
+      .sort()
+      .at(-1)!,
     issues: [...issuesByNumber.values()],
     milestones: [...milestonesByNumber.values()],
-    nextCursor: page.result.nextCursor,
-    issuesComplete: page.result.issuesComplete,
-    milestonesComplete: page.result.milestonesComplete,
-    acceptedCursors: new Set([...(replace ? [] : current.acceptedCursors), page.cursor ?? ""]),
+    nextCursor: last.nextCursor,
+    issuesComplete: last.issuesComplete,
+    milestonesComplete: last.milestonesComplete,
+    pages,
   };
 }

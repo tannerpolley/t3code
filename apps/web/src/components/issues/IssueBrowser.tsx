@@ -36,6 +36,8 @@ import { Spinner } from "../ui/spinner";
 import { IssueFilterMenu, useIssueFilterPreferences } from "./IssueFilterMenu";
 import { acceptIssueListPage, type IssueListSnapshot } from "./issuePaging.logic";
 import { IssueTree, IssueTreeRow, IssueTreeTag } from "./IssueTree";
+import { IssueRoadmap } from "./IssueRoadmap";
+import { IssueViewToggle, useIssueViews } from "./IssueViewToggle";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 import {
   filterAndSortIssues,
@@ -248,6 +250,7 @@ export function IssueBrowser({
     capabilitiesKnown,
   } = repositories;
   const [preferences, setPreferences] = useIssueFilterPreferences();
+  const [views, setViews] = useIssueViews();
   const stateFilter = issueStateFilter(preferences);
   const listState = issueListStateFor(stateFilter ?? "open");
   const explicitScope = search.repository !== undefined;
@@ -267,43 +270,73 @@ export function IssueBrowser({
     explicitScope && urlRepository === null && !issueRepositories.isPending;
   // A repository link shows that repository whatever the Filter menu says.
   const shownRepositories = useMemo(() => {
-    if (stateFilter === null) return [];
-    if (explicitScope) return urlRepository === null ? [] : [urlRepository];
+    if (explicitScope)
+      return urlRepository === null ||
+        (stateFilter === null &&
+          views[repositoryKey(urlRepository.host, urlRepository.repository)] !== "roadmap")
+        ? []
+        : [urlRepository];
     const host = search.host?.toLowerCase();
     return repositoryTargets.filter(
       (target) =>
-        (host === undefined || target.host === host) && repositoryShown(target, preferences),
+        (stateFilter !== null ||
+          views[repositoryKey(target.host, target.repository)] === "roadmap") &&
+        (host === undefined || target.host === host) &&
+        repositoryShown(target, preferences),
     );
-  }, [explicitScope, preferences, repositoryTargets, search.host, stateFilter, urlRepository]);
+  }, [
+    explicitScope,
+    preferences,
+    repositoryTargets,
+    search.host,
+    stateFilter,
+    urlRepository,
+    views,
+  ]);
   const baseListTargets = useMemo<ReadonlyArray<IssueListTarget>>(
     () =>
       shownRepositories
-        .filter((target) => !repositoryKnownEmpty(target, stateFilter ?? "open"))
+        .filter(
+          (target) =>
+            !repositoryKnownEmpty(
+              target,
+              views[repositoryKey(target.host, target.repository)] === "roadmap"
+                ? "open"
+                : (stateFilter ?? "open"),
+            ),
+        )
         .map((target) => ({
           environmentId: target.environmentId,
-          input: { host: target.host, repository: target.repository, state: listState },
+          input: {
+            host: target.host,
+            repository: target.repository,
+            state:
+              views[repositoryKey(target.host, target.repository)] === "roadmap"
+                ? "open"
+                : listState,
+          },
         })),
-    [listState, shownRepositories, stateFilter],
+    [listState, shownRepositories, stateFilter, views],
   );
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const generationRef = useRef(0);
+  const live = variant === "panel" && explicitScope;
   const listTargets = useMemo(
     () =>
-      baseListTargets.map((target) => {
+      baseListTargets.flatMap((target) => {
         const state = pagingByKey[issueListScopeKey(target)];
-        return {
+        const cursors = new Set<string | null>([state?.cursor ?? null]);
+        if (live && !state?.refreshing) {
+          for (const cursor of state?.snapshot?.pages.keys() ?? []) cursors.add(cursor || null);
+        }
+        return [...cursors].map((cursor) => ({
           ...target,
-          input: {
-            ...target.input,
-            ...(state?.cursor === null || state?.cursor === undefined
-              ? {}
-              : { cursor: state.cursor }),
-          },
-        };
+          input: { ...target.input, ...(cursor === null ? {} : { cursor }) },
+        }));
       }),
-    [baseListTargets, pagingByKey],
+    [baseListTargets, pagingByKey, live],
   );
-  const issueLists = useIssueLists(listTargets);
+  const issueLists = useIssueLists(listTargets, live);
   const issueErrors = useMemo(() => {
     const errors = new Map<string, IssueError>();
     for (const failure of issueLists.failures) {
@@ -321,7 +354,7 @@ export function IssueBrowser({
         const key = issueListScopeKey(answer.target);
         const cursor = answer.target.input.cursor ?? null;
         const state =
-          current[key] ??
+          next[key] ??
           ({
             cursor: null,
             generation: generationRef.current,
@@ -336,7 +369,17 @@ export function IssueBrowser({
         });
         if (snapshot === state.snapshot && !state.refreshing) continue;
         if (next === current) next = { ...current };
-        next[key] = { ...state, snapshot: snapshot ?? state.snapshot, refreshing: false };
+        next[key] = {
+          ...state,
+          cursor:
+            state.snapshot?.pages.has(state.cursor ?? "") &&
+            snapshot !== null &&
+            !snapshot.pages.has(state.cursor ?? "")
+              ? null
+              : state.cursor,
+          snapshot: snapshot ?? state.snapshot,
+          refreshing: false,
+        };
       }
       return next;
     });
@@ -419,8 +462,8 @@ export function IssueBrowser({
     assignee: preferences.assignee,
   };
   const narrowed = query.trim() !== "" || filters.milestone !== "all" || filters.assignee !== "all";
-  const stateNoun = (count: number) =>
-    filters.state === "all" ? (count === 1 ? "issue" : "issues") : filters.state;
+  const stateNoun = (count: number, state: "all" | "open" | "closed" = filters.state) =>
+    state === "all" ? (count === 1 ? "issue" : "issues") : state;
   const viewerLogins = [
     ...new Set(issueRepositories.answers.map((answer) => answer.result.viewer.login)),
   ];
@@ -453,7 +496,11 @@ export function IssueBrowser({
     const snapshot = state?.snapshot ?? null;
     const error = scopeKey === null ? null : (issueErrors.get(scopeKey) ?? null);
     const filteredIssues = snapshot
-      ? filterAndSortIssues(snapshot.issues, filters, target.repository)
+      ? filterAndSortIssues(
+          snapshot.issues,
+          views[key] === "roadmap" ? { ...filters, state: "open" } : filters,
+          target.repository,
+        )
       : [];
     const settled = scopeKey === null || (snapshot !== null && snapshot.issuesComplete && !error);
     const count = filteredIssues.length;
@@ -467,15 +514,16 @@ export function IssueBrowser({
       sameRepository(selectedIssue, target)
         ? selectedIssue.number
         : undefined;
+    const entryState = views[key] === "roadmap" ? "open" : filters.state;
     const countLabel: ReactNode =
       scopeKey === null ? (
-        `0 ${stateNoun(0)}`
+        `0 ${stateNoun(0, entryState)}`
       ) : snapshot === null && error === null ? (
         <Spinner className="size-3" />
       ) : snapshot === null ? (
         <span className="text-warning-foreground">unavailable</span>
       ) : (
-        `${count}${snapshot.issuesComplete ? "" : "+"} ${stateNoun(count)}`
+        `${count}${snapshot.issuesComplete ? "" : "+"} ${stateNoun(count, entryState)}`
       );
     return [
       {
@@ -512,7 +560,8 @@ export function IssueBrowser({
     const message = (text: string) => (
       <p className="py-1.5 ps-6 pe-4 text-xs text-muted-foreground">{text}</p>
     );
-    if (scopeKey === null) return message(`No ${filters.state} issues`);
+    if (scopeKey === null)
+      return message(`No ${views[entry.key] === "roadmap" ? "open" : filters.state} issues`);
     if (snapshot === null && error === null) {
       return (
         <div className="flex items-center gap-2 py-1.5 ps-6 text-xs text-muted-foreground">
@@ -553,7 +602,27 @@ export function IssueBrowser({
       ) || state?.refreshing === true;
     return (
       <>
-        {filteredIssues.length > 0 ? (
+        {!explicitScope ? (
+          <div className="px-6 pb-2">
+            <IssueViewToggle
+              value={views[entry.key] ?? "milestones"}
+              onChange={(value) => setViews((current) => ({ ...current, [entry.key]: value }))}
+            />
+          </div>
+        ) : null}
+        {views[entry.key] === "roadmap" ? (
+          <IssueRoadmap
+            scope={entry}
+            environmentId={entry.environmentId}
+            milestones={snapshot.milestones}
+            issues={snapshot.issues}
+            visibleNumbers={new Set(filteredIssues.map((issue) => issue.number))}
+            onSelect={(issue) => selectIssue(issue, entry, snapshot)}
+            {...(entry.selectedIssueNumber === undefined
+              ? {}
+              : { selectedIssueNumber: entry.selectedIssueNumber })}
+          />
+        ) : filteredIssues.length > 0 ? (
           <IssueTree
             key={scopeKey}
             renderMilestoneActions={(milestone) => (
@@ -812,6 +881,19 @@ export function IssueBrowser({
               value={query}
             />
           </InputGroup>
+          {urlRepository !== null ? (
+            <IssueViewToggle
+              value={
+                views[repositoryKey(urlRepository.host, urlRepository.repository)] ?? "milestones"
+              }
+              onChange={(value) =>
+                setViews((current) => ({
+                  ...current,
+                  [repositoryKey(urlRepository.host, urlRepository.repository)]: value,
+                }))
+              }
+            />
+          ) : null}
           <IssueFilterMenu
             host={explicitScope ? "" : (search.host ?? "")}
             hosts={explicitScope ? [] : hosts}
@@ -822,7 +904,13 @@ export function IssueBrowser({
           {stateFilter !== null && repositoryEntries.length > 0 ? (
             <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:inline">
               {totalCount}
-              {totalIncomplete ? "+" : ""} {stateNoun(totalCount)}
+              {totalIncomplete ? "+" : ""}{" "}
+              {stateNoun(
+                totalCount,
+                repositoryEntries.some((entry) => views[entry.key] === "roadmap")
+                  ? "all"
+                  : filters.state,
+              )}
             </span>
           ) : null}
         </div>

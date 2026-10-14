@@ -40,12 +40,12 @@ interface IssueListsView {
 
 const issueLists = Atom.family((key: string) =>
   Atom.make((get): IssueListsView => {
-    const targets = JSON.parse(key) as ReadonlyArray<IssueListTarget>;
+    const [targets, live] = JSON.parse(key) as [ReadonlyArray<IssueListTarget>, boolean];
     const answers: IssueListAnswer[] = [];
     const failures: IssueListFailure[] = [];
     let isPending = false;
     for (const target of targets) {
-      const result = get(issueEnvironment.list(target));
+      const result = get((live ? issueEnvironment.liveList : issueEnvironment.list)(target));
       isPending ||= result.waiting;
       const value = Option.getOrNull(AsyncResult.value(result));
       if (value !== null) answers.push({ target, result: value, waiting: result.waiting });
@@ -62,17 +62,19 @@ const EMPTY_ISSUE_LISTS = Atom.make<IssueListsView>({
 }).pipe(Atom.withLabel("web-issues:lists:empty"));
 
 /** One guarded project query per target, observed through one hook-safe derived atom. */
-export function useIssueLists(targets: ReadonlyArray<IssueListTarget>) {
-  const key = JSON.stringify(targets);
+export function useIssueLists(targets: ReadonlyArray<IssueListTarget>, live = false) {
+  const key = JSON.stringify([targets, live]);
   const view = useAtomValue(targets.length === 0 ? EMPTY_ISSUE_LISTS : issueLists(key));
   const refresh = useCallback(
     (override?: ReadonlyArray<IssueListTarget>) => {
-      const refreshTargets = override ?? (JSON.parse(key) as ReadonlyArray<IssueListTarget>);
-      for (const atom of new Set(refreshTargets.map(issueEnvironment.list))) {
+      const refreshTargets = override ?? targets;
+      for (const atom of new Set(
+        refreshTargets.map(live ? issueEnvironment.liveList : issueEnvironment.list),
+      )) {
         appAtomRegistry.refresh(atom);
       }
     },
-    [key],
+    [targets, live],
   );
   return { ...view, refresh };
 }

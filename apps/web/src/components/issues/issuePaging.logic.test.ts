@@ -140,3 +140,77 @@ describe("issue list paging", () => {
     expect(repeated).toBe(second);
   });
 });
+
+it("accepts metadata-only live refreshes and removes issues that left an open page", () => {
+  const initial = result(
+    [{ ...issue(1, "2026-09-21T00:00:00Z"), blockedBy: [], liveWork: [] }],
+    null,
+    "2026-09-21T01:00:00Z",
+  );
+  const first = acceptIssueListPage(null, {
+    scopeKey: "env:project",
+    generation: 1,
+    cursor: null,
+    result: initial,
+  });
+  const refreshed = acceptIssueListPage(first, {
+    scopeKey: "env:project",
+    generation: 1,
+    cursor: null,
+    result: {
+      ...initial,
+      fetchedAt: "2026-09-21T02:00:00Z",
+      issues: [
+        {
+          ...initial.issues[0]!,
+          blockedBy: [{ host: "github.com", repository: "acme/app", number: 99, state: "closed" }],
+        },
+      ],
+    },
+  });
+  expect(refreshed?.issues[0]?.blockedBy?.[0]?.state).toBe("closed");
+  const closed = acceptIssueListPage(refreshed, {
+    scopeKey: "env:project",
+    generation: 1,
+    cursor: null,
+    result: { ...initial, fetchedAt: "2026-09-21T03:00:00Z", issues: [] },
+  });
+  expect(closed?.issues).toEqual([]);
+});
+
+it("refreshes previously loaded pages and drops obsolete continuations without mixing generations", () => {
+  const first = acceptIssueListPage(null, {
+    scopeKey: "env:project",
+    generation: 1,
+    cursor: null,
+    result: result([issue(1, "2026-09-21T00:00:00Z")], "cursor-2", "2026-09-21T01:00:00Z"),
+  });
+  const second = acceptIssueListPage(first, {
+    scopeKey: "env:project",
+    generation: 1,
+    cursor: "cursor-2",
+    result: result([issue(2, "2026-09-21T00:00:00Z")], null, "2026-09-21T02:00:00Z"),
+  });
+  const updated = acceptIssueListPage(second, {
+    scopeKey: "env:project",
+    generation: 1,
+    cursor: "cursor-2",
+    result: result(
+      [issue(2, "2026-09-21T00:00:00Z", "New dependency metadata")],
+      null,
+      "2026-09-21T03:00:00Z",
+    ),
+  });
+  expect(updated?.issues.map((issue) => issue.title)).toEqual([
+    "Issue 1",
+    "New dependency metadata",
+  ]);
+  const complete = acceptIssueListPage(updated, {
+    scopeKey: "env:project",
+    generation: 1,
+    cursor: null,
+    result: result([issue(1, "2026-09-21T00:00:00Z")], null, "2026-09-21T04:00:00Z"),
+  });
+  expect(complete?.issues.map((issue) => issue.number)).toEqual([1]);
+  expect(complete?.pageCount).toBe(1);
+});

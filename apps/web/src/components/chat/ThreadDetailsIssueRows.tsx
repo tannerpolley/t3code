@@ -20,6 +20,8 @@ import { useEnvironment } from "~/state/environments";
 import { issueEnvironment } from "~/state/issues";
 import { useUiStateStore } from "~/uiStateStore";
 
+import { IssueRoadmap } from "../issues/IssueRoadmap";
+import { IssueViewToggle, useIssueView } from "../issues/IssueViewToggle";
 import { IssueFilterMenu, useIssueFilterPreferences } from "../issues/IssueFilterMenu";
 import { groupIssuesByMilestone, type IssueGroup } from "../issues/issueTree.logic";
 import {
@@ -111,7 +113,9 @@ function IssueRows({
   );
   const open = expandedBlocks[key] === true;
   const [preferences, setPreferences] = useIssueFilterPreferences();
-  const listState = issueListStateFor(issueStateFilter(preferences) ?? "open");
+  const [issueView, setIssueView] = useIssueView(host, repository);
+  const listState =
+    issueView === "roadmap" ? "open" : issueListStateFor(issueStateFilter(preferences) ?? "open");
   const result = useAtomValue(
     issueEnvironment.liveList({ environmentId, input: { host, repository, state: listState } }),
   );
@@ -122,7 +126,7 @@ function IssueRows({
       ? null
       : threadIssueGroups(
           list.issues,
-          preferences,
+          issueView === "roadmap" ? { ...preferences, open: true, closed: false } : preferences,
           showAll ? Number.POSITIVE_INFINITY : VISIBLE_ISSUE_COUNT,
         );
   const more = list?.nextCursor == null ? "" : "+";
@@ -132,14 +136,17 @@ function IssueRows({
       headingId="thread-details-issues-heading"
       title="Issues"
       actions={
-        <IssueFilterMenu
-          host=""
-          hosts={[]}
-          onChange={setPreferences}
-          onHostChange={() => {}}
-          preferences={preferences}
-          singleRepository
-        />
+        <>
+          <IssueViewToggle value={issueView} onChange={setIssueView} />
+          <IssueFilterMenu
+            host=""
+            hosts={[]}
+            onChange={setPreferences}
+            onHostChange={() => {}}
+            preferences={preferences}
+            singleRepository
+          />
+        </>
       }
     >
       <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">
@@ -157,7 +164,52 @@ function IssueRows({
         >
           {repository}
         </CollapsibleSectionHeader>
-        {open ? (
+        {open && issueView === "roadmap" && list !== null ? (
+          <>
+            <IssueRoadmap
+              scope={{ host, repository }}
+              environmentId={environmentId}
+              milestones={list.milestones}
+              issues={list.issues}
+              visibleNumbers={
+                new Set(
+                  filterAndSortIssues(list.issues, {
+                    query: "",
+                    state: "open",
+                    milestone: preferences.milestone,
+                    assignee: preferences.assignee,
+                    sort: preferences.sort,
+                  }).map((issue) => issue.number),
+                )
+              }
+              limit={showAll ? Infinity : VISIBLE_ISSUE_COUNT}
+              onSelect={(issue) =>
+                useRightPanelStore.getState().openIssue(scopeThreadRef(environmentId, threadId), {
+                  environmentId,
+                  host,
+                  repository,
+                  number: issue.number,
+                  url: issue.url,
+                })
+              }
+            />
+            {view !== null && view.total > VISIBLE_ISSUE_COUNT ? (
+              <ThreadDetailsControl tone="muted" onClick={() => setShowAll(!showAll)}>
+                {showAll ? "Show less" : "Show all loaded issues"}
+              </ThreadDetailsControl>
+            ) : null}
+            <ThreadDetailsControl
+              tone="muted"
+              onClick={() =>
+                useRightPanelStore
+                  .getState()
+                  .openIssueList(scopeThreadRef(environmentId, threadId), { host, repository })
+              }
+            >
+              Browse all issues
+            </ThreadDetailsControl>
+          </>
+        ) : open ? (
           <IssueRowsBody
             environmentId={environmentId}
             threadId={threadId}
