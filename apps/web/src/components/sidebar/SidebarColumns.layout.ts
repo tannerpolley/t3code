@@ -30,8 +30,8 @@ export function generateSidebarColumnLayoutCss() {
         name === "name"
           ? "minmax(0, 1fr)"
           : name === "caret"
-            ? // A row pulled out of its list indent (the outdent) keeps its caret where the indent put it.
-              "calc(var(--sidebar-caret-width) + max(0px, var(--sidebar-thread-outdent, 0px) - var(--sidebar-thread-lead)))"
+            ? // The caret starts at the inset, or after usage and the bar when those reach further.
+              "calc(var(--sidebar-caret-width) + max(0px, var(--sidebar-thread-inset, 0px) - var(--sidebar-thread-lead)))"
             : `var(--sidebar-${name}-width)`,
       )
       .join(" ");

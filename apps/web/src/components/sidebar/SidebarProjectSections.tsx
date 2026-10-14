@@ -1129,6 +1129,8 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             codexStyle
               ? ({
                   "--sidebar-thread-outdent": "calc(var(--sidebar-section-indent, 0px) + 1.5rem)",
+                  // The same caret start for every thread: a top-level section's project indent.
+                  "--sidebar-thread-inset": "2.25rem",
                 } as CSSProperties)
               : undefined
           }

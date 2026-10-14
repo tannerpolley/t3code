@@ -19,7 +19,7 @@
 @utility sidebar-thread-columns {
   grid-template-columns: var(--sidebar-usage-width) var(--sidebar-bar-width) calc(
       var(--sidebar-caret-width) +
-        max(0px, var(--sidebar-thread-outdent, 0px) - var(--sidebar-thread-lead))
+        max(0px, var(--sidebar-thread-inset, 0px) - var(--sidebar-thread-lead))
     ) var(--sidebar-location-width) var(--sidebar-role-width) var(--sidebar-provider-width) var(
       --sidebar-model-width
     ) var(--sidebar-effort-width) minmax(0, 1fr) var(--sidebar-count-width) var(
@@ -31,7 +31,7 @@
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-bar-width) calc(
         var(--sidebar-caret-width) +
-          max(0px, var(--sidebar-thread-outdent, 0px) - var(--sidebar-thread-lead))
+          max(0px, var(--sidebar-thread-inset, 0px) - var(--sidebar-thread-lead))
       ) var(--sidebar-location-width) var(--sidebar-role-width) var(--sidebar-provider-width) var(
         --sidebar-model-width
       ) var(--sidebar-effort-width) minmax(0, 1fr) var(--sidebar-count-width) var(
@@ -50,7 +50,7 @@
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-bar-width) calc(
         var(--sidebar-caret-width) +
-          max(0px, var(--sidebar-thread-outdent, 0px) - var(--sidebar-thread-lead))
+          max(0px, var(--sidebar-thread-inset, 0px) - var(--sidebar-thread-lead))
       ) var(--sidebar-location-width) var(--sidebar-role-width) var(--sidebar-provider-width) var(
         --sidebar-model-width
       ) minmax(0, 1fr) var(--sidebar-count-width) var(--sidebar-time-width) var(
@@ -65,7 +65,7 @@
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-bar-width) calc(
         var(--sidebar-caret-width) +
-          max(0px, var(--sidebar-thread-outdent, 0px) - var(--sidebar-thread-lead))
+          max(0px, var(--sidebar-thread-inset, 0px) - var(--sidebar-thread-lead))
       ) var(--sidebar-location-width) var(--sidebar-role-width) var(
         --sidebar-provider-width
       ) minmax(0, 1fr) var(--sidebar-count-width) var(--sidebar-time-width) var(

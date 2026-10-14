@@ -10,12 +10,13 @@
 }
 @utility sidebar-caret-toggle {
   inset-inline-start: calc(
-    0.125rem + max(var(--sidebar-thread-lead, 0px), var(--sidebar-thread-outdent, 0px))
+    0.125rem + max(var(--sidebar-thread-lead, 0px), var(--sidebar-thread-inset, 0px))
   );
 }
 /*
  * Projects thread rows reach back over their section and project indents (the outdent) to the
- * list's start, so usage sits at one x for every thread; the caret column absorbs the indent.
+ * list's start, so every thread's columns sit at one x however deeply its project is nested. Only
+ * section and project rows indent; the thread inset keeps the caret clear of them.
  */
 @utility sidebar-thread-outdent {
   margin-inline-start: calc(-1 * var(--sidebar-thread-outdent, 0px));
