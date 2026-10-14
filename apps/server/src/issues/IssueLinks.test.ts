@@ -183,6 +183,7 @@ it.effect(
       };
       const first = yield* links.enrich(withPr);
       assert.equal(h.snapshotCount(), 1);
+      assert.notProperty(first.issues[0]!, "pullRequestRefs");
       const work = first.issues[0]!.liveWork!;
       assert.deepEqual(
         work.map((item) => [item.threadId, item.status]),

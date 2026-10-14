@@ -1426,3 +1426,79 @@ it.effect(
       assert.notProperty(last.variables, "cursor0");
     }),
 );
+
+it.effect(
+  "associates older PR references and closing PR pages without restarting completed metadata connections",
+  () =>
+    Effect.gen(function* () {
+      const pr = (number: number) => ({
+        __typename: "PullRequest",
+        number,
+        repository: { nameWithOwner: REPOSITORY },
+      });
+      const harness = makeHarness({
+        responses: [
+          httpResponse([rawIssue(7)]),
+          httpResponse([]),
+          httpResponse({
+            data: {
+              p0: {
+                issue: {
+                  parent: null,
+                  blockedBy: projectConnection([]),
+                  projectItems: projectConnection([]),
+                  closedByPullRequestsReferences: projectConnection([pr(1)], "next-pr"),
+                  timelineItems: {
+                    nodes: [{ source: pr(2) }],
+                    pageInfo: { hasPreviousPage: true, startCursor: "older-events" },
+                  },
+                },
+              },
+            },
+          }),
+          httpResponse({
+            data: {
+              p0: {
+                issue: {
+                  parent: null,
+                  closedByPullRequestsReferences: projectConnection([pr(3)]),
+                  timelineItems: {
+                    nodes: [{ source: pr(4) }],
+                    pageInfo: { hasPreviousPage: true, startCursor: "oldest-events" },
+                  },
+                },
+              },
+            },
+          }),
+          httpResponse({
+            data: {
+              p0: {
+                issue: {
+                  parent: null,
+                  timelineItems: {
+                    nodes: [{ source: pr(5) }],
+                    pageInfo: { hasPreviousPage: false, startCursor: null },
+                  },
+                },
+              },
+            },
+          }),
+        ],
+      });
+      const result = yield* (yield* service(harness)).list(listInput);
+      assert.deepEqual(
+        result.issues[0]?.pullRequestRefs?.map((pr) => pr.number),
+        [1, 2, 3, 4, 5],
+      );
+      assert.equal(result.issues[0]?.relationshipsComplete, true);
+      assert.equal(harness.calls.length, 5);
+      const middle = yield* decodeProjectRequest(harness.calls[3]!.body!);
+      assert.equal(middle.variables.pullRequest0, "next-pr");
+      assert.equal(middle.variables.timeline0, "older-events");
+      assert.notInclude(middle.query, "projectItems(");
+      assert.notInclude(middle.query, "blockedBy(");
+      const last = yield* decodeProjectRequest(harness.calls[4]!.body!);
+      assert.notInclude(last.query, "closedByPullRequestsReferences(");
+      assert.equal(last.variables.timeline0, "oldest-events");
+    }),
+);
