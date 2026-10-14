@@ -328,11 +328,13 @@ export const layer: Layer.Layer<
           const ownership = context.message?.delegatedCompletion;
           if (ownership !== undefined) {
             const projection = yield* projections.getThreadRecords(input.threadId, ["runs"], {
-              runIds: [ownership.parentRunId],
+              runIds: ownership.parentRunId === null ? [] : [ownership.parentRunId],
             });
-            const cohort = projection.runs.find(
-              (run) => run.id === ownership.parentRunId,
-            )?.delegatedCompletion;
+            const cohort =
+              ownership.parentRunId === null
+                ? projection.thread.delegatedCompletion
+                : projection.runs.find((run) => run.id === ownership.parentRunId)
+                    ?.delegatedCompletion;
             if (
               cohort?.disposition !== "open" ||
               cohort.delivery?.messageId !== input.messageId ||

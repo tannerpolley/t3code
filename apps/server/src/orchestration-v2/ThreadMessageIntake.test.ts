@@ -9,6 +9,8 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  NodeId,
+  RunId,
   ProviderInstanceId,
   RuntimeRequestId,
   ThreadId,
@@ -818,3 +820,52 @@ it.effect("releases claimed copies when a project disables the message's provide
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
+
+it.effect("rejects client commands that bypass managed issue admission before dispatch", () => {
+  const captured: OrchestrationV2ServerCommand[] = [];
+  return Effect.gen(function* () {
+    const issue = {
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      repositoryId: "repo:1",
+      id: "issue:8",
+      nodeId: "node:8",
+      number: 8,
+      title: "Managed issue",
+      url: "https://github.com/tannerpolley/t3code/issues/8",
+    };
+    const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const commands: OrchestrationV2Command[] = [
+      {
+        type: "issue.work.start",
+        commandId: CommandId.make("bypass:panel"),
+        threadId: ThreadId.make("root"),
+        issue,
+        workerModelSelection: modelSelection,
+        createdBy: "user",
+        creationSource: "web",
+      },
+      {
+        type: "delegated_task.request",
+        commandId: CommandId.make("bypass:delegate"),
+        parentThreadId: ThreadId.make("root"),
+        parentRunId: RunId.make("run"),
+        parentNodeId: NodeId.make("node"),
+        issue,
+        task: "Bypass start",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "user",
+        creationSource: "web",
+      },
+    ];
+    for (const command of commands) {
+      const rejected = yield* dispatchCommand(command).pipe(Effect.result);
+      expect(rejected._tag).toBe("Failure");
+      if (rejected._tag === "Failure")
+        expect(String(rejected.failure)).toContain("issue work service");
+    }
+    expect(captured).toHaveLength(0);
+  }).pipe(Effect.provide(Layer.mergeAll(layerFailingDispatch(captured), layerIntakeTest)));
+});

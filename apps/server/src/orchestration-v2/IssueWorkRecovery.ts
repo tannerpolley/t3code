@@ -142,6 +142,8 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         target.deletedAt !== null ||
         target.archivedAt !== null ||
         target.linkedIssue !== undefined ||
+        target.worktreePath !== null ||
+        (target.branch !== null && target.branch !== "main") ||
         isProviderNativeSubagentThread(target) ||
         (targetConfig !== undefined &&
           (targetConfig.host !== command.host ||
@@ -170,7 +172,6 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
           repository: command.repository,
           repositoryId: command.repositoryId,
           projectId: command.projectId,
-          workspace: target.worktreePath === null ? "project" : "worktree",
           launchCommandId: command.commandId,
           revision: 1,
           paused: false,
@@ -248,6 +249,7 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         occurredAt,
         payload: {
           ...target,
+          branch: "main",
           repositoryOrchestration: config,
           updatedAt: occurredAt,
         },

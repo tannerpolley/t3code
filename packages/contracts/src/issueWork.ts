@@ -10,7 +10,6 @@ import { IssueRef, IssueRepositoryRef } from "./issue.ts";
 export const RepositoryMilestonePlan = Schema.Struct({
   number: Schema.Int.check(Schema.isGreaterThan(0)),
   modelRoleId: ModelRoleId,
-  workspace: Schema.Literals(["project", "worktree"]),
   status: Schema.Literals(["running", "complete", "blocked", "awaiting_approval", "unreadable"]),
   fingerprint: Schema.String,
 });
@@ -20,7 +19,6 @@ export const RepositoryOrchestration = Schema.Struct({
   repository: TrimmedNonEmptyString,
   repositoryId: TrimmedNonEmptyString,
   projectId: ProjectId,
-  workspace: Schema.Literals(["project", "worktree"]),
   launchCommandId: CommandId,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   paused: Schema.Boolean,
@@ -69,7 +67,6 @@ export const RepositoryWorkInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   projectId: ProjectId,
   modelRoleId: ModelRoleId,
-  workspace: Schema.Literals(["project", "worktree"]),
   milestoneNumber: Schema.Int.check(Schema.isGreaterThan(0)),
   clientRequestId: CommandId,
 });
@@ -150,7 +147,6 @@ export const IssueWorkStartInput = Schema.Struct({
   ...IssueRef.fields,
   projectId: ProjectId,
   modelRoleId: ModelRoleId,
-  workspace: Schema.Literals(["project", "worktree"]),
   /** Selected existing lead; otherwise reuse the registered owner or explicitly create the first one. */
   orchestratorThreadId: Schema.optional(ThreadId),
   /** Explicit consent to create the first orchestrator when none is registered. */
@@ -231,7 +227,6 @@ export const IssueWorkRequested = Schema.Struct({
   issueThreadId: Schema.NullOr(ThreadId),
   attemptKey: Schema.String,
   modelSelection: ModelSelection,
-  workspace: Schema.Literals(["project", "worktree"]),
   cancellation: Schema.optional(IssueWorkCancellation),
 });
 export type IssueWorkRequested = typeof IssueWorkRequested.Type;

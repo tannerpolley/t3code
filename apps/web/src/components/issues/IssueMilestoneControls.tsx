@@ -75,7 +75,7 @@ function RepositoryControls({
   if (config == null || data?.rootThreadId == null) return null;
   const restoreTarget = restoreCandidates.find((lead) => lead.id === restoreTargetId);
   const replaceRoot = async () => {
-    if (busy || restoreTarget === undefined) return;
+    if (busy || !config.paused || restoreTarget === undefined) return;
     setBusy(true);
     const result = await restore({
       environmentId,
@@ -100,6 +100,11 @@ function RepositoryControls({
     else {
       setRestoreExpanded(false);
       setRestoreTargetId(null);
+      toastManager.add({
+        type: "success",
+        title: "Repository orchestrator changed",
+        description: "Repository work remains paused. Choose Resume repository work to continue.",
+      });
     }
     appAtomRegistry.refresh(statusAtom);
   };
@@ -179,7 +184,7 @@ function RepositoryControls({
           disabled={busy || config.handoff?.status === "draining"}
           onClick={() => void togglePause()}
         >
-          {canResume ? "Resume repository" : "Pause repository"}
+          {canResume ? "Resume repository work" : "Pause repository work"}
         </Button>
         {config.handoff === undefined ? (
           <Button
@@ -242,7 +247,7 @@ function RepositoryControls({
             </Button>
             <Button
               size="xs"
-              disabled={busy || restoreTarget === undefined}
+              disabled={busy || !config.paused || restoreTarget === undefined}
               onClick={() => void replaceRoot()}
             >
               Make orchestrator
@@ -327,7 +332,6 @@ function Controls({
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [roleId, setRoleId] = useState<string | null>(null);
-  const [workspace, setWorkspace] = useState<"project" | "worktree">("worktree");
   const role =
     roles.find((entry) => entry.id === roleId) ??
     roles.find((entry) => entry.id !== "orchestrator") ??
@@ -344,7 +348,6 @@ function Controls({
         milestoneNumber: milestone.number,
         projectId: project.id,
         modelRoleId: role.id,
-        workspace,
         clientRequestId: CommandId.make(randomUUID()),
       },
     });
@@ -391,20 +394,9 @@ function Controls({
               ))}
             </SelectContent>
           </Select>
-          <Select
-            value={workspace}
-            onValueChange={(value) => setWorkspace(value as "project" | "worktree")}
-          >
-            <SelectTrigger size="sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="worktree">Workers in worktrees</SelectItem>
-              <SelectItem value="project">Workers in project</SelectItem>
-            </SelectContent>
-          </Select>
           <span className="text-xs text-muted-foreground">
-            Four workers across the repository. T3 publishes status and closeout comments.
+            Four workers across the repository, each in a new issue-named worktree from the default
+            branch. T3 publishes status and closeout comments.
           </span>
           <Button size="xs" disabled={busy || role === undefined} onClick={() => void start()}>
             Start milestone work

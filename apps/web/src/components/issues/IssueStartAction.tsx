@@ -97,7 +97,6 @@ function IssueStartControls({
     null,
   );
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
-  const [workspace, setWorkspace] = useState<"project" | "worktree">("worktree");
   const [expanded, setExpanded] = useState(false);
   const [starting, setStarting] = useState(false);
   const request = useRef<{ key: string; id: string } | null>(null);
@@ -175,7 +174,6 @@ function IssueStartControls({
       ...reference,
       projectId: project.id,
       modelRoleId: role.id,
-      workspace,
       ...(orchestratorThreadId === undefined ? {} : { orchestratorThreadId }),
       ...(createOrchestrator ? { createOrchestrator: true } : {}),
     };
@@ -208,7 +206,8 @@ function IssueStartControls({
     setExpanded(false);
     toastManager.add({
       type: "success",
-      title: "Issue work accepted by the repository orchestrator",
+      title: result.value.issueThreadId === null ? "Issue work queued" : "Issue worker started",
+      description: issueWorkPresentation(null, result.value).label ?? undefined,
     });
   };
 
@@ -310,7 +309,7 @@ function IssueStartControls({
             </p>
           ) : null}
           <label className="flex flex-col gap-1 text-xs">
-            Repository workspace
+            Repository project
             <Select
               items={matchingProjects.map((entry) => ({ value: entry.id, label: entry.title }))}
               value={project?.id ?? null}
@@ -371,20 +370,10 @@ function IssueStartControls({
               <span>Issue workers run beneath this lead, following the issue parent tree.</span>
             </label>
           ) : null}
-          <Select
-            value={workspace}
-            onValueChange={(value) => {
-              if (value === "project" || value === "worktree") setWorkspace(value);
-            }}
-          >
-            <SelectTrigger size="compact" aria-label="Issue checkout choice">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="worktree">New worktree</SelectItem>
-              <SelectItem value="project">Project checkout</SelectItem>
-            </SelectContent>
-          </Select>
+          <p className="text-xs text-muted-foreground">
+            Each worker gets a new issue-named worktree from the default branch. The repository
+            orchestrator stays on local main in the main checkout.
+          </p>
           <p className="text-xs text-muted-foreground">
             Starting authorizes one updated T3 status comment and one closeout comment per finished
             attempt. Agents can create and split issues and move milestones. Body edits,

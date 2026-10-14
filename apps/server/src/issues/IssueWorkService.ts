@@ -18,13 +18,19 @@ import {
   type RepositoryWorkResult,
   type RepositoryOrchestration,
   type ThreadId,
+  type ProjectId,
   type IssueWorkRead,
   type ThreadLinkedIssue,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
-import type { OrchestratorV2DispatchResult } from "../orchestration-v2/Orchestrator.ts";
+import {
+  OrchestratorCommandRejectedError,
+  OrchestratorCommandPreviouslyRejectedError,
+  OrchestratorDispatchError,
+  type OrchestratorV2DispatchResult,
+} from "../orchestration-v2/Orchestrator.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
@@ -35,7 +41,10 @@ import { IssueService } from "./IssueService.ts";
 import { IssueWorkStore } from "./IssueWorkStore.ts";
 import { deriveIssueWorkStatus } from "./IssueWorkStatus.ts";
 import { ThreadLaunchService } from "../orchestration-v2/ThreadLaunchService.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  ThreadManagementService,
+  ThreadManagementProviderInstanceDisabledError,
+} from "../orchestration-v2/ThreadManagementService.ts";
 import { IdAllocatorV2 } from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentProjection";
@@ -69,7 +78,10 @@ export class IssueWorkService extends Context.Service<
         OrchestrationV2ServerCommand,
         { type: "issue.work.start" | "delegated_task.request" }
       >,
-    ) => Effect.Effect<OrchestratorV2DispatchResult, IssueWorkError>;
+    ) => Effect.Effect<
+      OrchestratorV2DispatchResult,
+      IssueWorkError | ThreadManagementProviderInstanceDisabledError
+    >;
     /** User-only recovery. Cancellation never interrupts a claimed worker. */
     readonly cancelRequest: (
       input: IssueWorkCancelInput,
@@ -100,6 +112,12 @@ export class IssueWorkService extends Context.Service<
   }
 >()("t3/issues/IssueWorkService") {}
 
+const isIssueWorkError = Schema.is(IssueWorkError);
+const isCommandRejectedError = Schema.is(OrchestratorCommandRejectedError);
+const isPreviouslyRejectedError = Schema.is(OrchestratorCommandPreviouslyRejectedError);
+const isDispatchError = Schema.is(OrchestratorDispatchError);
+const isProviderDisabledError = Schema.is(ThreadManagementProviderInstanceDisabledError);
+
 export const layer = Layer.effect(
   IssueWorkService,
   Effect.gen(function* () {
@@ -113,9 +131,31 @@ export const layer = Layer.effect(
     const adapters = yield* ProviderAdapterRegistryV2;
     const ids = yield* IdAllocatorV2;
     const mapError = (cause: unknown) =>
-      new IssueWorkError({
-        code: "orchestration-error",
-        message: cause instanceof Error ? cause.message : String(cause),
+      isIssueWorkError(cause)
+        ? cause
+        : new IssueWorkError({
+            code:
+              isCommandRejectedError(cause) ||
+              isPreviouslyRejectedError(cause) ||
+              isDispatchError(cause)
+                ? "invalid-request"
+                : "orchestration-error",
+            message: cause instanceof Error ? cause.message : String(cause),
+          });
+    const assertRootCheckout = (input: {
+      projectId: ProjectId;
+      commandId: CommandId;
+      worktreePath: string | null;
+    }) =>
+      Effect.gen(function* () {
+        if (
+          input.worktreePath !== null ||
+          (yield* launch.readCheckoutBranch(input).pipe(Effect.mapError(mapError))) !== "main"
+        )
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: "The repository orchestrator requires the main checkout on local main.",
+          });
       });
     const progressFor = (threadId: Parameters<typeof threads.getThreadShell>[0], paused: boolean) =>
       Effect.gen(function* () {
@@ -172,7 +212,6 @@ export const layer = Layer.effect(
         IssueWorkStartInput,
         | "projectId"
         | "modelRoleId"
-        | "workspace"
         | "orchestratorThreadId"
         | "createOrchestrator"
         | "clientRequestId"
@@ -291,6 +330,11 @@ export const layer = Layer.effect(
         let createdRoot = false;
         if (root === null) {
           yield* assertProjectRepository(input.projectId, issue);
+          yield* assertRootCheckout({
+            projectId: input.projectId,
+            commandId: input.clientRequestId,
+            worktreePath: null,
+          });
           // All projects pointing at this repository share a command identity. The
           // serialized receipt and unique projected repository key are the lock.
           const commandId = CommandId.make(`issue-root:${issue.host}:${issue.repositoryId}`);
@@ -323,13 +367,12 @@ export const layer = Layer.effect(
               modelSelection: rootSelection,
               runtimeMode: "full-access",
               interactionMode: "default",
-              workspaceStrategy: { type: "root" },
+              workspaceStrategy: { type: "root", branch: "main" },
               repositoryOrchestration: {
                 host: issue.host,
                 repository: issue.repository,
                 repositoryId: issue.repositoryId,
                 projectId: input.projectId,
-                workspace: input.workspace,
                 launchCommandId: commandId,
                 revision: 1,
                 paused: false,
@@ -367,7 +410,7 @@ export const layer = Layer.effect(
         return { root, selection, createdRoot };
       });
 
-    // All issue entry points share repository workspace policy and post-commit preparation.
+    // Every issue admission prepares its own default-branch worktree after commit.
     const startWorker: IssueWorkService["Service"]["startWorker"] = Effect.fn(
       "IssueWorkService.startWorker",
     )(function* (command) {
@@ -383,8 +426,16 @@ export const layer = Layer.effect(
           code: "invalid-request",
           message: "The repository orchestrator is unavailable.",
         });
+      const rootThread = yield* threads
+        .getThreadRecords(owner.rootThreadId, [])
+        .pipe(Effect.mapError(mapError));
+      yield* assertRootCheckout({
+        projectId: config.projectId,
+        commandId: command.commandId,
+        worktreePath: rootThread.thread.worktreePath,
+      });
       let worktree: { baseRef: string; branch: string } | undefined;
-      if (config.workspace === "worktree" && !(yield* threads.hasReceipt(command.commandId))) {
+      if (!(yield* threads.hasReceipt(command.commandId))) {
         const baseRef = yield* launch
           .readDefaultBranch({ commandId: command.commandId, projectId: config.projectId })
           .pipe(Effect.mapError(mapError));
@@ -394,10 +445,15 @@ export const layer = Layer.effect(
       const dispatched = yield* threads
         .dispatch({
           ...command,
-          worktree,
-          ...(command.type === "issue.work.start" ? { workspace: config.workspace } : {}),
+          ...(worktree === undefined
+            ? {}
+            : command.type === "issue.work.start"
+              ? { issueWorktree: worktree }
+              : { worktree }),
         })
-        .pipe(Effect.mapError(mapError));
+        .pipe(
+          Effect.mapError((cause) => (isProviderDisabledError(cause) ? cause : mapError(cause))),
+        );
       const childId = dispatched.storedEvents.find(
         (stored) => stored.event.type === "subagent.updated",
       )?.event;
@@ -525,7 +581,6 @@ export const layer = Layer.effect(
           threadId: root.rootThreadId,
           issue,
           workerModelSelection: selection,
-          workspace: input.workspace,
           createdBy: "user",
           creationSource: "web",
         }).pipe(Effect.mapError(mapError));
@@ -592,8 +647,7 @@ export const layer = Layer.effect(
         [
           "Milestones",
           config.milestones.map(
-            (plan) =>
-              `#${plan.number}: ${plan.status}; worker role ${plan.modelRoleId}; workspace ${plan.workspace}`,
+            (plan) => `#${plan.number}: ${plan.status}; worker role ${plan.modelRoleId}`,
           ),
         ],
         ["Completed attempts", []],
@@ -758,7 +812,6 @@ export const layer = Layer.effect(
                 threadId: rootThreadId,
                 issue: parent,
                 workerModelSelection: request.modelSelection,
-                workspace: request.workspace,
                 createdBy: "agent",
                 creationSource: "server",
               }).pipe(
@@ -770,14 +823,17 @@ export const layer = Layer.effect(
           }
           yield* startWorker({
             type: "issue.work.start",
-            commandId: CommandId.make(`issue-parent-start:${request.requestId}:${parentOwner}`),
+            commandId: CommandId.make(`issue-child-start:${request.requestId}:${parentOwner}`),
             threadId: rootThreadId,
             issue: request.issue,
             workerModelSelection: request.modelSelection,
-            workspace: config.workspace,
             createdBy: "agent",
             creationSource: "server",
-          });
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not start the pending sub-issue", { cause }),
+            ),
+          );
         }
         yield* threads
           .dispatch({
@@ -918,7 +974,6 @@ export const layer = Layer.effect(
               number: issue.number,
               projectId: config.projectId,
               modelRoleId: plan.modelRoleId,
-              workspace: plan.workspace,
               clientRequestId: CommandId.make(
                 `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`,
               ),
@@ -980,7 +1035,6 @@ export const layer = Layer.effect(
                 {
                   number: input.milestoneNumber,
                   modelRoleId: input.modelRoleId,
-                  workspace: input.workspace,
                   status: "running",
                   fingerprint: "",
                 },
@@ -1192,6 +1246,11 @@ export const layer = Layer.effect(
     const restoreRoot: IssueWorkService["Service"]["restoreRoot"] = (input) =>
       Effect.gen(function* () {
         yield* assertProjectRepository(input.projectId, input);
+        yield* assertRootCheckout({
+          projectId: input.projectId,
+          commandId: input.clientRequestId,
+          worktreePath: null,
+        });
         if (input.expectedRootThreadId === null) {
           const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
           if (

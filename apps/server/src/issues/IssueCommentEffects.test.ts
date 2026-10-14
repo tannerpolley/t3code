@@ -92,7 +92,7 @@ it.effect(
                 repository: issue.repository,
                 repositoryId: issue.repositoryId,
                 projectId,
-                workspace: "project",
+
                 launchCommandId: CommandId.make("managed-status-root"),
                 revision: 1,
                 paused: false,

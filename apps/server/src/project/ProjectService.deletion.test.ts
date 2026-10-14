@@ -549,7 +549,7 @@ it.effect(
                   repository: "tannerpolley/t3code",
                   repositoryId: "repo:root",
                   projectId,
-                  workspace: "project",
+
                   launchCommandId: CommandId.make("command:root-create"),
                   revision: 1,
                   paused: false,

@@ -1969,7 +1969,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   publish_closeout_comments, created_at, updated_at
                 ) VALUES (
                   ${owner.host}, ${owner.repositoryId}, ${owner.repository}, ${threadId},
-                  ${owner.projectId}, ${owner.workspace}, ${owner.launchCommandId},
+                  ${owner.projectId}, ${"worktree"}, ${owner.launchCommandId},
                   ${owner.revision}, ${owner.paused ? 1 : 0}, ${owner.workerLimit},
                   ${owner.publishStatusComments ? 1 : 0}, ${owner.publishCloseoutComments ? 1 : 0},
                   ${DateTime.formatIso(occurredAt)}, ${DateTime.formatIso(occurredAt)}

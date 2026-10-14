@@ -2294,7 +2294,13 @@ const make = Effect.gen(function* () {
         const result = yield* linkedIssue !== undefined && Option.isSome(issueWork)
           ? issueWork.value
               .startWorker(taskCommand)
-              .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)))
+              .pipe(
+                Effect.mapError((error) =>
+                  error._tag === "ThreadManagementProviderInstanceDisabledError"
+                    ? threadManagementFailure(error)
+                    : failure("orchestration_error", error.message),
+                ),
+              )
           : threadManagement
               .dispatch(taskCommand)
               .pipe(

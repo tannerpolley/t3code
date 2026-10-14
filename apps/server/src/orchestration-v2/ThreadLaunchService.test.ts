@@ -235,6 +235,7 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
+      resolveDefaultBranchRef: () => Effect.succeed("main"),
       renameBranch,
       localStatus,
       invalidateLocalStatus: options.invalidateLocalStatus ?? (() => Effect.void),
@@ -3002,6 +3003,8 @@ describe("managed issue work", () => {
       });
     const harness = makeHarness({
       issueServiceLayer: Layer.mock(IssueService.IssueService)({ workRead }),
+      localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
+      hasCommit: () => Effect.succeed(true),
       providers: [provider],
       projectRepositoryIdentity: {
         canonicalKey: "github.com/tannerpolley/t3code",
@@ -3143,7 +3146,6 @@ describe("managed issue work", () => {
         projectId,
         orchestratorThreadId: selectedLeadId,
         modelRoleId: "worker",
-        workspace: "project" as const,
       };
       const starts = yield* Effect.all(
         [
@@ -3235,18 +3237,18 @@ describe("managed issue work", () => {
         })
         .pipe(Effect.result);
       assert.isTrue(missingIssue._tag === "Failure");
-      const concurrent = yield* Effect.all(
+      const reuseResults = yield* Effect.all(
         [
           threads.dispatch(command).pipe(Effect.result),
           threads
-            .dispatch({ ...command, commandId: CommandId.make("issue-delegate:concurrent") })
+            .dispatch({ ...command, commandId: CommandId.make("issue-delegate:second-reuse") })
             .pipe(Effect.result),
         ],
         { concurrency: 2 },
       );
-      const successful = concurrent.filter((result) => result._tag === "Success");
+      const successful = reuseResults.filter((result) => result._tag === "Success");
       assert.equal(successful.length, 2);
-      assert.equal(concurrent.filter((result) => result._tag === "Failure").length, 0);
+      assert.equal(reuseResults.filter((result) => result._tag === "Failure").length, 0);
       assert.isFalse(
         successful.some(
           (result) =>
@@ -3567,16 +3569,18 @@ describe("managed issue work", () => {
         );
         return;
       }
+      const rootHistoryBeforeRetry = yield* threads.getThreadRecords(root.thread.id, [
+        "messages",
+        "runs",
+      ]);
       const retry = yield* issues.start({
         ...input,
         clientRequestId: CommandId.make("issue-click:first"),
       });
       assert.equal(retry.rootThreadId, root.thread.id);
-      assert.equal(
-        (yield* threads.getThreadProjection(root.thread.id)).messages.filter((message) =>
-          message.text.startsWith("Start issue #8:"),
-        ).length,
-        0,
+      assert.deepEqual(
+        (yield* threads.getThreadRecords(root.thread.id, ["messages", "runs"])).messages,
+        rootHistoryBeforeRetry.messages,
       );
       assert.equal(
         (yield* sql`SELECT * FROM orchestration_v2_projection_issue_work_requests`).length,
@@ -3596,18 +3600,14 @@ describe("managed issue work", () => {
         ...input,
         clientRequestId: CommandId.make("issue-click:successor-duplicate"),
       });
-      assert.equal(
-        (yield* threads.getThreadProjection(root.thread.id)).messages.filter((message) =>
-          message.text.startsWith("Start issue #8:"),
-        ).length,
-        0,
+      assert.deepEqual(
+        (yield* threads.getThreadRecords(root.thread.id, ["messages", "runs"])).messages,
+        rootHistoryBeforeRetry.messages,
       );
       yield* issues.start({ ...input, clientRequestId: CommandId.make("issue-click:first") });
-      assert.equal(
-        (yield* threads.getThreadProjection(root.thread.id)).messages.filter((message) =>
-          message.text.startsWith("Start issue #8:"),
-        ).length,
-        0,
+      assert.deepEqual(
+        (yield* threads.getThreadRecords(root.thread.id, ["messages", "runs"])).messages,
+        rootHistoryBeforeRetry.messages,
       );
       const successorResult = yield* threads.dispatch({
         ...command,
@@ -3683,7 +3683,7 @@ it.effect(
         repository: "tannerpolley/t3code",
         repositoryId: "repo:milestone",
         projectId,
-        workspace: "project" as const,
+
         launchCommandId: CommandId.make("milestone-root-create"),
         revision: 1,
         paused: false,
@@ -3694,7 +3694,7 @@ it.effect(
           {
             number: 1,
             modelRoleId: "worker",
-            workspace: "project" as const,
+
             status: "running" as const,
             fingerprint: "",
           },
@@ -4103,6 +4103,8 @@ it.effect(
     };
     const harness = makeHarness({
       issueServiceLayer: reads,
+      localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
+      hasCommit: () => Effect.succeed(true),
       providers: [provider],
       projectRepositoryIdentity: {
         canonicalKey: "github.com/tannerpolley/t3code",
@@ -4145,7 +4147,6 @@ it.effect(
         repository: "tannerpolley/t3code",
         projectId,
         modelRoleId: "worker",
-        workspace: "project" as const,
       };
       const emptyPlan = yield* service.workMilestone({
         ...input,
@@ -4167,6 +4168,10 @@ it.effect(
       const store = yield* IssueWorkStore.IssueWorkStore;
       const firstId = (yield* store.issueOwner(linked(1)))!;
       const secondId = (yield* store.issueOwner(linked(2)))!;
+      yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(firstId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
       assert.equal(
         (yield* threads.getThreadRecords(firstId, ["runs"])).runs[0]!.status,
         "starting",
@@ -4491,7 +4496,7 @@ const createReviewRoot = (repository = "tannerpolley/t3code") =>
         repository,
         repositoryId: issue.repositoryId,
         projectId,
-        workspace: "project",
+
         launchCommandId: CommandId.make(`review-create:${repository}`),
         revision: 1,
         paused: false,
@@ -4502,7 +4507,7 @@ const createReviewRoot = (repository = "tannerpolley/t3code") =>
           {
             number: 1,
             modelRoleId: "worker",
-            workspace: "project",
+
             status: "running",
             fingerprint: "",
           },
@@ -4580,7 +4585,7 @@ it.effect(
           ...childIssue,
           projectId,
           modelRoleId: "worker",
-          workspace: "project",
+
           clientRequestId: CommandId.make("cross-start"),
         })
         .pipe(Effect.flip);
@@ -4632,7 +4637,7 @@ it.effect(
           ...reviewIssue(1),
           projectId,
           modelRoleId: "worker",
-          workspace: "project",
+
           clientRequestId: CommandId.make("unsupported-start"),
         })
         .pipe(Effect.flip);
@@ -4645,7 +4650,7 @@ it.effect(
           threadId: root,
           issue: reviewIssue(1),
           workerModelSelection: unsupported,
-          workspace: "project",
+
           createdBy: "user",
           creationSource: "web",
         })
@@ -4896,7 +4901,7 @@ describe("fresh-thread repository handoff", () => {
   const plan = {
     number: 1,
     modelRoleId: "worker",
-    workspace: "project" as const,
+
     status: "running" as const,
     fingerprint: "",
   };
@@ -4904,7 +4909,7 @@ describe("fresh-thread repository handoff", () => {
     ...reference,
     repositoryId: "repo:handoff",
     projectId,
-    workspace: "project" as const,
+
     launchCommandId: CommandId.make("handoff-root-create"),
     revision: 1,
     paused: false,
@@ -4957,7 +4962,10 @@ describe("fresh-thread repository handoff", () => {
       continuation?: boolean;
       inventoryIssues?: () => number[];
       /** Runs first in the provider check, which the handoff command makes under the root's lock. */
-      beforeCapabilities?: () => Effect.Effect<void>;
+      beforeCapabilities?: () => Effect.Effect<
+        void,
+        ProviderAdapter.ProviderAdapterCapabilitiesError
+      >;
       /** Wraps the store the issue work service reads. */
       wrapStore?: (
         store: IssueWorkStore.IssueWorkStore["Service"],
@@ -5007,6 +5015,8 @@ describe("fresh-thread repository handoff", () => {
         ),
     };
     const harness = makeHarness({
+      localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
+      hasCommit: () => Effect.succeed(true),
       providers: [provider],
       ...(options.git === undefined ? {} : { git: options.git }),
       ...(options.recovery
@@ -5193,7 +5203,7 @@ describe("fresh-thread repository handoff", () => {
           threadId: rootId,
           commandId: CommandId.make("worktree-policy"),
           expectedRevision: 1,
-          orchestration: { ...config, workspace: "worktree", milestones: [] },
+          orchestration: { ...config, milestones: [] },
         });
         yield* threads.sendToThread({
           projectId,
@@ -5239,7 +5249,7 @@ describe("fresh-thread repository handoff", () => {
           number: 9,
           projectId,
           modelRoleId: "worker",
-          workspace: "project",
+
           clientRequestId: CommandId.make("managed-panel-duplicate"),
         });
         assert.equal(panelDuplicate.issueThreadId, task.childThreadId);
@@ -5251,22 +5261,8 @@ describe("fresh-thread repository handoff", () => {
           fixture({
             recovery: true,
             git: {
-              listRefs: () =>
-                Effect.succeed({
-                  isRepo: true,
-                  hasPrimaryRemote: true,
-                  totalCount: 2,
-                  nextCursor: null,
-                  refs: [
-                    {
-                      name: "feature/orchestrator",
-                      current: true,
-                      isDefault: false,
-                      worktreePath: null,
-                    },
-                    { name: "trunk", current: false, isDefault: true, worktreePath: null },
-                  ],
-                }),
+              resolveDefaultBranchRef: () => Effect.succeed("trunk"),
+              localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
               hasCommit: () => Effect.succeed(true),
               createWorktree: (input) =>
                 Effect.sync(() => {
@@ -5287,7 +5283,7 @@ describe("fresh-thread repository handoff", () => {
   );
 
   it.effect.each(["panel", "milestone"] as const)(
-    "%s uses the shared issue start path and repository workspace without queuing the idle root",
+    "%s creates a worktree child without queuing the idle root, then delivers completion to it",
     (path) => {
       const created: Array<
         Parameters<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]>[0]
@@ -5303,13 +5299,13 @@ describe("fresh-thread repository handoff", () => {
           threadId: rootId,
           commandId: CommandId.make("shared-worktree-policy"),
           expectedRevision: 1,
-          orchestration: { ...config, workspace: "worktree", milestones: [] },
+          orchestration: { ...config, milestones: [] },
         });
         const input = {
           ...reference,
           projectId,
           modelRoleId: "worker",
-          workspace: "project" as const,
+
           clientRequestId: CommandId.make(`shared-start:${path}`),
         };
         if (path === "panel") yield* service.start({ ...input, number: 9 });
@@ -5332,21 +5328,54 @@ describe("fresh-thread repository handoff", () => {
         assert.lengthOf(root.subagents, 1);
         if (path === "milestone")
           assert.equal(root.thread.repositoryOrchestration!.milestones[0]!.status, "running");
+        const sink = yield* EventSink.EventSinkV2;
+        const beforeCompletion = yield* sink.latestSequence();
+        yield* finish(childId, `shared-start:${path}:done`);
+        yield* (yield* Orchestrator.OrchestratorV2).recoverDelegatedTask(
+          childId,
+          child.runs[0]!.id,
+        );
+        yield* awaitFollowup(rootId, beforeCompletion);
+        const notifiedRoot = yield* threads.getThreadRecords(rootId, [
+          "messages",
+          "runs",
+          "subagents",
+        ]);
+        const completion = notifiedRoot.messages.find(
+          (message) => message.delegatedCompletion !== undefined,
+        )!;
+        assert.equal(completion.delegatedCompletion!.parentRunId, null);
+        assert.include(completion.text, notifiedRoot.subagents[0]!.id);
+        assert.equal(notifiedRoot.subagents[0]!.completionDelivery?.state, "claimed");
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        yield* maintenance.compactEventStore;
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.deepEqual(
+          (yield* threads.getThreadRecords(rootId, [])).thread.delegatedCompletion,
+          notifiedRoot.thread.delegatedCompletion,
+        );
+        yield* threads.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make(`shared-start:${path}:ack`),
+          parentThreadId: rootId,
+          taskId: notifiedRoot.subagents[0]!.id,
+          observedByRunId: null,
+        });
+        assert.deepEqual(
+          (yield* threads.getThreadRecords(rootId, [])).thread.delegatedCompletion!.delivery!
+            .taskIds,
+          [],
+        );
         yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
       }).pipe(
         Effect.provide(
           fixture({
             recovery: true,
+            continuation: true,
             inventoryIssues: () => [9],
             git: {
-              listRefs: () =>
-                Effect.succeed({
-                  isRepo: true,
-                  hasPrimaryRemote: true,
-                  totalCount: 1,
-                  nextCursor: null,
-                  refs: [{ name: "trunk", current: true, isDefault: true, worktreePath: null }],
-                }),
+              resolveDefaultBranchRef: () => Effect.succeed("trunk"),
+              localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
               hasCommit: () => Effect.succeed(true),
               createWorktree: (input) =>
                 Effect.sync(() => {
@@ -5360,6 +5389,324 @@ describe("fresh-thread repository handoff", () => {
                   };
                 }),
             },
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("serializes a panel sub-issue start with its parent's simultaneous delegate", () => {
+    let gate: Deferred.Deferred<void> | undefined;
+    let arrivals = 0;
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      yield* createRoot;
+      const parent = (yield* service.start({
+        ...reference,
+        number: 1,
+        projectId,
+        modelRoleId: "worker",
+        clientRequestId: CommandId.make("sub-race:parent"),
+      })).issueThreadId!;
+      yield* tracker.stream(parent).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
+      gate = yield* Deferred.make<void>();
+      const results = yield* Effect.all(
+        [
+          service.start({
+            ...reference,
+            number: 2,
+            projectId,
+            modelRoleId: "worker",
+            clientRequestId: CommandId.make("sub-race:panel"),
+          }),
+          (yield* OrchestratorMcp.OrchestratorMcpService).delegateTask(scope(parent), {
+            issue: { ...reference, number: 2 },
+            task: "Implement sub-issue 2",
+            mode: "async",
+            clientRequestId: "sub-race:delegate",
+          }),
+        ],
+        { concurrency: 2 },
+      );
+      assert.equal(arrivals, 2);
+      assert.equal(results[0].issueThreadId, results[1].childThreadId);
+      assert.equal(yield* store.currentIssueOwner(linked(2)), results[1].childThreadId);
+      const parentAfter = yield* threads.getThreadRecords(parent, ["subagents", "messages"]);
+      assert.lengthOf(parentAfter.subagents, 1);
+      assert.lengthOf(parentAfter.messages, 1);
+    }).pipe(
+      Effect.provide(
+        fixture({
+          recovery: true,
+          git: {
+            resolveDefaultBranchRef: () =>
+              Effect.gen(function* () {
+                const waiting = gate;
+                if (waiting === undefined) return "main";
+                arrivals++;
+                if (arrivals === 2) yield* Deferred.succeed(waiting, undefined);
+                yield* Deferred.await(waiting);
+                return "main";
+              }),
+          },
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "a permanently rejected sub-issue continuation still runs repository and milestone reconciliation",
+    () => {
+      let rejectNext = false;
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        const sink = yield* EventSink.EventSinkV2;
+        yield* createRoot;
+        const parent = (yield* service.start({
+          ...reference,
+          number: 1,
+          projectId,
+          modelRoleId: "worker",
+          clientRequestId: CommandId.make("continuation-failure:parent"),
+        })).issueThreadId!;
+        yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(parent).pipe(
+          Stream.filter((snapshot) => snapshot?.phase === "done"),
+          Stream.runHead,
+        );
+        const now = yield* DateTime.now;
+        const requestId = CommandId.make("continuation-failure:request");
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("continuation-failure:pending"),
+              type: "issue.work.requested",
+              threadId: rootId,
+              occurredAt: now,
+              payload: {
+                requestId,
+                issue: linked(2),
+                parent: linked(1),
+                rootThreadId: rootId,
+                issueThreadId: null,
+                attemptKey: "first",
+                modelSelection,
+              },
+            },
+          ],
+        });
+        rejectNext = true;
+        yield* service.reconcile(rootId);
+        assert.isNull(yield* store.currentIssueOwner(linked(2)));
+        assert.isNotNull(yield* store.currentIssueOwner(linked(9)));
+        assert.equal((yield* store.configuration(rootId))!.milestones[0]!.status, "running");
+        assert.isTrue(
+          yield* threads.hasReceipt(CommandId.make(`issue-child-start:${requestId}:${parent}`)),
+        );
+        // The rejected receipt repeats on the next pass without stalling the rest of it.
+        yield* service.reconcile(rootId);
+        assert.isNotNull(yield* store.currentIssueOwner(linked(9)));
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            inventoryIssues: () => [9],
+            beforeCapabilities: () =>
+              rejectNext
+                ? Effect.sync(() => {
+                    rejectNext = false;
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ProviderAdapter.ProviderAdapterCapabilitiesError({
+                          driver: adapter.driver,
+                        }),
+                      ),
+                    ),
+                  )
+                : Effect.void,
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "rejects reusing a worker under a retired root without rewriting that root's task",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        yield* createRoot;
+        const child = (yield* service.start({
+          ...reference,
+          number: 9,
+          projectId,
+          modelRoleId: "worker",
+          clientRequestId: CommandId.make("foreign-reuse:first"),
+        })).issueThreadId!;
+        yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(child).pipe(
+          Stream.filter((snapshot) => snapshot?.phase === "done"),
+          Stream.runHead,
+        );
+        const prior = yield* threads.getThreadRecords(rootId, ["subagents"]);
+        const replacement = ThreadId.make("foreign-reuse:replacement");
+        const now = yield* DateTime.now;
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("foreign-reuse:create"),
+          threadId: replacement,
+          projectId,
+          title: "Replacement repository orchestrator",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const target = (yield* threads.getThreadRecords(replacement, [])).thread;
+        const successorConfig = {
+          ...config,
+          handoffHistory: [{ threadId: rootId, transferredAt: DateTime.formatIso(now) }],
+          revision: 2,
+          launchCommandId: CommandId.make("foreign-reuse:create"),
+        };
+        // A draining handoff retains active workers owned by the retiring root.
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("foreign-reuse:restore"),
+              type: "repository.work.restored",
+              threadId: replacement,
+              occurredAt: now,
+              payload: {
+                previousRootThreadId: rootId,
+                targetThreadId: replacement,
+                expectedRevision: 1,
+                reason: "Retain the former root's running workers",
+                repositoryOrchestration: successorConfig,
+              },
+            },
+            {
+              id: EventId.make("foreign-reuse:retire"),
+              type: "thread.metadata-updated",
+              threadId: rootId,
+              occurredAt: now,
+              payload: {
+                ...prior.thread,
+                repositoryOrchestration: { ...config, retiredToThreadId: replacement },
+              },
+            },
+            {
+              id: EventId.make("foreign-reuse:adopt"),
+              type: "thread.metadata-updated",
+              threadId: replacement,
+              occurredAt: now,
+              payload: { ...target, repositoryOrchestration: successorConfig },
+            },
+          ],
+        });
+        yield* threads.sendToThread({
+          threadId: replacement,
+          projectId,
+          commandId: CommandId.make("foreign-reuse:run"),
+          messageId: MessageId.make("foreign-reuse:run"),
+          text: "Continue repository orchestration",
+          attachments: [],
+          mode: "auto",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const rejected = yield* (yield* OrchestratorMcp.OrchestratorMcpService)
+          .delegateTask(scope(replacement), {
+            issue: { ...reference, number: 9 },
+            task: "Claim existing worker",
+            mode: "async",
+            clientRequestId: "foreign-reuse:delegate",
+          })
+          .pipe(Effect.result);
+        assert.equal(rejected._tag, "Failure");
+        if (rejected._tag === "Failure") assert.include(rejected.failure.message, "another parent");
+        assert.deepEqual(
+          (yield* threads.getThreadRecords(rootId, ["subagents"])).subagents,
+          prior.subagents,
+        );
+        assert.lengthOf((yield* threads.getThreadRecords(replacement, ["subagents"])).subagents, 0);
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect(
+    "keeps invalid-request on rejected start replay so milestone reconciliation awaits the owner",
+    () => {
+      let rejectNext = false;
+      return Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const store = yield* IssueWorkStore.IssueWorkStore;
+        yield* createRoot;
+        const requestId = CommandId.make(`milestone-issue:${rootId}:1:issue:9:first`);
+        rejectNext = true;
+        const initial = yield* service
+          .startWorker({
+            type: "issue.work.start",
+            commandId: requestId,
+            threadId: rootId,
+            issue: linked(9),
+            workerModelSelection: modelSelection,
+            createdBy: "agent",
+            creationSource: "server",
+          })
+          .pipe(Effect.result);
+        assert.equal(initial._tag, "Failure");
+        if (initial._tag === "Failure")
+          assert.equal(
+            initial.failure._tag === "IssueWorkError" ? initial.failure.code : undefined,
+            "invalid-request",
+          );
+        const replay = yield* service
+          .start({
+            ...reference,
+            number: 9,
+            projectId,
+            modelRoleId: "worker",
+            clientRequestId: requestId,
+          })
+          .pipe(Effect.result);
+        assert.equal(replay._tag, "Failure");
+        if (replay._tag === "Failure") assert.equal(replay.failure.code, "invalid-request");
+        yield* service.reconcile(rootId);
+        assert.equal(
+          (yield* store.configuration(rootId))!.milestones[0]!.status,
+          "awaiting_approval",
+        );
+      }).pipe(
+        Effect.provide(
+          fixture({
+            recovery: true,
+            inventoryIssues: () => [9],
+            beforeCapabilities: () =>
+              rejectNext
+                ? Effect.sync(() => {
+                    rejectNext = false;
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ProviderAdapter.ProviderAdapterCapabilitiesError({
+                          driver: adapter.driver,
+                        }),
+                      ),
+                    ),
+                  )
+                : Effect.void,
           }),
         ),
       );
@@ -5458,7 +5805,6 @@ describe("fresh-thread repository handoff", () => {
               issueThreadId: null,
               attemptKey: "first",
               modelSelection,
-              workspace: "project",
             },
           },
         ],
@@ -5492,7 +5838,7 @@ describe("fresh-thread repository handoff", () => {
           number: 9,
           projectId,
           modelRoleId: "worker",
-          workspace: "project" as const,
+
           createOrchestrator: true,
         };
         const results = yield* Effect.all(
@@ -5551,7 +5897,6 @@ describe("fresh-thread repository handoff", () => {
           number: 2,
           projectId,
           modelRoleId: "worker",
-          workspace: "project" as const,
         };
         const noSelection = yield* service
           .start({ ...input, clientRequestId: CommandId.make("start:unselected") })
@@ -5727,7 +6072,7 @@ describe("fresh-thread repository handoff", () => {
             number: 9,
             projectId,
             modelRoleId: "worker",
-            workspace: "project",
+
             clientRequestId: cancelInput.requestId,
           })).status,
           "cancelled",
@@ -5769,7 +6114,7 @@ describe("fresh-thread repository handoff", () => {
           number: 9,
           projectId,
           modelRoleId: "worker",
-          workspace: "project",
+
           clientRequestId: CommandId.make("original:subsequent-start"),
         });
         assert.equal(started.rootThreadId, originalLeadId);
@@ -6023,7 +6368,7 @@ describe("fresh-thread repository handoff", () => {
         number: 9,
         projectId,
         modelRoleId: "worker",
-        workspace: "project" as const,
+
         orchestratorThreadId: lead,
       };
       const rejected = yield* service
@@ -6162,7 +6507,7 @@ describe("fresh-thread repository handoff", () => {
             threadId: rootId,
             issue: linked(9),
             workerModelSelection: modelSelection,
-            workspace: "project",
+
             createdBy: "agent",
             creationSource: "mcp",
           })
@@ -6318,7 +6663,7 @@ describe("fresh-thread repository handoff", () => {
             ...reference,
             projectId,
             modelRoleId: "worker",
-            workspace: "project",
+
             milestoneNumber: 1,
             clientRequestId: CommandId.make("retired:milestone"),
           })
@@ -6778,7 +7123,7 @@ describe("fresh-thread repository handoff", () => {
           threadId: nextId,
           issue: linked(2),
           workerModelSelection: modelSelection,
-          workspace: "project",
+
           createdBy: "agent",
           creationSource: "mcp",
         });

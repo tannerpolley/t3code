@@ -2209,7 +2209,6 @@ it("loads issue changes only for repository roots and linked issue workers", () 
         repository: "acme/repo",
         repositoryId: "1",
         projectId: ordinary.projectId,
-        workspace: "project",
         launchCommandId: CommandId.make("root-start"),
         revision: 1,
         paused: false,

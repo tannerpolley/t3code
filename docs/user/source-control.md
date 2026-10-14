@@ -276,18 +276,20 @@ it; a linked pull request opens in the pull request panel. **Prepare draft** ope
 for the issue's project in a worktree on a branch named after the issue, with an unsent prompt.
 Use **Open on GitHub** to comment or make other changes.
 
-To run issue work, open an issue, choose **Start agent**, then a model role and a
-repository workspace. Use a model role with an available Codex or Claude target.
+To run issue work, open an issue, choose **Start agent**, then a model role and the
+matching repository project. Use a model role with an available Codex or Claude target.
 **Start agent on issue…** in the command palette opens the current
 repository’s issues beside the thread, or the Issues page when there is no current repository.
-Work goes to the repository's registered orchestrator, which keeps its issue workers linked to GitHub.
-If none is registered, choose an existing lead in the matching project or explicitly choose
-**Create first orchestrator**. When you open issues beside a thread, its lead is selected for you.
-Start agent registers the selected lead and follows the issue parent tree for its workers. Later
-starts use that orchestrator's project. You can choose a new worktree or that project's checkout
-for the worker. Starting allows T3 to update one status comment and publish a closeout comment for
-each finished attempt; the publishing policy is shown before you start. Select the worker’s name
-to open its conversation with the issue beside it; before a worker exists, open the repository orchestrator instead.
+If no repository orchestrator is registered, choose an existing lead in the matching project or
+explicitly choose **Create first orchestrator**. When you open issues beside a thread, its lead
+is selected for you. The repository orchestrator stays on local `main` in the main checkout.
+Start agent registers the selected lead and starts or queues an issue worker, following the issue
+parent tree. Later starts use that orchestrator's project. Every worker gets a new worktree and
+branch named after the issue, created from the default branch; there is no checkout choice.
+Starting allows T3 to update one status comment and publish a closeout comment for each finished
+attempt; the publishing policy is shown before you start. When a worker has been created, select
+its name to open its conversation with the issue beside it. A queued start can appear before a
+worker exists; use the repository's orchestrator link on the Issues page to open the lead.
 **Linked issue** in thread details opens the issue beside that thread. A worker marked done may
 still need review, publishing, or merge approval; T3 does not automatically close the GitHub issue.
 
@@ -307,6 +309,12 @@ To replace the orchestrator's conversation, open the repository on the Issues pa
 workers and their final results finish; the fresh thread receives your summary and a recovery
 inventory. These controls also let you cancel a pending handoff and open the current or previous
 roots. For a routine provider or model change, keep the same thread.
+
+To restore orchestration to another existing thread, first use **Pause repository work**. The
+current orchestrator must be stopped, with no active issue workers or unclaimed start requests.
+Then use **Use another thread as orchestrator** to select a top-level thread in the same project.
+Only you can approve this restore. Existing issue workers keep their threads, and the repository
+remains paused after the change. Use **Resume repository work** when you are ready to continue.
 
 A thread's details also list its repository's open issues in an **Issues** section, grouped by
 collapsible milestones, and open them beside the thread. For a fork checkout, these are the fork's

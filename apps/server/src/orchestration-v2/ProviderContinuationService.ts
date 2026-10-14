@@ -18,18 +18,25 @@ function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
 }
 
 function currentDelegatedCompletionDelivery(
-  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "runs" | "providerTurns">,
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "messages" | "runs" | "providerTurns"
+  >,
   completion: NonNullable<
     ProviderContinuationRequests.ProviderContinuationRequest["delegatedCompletion"]
   >,
 ) {
   const sourceRun = projection.runs.find((candidate) => candidate.id === completion.parentRunId);
-  const delivery = sourceRun?.delegatedCompletion?.delivery;
+  const cohort =
+    completion.parentRunId === null
+      ? projection.thread.delegatedCompletion
+      : sourceRun?.delegatedCompletion;
+  const delivery = cohort?.delivery;
   const alreadyDispatched = projection.messages.some(
     (message) => message.id === completion.messageId,
   );
   if (
-    sourceRun?.delegatedCompletion?.disposition !== "open" ||
+    cohort?.disposition !== "open" ||
     delivery === null ||
     delivery === undefined ||
     delivery.generation !== completion.generation ||

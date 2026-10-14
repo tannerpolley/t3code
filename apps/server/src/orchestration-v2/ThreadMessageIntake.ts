@@ -57,6 +57,15 @@ const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   command: OrchestrationV2Command,
 ) {
+  if (
+    command.type === "issue.work.start" ||
+    (command.type === "delegated_task.request" && command.issue !== undefined)
+  )
+    return yield* new Orchestrator.OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: "Managed issue workers must start through the issue work service.",
+    });
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;

@@ -383,6 +383,23 @@ const OrchestrationV2ThreadTitleFields = {
   titleEvaluation: Schema.optional(Schema.NullOr(OrchestrationV2TitleEvaluation)),
 };
 
+export const OrchestrationV2DelegatedCompletionDelivery = Schema.Struct({
+  generation: PositiveInt,
+  messageId: MessageId,
+  taskIds: Schema.Array(NodeId),
+});
+export type OrchestrationV2DelegatedCompletionDelivery =
+  typeof OrchestrationV2DelegatedCompletionDelivery.Type;
+
+export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
+  disposition: Schema.Literals(["open", "stopped", "disposed"]),
+  nextGeneration: PositiveInt,
+  settledDeliveryCount: Schema.optional(NonNegativeInt),
+  delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
+});
+export type OrchestrationV2DelegatedCompletionCohort =
+  typeof OrchestrationV2DelegatedCompletionCohort.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   role: Schema.optional(ThreadRoleInput),
   ...OrchestrationV2ThreadTitleFields,
@@ -398,6 +415,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedIssue: Schema.optional(ThreadLinkedIssue),
   repositoryOrchestration: Schema.optional(RepositoryOrchestration),
+  /** Completion mailbox for managed workers launched outside a parent run. */
+  delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   /** Pull request the user linked to this thread (#8160); optional so
       pre-linking servers still decode. */
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -510,23 +529,6 @@ export const OrchestrationV2DelegatedCompletionTaskDelivery = Schema.Struct({
 });
 export type OrchestrationV2DelegatedCompletionTaskDelivery =
   typeof OrchestrationV2DelegatedCompletionTaskDelivery.Type;
-
-export const OrchestrationV2DelegatedCompletionDelivery = Schema.Struct({
-  generation: PositiveInt,
-  messageId: MessageId,
-  taskIds: Schema.Array(NodeId),
-});
-export type OrchestrationV2DelegatedCompletionDelivery =
-  typeof OrchestrationV2DelegatedCompletionDelivery.Type;
-
-export const OrchestrationV2DelegatedCompletionCohort = Schema.Struct({
-  disposition: Schema.Literals(["open", "stopped", "disposed"]),
-  nextGeneration: PositiveInt,
-  settledDeliveryCount: Schema.optional(NonNegativeInt),
-  delivery: Schema.NullOr(OrchestrationV2DelegatedCompletionDelivery),
-});
-export type OrchestrationV2DelegatedCompletionCohort =
-  typeof OrchestrationV2DelegatedCompletionCohort.Type;
 
 /** Background work that restart recovery cancelled; the next provider turn is told once. */
 export const OrchestrationV2RestartCancelledBackgroundWork = Schema.Struct({
@@ -1269,7 +1271,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   updatedAt: Schema.DateTimeUtc,
   delegatedCompletion: Schema.optional(
     Schema.Struct({
-      parentRunId: RunId,
+      parentRunId: Schema.NullOr(RunId),
       generation: PositiveInt,
       taskIds: Schema.Array(NodeId),
     }),
@@ -3089,7 +3091,7 @@ export const OrchestrationV2Command = Schema.Union([
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     delegatedCompletion: Schema.optional(
       Schema.Struct({
-        parentRunId: RunId,
+        parentRunId: Schema.NullOr(RunId),
         generation: PositiveInt,
         taskIds: Schema.Array(NodeId),
       }),
@@ -3254,10 +3256,6 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     issue: ThreadLinkedIssue,
     workerModelSelection: ModelSelection,
-    workspace: Schema.Literals(["project", "worktree"]),
-    worktree: Schema.optional(
-      Schema.Struct({ baseRef: TrimmedNonEmptyString, branch: TrimmedNonEmptyString }),
-    ),
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
@@ -3448,6 +3446,8 @@ export type OrchestrationV2ServerCommand = (
 ) & {
   /** Server-read relationship snapshots, acquired before entering command planning. */
   readonly issueReads?: ReadonlyArray<IssueWorkRead>;
+  /** Managed worker preparation, supplied only by IssueWorkService. */
+  readonly issueWorktree?: { readonly baseRef: string; readonly branch: string };
   /** Suspension interrupts retain their provider action until it succeeds. */
   readonly retryInterruptUntilDone?: boolean;
 };

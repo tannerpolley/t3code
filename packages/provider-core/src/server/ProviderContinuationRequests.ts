@@ -14,8 +14,8 @@ import * as Queue from "effect/Queue";
 
 export interface ProviderContinuationRequest {
   readonly threadId: ThreadId;
-  readonly providerThreadId: ProviderThreadId;
-  readonly driver: ProviderDriverKind;
+  readonly providerThreadId: ProviderThreadId | null;
+  readonly driver: ProviderDriverKind | null;
   readonly detail: string | null;
   readonly notification?: OrchestrationV2Notification;
   /**
@@ -24,7 +24,7 @@ export interface ProviderContinuationRequest {
    * task can join a queued wake and a stopped or acknowledged cohort is dropped.
    */
   readonly delegatedCompletion?: {
-    readonly parentRunId: RunId;
+    readonly parentRunId: RunId | null;
     readonly generation: number;
     readonly messageId: MessageId;
   };
