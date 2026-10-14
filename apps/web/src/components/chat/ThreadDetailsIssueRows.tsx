@@ -121,14 +121,10 @@ function IssueRows({
   const listState =
     issueView === "roadmap" ? "open" : issueListStateFor(issueStateFilter(preferences) ?? "open");
   const result = useAtomValue(
-    issueEnvironment.liveList({
+    // Both views read blockers and live work so issue circles show blocked and in progress.
+    (issueView === "roadmap" ? issueEnvironment.roadmapList : issueEnvironment.liveList)({
       environmentId,
-      input: {
-        host,
-        repository,
-        state: listState,
-        ...(issueView === "roadmap" ? { roadmap: true } : {}),
-      },
+      input: { host, repository, state: listState, roadmap: true },
     }),
   );
   const list = Option.getOrNull(AsyncResult.value(result));

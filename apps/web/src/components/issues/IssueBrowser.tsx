@@ -130,7 +130,7 @@ function issueListScopeKey(target: IssueListTarget): string {
     target.environmentId,
     repositoryKey(target.input.host, target.input.repository),
     target.input.state ?? "open",
-    target.input.roadmap === true,
+    target.roadmapView === true,
   ]);
 }
 
@@ -313,20 +313,20 @@ export function IssueBrowser({
                 : (stateFilter ?? "open"),
             ),
         )
-        .map((target) => ({
-          environmentId: target.environmentId,
-          input: {
-            host: target.host,
-            repository: target.repository,
-            state:
-              views[repositoryKey(target.host, target.repository)] === "roadmap"
-                ? "open"
-                : listState,
-            ...(views[repositoryKey(target.host, target.repository)] === "roadmap"
-              ? { roadmap: true }
-              : {}),
-          },
-        })),
+        .map((target) => {
+          const roadmapView = views[repositoryKey(target.host, target.repository)] === "roadmap";
+          // Every view reads blockers and live work so issue circles show blocked and in progress.
+          return {
+            environmentId: target.environmentId,
+            roadmapView,
+            input: {
+              host: target.host,
+              repository: target.repository,
+              state: roadmapView ? "open" : listState,
+              roadmap: true,
+            },
+          };
+        }),
     [listState, shownRepositories, stateFilter, views],
   );
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
@@ -336,7 +336,7 @@ export function IssueBrowser({
       baseListTargets.flatMap((target) => {
         const state = pagingByKey[issueListScopeKey(target)];
         const cursors = new Set<string | null>([state?.cursor ?? null]);
-        if (target.input.roadmap && !state?.refreshing) cursors.add(null);
+        if (target.roadmapView && !state?.refreshing) cursors.add(null);
         return [...cursors].map((cursor) => ({
           ...target,
           input: { ...target.input, ...(cursor === null ? {} : { cursor }) },

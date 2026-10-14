@@ -322,7 +322,7 @@ it.effect(
         const registry = AtomRegistry.make();
         yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
         const input = { host: "github.com", repository: "owner/repo" };
-        const roadmap = queries.liveList({ environmentId, input: { ...input, roadmap: true } });
+        const roadmap = queries.roadmapList({ environmentId, input: { ...input, roadmap: true } });
         const unmountRoadmap = registry.mount(roadmap);
         yield* Effect.addFinalizer(() => Effect.sync(unmountRoadmap));
         yield* AtomRegistry.getResult(registry, roadmap, { suspendOnWaiting: true });

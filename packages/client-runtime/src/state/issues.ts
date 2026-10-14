@@ -121,7 +121,14 @@ export function createIssueEnvironmentAtoms<R, E>(
       tag: WS_METHODS.issuesList,
       staleTimeMs: 30_000,
       refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
-      refreshTrigger: (target) => (target.input.roadmap ? undefined : refreshTrigger(target)),
+      refreshTrigger,
+    }),
+    /** Roadmap page one: polled like `liveList`, but agent turns finishing do not re-read it. */
+    roadmapList: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:issues:roadmap-list",
+      tag: WS_METHODS.issuesList,
+      staleTimeMs: 30_000,
+      refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
     }),
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:detail",

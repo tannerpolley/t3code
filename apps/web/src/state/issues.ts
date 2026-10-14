@@ -19,6 +19,8 @@ export const issueEnvironment = createIssueEnvironmentAtoms(connectionAtomRuntim
 export interface IssueListTarget {
   readonly environmentId: EnvironmentId;
   readonly input: IssueListInput;
+  /** The repository shows the Roadmap view, whose first page stays live. */
+  readonly roadmapView?: boolean;
 }
 
 export interface IssueListAnswer {
@@ -40,8 +42,8 @@ interface IssueListsView {
 
 // Only the first Roadmap page is kept live; other pages and Milestones retain ordinary reads.
 const issueListAtom = (target: IssueListTarget) =>
-  (target.input.roadmap && target.input.cursor === undefined
-    ? issueEnvironment.liveList
+  (target.roadmapView && target.input.cursor === undefined
+    ? issueEnvironment.roadmapList
     : issueEnvironment.list)(target);
 
 const issueLists = Atom.family((key: string) =>
