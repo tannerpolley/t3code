@@ -686,7 +686,19 @@ export function IssueBrowser({
     );
   };
 
+  // A pane scoped to one project already names it, so its issues show without a repository row.
+  const scopedToOne = explicitScope && urlRepository !== null;
   const repositoryTree = listedRepositories.map((entry) => {
+    if (scopedToOne)
+      return (
+        <section key={entry.key}>
+          <IssueRepositoryControls
+            environmentId={entry.environmentId}
+            reference={{ host: entry.host, repository: entry.repository }}
+          />
+          {renderRepositoryBody(entry)}
+        </section>
+      );
     const repositoryOpen = isExpanded(
       `repository:${entry.key}`,
       openAll || entry.error !== null || entry.selectedIssueNumber !== undefined,
@@ -932,12 +944,8 @@ export function IssueBrowser({
             </span>
           ) : null}
         </div>
-        {explicitScope && urlRepository !== null ? (
+        {explicitScope && urlRepository !== null && showAllRepositories ? (
           <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="min-w-0 truncate">
-              Showing{" "}
-              <span className="font-medium text-foreground">{urlRepository.repository}</span>
-            </span>
             {showAllRepositories}
           </div>
         ) : null}

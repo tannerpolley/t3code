@@ -172,7 +172,7 @@ function IssueRows({
             )
           }
         >
-          {repository}
+          {issueView === "roadmap" ? "Roadmap" : "Open issues"}
         </CollapsibleSectionHeader>
         {open && issueView === "roadmap" && list !== null ? (
           <>
