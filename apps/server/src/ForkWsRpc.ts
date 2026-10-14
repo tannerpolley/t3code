@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 
 import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
+import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
 import * as IssueService from "./issues/IssueService.ts";
 import * as IssueWorkService from "./issues/IssueWorkService.ts";
 import { RpcInstrumentation } from "./observability/RpcInstrumentation.ts";
@@ -22,6 +23,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       );
       const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
       const issues = yield* IssueService.IssueService;
+      const roadmap = yield* IssueRoadmap.IssueRoadmap;
       const issueWork = yield* IssueWorkService.IssueWorkService;
       const issueChanges = yield* IssueChangeService.IssueChangeService;
       return {
@@ -54,7 +56,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
             scopes: currentSession.scopes,
           }),
         [WS_METHODS.issuesRepositories]: () => issues.repositories(),
-        [WS_METHODS.issuesList]: (input) => issues.list(input),
+        [WS_METHODS.issuesList]: (input) => roadmap.list(input),
         [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
       };
     }),

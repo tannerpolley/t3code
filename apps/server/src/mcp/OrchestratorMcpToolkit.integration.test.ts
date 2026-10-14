@@ -1,3 +1,4 @@
+import * as IssueLinks from "../issues/IssueLinks.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
@@ -704,6 +705,7 @@ describe("orchestrator MCP toolkit", () => {
             McpHttpServer.layerOrchestratorToolkit,
             McpHttpServer.layerThreadToolkit,
           ).pipe(
+            Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(layerOrchestration),
             Layer.provide(layerRegistry),
@@ -4521,6 +4523,7 @@ describe("orchestrator MCP toolkit", () => {
           }),
         ]);
         const layerTest = McpHttpServer.layerOrchestratorToolkit.pipe(
+          Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provideMerge(layerOrchestration),
           Layer.provide(

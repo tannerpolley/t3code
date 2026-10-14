@@ -49,6 +49,8 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
+import { LinkIssueTool, UnlinkIssueTool } from "../../../issues/IssueMcpTools.ts";
+
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
@@ -348,6 +350,8 @@ export const OrchestratorToolkit = Toolkit.make(
     failureMode: "return",
     dependencies,
   }).annotate(Tool.Destructive, true),
+  LinkIssueTool,
+  UnlinkIssueTool,
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
   TaskStatusTool,

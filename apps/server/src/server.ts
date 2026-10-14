@@ -37,6 +37,8 @@ import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
+import * as IssueLinks from "./issues/IssueLinks.ts";
 import * as IssueService from "./issues/IssueService.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
@@ -748,6 +750,14 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
   // Server browser tabs and HTML render previews install and run the same headless browser.
   Layer.provide(PreviewBrowser.layer),
+  Layer.provide(
+    IssueRoadmap.layer.pipe(
+      Layer.provide(layerIssueService),
+      Layer.provide(IssueLinks.layer),
+      Layer.provide(ProjectionStoreV2.layer),
+    ),
+  ),
+  Layer.provide(IssueLinks.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   Layer.provide(layerIssueService),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),

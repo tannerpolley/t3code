@@ -8,7 +8,10 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
+import { issueLinkHandlers } from "../../../issues/IssueMcpTools.ts";
+
 const handlers = {
+  ...issueLinkHandlers,
   propose_issue_change: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

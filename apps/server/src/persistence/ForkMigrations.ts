@@ -15,6 +15,8 @@ import RepositoryScheduledWork from "./ForkMigrations/005_RepositoryScheduledWor
 import IssueChanges from "./ForkMigrations/006_IssueChanges.ts";
 import PendingRoutedRequests from "./ForkMigrations/007_PendingRoutedRequests.ts";
 
+import IssueThreadLinks from "../issues/IssueLinksMigration.ts";
+
 export const FORK_MIGRATIONS_TABLE = "t3_fork_migrations";
 
 export const forkMigrationEntries = [
@@ -25,6 +27,7 @@ export const forkMigrationEntries = [
   [5, "RepositoryScheduledWork", RepositoryScheduledWork],
   [6, "IssueChanges", IssueChanges],
   [7, "PendingRoutedRequests", PendingRoutedRequests],
+  [8, "IssueThreadLinks", IssueThreadLinks],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.
