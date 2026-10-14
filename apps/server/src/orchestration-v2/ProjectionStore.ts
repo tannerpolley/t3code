@@ -1519,6 +1519,7 @@ export function threadShellFromProjection(
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
+    ...(projection.thread.role === undefined ? {} : { role: projection.thread.role }),
     id: projection.thread.id,
     projectId: projection.thread.projectId,
     title: projection.thread.title,
@@ -1852,6 +1853,7 @@ function shellFromState(input: {
   return {
     createdBy: input.state.thread.createdBy,
     creationSource: input.state.thread.creationSource,
+    ...(input.state.thread.role === undefined ? {} : { role: input.state.thread.role }),
     id: input.state.thread.id,
     projectId: input.state.thread.projectId,
     title: input.state.thread.title,

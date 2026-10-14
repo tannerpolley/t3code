@@ -1,3 +1,4 @@
+import { ThreadRoleInput } from "./threadRole.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -383,6 +384,7 @@ const OrchestrationV2ThreadTitleFields = {
 };
 
 export const OrchestrationV2AppThread = Schema.Struct({
+  role: Schema.optional(ThreadRoleInput),
   ...OrchestrationV2ThreadTitleFields,
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -2005,6 +2007,7 @@ export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  role: OrchestrationV2AppThread.fields.role,
   ...OrchestrationV2ThreadTitleFields,
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -3253,6 +3256,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
+    role: Schema.optional(ThreadRoleInput),
     issue: Schema.optional(ThreadLinkedIssue),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,

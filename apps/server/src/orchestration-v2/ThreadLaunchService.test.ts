@@ -3152,6 +3152,7 @@ describe("managed issue work", () => {
         1,
       );
       const root = yield* threads.getThreadProjection(starts[0].rootThreadId);
+      assert.equal(root.thread.role, "orchestrator");
       assert.equal(root.messages.length, 1);
       assert.equal((yield* issues.workStatus(input)).status, "queued_preparing");
       assert.equal((yield* issues.workStatus(input)).projectId, projectId);
@@ -3230,6 +3231,7 @@ describe("managed issue work", () => {
         return yield* Effect.die("No issue worker");
       const child = yield* threads.getThreadProjection(taskEvent.event.payload.childThreadId);
       assert.deepEqual(child.thread.linkedIssue, issue);
+      assert.equal(child.thread.role, "implementor");
       assert.equal(child.thread.title, "#8 Single issue");
       const duplicate = yield* threads
         .dispatch({ ...command, commandId: CommandId.make("issue-delegate:duplicate") })

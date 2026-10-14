@@ -1,3 +1,5 @@
+import { useThreadShell } from "../../state/entities";
+import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -92,6 +94,7 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
 }: ChatHeaderProps) {
+  const thread = useThreadShell(scopeThreadRef(activeThreadEnvironmentId, activeThreadId));
   const activeProjectName = activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -428,6 +431,7 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 }
               >
+                {thread ? <ThreadRoleIcon thread={thread.source} /> : null}
                 <h2 className="min-w-0">
                   <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
                 </h2>
@@ -442,8 +446,14 @@ export const ChatHeader = memo(function ChatHeader({
           ) : (
             <Tooltip>
               <TooltipTrigger
-                render={<h2 aria-label={activeThreadTitle} className="min-w-0 flex-1" />}
+                render={
+                  <h2
+                    aria-label={activeThreadTitle}
+                    className="flex min-w-0 flex-1 items-center gap-1.5"
+                  />
+                }
               >
+                {thread ? <ThreadRoleIcon thread={thread.source} /> : null}
                 <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
               </TooltipTrigger>
               <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>

@@ -272,15 +272,21 @@ over two hours is marked as possibly stuck.
 
 To tell agents which model and effort suit each kind of delegated work, edit
 **Model roles** in **Settings → Customizations** on web and desktop. Agents use these
-roles at their own discretion; your explicit instructions in a thread win. Each
-role holds up to four model and effort choices; the first is the default, and an
-unavailable choice is marked. Codex agents see changes on their next turn and
+roles at their own discretion; your explicit instructions in a thread win. The
+standard roles are Orchestrator, Implementor, Reviewer, Investigator and Checker.
+Implementor has separate Fast and Thorough profiles, each with its own model and
+effort choices. Choices are ranked by available weekly usage; unavailable choices
+are marked. Codex agents see changes on their next turn and
 Claude agents in their next session. Reset model roles to get the latest
 defaults; this replaces your customizations.
 
-Subagent threads started by the agent can't take messages; message the parent
-thread instead. When such a subagent needs an approval or an answer, the parent
-thread asks for it.
+Threads you create have no role until they delegate work, when they become
+Orchestrators. Role icons appear in thread rows and the chat header.
+
+Native provider subagents have a bot icon and run on their own. They cannot take
+messages; use **Open parent** to direct them. App-owned child threads accept
+messages like other threads. Questions and approvals from either kind are routed
+to their parent.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

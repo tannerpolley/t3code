@@ -2,13 +2,14 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
 import { CommandId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ModelRoleId } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import { IssueRef, IssueRepositoryRef } from "./issue.ts";
 
 export const RepositoryMilestonePlan = Schema.Struct({
   number: Schema.Int.check(Schema.isGreaterThan(0)),
-  modelRoleId: TrimmedNonEmptyString,
+  modelRoleId: ModelRoleId,
   workspace: Schema.Literals(["project", "worktree"]),
   status: Schema.Literals(["running", "complete", "blocked", "awaiting_approval", "unreadable"]),
   fingerprint: Schema.String,
@@ -67,7 +68,7 @@ export const RepositoryWorkTarget = Schema.Struct({
 export const RepositoryWorkInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   projectId: ProjectId,
-  modelRoleId: TrimmedNonEmptyString,
+  modelRoleId: ModelRoleId,
   workspace: Schema.Literals(["project", "worktree"]),
   milestoneNumber: Schema.Int.check(Schema.isGreaterThan(0)),
   clientRequestId: CommandId,
@@ -148,7 +149,7 @@ export type RepositoryWorkResult = typeof RepositoryWorkResult.Type;
 export const IssueWorkStartInput = Schema.Struct({
   ...IssueRef.fields,
   projectId: ProjectId,
-  modelRoleId: TrimmedNonEmptyString,
+  modelRoleId: ModelRoleId,
   workspace: Schema.Literals(["project", "worktree"]),
   /** Selected existing lead; otherwise reuse the registered owner or explicitly create the first one. */
   orchestratorThreadId: Schema.optional(ThreadId),

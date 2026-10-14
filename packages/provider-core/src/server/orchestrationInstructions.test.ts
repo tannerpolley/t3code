@@ -51,8 +51,8 @@ describe("T3 orchestration provider instructions", () => {
       ...role,
       targets: Arr.map(role.targets, (target, index) => ({
         ...target,
-        unavailableReason: role.id === "strong-reviewer" ? unavailable : null,
-        ...(role.name === "Fast builder" && index === 0
+        unavailableReason: role.id === "reviewer" ? unavailable : null,
+        ...(role.id === "implementor-fast" && index === 0
           ? {
               weeklyUsage: {
                 remainingPercent: 42,
@@ -70,14 +70,16 @@ describe("T3 orchestration provider instructions", () => {
     );
     assert.include(
       text,
-      '- Checker: Read-only review of a build: missed places, weak tests, edge cases; budget review and sanity checks. gpt-6.1-sol high (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-6.1-sol","options":{"reasoningEffort":"high"}}`',
+      '- Checker (role: checker): Check a build for missed places, weak tests and edge cases. gpt-6.1-sol high (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-6.1-sol","options":{"reasoningEffort":"high"}}`',
     );
     assert.include(
       text,
-      '- Quick Claude: Quick, well-specified Claude-side work. claude-sonnet-5-5 medium (claudeAgent). Target JSON: `{"providerInstanceId":"claudeAgent","model":"claude-sonnet-5-5","options":{"effort":"medium"}}`',
+      '- Investigator (role: investigator): Gather evidence and investigate questions. gpt-6-luna max (codex). Target JSON: `{"providerInstanceId":"codex","model":"gpt-6-luna","options":{"reasoningEffort":"max"}}`',
     );
     assert.notInclude(text, "The first choice is the default");
-    const fastBuilder = text.split("\n").find((line) => line.startsWith("- Fast builder:"))!;
+    const fastBuilder = text
+      .split("\n")
+      .find((line) => line.startsWith("- Implementor · Fast (role: implementor):"))!;
     assert.include(
       fastBuilder,
       "claude-opus-5-5 medium (claudeAgent). Weekly usage: 42% left; resets 2026-07-24T08:59:00.000Z; pace under. Target JSON:",
@@ -89,10 +91,10 @@ describe("T3 orchestration provider instructions", () => {
     // An unavailable choice keeps its label but offers no target JSON to delegate to.
     assert.include(
       text,
-      `- Strong reviewer: Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call. gpt-6-astra xhigh (codex). Unavailable: ${unavailable}`,
+      `- Reviewer (role: reviewer): Strong read-only review and design guidance. gpt-6-astra xhigh (codex). Unavailable: ${unavailable}`,
     );
     assert.notInclude(text, '"model":"gpt-6-astra"');
-    assert.equal(text.split("\n").filter((line) => line.startsWith("- ")).length, 8);
+    assert.equal(text.split("\n").filter((line) => line.startsWith("- ")).length, 6);
     assert.isAtMost(text.length, MAX_MODEL_ROLES_INSTRUCTIONS_LENGTH);
     assert.equal(t3OrchestrationInstructions(roles), T3_CODE_ORCHESTRATION_INSTRUCTIONS + text);
     assert.equal(t3OrchestrationInstructions([]), T3_CODE_ORCHESTRATION_INSTRUCTIONS);

@@ -246,7 +246,12 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         type: "thread.metadata-updated",
         threadId: target.id,
         occurredAt,
-        payload: { ...target, repositoryOrchestration: config, updatedAt: occurredAt },
+        payload: {
+          ...target,
+          role: "orchestrator",
+          repositoryOrchestration: config,
+          updatedAt: occurredAt,
+        },
       });
       return { retiringRoot, events };
     });

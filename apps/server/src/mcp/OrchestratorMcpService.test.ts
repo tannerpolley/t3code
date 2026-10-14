@@ -1835,6 +1835,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const result = yield* service.delegateTask(scope, {
           task: "Summarize the diff.",
+          role: "general",
           target: { driverKind: ProviderDriverKind.make("codex") },
           mode: "async",
           clientRequestId: "delegate-driver-skip-disabled-1",
@@ -1844,8 +1845,14 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(commands.length, 1);
         const request = commands[0] as {
           modelSelection: { instanceId: string; model: string };
+          role: string;
+          worktree?: unknown;
+          task: string;
         };
         assert.equal(request.modelSelection.instanceId, altInstanceId);
+        assert.equal(request.role, "implementor");
+        assert.isUndefined(request.worktree);
+        assert.equal(request.task, "Summarize the diff.");
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
     }),
   );

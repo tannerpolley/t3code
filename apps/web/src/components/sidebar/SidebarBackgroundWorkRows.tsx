@@ -1,5 +1,9 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  isProviderNativeSubagentThread,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CornerDownRightIcon } from "lucide-react";
 import { useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
@@ -44,6 +48,7 @@ import {
 } from "./SidebarBackgroundWork.logic";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
+import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type NestedWorkToggle = {
@@ -110,7 +115,11 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
       {rows.map((row, index) => {
         const kindLabel =
           row.kind === "subagent"
-            ? "Subagent"
+            ? row.child
+              ? isProviderNativeSubagentThread(row.child.source)
+                ? "Native subagent · Runs on its own"
+                : "Child thread · Accepts messages"
+              : "Subagent"
             : backgroundProcessKindLabel(row.kind, row.commandKind);
         const taskThreadId =
           row.kind === "subagent" ? props.threadId : (row.ownerThreadId ?? props.threadId);
@@ -145,6 +154,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
         const locationIcon =
           row.kind === "subagent" && row.child ? <ThreadLocationIcon thread={row.child} /> : null;
+        const roleIcon =
+          row.kind === "subagent" && row.child ? (
+            <ThreadRoleIcon thread={row.child.source} />
+          ) : null;
         const modelLabel =
           row.kind === "subagent" && row.child
             ? resolveSidebarThreadModelLabel(row.child, provider, shortModelNames)
@@ -166,6 +179,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           <>
             <SidebarCaretSlot />
             {locationIcon}
+            {roleIcon}
             {icon}
             {modelLabel ? (
               // Gives way before the label, as in the thread row above it.
@@ -184,6 +198,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
         ) : (
           <>
             {locationIcon}
+            {roleIcon}
             {icon}
             <span className="min-w-0 flex-1 truncate text-foreground/85">{row.label}</span>
             {usage}

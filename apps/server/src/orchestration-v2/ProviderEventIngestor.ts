@@ -1,4 +1,5 @@
 import {
+  isProviderNativeSubagentThread,
   NodeId,
   CommandId,
   OrchestrationV2DomainEvent,
@@ -549,7 +550,7 @@ export const layer: Layer.Layer<
             )
               return [];
             const now = yield* DateTime.now;
-            return [
+            const events = [
               yield* makeDomainEvent(input, {
                 type: existing === null ? "thread.created" : "thread.metadata-updated",
                 threadId: offered.id,
@@ -565,6 +566,28 @@ export const layer: Layer.Layer<
                 occurredAt: now,
               }),
             ];
+            if (
+              existing === null &&
+              isProviderNativeSubagentThread(offered) &&
+              offered.lineage.parentThreadId !== null
+            ) {
+              const parent = yield* projections.getThread(offered.lineage.parentThreadId).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+              );
+              if (parent !== null && parent.role !== "orchestrator") {
+                events.push(
+                  yield* makeDomainEvent(input, {
+                    type: "thread.metadata-updated",
+                    threadId: parent.id,
+                    payload: { ...parent, role: "orchestrator", updatedAt: now },
+                    occurredAt: now,
+                  }),
+                );
+              }
+            }
+            return events;
           }
           case "provider_session.updated":
             return [
@@ -818,10 +841,17 @@ export const layer: Layer.Layer<
               );
             }),
           ),
-          (effect) =>
-            input.event.type === "app_thread.created"
-              ? threadCommands.withLock(input.event.appThread.id, effect)
-              : effect,
+          (effect) => {
+            if (input.event.type !== "app_thread.created") return effect;
+            const thread = input.event.appThread;
+            const childLocked = threadCommands.withLock(thread.id, effect);
+            const parentId = thread.lineage.parentThreadId;
+            return isProviderNativeSubagentThread(thread) &&
+              parentId !== null &&
+              parentId !== thread.id
+              ? threadCommands.withLock(parentId, childLocked)
+              : childLocked;
+          },
         ),
     });
   }),

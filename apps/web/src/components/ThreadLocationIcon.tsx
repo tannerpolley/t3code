@@ -15,9 +15,10 @@ export function ThreadLocationIcon({
   const environment = useEnvironment(thread.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const machine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);
+  const remote = thread.environmentId !== primaryEnvironmentId || machine === "cloud";
   const location = threadLocation({
-    remote: thread.environmentId !== primaryEnvironmentId || machine === "cloud",
-    environmentName: environment?.label ?? "Local checkout",
+    remote,
+    environmentName: environment?.label ?? (remote ? "Remote environment" : "Local checkout"),
     worktreePath: thread.worktreePath,
   });
   const icon =

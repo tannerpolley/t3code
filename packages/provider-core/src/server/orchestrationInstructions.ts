@@ -60,7 +60,7 @@ const oneLine = (text: string, maxLength: number) => {
 
 function modelRoleLine(role: OrchestratorMcpModelRole): string {
   const description = oneLine(role.description, 200);
-  const head = `- ${oneLine(role.name, 60)}${description.length > 0 ? `: ${description}` : ""}.`;
+  const head = `- ${oneLine(role.name, 60)}${role.role ? ` (role: ${role.role})` : ""}${description.length > 0 ? `: ${description}` : ""}.`;
   const choices = role.targets.map(
     ({ providerInstanceId, model, options, unavailableReason, weeklyUsage }) => {
       const traits = options?.map((option) => oneLine(String(option.value), 60)).join(" ");

@@ -1,3 +1,4 @@
+import { RepositoryMilestonePlan } from "./issueWork.ts";
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
@@ -65,26 +66,23 @@ describe("model roles", () => {
     const roles = decodeServerSettings({ enableAgentBrowserAccess: false }).modelRoles;
     expect(roles.map((entry) => entry.name)).toEqual([
       "Orchestrator",
-      "Fast builder",
+      "Implementor · Fast",
+      "Implementor · Thorough",
+      "Reviewer",
+      "Investigator",
       "Checker",
-      "Thorough builder",
-      "Bounded worker",
-      "Evidence gatherer",
-      "Quick Claude",
-      "Strong reviewer",
     ]);
-    expect(roles[2]!.targets[0]).toEqual({
-      providerInstanceId: "codex",
-      model: "gpt-6.1-sol",
-      options: [{ id: "reasoningEffort", value: "high" }],
-    });
+    expect(new Set(roles.map((entry) => entry.role))).toEqual(
+      new Set(["orchestrator", "implementor", "reviewer", "investigator", "checker"]),
+    );
   });
 
   it("decodes saved single-target roles and encodes only the new shape", () => {
     const { targets, ...metadata } = role;
     const legacy = { ...metadata, target: targets[0] };
     const decoded = decodeServerSettings({ modelRoles: [legacy] });
-    expect(decoded.modelRoles).toEqual([{ ...metadata, targets: [targets[0]] }]);
+    expect(decoded.modelRoles[0]).toEqual({ ...metadata, targets: [targets[0]] });
+    expect(decoded.modelRoles).toHaveLength(DEFAULT_MODEL_ROLES.length);
     expect(encodeServerSettings(decoded).modelRoles).toEqual(decoded.modelRoles);
     expect(encodeServerSettings(decoded).modelRoles?.[0]).not.toHaveProperty("target");
     expect(decodeServerSettingsPatch({ modelRoles: [legacy] }).modelRoles).toEqual(
@@ -92,7 +90,7 @@ describe("model roles", () => {
     );
   });
 
-  it("seeds Fast builder with Claude medium and Codex Sol medium, in default order", () => {
+  it("seeds the Fast Implementor profile with Claude medium and Codex Sol medium, in default order", () => {
     expect(decodeServerSettings({}).modelRoles[1]!.targets).toEqual([
       {
         providerInstanceId: "claudeAgent",
@@ -107,12 +105,117 @@ describe("model roles", () => {
     ]);
   });
 
-  it("keeps a saved list, including an empty one, and replaces it through a patch", () => {
-    expect(decodeServerSettings({ modelRoles: [] }).modelRoles).toEqual([]);
-    const roles = [role, DEFAULT_MODEL_ROLES[1]!];
-    const saved = encodeServerSettings({ ...DEFAULT_SERVER_SETTINGS, modelRoles: roles });
-    expect(decodeServerSettings(saved).modelRoles).toEqual(roles);
-    expect(decodeServerSettingsPatch({ modelRoles: roles })).toEqual({ modelRoles: roles });
+  it("fills missing standard profiles without replacing configured choices", () => {
+    expect(decodeServerSettings({ modelRoles: [] }).modelRoles).toEqual(DEFAULT_MODEL_ROLES);
+    const configured = {
+      ...role,
+      targets: [
+        { ...role.targets[0], model: "owner-model", options: [{ id: "effort", value: "max" }] },
+      ],
+    };
+    const decoded = decodeServerSettings({ modelRoles: [configured] });
+    expect(decoded.modelRoles[0]).toEqual(configured);
+    expect(decoded.modelRoles).toHaveLength(DEFAULT_MODEL_ROLES.length);
+    expect(decodeServerSettings(encodeServerSettings(decoded)).modelRoles).toEqual(
+      decoded.modelRoles,
+    );
+    expect(decodeServerSettingsPatch({ modelRoles: [configured] }).modelRoles).toEqual(
+      decoded.modelRoles,
+    );
+  });
+
+  it("migrates every old role and keeps every configured model and effort in its profile", () => {
+    const oldIds = [
+      "orchestrator",
+      "fast-builder",
+      "checker",
+      "thorough-builder",
+      "bounded-worker",
+      "evidence-gatherer",
+      "quick-claude",
+      "strong-reviewer",
+    ];
+    const saved = oldIds.map((id, index) => ({
+      id,
+      name: id,
+      description: `owner description ${index}`,
+      targets: [
+        {
+          providerInstanceId: index % 2 ? "claudeAgent" : "codex",
+          model: `owner-${index}`,
+          options: [
+            { id: index % 2 ? "effort" : "reasoningEffort", value: index % 2 ? "medium" : "high" },
+          ],
+        },
+      ],
+    }));
+    const roles = decodeServerSettings({ modelRoles: saved }).modelRoles;
+    expect(roles.find((entry) => entry.id === "implementor-fast")?.targets).toEqual([
+      saved[1]!.targets[0],
+      saved[4]!.targets[0],
+      saved[6]!.targets[0],
+    ]);
+    expect(roles.find((entry) => entry.id === "implementor-thorough")?.targets).toEqual(
+      saved[3]!.targets,
+    );
+    expect(roles.find((entry) => entry.id === "investigator")?.targets).toEqual(saved[5]!.targets);
+    expect(roles.find((entry) => entry.id === "reviewer")?.targets).toEqual(saved[7]!.targets);
+    expect(roles.find((entry) => entry.id === "checker")?.targets).toEqual(saved[2]!.targets);
+    expect(
+      roles
+        .flatMap((entry) => entry.targets)
+        .map((target) => target.model)
+        .sort(),
+    ).toEqual(
+      saved
+        .flatMap((entry) => entry.targets)
+        .map((target) => target.model)
+        .sort(),
+    );
+    expect(
+      decodeServerSettings(encodeServerSettings({ ...DEFAULT_SERVER_SETTINGS, modelRoles: roles }))
+        .modelRoles,
+    ).toEqual(roles);
+    const single = saved.map(({ targets, ...entry }) => ({ ...entry, target: targets[0] }));
+    expect(decodeServerSettings({ modelRoles: single }).modelRoles).toEqual(roles);
+  });
+
+  it("keeps saved issue-work profile references usable after the settings migration", () => {
+    const decode = Schema.decodeUnknownSync(RepositoryMilestonePlan);
+    const mappings = {
+      "fast-builder": "implementor-fast",
+      "bounded-worker": "implementor-fast",
+      "quick-claude": "implementor-fast",
+      "thorough-builder": "implementor-thorough",
+      "evidence-gatherer": "investigator",
+      "strong-reviewer": "reviewer",
+      checker: "checker",
+      "custom-role": "custom-role",
+    };
+    for (const [oldId, id] of Object.entries(mappings)) {
+      expect(
+        decode({
+          number: 1,
+          modelRoleId: oldId,
+          workspace: "project",
+          status: "running",
+          fingerprint: "",
+        }).modelRoleId,
+      ).toBe(id);
+    }
+  });
+
+  it("preserves a full legacy custom list when filling standard defaults", () => {
+    const custom = Array.from({ length: 20 }, (_, index) => ({
+      ...role,
+      role: undefined,
+      id: `custom-${index}`,
+    }));
+    const decoded = decodeServerSettings({ modelRoles: custom });
+    expect(decoded.modelRoles.slice(0, 20)).toEqual(custom);
+    expect(decodeServerSettings(encodeServerSettings(decoded)).modelRoles).toEqual(
+      decoded.modelRoles,
+    );
   });
 
   it("bounds the role count and description length", () => {
@@ -128,13 +231,13 @@ describe("model roles", () => {
     ).toThrow();
   });
 
-  it("requires one to four choices per role", () => {
+  it("bounds choices per role while allowing merged legacy lists", () => {
     const withCount = (count: number) => ({
       modelRoles: [{ ...role, targets: Array.from({ length: count }, () => role.targets[0]) }],
     });
-    expect(decodeServerSettingsPatch(withCount(MAX_MODEL_ROLE_TARGETS))).toEqual(
-      withCount(MAX_MODEL_ROLE_TARGETS),
-    );
+    expect(
+      decodeServerSettingsPatch(withCount(MAX_MODEL_ROLE_TARGETS)).modelRoles?.[0]?.targets,
+    ).toEqual(withCount(MAX_MODEL_ROLE_TARGETS).modelRoles[0]!.targets);
     expect(() => decodeServerSettingsPatch(withCount(0))).toThrow();
     expect(() => decodeServerSettingsPatch(withCount(MAX_MODEL_ROLE_TARGETS + 1))).toThrow();
   });
@@ -152,7 +255,7 @@ describe("model roles", () => {
       model: "m".repeat(MAX_MODEL_ROLE_MODEL_LENGTH),
       options: options(MAX_MODEL_ROLE_OPTIONS, MAX_MODEL_ROLE_OPTION_LENGTH),
     });
-    expect(decodeServerSettingsPatch(largest)).toEqual(largest);
+    expect(decodeServerSettingsPatch(largest).modelRoles?.[0]).toEqual(largest.modelRoles[0]);
     for (const invalid of [
       { model: "m".repeat(MAX_MODEL_ROLE_MODEL_LENGTH + 1) },
       { options: options(MAX_MODEL_ROLE_OPTIONS + 1, 2) },

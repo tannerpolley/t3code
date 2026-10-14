@@ -1,3 +1,4 @@
+import { ThreadRoleInput } from "./threadRole.ts";
 import { RepositoryWorkTarget } from "./issueWork.ts";
 import { IssueRef } from "./issue.ts";
 import * as Effect from "effect/Effect";
@@ -142,14 +143,8 @@ export const OrchestratorMcpInteractionMode = Schema.Union([
 ]);
 export type OrchestratorMcpInteractionMode = typeof OrchestratorMcpInteractionMode.Type;
 
-export const OrchestratorMcpTaskRole = Schema.Literals([
-  "implementation",
-  "research",
-  "review",
-  "design",
-  "test",
-  "general",
-]);
+// Keep old caller types accepted; the service records their canonical thread role.
+export const OrchestratorMcpTaskRole = Schema.toEncoded(ThreadRoleInput);
 export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
 
 export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
@@ -182,7 +177,10 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   }),
   target: Schema.optional(OrchestratorMcpTarget),
   title: Schema.optional(OrchestratorMcpTitle),
-  role: Schema.optional(OrchestratorMcpTaskRole),
+  role: Schema.optional(OrchestratorMcpTaskRole).annotate({
+    description:
+      "Thread role: orchestrator, implementor, reviewer, investigator or checker. Legacy role names remain accepted. Fast and Thorough Implementor profiles select model targets, not separate thread roles.",
+  }),
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:
@@ -199,7 +197,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   workspace: Schema.optional(
     Schema.Literals(["inherit", "worktree"]).annotate({
       description:
-        "Defaults to worktree for implementation and test roles, inherit otherwise. inherit keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's branch, or the branch its checkout is on (local commits; uncommitted changes are not copied), with the project's setup script run before the child starts. Explicit workspace always overrides the role default.",
+        "Defaults to worktree for Implementor and Checker roles, inherit otherwise. inherit keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's branch, or the branch its checkout is on (local commits; uncommitted changes are not copied), with the project's setup script run before the child starts. Explicit workspace always overrides the role default.",
     }),
   ),
 });

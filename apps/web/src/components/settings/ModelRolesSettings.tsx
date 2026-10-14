@@ -1,8 +1,6 @@
 import {
   DEFAULT_MODEL_ROLES,
   MAX_MODEL_ROLE_DESCRIPTION_LENGTH,
-  MAX_MODEL_ROLE_NAME_LENGTH,
-  MAX_MODEL_ROLES,
   MAX_MODEL_ROLE_TARGETS,
   type ModelRoleTarget,
 } from "@t3tools/contracts";
@@ -10,7 +8,6 @@ import * as Equal from "effect/Equal";
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { randomUUID } from "../../lib/utils";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -102,27 +99,6 @@ export function ModelRolesSection() {
             />
           )
         }
-        control={
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={roles.length >= MAX_MODEL_ROLES}
-            onClick={() =>
-              edit({
-                type: "add",
-                role: {
-                  id: `role-${randomUUID().slice(0, 8)}`,
-                  name: "New role",
-                  description: "",
-                  targets: [(draftRef.current.roles[0] ?? DEFAULT_MODEL_ROLES[0]!).targets[0]],
-                },
-              })
-            }
-          >
-            <PlusIcon className="size-3.5" />
-            Add role
-          </Button>
-        }
       />
       {roles.map((role, index) => {
         return (
@@ -130,20 +106,7 @@ export function ModelRolesSection() {
             key={role.id}
             serverScoped
             settingKeys={MODEL_ROLE_KEYS}
-            title={
-              <DraftInput
-                aria-label="Role name"
-                size="sm"
-                maxLength={MAX_MODEL_ROLE_NAME_LENGTH}
-                value={role.name}
-                onCommit={(next) => {
-                  const name = next.trim();
-                  if (name.length > 0 && name !== role.name) {
-                    edit({ type: "update", id: role.id, patch: { name } });
-                  }
-                }}
-              />
-            }
+            title={role.name}
             description={
               <DraftInput
                 aria-label={`When to use ${role.name}`}
@@ -264,14 +227,6 @@ export function ModelRolesSection() {
                     onClick={() => edit({ type: "move", id: role.id, offset: 1 })}
                   >
                     <ArrowDownIcon className="size-3.5" />
-                  </Button>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    aria-label={`Remove ${role.name}`}
-                    onClick={() => edit({ type: "remove", id: role.id })}
-                  >
-                    <Trash2Icon className="size-3.5" />
                   </Button>
                 </div>
               </div>

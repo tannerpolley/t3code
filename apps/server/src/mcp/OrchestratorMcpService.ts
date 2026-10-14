@@ -1,3 +1,4 @@
+import { resolveThreadRole, THREAD_ROLE_LABELS } from "@t3tools/contracts";
 import {
   CommandId,
   type RunId,
@@ -701,7 +702,7 @@ function threadTitle(input: {
 function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
   return input.role === undefined || input.role === "general"
     ? input.task
-    : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
+    : `Act as the ${THREAD_ROLE_LABELS[resolveThreadRole(input.role)!]} sub-agent for this task.\n\n${input.task}`;
 }
 
 function threadSettlement(
@@ -1312,7 +1313,7 @@ const make = Effect.gen(function* () {
     });
 
   /**
-   * Where a delegated child works. Implementation and test roles default to
+   * Where a delegated child works. Implementor and Checker roles default to
    * their own worktree, cut from the parent's branch or, for a thread in the
    * project root, the branch its checkout is on. Without a branch, a default
    * falls back to the parent's checkout with a note; an explicit request fails.
@@ -1331,7 +1332,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const requested =
         input.input.workspace ??
-        (input.input.role === "implementation" || input.input.role === "test"
+        (input.input.role !== "general" &&
+        ["implementor", "checker"].includes(resolveThreadRole(input.input.role ?? "") ?? "")
           ? "worktree"
           : "inherit");
       // A retry replays the accepted command, whose decision stands.
@@ -2267,6 +2269,7 @@ const make = Effect.gen(function* () {
             parentRunId: parentRun.id,
             parentNodeId: parentRun.rootNodeId,
             task: taskPrompt(input),
+            ...(input.role === undefined ? {} : { role: resolveThreadRole(input.role)! }),
             ...(input.title === undefined ? {} : { title: input.title }),
             modelSelection: target.modelSelection,
             runtimeMode,

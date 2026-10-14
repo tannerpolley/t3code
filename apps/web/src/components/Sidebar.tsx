@@ -1,4 +1,5 @@
 import { ThreadLocationIcon } from "./ThreadLocationIcon";
+import { ThreadRoleIcon } from "./ThreadRoleIcon";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
@@ -1371,10 +1372,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     ? getTriggerDisplayModelLabel(selectedModel)
     : thread.modelSelection.model;
 
-  // The local environment is "this machine" and needs no marker; every other
-  // one gets its machine glyph. With no local environment (the hosted app)
-  // that is every thread, which is the point: the glyph is what tells rows on
-  // different machines apart.
   const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
 
   const detailsTooltip = (
@@ -2166,6 +2163,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
               <ThreadLocationIcon thread={thread} />
+              <ThreadRoleIcon thread={thread.source} />
               {thread.branch ? (
                 <>
                   <span className="flex min-w-0 flex-1 text-muted-foreground/40">

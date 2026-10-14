@@ -579,6 +579,7 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       creationSource: "web",
     });
     const parent = yield* projections.getThreadProjection(parentThreadId);
+    assert.isUndefined(parent.thread.role);
     const parentRun = parent.runs[0]!;
     yield* orchestrator.dispatch({
       type: "delegated_task.request",
@@ -587,6 +588,7 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       parentRunId: parentRun.id,
       parentNodeId: parentRun.rootNodeId!,
       task: "Review the changes",
+      role: "reviewer",
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
@@ -596,6 +598,10 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     const updatedParent = yield* projections.getThreadProjection(parentThreadId);
     const childThreadId = updatedParent.subagents[0]!.childThreadId!;
     const child = yield* projections.getThreadProjection(childThreadId);
+    assert.equal(updatedParent.thread.role, "orchestrator");
+    assert.equal(child.thread.role, "reviewer");
+    assert.equal((yield* projections.getThreadShell(parentThreadId))?.role, "orchestrator");
+    assert.equal((yield* projections.getThreadShell(childThreadId))?.role, "reviewer");
     assert.isNull(child.thread.linkedPullRequest);
     assert.deepEqual(child.thread.pullRequests, []);
     assert.equal(child.thread.branch, parent.thread.branch);

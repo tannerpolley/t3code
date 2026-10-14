@@ -1609,6 +1609,7 @@ layer("ProviderEventIngestorV2", (it) => {
       const offered = {
         ...rootEvent.payload,
         id: childThreadId,
+        creationSource: "provider" as const,
         title: "Inspect checkout",
         activeProviderThreadId: null,
         lineage: {
@@ -1630,7 +1631,17 @@ layer("ProviderEventIngestorV2", (it) => {
       });
       assert.deepEqual(
         created.flat().map((stored) => stored.event.type),
-        ["thread.created"],
+        ["thread.created", "thread.metadata-updated"],
+      );
+      assert.equal((yield* projectionStore.getThread(rootEvent.threadId)).role, "orchestrator");
+      assert.isUndefined((yield* projectionStore.getThread(childThreadId)).role);
+      assert.equal(
+        (yield* projectionStore.getThreadShell(rootEvent.threadId))?.role,
+        "orchestrator",
+      );
+      assert.deepEqual(
+        (yield* ingest(offered)).map((stored) => stored.event.type),
+        [],
       );
       const saved = {
         ...offered,

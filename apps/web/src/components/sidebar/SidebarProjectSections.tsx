@@ -55,6 +55,7 @@ import {
 } from "./SidebarColumns";
 import { useServerConfigs } from "../../state/entities";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
+import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import {
   describeSidebarBackgroundWork,
@@ -1261,6 +1262,7 @@ function SidebarProjectThreadRow(props: {
             {/* The work toggle sits over this slot because buttons cannot nest. */}
             <SidebarCaretSlot />
             <ThreadLocationIcon thread={props.thread} />
+            <ThreadRoleIcon thread={props.thread.source} />
             <ThreadRelationshipIcon
               driver={provider?.driver}
               provider={provider}
@@ -1273,7 +1275,12 @@ function SidebarProjectThreadRow(props: {
             className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
           />
         )}
-        {!props.codexStyle ? <ThreadLocationIcon thread={props.thread} /> : null}
+        {!props.codexStyle ? (
+          <>
+            <ThreadLocationIcon thread={props.thread} />
+            <ThreadRoleIcon thread={props.thread.source} />
+          </>
+        ) : null}
         {props.codexStyle ? (
           // The model sits right after the provider icon, as in Lineage. It gives way first: hidden
           // in a narrow row, and in a wider one it shrinks before the title's 5rem basis does.

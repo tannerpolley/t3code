@@ -1,4 +1,5 @@
 import { ThreadLocationIcon } from "./ThreadLocationIcon";
+import { ThreadRoleIcon } from "./ThreadRoleIcon";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -847,6 +848,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </Tooltip>
           )}
           <ThreadLocationIcon thread={thread} />
+          <ThreadRoleIcon thread={thread.source} />
           <ThreadTerminalStatusButton
             threadRef={threadRef}
             terminalIds={runningTerminalIds}

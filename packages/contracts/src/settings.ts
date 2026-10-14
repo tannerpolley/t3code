@@ -1,3 +1,9 @@
+import {
+  ThreadRole,
+  resolveThreadRole,
+  modelRoleProfile,
+  THREAD_ROLE_LABELS,
+} from "./threadRole.ts";
 import { SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -1161,8 +1167,9 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
-export const MAX_MODEL_ROLES = 20;
-export const MAX_MODEL_ROLE_TARGETS = 4;
+export const MAX_MODEL_ROLES = 26;
+// Legacy lists can converge on one profile without discarding any saved choices.
+export const MAX_MODEL_ROLE_TARGETS = 80;
 export const MAX_MODEL_ROLE_NAME_LENGTH = 60;
 export const MAX_MODEL_ROLE_DESCRIPTION_LENGTH = 200;
 export const MAX_MODEL_ROLE_MODEL_LENGTH = 100;
@@ -1195,6 +1202,8 @@ export type ModelRoleTarget = typeof ModelRoleTarget.Type;
 
 /** Ordered delegation choices; the first is the default. Bounded for per-turn instructions. */
 export const ModelRole = Schema.Struct({
+  role: Schema.optional(ThreadRole),
+  profile: Schema.optional(Schema.Literals(["fast", "thorough"])),
   id: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(MAX_MODEL_ROLE_NAME_LENGTH)),
   description: TrimmedString.check(Schema.isMaxLength(MAX_MODEL_ROLE_DESCRIPTION_LENGTH)),
@@ -1219,7 +1228,13 @@ const LegacyModelRole = Schema.Struct({
 );
 // Try the current shape first so encoding never writes the legacy `target` key.
 const ModelRoleSetting = Schema.Union([ModelRole, LegacyModelRole]);
-export const ModelRoles = Schema.Array(ModelRoleSetting).check(Schema.isMaxLength(MAX_MODEL_ROLES));
+const SavedModelRoles = Schema.Array(ModelRoleSetting).check(Schema.isMaxLength(MAX_MODEL_ROLES));
+export const ModelRoles = SavedModelRoles.pipe(
+  Schema.decodeTo(
+    Schema.Array(Schema.toType(ModelRole)),
+    SchemaTransformation.transform({ decode: migrateModelRoles, encode: (roles) => roles }),
+  ),
+);
 
 const modelRole = (
   id: string,
@@ -1249,75 +1264,101 @@ export const DEFAULT_MODEL_ROLES: ReadonlyArray<ModelRole> = [
   modelRole(
     "orchestrator",
     "Orchestrator",
-    "Plans, delegates, integrates; default main-thread model",
+    "Plans, delegates, integrates",
     "claudeAgent",
     "claude-opus-5-5",
     "high",
   ),
+  {
+    ...modelRole(
+      "implementor-fast",
+      "Implementor · Fast",
+      "Bounded changes where speed matters; a Checker reviews afterwards",
+      "claudeAgent",
+      "claude-opus-5-5",
+      "medium",
+      [
+        {
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6.1-sol",
+          options: [{ id: "reasoningEffort", value: "medium" }],
+        },
+      ],
+    ),
+    role: "implementor",
+    profile: "fast" as const,
+  },
+  {
+    ...modelRole(
+      "implementor-thorough",
+      "Implementor · Thorough",
+      "Broad, cross-cutting or correctness-critical implementation",
+      "codex",
+      "gpt-6.1-sol",
+      "high",
+    ),
+    role: "implementor",
+    profile: "thorough" as const,
+  },
   modelRole(
-    "fast-builder",
-    "Fast builder",
-    "Bounded changes where speed matters; a Checker reviews afterwards",
-    "claudeAgent",
-    "claude-opus-5-5",
-    "medium",
-    [
-      {
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-6.1-sol",
-        options: [{ id: "reasoningEffort", value: "medium" }],
-      },
-    ],
-  ),
-  modelRole(
-    "checker",
-    "Checker",
-    "Read-only review of a build: missed places, weak tests, edge cases; budget review and sanity checks",
+    "reviewer",
+    "Reviewer",
+    "Strong read-only review and design guidance",
     "codex",
-    "gpt-6.1-sol",
-    "high",
+    "gpt-6-astra",
+    "xhigh",
   ),
   modelRole(
-    "thorough-builder",
-    "Thorough builder",
-    "Broad, cross-cutting or correctness-critical implementation; complex diagnosis, even read-only",
-    "codex",
-    "gpt-6.1-sol",
-    "high",
-  ),
-  modelRole(
-    "bounded-worker",
-    "Bounded worker",
-    "Well-specified, contained tasks and calculations; same results as the Thorough builder there, faster and cheaper",
-    "codex",
-    "gpt-6.1-sol",
-    "medium",
-  ),
-  modelRole(
-    "evidence-gatherer",
-    "Evidence gatherer",
-    "Deterministic work with one clear result; gathering evidence without making decisions",
+    "investigator",
+    "Investigator",
+    "Gather evidence and investigate questions",
     "codex",
     "gpt-6-luna",
     "max",
   ),
   modelRole(
-    "quick-claude",
-    "Quick Claude",
-    "Quick, well-specified Claude-side work",
-    "claudeAgent",
-    "claude-sonnet-5-5",
-    "medium",
-  ),
-  modelRole(
-    "strong-reviewer",
-    "Strong reviewer",
-    "Strong review, or guidance for the orchestrator on a plan, a stuck diagnosis or a design call",
+    "checker",
+    "Checker",
+    "Check a build for missed places, weak tests and edge cases",
     "codex",
-    "gpt-6-astra",
-    "xhigh",
+    "gpt-6.1-sol",
+    "high",
   ),
-];
+].map((entry) => ({ ...entry, role: resolveThreadRole(entry.id)! }));
+
+/** Default-fill missing profiles, keeping every saved model, option and choice order. */
+function migrateModelRoles(saved: ReadonlyArray<ModelRole>): ReadonlyArray<ModelRole> {
+  const migrated: Array<ModelRole> = [];
+  for (const entry of saved) {
+    const role = entry.role ?? resolveThreadRole(entry.id);
+    const profile =
+      role === "implementor" ? (entry.profile ?? modelRoleProfile(entry.id) ?? "fast") : undefined;
+    const id =
+      role === undefined ? entry.id : profile === undefined ? role : `implementor-${profile}`;
+    const previous = migrated.findIndex((candidate) => candidate.id === id);
+    const normalized: ModelRole = {
+      ...entry,
+      id,
+      ...(role === undefined
+        ? {}
+        : {
+            role,
+            name: `${THREAD_ROLE_LABELS[role]}${profile ? ` · ${profile === "fast" ? "Fast" : "Thorough"}` : ""}`,
+          }),
+      ...(profile === undefined ? {} : { profile }),
+    };
+    if (previous === -1) migrated.push(normalized);
+    else
+      migrated[previous] = {
+        ...migrated[previous]!,
+        targets: [...migrated[previous]!.targets, ...entry.targets],
+      };
+  }
+  for (const entry of DEFAULT_MODEL_ROLES) {
+    if (!migrated.some((candidate) => candidate.id === entry.id)) migrated.push(entry);
+  }
+  return migrated;
+}
 
 /** Stored in `worktreesDirectory` to select a repository-local folder. */
 export const PROJECT_LOCAL_WORKTREES = "project-local";

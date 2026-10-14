@@ -2385,6 +2385,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      ...(command.repositoryOrchestration === undefined ? {} : { role: "orchestrator" as const }),
       activeProviderThreadId: null,
       lineage: {
         parentThreadId: null,
@@ -7268,6 +7269,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.issue === undefined
           ? {}
           : { linkedIssue: command.issue, titleSource: "generated" as const }),
+        ...(command.role === undefined && command.issue === undefined
+          ? {}
+          : { role: command.role ?? "implementor" }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
         // A child with its own worktree has no checkout until its deferred run's
@@ -7341,6 +7345,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         result: null,
       };
       const emitEvent = emit(events, command);
+      if (parentProjection.thread.role !== "orchestrator") {
+        yield* emitEvent({
+          type: "thread.metadata-updated",
+          threadId: command.parentThreadId,
+          occurredAt: now,
+          payload: { ...parentProjection.thread, role: "orchestrator", updatedAt: now },
+        });
+      }
 
       yield* emitEvent({
         type: "thread.created",
@@ -12072,6 +12084,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: {
             ...next,
+            role: "orchestrator",
             repositoryOrchestration: {
               ...config,
               handoff: undefined,

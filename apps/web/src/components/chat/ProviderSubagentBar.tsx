@@ -3,7 +3,7 @@ import {
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
-import { ArrowUpLeftIcon } from "lucide-react";
+import { ArrowUpLeftIcon, BotIcon } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -54,6 +54,7 @@ export function ProviderSubagentBar(props: {
 
   return (
     <div className="flex min-h-12 items-center gap-3 rounded-3xl py-2 ps-5 pe-2 text-sm">
+      <BotIcon aria-label="Native subagent" className="size-4 shrink-0 text-muted-foreground" />
       <span className="flex min-w-0 items-center gap-2">
         {props.provider ? (
           <ProviderInstanceIcon

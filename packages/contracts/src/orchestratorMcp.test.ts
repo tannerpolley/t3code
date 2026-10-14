@@ -1,3 +1,4 @@
+import { LEGACY_THREAD_ROLES, THREAD_ROLES, resolveThreadRole } from "./threadRole.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
@@ -162,5 +163,24 @@ describe("orchestrator MCP contracts", () => {
         reason: "Loop converged.",
       }).reason,
     ).toBe("Loop converged.");
+  });
+});
+
+describe("delegation roles", () => {
+  it("accepts all standard roles and maps legacy caller names without changing targets", () => {
+    const decode = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
+    const target = {
+      providerInstanceId: "codex",
+      model: "gpt-6.1-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    for (const [input, expected] of [
+      ...THREAD_ROLES.map((role) => [role, role]),
+      ...Object.entries(LEGACY_THREAD_ROLES),
+    ]) {
+      const decoded = decode({ task: "Do the work", role: input, target });
+      expect(resolveThreadRole(decoded.role!)).toBe(expected);
+      expect(decoded.target).toEqual(target);
+    }
   });
 });
