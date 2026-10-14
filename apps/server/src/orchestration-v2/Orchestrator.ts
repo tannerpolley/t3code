@@ -152,8 +152,12 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { isSnoozed } from "./ThreadSettlementService.ts";
 import { usageLimitQueuedRunEvents } from "./usageLimitQueuedRuns.ts";
-import { usageLimitRecoveryPending } from "./usageLimitRecoveryPending.ts";
+import {
+  usageLimitRecoveryPending,
+  usageLimitSwitchResultRun,
+} from "./usageLimitRecoveryPending.ts";
 import { delegatedRequestOwner } from "./DelegatedRequestRouting.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
@@ -4960,6 +4964,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (command.automaticProviderContinuationOfRunId !== undefined) {
         const marker = projection.thread.autoProviderSwitch;
         const source = latestExecutedRun(projection.runs);
+        const shell = threadShellFromProjection(projection);
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         if (
           source?.id !== command.automaticProviderContinuationOfRunId ||
           source.status !== "failed" ||
@@ -4970,7 +4976,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
           projection.thread.settledOverride === "settled" ||
-          projection.thread.snoozedUntil != null ||
+          isSnoozed(shell, nowMs) ||
           projection.thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
           projection.runs.some(isBlockingRun) ||
           projection.runtimeRequests.some((request) => request.status === "pending")
@@ -5059,9 +5065,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       const continuationOf =
-        command.restartContinuationOfRunId ??
-        command.automaticProviderContinuationOfRunId ??
-        command.usageLimitContinuationOfRunId;
+        command.restartContinuationOfRunId ?? command.automaticProviderContinuationOfRunId;
       const continuedTaskId =
         continuationOf === undefined
           ? undefined
@@ -7649,7 +7653,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.notification !== undefined ||
       command.restartContinuationOfRunId !== undefined ||
       command.automaticProviderContinuationOfRunId !== undefined ||
-      command.usageLimitContinuationOfRunId !== undefined ||
       (command.createdBy !== "user" && command.creationSource !== "mcp")
     )
       return;
@@ -10905,25 +10908,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.flatMap((pending) =>
         Effect.gen(function* () {
           if (pending.includes(true)) return true;
-          const latest = latestExecutedRun(runs);
+          const latest = resultRun.status === "failed" ? resultRun : latestExecutedRun(runs);
           if (!latest || latest.status !== "failed") return false;
-          const {
-            thread: current,
-            turnItems,
-            providerThreads,
-          } = yield* projectionStore.getThreadRecords(thread.id, ["turnItems", "providerThreads"], {
-            turnItemRunId: latest.id,
-            turnItemTypes: ["error"],
-          });
-          const driver = providerThreads.find(
-            (providerThread) => providerThread.id === latest.providerThreadId,
-          )?.driver;
+          const shell = yield* projectionStore.getThreadShell(thread.id);
+          const { providerThreads, turnItems } = yield* projectionStore.getThreadRecords(
+            thread.id,
+            ["providerThreads", "turnItems"],
+            { turnItemRunId: latest.id, turnItemTypes: ["error"] },
+          );
           return usageLimitRecoveryPending(
-            current,
+            shell,
             latest,
             latestRootProviderFailure(latest, turnItems),
-            yield* serverSettings.getSettings,
-            driver,
+            runs,
+            (yield* serverSettings.getSettings).usageLimitRecovery,
+            providerThreads.find((providerThread) => providerThread.id === latest.providerThreadId)
+              ?.driver,
+            DateTime.toEpochMillis(yield* DateTime.now),
           );
         }),
       ),
@@ -11209,11 +11210,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === options.taskId);
       const childRun =
-        taskRuns.length === 0
+        usageLimitSwitchResultRun(childControls.thread, childControls.runs, options.taskId) ??
+        (taskRuns.length === 0
           ? options.taskId === forkedFrom.nodeId
             ? options.resultRun
             : undefined
-          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0]);
       if (childRun === undefined) return;
       const terminalStatus = delegatedTaskTerminalStatus(childRun.status);
       if (terminalStatus === null) {
@@ -11222,7 +11224,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         yield* childAwaitsRecoveryContinuation(
           childControls.thread,
-          taskRuns.length === 0 ? childControls.runs : taskRuns,
+          childControls.runs,
           childRun,
           options?.settledContinuationOf,
         )
@@ -11522,7 +11524,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           task.origin !== "app_owned" ||
           task.childThreadId !== childThreadId ||
           (task.id === childControls.thread.forkedFrom.nodeId &&
-            progress.state !== "result_available") ||
+            progress.state !== "result_available" &&
+            usageLimitSwitchResultRun(childControls.thread, childControls.runs, task.id) ===
+              undefined) ||
           (task.result !== null &&
             parent.contextTransfers.some(
               (transfer) =>
@@ -12976,9 +12980,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       if (taskId !== undefined) {
         const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
-        const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        const run =
+          usageLimitSwitchResultRun(child.thread, child.runs, taskId) ??
+          runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-        return yield* childAwaitsRecoveryContinuation(child.thread, runs, run);
+        return yield* childAwaitsRecoveryContinuation(child.thread, child.runs, run);
       }
       const childShell = yield* projectionStore.getThreadShell(childThreadId);
       const progress = delegatedTaskProgress({

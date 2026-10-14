@@ -5,6 +5,7 @@ import {
   deriveThreadUsageSummary,
   refreshThreadUsageSummary,
 } from "./ThreadUsageSummary.ts";
+import { USAGE_LIMIT_SWITCH_RESUME_PREFIX } from "./usageLimitRecoveryPending.ts";
 import { IssueWorkCancelled, IssueWorkRequested } from "@t3tools/contracts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -16,6 +17,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   latestRootProviderFailure,
+  latestExecutedRun,
   latestUnheldRun,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
@@ -643,9 +645,11 @@ function needsRecovery(
                 ),
             ),
         ) ||
-          (["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
+          ((["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
             latestUnheldRun(projection.runs)?.status ?? "idle",
-          ) &&
+          ) ||
+            latestRootProviderFailure(latestExecutedRun(projection.runs), projection.turnItems)
+              ?.class === "usage_limit") &&
             ![...projection.contextTransfers, ...(parent?.contextTransfers ?? [])].some(
               (transfer) =>
                 transfer.type === "subagent_result" &&
@@ -3896,7 +3900,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
             AND json_extract(t.payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
-            AND (
+            AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
+            AND ((
+              ${booleanInt(options.switchProvider ?? false)}
+              AND (
               (t.provider_instance_id = r.provider_instance_id
                 AND json_extract(t.payload_json, '$.modelSelection.model') IS json_extract(r.payload_json, '$.modelSelection.model')
                 AND COALESCE(json_extract(t.payload_json, '$.modelSelection.options'), '[]') IS COALESCE(json_extract(r.payload_json, '$.modelSelection.options'), '[]'))
@@ -3905,17 +3912,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND json_extract(t.payload_json, '$.autoProviderSwitch.to.model') IS json_extract(t.payload_json, '$.modelSelection.model')
                 AND COALESCE(json_extract(t.payload_json, '$.autoProviderSwitch.to.options'), '[]') IS COALESCE(json_extract(t.payload_json, '$.modelSelection.options'), '[]'))
             )
-            AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
-            AND ((
-              ${booleanInt(options.switchProvider ?? false)}
-              AND json_extract(t.payload_json, '$.snoozedUntil') IS NULL
+              AND (
+                json_extract(t.payload_json, '$.snoozedUntil') IS NULL
+                OR julianday(json_extract(t.payload_json, '$.snoozedUntil')) <= julianday(${DateTime.formatIso(options.now)})
+                OR json_extract(t.payload_json, '$.snoozedAt') IS NULL
+                OR julianday(r.completed_at) > julianday(json_extract(t.payload_json, '$.snoozedAt'))
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_runs continuation
+                WHERE continuation.thread_id = t.thread_id
+                  AND json_extract(continuation.payload_json, '$.userMessageId') = ${USAGE_LIMIT_SWITCH_RESUME_PREFIX} || t.thread_id || ':' || r.run_id
+              )
               AND t.provider_instance_id IN (SELECT value FROM json_each(${encodeRecoveryInstanceIds(options.switchProviderInstanceIds ?? [])}))
               AND (
                 json_extract(t.payload_json, '$.autoProviderSwitch.runId') IS NOT r.run_id
                 OR json_extract(t.payload_json, '$.autoProviderSwitch.to.instanceId') IS NOT NULL
               )
             ) OR (
-            json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
+            t.provider_instance_id = r.provider_instance_id
+            AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
             AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
             AND (
               (
@@ -4027,12 +4042,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND json_extract(task.payload_json, '$.origin') = 'app_owned'
                       AND json_extract(task.payload_json, '$.result') IS NULL
                   ) OR (
-                    -- The original task still waits for the latest unheld work.
-                    (SELECT status FROM orchestration_v2_projection_runs
+                    -- An unstarted limit continuation cannot hide the original failure.
+                    ((SELECT status FROM orchestration_v2_projection_runs
                      WHERE thread_id = child.thread_id
                        AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
                      ORDER BY ordinal DESC LIMIT 1
                     ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                    OR EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_turn_items error
+                      WHERE error.thread_id = child.thread_id AND error.type = 'error'
+                        AND json_extract(error.payload_json, '$.failure.class') = 'usage_limit'
+                    ))
                     AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_context_transfers
                     WHERE source_thread_id = child.thread_id

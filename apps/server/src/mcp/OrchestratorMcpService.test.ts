@@ -58,7 +58,15 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
-        contextTransfers: [],
+        contextTransfers: [
+          {
+            id: "transfer:delivered-original",
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: { runId: childRunId },
+          },
+        ],
         subagents: [
           {
             id: taskId,
@@ -68,12 +76,16 @@ describe("OrchestratorMcpService", () => {
             driver: "codex",
             model: "gpt-5.6-terra",
             result: "terminal result",
+            status: "completed",
             completionDelivery: { state: "pending" },
           },
         ],
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
-        thread: { id: childThreadId },
+        thread: {
+          id: childThreadId,
+          forkedFrom: { type: "node", threadId: parentThreadId, nodeId: taskId },
+        },
         runs: [
           {
             id: childRunId,
@@ -84,14 +96,23 @@ describe("OrchestratorMcpService", () => {
           },
           {
             id: RunId.make("run:mcp-ack-continuation"),
+            delegatedTaskId: taskId,
             ordinal: 2,
             status: "failed",
             startedAt: DateTime.makeUnsafe("2026-10-03T10:02:00Z"),
             completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
           },
         ],
-        contextTransfers: [],
+        contextTransfers: [
+          {
+            type: "subagent_spawn",
+            sourceThreadId: parentThreadId,
+            targetThreadId: childThreadId,
+            targetRunId: childRunId,
+          },
+        ],
         messages: [],
+        turnItems: [],
         subagents: [],
         providerThreads: [],
       } as unknown as OrchestrationV2ThreadProjection;
@@ -116,6 +137,10 @@ describe("OrchestratorMcpService", () => {
                 : hasNestedWork
                   ? {
                       ...childProjection,
+                      runs: childProjection.runs.map((run) => ({
+                        ...run,
+                        delegatedTaskId: undefined,
+                      })),
                       subagents: [
                         { ...parentProjection.subagents[0]!, status: "running" as const },
                       ],
@@ -171,6 +196,7 @@ describe("OrchestratorMcpService", () => {
         const result = yield* service.taskStatus(scope, taskId);
         assert.equal(result.status, "completed");
         assert.equal(result.summary, "terminal result");
+        assert.equal(result.resultContextTransferId, "transfer:delivered-original");
         assert.equal(result.latestTerminalRunId, childRunId);
         assert.equal(result.latestTerminalStatus, "completed");
         const commandIds = yield* Ref.get(acknowledgementCommandIds);

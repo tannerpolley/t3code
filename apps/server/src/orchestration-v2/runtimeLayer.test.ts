@@ -1,3 +1,5 @@
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import { USAGE_LIMIT_SWITCH_HOLD_MS } from "./usageLimitRecoveryPending.ts";
 import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorker.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -6092,6 +6094,7 @@ const makeUsageSwitchTest = (preferences: Parameters<typeof ServerSettings.layer
   ).pipe(
     Layer.provide(McpSessionRegistryTestkit.layer),
     Layer.provide(McpProviderSessions.layer),
+    Layer.provideMerge(IssueWorkStore.layer),
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provide(layerCheckpointStoreTest),
     Layer.provide(layerServerConfig),
@@ -6697,195 +6700,446 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
     }),
   );
 });
-it.effect.each(["switch", "wait"] as const)(
-  "holds a delegated child's limited result through %s recovery",
-  (mode) => {
-    const preferences = {
-      usageLimitRecovery: mode,
-      autoResumeLimitedThreads: mode === "wait",
-      snoozeLimitedThreads: mode === "wait",
-      usageLimitFallbackModels: [claudeSelection],
-    };
-    const workers = Layer.merge(
-      UsageLimitProviderSwitchWorker.layer,
-      UsageLimitRecoveryWorker.serviceLayer,
-    ).pipe(
-      Layer.provide(
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed(switchSnapshots),
-        }),
+it.effect.each([
+  "switch",
+  "off",
+  "wait",
+  "wait-model",
+  "no-target",
+  "deadline",
+  "starting-timeout",
+  "off-during-hold",
+  "restart",
+  "managed-queued",
+  "managed-held",
+  "expired-snooze",
+  "cancelled",
+  "changed-model",
+  "snoozed",
+  "session-error",
+] as const)("bounds a delegated child's usage-limit recovery: %s", (scenario) => {
+  const mode = scenario === "off" ? "off" : scenario.startsWith("wait") ? "wait" : "switch";
+  const preferences = {
+    usageLimitRecovery: mode,
+    autoResumeLimitedThreads: mode === "wait",
+    snoozeLimitedThreads: mode === "wait",
+    usageLimitFallbackModels: scenario === "no-target" ? [] : [claudeSelection],
+  } satisfies Parameters<typeof ServerSettings.layerTest>[0];
+  const workers = Layer.merge(
+    UsageLimitProviderSwitchWorker.layer,
+    UsageLimitRecoveryWorker.serviceLayer,
+  ).pipe(
+    Layer.provide(
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed(switchSnapshots),
+      }),
+    ),
+    Layer.provide(
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+        Layer.provide(layerSwitchInstances),
       ),
-      Layer.provide(
-        ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
-          Layer.provide(layerSwitchInstances),
-        ),
-      ),
-    );
-    return Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const sink = yield* EventSink.EventSinkV2;
-      const switchWorker = yield* UsageLimitProviderSwitchWorker.UsageLimitProviderSwitchWorker;
-      const resetWorker = yield* UsageLimitRecoveryWorker.UsageLimitRecoveryWorker;
-      const parentThreadId = ThreadId.make(`limit-child:${mode}:parent`);
-      const projectId = ProjectId.make(`limit-child:${mode}:project`);
-      const now = yield* DateTime.now;
-      yield* seedProject({
-        projectId,
-        title: "Delegated recovery",
-        workspaceRoot: process.cwd(),
-        defaultModelSelection: modelSelection,
-        createdAt: DateTime.formatIso(now),
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        commandId: CommandId.make(`${parentThreadId}:create`),
-        threadId: parentThreadId,
-        projectId,
-        title: "Parent",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        createdBy: "user",
-        creationSource: "web",
-      });
+    ),
+  );
+  return Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const switchWorker = yield* UsageLimitProviderSwitchWorker.UsageLimitProviderSwitchWorker;
+    const resetWorker = yield* UsageLimitRecoveryWorker.UsageLimitRecoveryWorker;
+    const parentThreadId = ThreadId.make(`limit-child:${scenario}:parent`);
+    const projectId = ProjectId.make(`limit-child:${scenario}:project`);
+    const now = yield* DateTime.now;
+    yield* seedProject({
+      projectId,
+      title: "Delegated recovery",
+      workspaceRoot: process.cwd(),
+      defaultModelSelection: modelSelection,
+      createdAt: DateTime.formatIso(now),
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`${parentThreadId}:create`),
+      threadId: parentThreadId,
+      projectId,
+      title: "Parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`${parentThreadId}:start`),
+      threadId: parentThreadId,
+      messageId: MessageId.make(`${parentThreadId}:start`),
+      text: "Delegate the work",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make(`${parentThreadId}:delegate`),
+      parentThreadId,
+      parentRunId: parentRun.id,
+      parentNodeId: parentRun.rootNodeId!,
+      task: "Finish the implementation",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      completionWake: "always",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+    const childThreadId = task.childThreadId!;
+    const child = yield* orchestrator.getThreadProjection(childThreadId);
+    const original = child.runs[0]!;
+    if (scenario === "managed-queued" || scenario === "managed-held" || scenario === "cancelled") {
       yield* orchestrator.dispatch({
         type: "message.dispatch",
-        commandId: CommandId.make(`${parentThreadId}:start`),
-        threadId: parentThreadId,
-        messageId: MessageId.make(`${parentThreadId}:start`),
-        text: "Delegate the work",
+        commandId: CommandId.make(`${childThreadId}:queued`),
+        threadId: childThreadId,
+        messageId: MessageId.make(`${childThreadId}:queued`),
+        text: "Queued issue work",
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
+        dispatchMode: { type: "queue_after_active" },
         createdBy: "user",
         creationSource: "web",
       });
-      const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
-      yield* orchestrator.dispatch({
-        type: "delegated_task.request",
-        commandId: CommandId.make(`${parentThreadId}:delegate`),
-        parentThreadId,
-        parentRunId: parentRun.id,
-        parentNodeId: parentRun.rootNodeId!,
-        task: "Finish the implementation",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        completionWake: "always",
-        createdBy: "agent",
-        creationSource: "mcp",
-      });
-      const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
-      const childThreadId = task.childThreadId!;
-      const child = yield* orchestrator.getThreadProjection(childThreadId);
-      const original = child.runs[0]!;
+      const queued = (yield* orchestrator.getThreadProjection(childThreadId)).runs.at(-1)!;
       yield* sink.write({
-        commandId: CommandId.make(`${childThreadId}:failure`),
         events: [
           {
-            id: EventId.make(`${childThreadId}:failed`),
-            type: "run.updated",
-            threadId: childThreadId,
-            occurredAt: now,
-            payload: { ...original, status: "failed", completedAt: now },
-          },
-          {
-            id: EventId.make(`${childThreadId}:error`),
-            type: "turn-item.updated",
+            id: EventId.make(`${childThreadId}:managed`),
+            type: "thread.metadata-updated",
             threadId: childThreadId,
             occurredAt: now,
             payload: {
-              id: TurnItemId.make(`${childThreadId}:error`),
-              type: "error",
-              threadId: childThreadId,
-              runId: original.id,
-              nodeId: original.rootNodeId,
-              providerThreadId: original.providerThreadId,
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: 2,
-              status: "failed",
-              title: "Usage limit",
-              startedAt: now,
-              completedAt: now,
-              updatedAt: now,
-              failure: {
-                class: "usage_limit",
-                message: "Allowance used",
-                code: "usageLimitExceeded",
-                retryable: null,
-                resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+              ...child.thread,
+              linkedIssue: {
+                host: "github.com",
+                repository: "owner/repo",
+                repositoryId: "repo",
+                id: "issue",
+                nodeId: "issue-node",
+                number: 14,
+                url: "https://github.com/owner/repo/issues/14",
+                title: "Managed work",
               },
             },
           },
-        ],
-      });
-      yield* orchestrator.recoverDelegatedTasks;
-      assert.isNull((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result);
-      assert.isTrue(yield* orchestrator.delegatedTaskResultPending(childThreadId, task.id));
-      if (mode === "switch") yield* switchWorker.recover(childThreadId);
-      else {
-        yield* resetWorker.sweep;
-        yield* TestClock.adjust("1 hour");
-        yield* resetWorker.sweep;
-      }
-      const resumed = yield* orchestrator.getThreadProjection(childThreadId);
-      const continuation = resumed.runs.findLast(
-        (run) => run.id !== original.id && run.delegatedTaskId === task.id,
-      )!;
-      assert.equal(continuation.delegatedTaskId, task.id);
-      assert.isNull((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result);
-      const completedAt = yield* DateTime.now;
-      yield* sink.write({
-        commandId: CommandId.make(`${childThreadId}:success`),
-        events: [
           {
-            id: EventId.make(`${childThreadId}:completed`),
+            id: EventId.make(`${childThreadId}:queue-held`),
             type: "run.updated",
             threadId: childThreadId,
-            occurredAt: completedAt,
-            payload: { ...continuation, status: "completed", completedAt },
+            occurredAt: now,
+            payload: { ...queued, queueHeld: true },
           },
-          {
-            id: EventId.make(`${childThreadId}:answer`),
-            type: "message.updated",
+        ],
+      });
+    }
+    yield* sink.write({
+      commandId: CommandId.make(`${childThreadId}:failure`),
+      events: [
+        {
+          id: EventId.make(`${childThreadId}:failed`),
+          type: "run.updated",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: { ...original, status: "failed", completedAt: now },
+        },
+        {
+          id: EventId.make(`${childThreadId}:error`),
+          type: "turn-item.updated",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`${childThreadId}:error`),
+            type: "error",
             threadId: childThreadId,
-            occurredAt: completedAt,
+            runId: original.id,
+            nodeId: original.rootNodeId,
+            providerThreadId: original.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 2,
+            status: "failed",
+            title: "Usage limit",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            failure: {
+              class: "usage_limit",
+              message: "Allowance used",
+              code: "usageLimitExceeded",
+              retryable: null,
+              resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+            },
+          },
+        },
+      ],
+    });
+    if (scenario === "expired-snooze" || scenario === "snoozed")
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`${childThreadId}:snooze`),
+            type: "thread.metadata-updated",
+            threadId: childThreadId,
+            occurredAt: now,
             payload: {
-              ...resumed.messages[0]!,
-              id: MessageId.make(`${childThreadId}:answer`),
-              runId: continuation.id,
-              nodeId: continuation.rootNodeId,
-              role: "assistant",
-              text: "Recovered task result",
-              streaming: false,
-              updatedAt: completedAt,
+              ...child.thread,
+              snoozedAt: now,
+              snoozedUntil: DateTime.add(now, { minutes: scenario === "expired-snooze" ? -1 : 60 }),
             },
           },
         ],
       });
-      yield* orchestrator.recoverDelegatedTasks;
+    if (scenario === "session-error")
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`${childThreadId}:session-error`),
+            type: "provider-session.attached",
+            threadId: childThreadId,
+            occurredAt: now,
+            payload: {
+              id: child.providerThreads[0]!.providerSessionId!,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              status: "error",
+              cwd: process.cwd(),
+              model: modelSelection.model,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: "Authentication expired",
+            },
+          },
+        ],
+      });
+    yield* orchestrator.recoverDelegatedTasks;
+    const assertFailed = Effect.gen(function* () {
       const parent = yield* orchestrator.getThreadProjection(parentThreadId);
-      assert.equal(parent.subagents.length, 1);
-      assert.equal(parent.subagents[0]!.status, "completed");
-      assert.include(parent.subagents[0]!.result ?? "", "Recovered task result");
-      const transfers = parent.contextTransfers.filter(
-        (transfer) =>
-          transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
-      );
-      assert.lengthOf(transfers, 1);
-      yield* orchestrator.recoverDelegatedTasks;
-      yield* switchWorker.sweep;
-      yield* resetWorker.sweep;
+      assert.equal(parent.subagents[0]!.status, "failed");
+      assert.include(parent.subagents[0]!.result ?? "", "Allowance used");
       assert.lengthOf(
-        (yield* orchestrator.getThreadProjection(parentThreadId)).contextTransfers.filter(
+        parent.contextTransfers.filter(
           (transfer) =>
             transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
         ),
         1,
       );
-    }).pipe(Effect.provide(workers.pipe(Layer.provideMerge(makeUsageSwitchTest(preferences)))));
-  },
-);
+      assert.isTrue(yield* (yield* IssueWorkStore.IssueWorkStore).resultAvailable(childThreadId));
+    });
+    if (
+      mode === "off" ||
+      mode === "wait" ||
+      scenario === "snoozed" ||
+      scenario === "session-error"
+    ) {
+      yield* assertFailed;
+      if (mode === "wait") {
+        yield* resetWorker.sweep;
+        if (scenario === "wait-model")
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${childThreadId}:model-change`),
+            threadId: childThreadId,
+            modelSelection: { ...modelSelection, model: "gpt-5.4-other" },
+          });
+        yield* TestClock.adjust("1 hour");
+        yield* resetWorker.sweep;
+        const resumed = yield* orchestrator.getThreadProjection(childThreadId);
+        assert.lengthOf(resumed.runs, 2);
+        assert.notEqual(
+          resumed.runs[1]!.delegatedTaskId,
+          task.id,
+          "Wait resume is ordinary follow-up work",
+        );
+        if (scenario === "wait-model")
+          assert.equal(resumed.runs[1]!.modelSelection.model, "gpt-5.4-other");
+        yield* assertFailed;
+      }
+      yield* switchWorker.sweep;
+      yield* assertFailed;
+      return;
+    }
+    assert.isNull((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result);
+    assert.isTrue(yield* orchestrator.delegatedTaskResultPending(childThreadId, task.id));
+    if (scenario === "restart" || scenario === "changed-model" || scenario === "off-during-hold") {
+      yield* orchestrator.dispatch({
+        type: "provider.switch",
+        commandId: CommandId.make(`${childThreadId}:persisted-switch`),
+        threadId: childThreadId,
+        modelSelection: claudeSelection,
+        autoProviderSwitch: {
+          runId: original.id,
+          from: modelSelection,
+          to: claudeSelection,
+          resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+          message: "Automatic switch",
+        },
+      });
+      if (scenario === "changed-model")
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${childThreadId}:changed-model`),
+          threadId: childThreadId,
+          modelSelection: { ...claudeSelection, model: "different-model" },
+        });
+    } else if (scenario !== "deadline") yield* switchWorker.recover(childThreadId);
+    if (scenario === "off-during-hold") {
+      yield* (yield* ServerSettings.ServerSettingsService).updateSettings({
+        usageLimitRecovery: "off",
+      });
+      yield* switchWorker.sweep;
+      yield* assertFailed;
+      return;
+    }
+    if (scenario === "no-target") {
+      yield* assertFailed;
+      return;
+    }
+    if (scenario === "changed-model") {
+      yield* switchWorker.sweep;
+      yield* assertFailed;
+      return;
+    }
+    if (scenario === "managed-queued" || scenario === "managed-held" || scenario === "cancelled") {
+      const queued = (yield* orchestrator.getThreadProjection(childThreadId)).runs.find(
+        (run) => run.delegatedTaskId === task.id,
+      )!;
+      assert.equal(queued.status, "queued");
+      if (scenario === "managed-held" || scenario === "cancelled")
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`${childThreadId}:continuation-held`),
+              type: "run.updated",
+              threadId: childThreadId,
+              occurredAt: now,
+              payload: { ...queued, queueHeld: true },
+            },
+          ],
+        });
+      const sequence = yield* orchestrator.getThreadEventSequence(childThreadId);
+      yield* switchWorker.recover(childThreadId);
+      yield* switchWorker.sweep;
+      assert.equal(
+        yield* orchestrator.getThreadEventSequence(childThreadId),
+        sequence,
+        "a persisted queued continuation is never re-sent",
+      );
+      if (scenario === "cancelled") {
+        yield* orchestrator.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make(`${childThreadId}:cancel-continuation`),
+          threadId: childThreadId,
+          runId: queued.id,
+        });
+        yield* switchWorker.sweep;
+        yield* assertFailed;
+        return;
+      }
+    }
+    if (
+      scenario === "deadline" ||
+      scenario === "starting-timeout" ||
+      scenario === "restart" ||
+      scenario === "managed-queued" ||
+      scenario === "managed-held"
+    ) {
+      yield* TestClock.adjust(USAGE_LIMIT_SWITCH_HOLD_MS - 1);
+      yield* orchestrator.recoverDelegatedTasks;
+      assert.isNull((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result);
+      yield* TestClock.adjust(1);
+      // Rebuild the worker against the same persisted database: no in-memory deadline survives.
+      yield* Effect.gen(function* () {
+        yield* (yield* UsageLimitProviderSwitchWorker.UsageLimitProviderSwitchWorker).sweep;
+      }).pipe(Effect.provide(workers));
+      yield* assertFailed;
+      const after = yield* orchestrator.getThreadEventSequence(childThreadId);
+      yield* switchWorker.sweep;
+      yield* assertFailed;
+      assert.equal(yield* orchestrator.getThreadEventSequence(childThreadId), after);
+      return;
+    }
+    const resumed = yield* orchestrator.getThreadProjection(childThreadId);
+    const continuation = resumed.runs.findLast(
+      (run) => run.id !== original.id && run.delegatedTaskId === task.id,
+    )!;
+    assert.equal(continuation.delegatedTaskId, task.id);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${childThreadId}:continuation-running`),
+          type: "run.updated",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: { ...continuation, status: "running", startedAt: now },
+        },
+      ],
+    });
+    assert.isNull((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result);
+    // Starting the continuation takes ownership even when its work exceeds the switch deadline.
+    yield* TestClock.adjust(USAGE_LIMIT_SWITCH_HOLD_MS);
+    yield* switchWorker.sweep;
+    assert.isNull((yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!.result);
+    const completedAt = yield* DateTime.now;
+    yield* sink.write({
+      commandId: CommandId.make(`${childThreadId}:success`),
+      events: [
+        {
+          id: EventId.make(`${childThreadId}:completed`),
+          type: "run.updated",
+          threadId: childThreadId,
+          occurredAt: completedAt,
+          payload: { ...continuation, status: "completed", startedAt: now, completedAt },
+        },
+        {
+          id: EventId.make(`${childThreadId}:answer`),
+          type: "message.updated",
+          threadId: childThreadId,
+          occurredAt: completedAt,
+          payload: {
+            ...resumed.messages[0]!,
+            id: MessageId.make(`${childThreadId}:answer`),
+            runId: continuation.id,
+            nodeId: continuation.rootNodeId,
+            role: "assistant",
+            text: "Recovered task result",
+            streaming: false,
+            updatedAt: completedAt,
+          },
+        },
+      ],
+    });
+    yield* orchestrator.recoverDelegatedTasks;
+    const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+    assert.equal(parent.subagents.length, 1);
+    assert.equal(parent.subagents[0]!.status, "completed");
+    assert.include(parent.subagents[0]!.result ?? "", "Recovered task result");
+    const transfers = parent.contextTransfers.filter(
+      (transfer) =>
+        transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+    );
+    assert.lengthOf(transfers, 1);
+    yield* orchestrator.recoverDelegatedTasks;
+    yield* switchWorker.sweep;
+    yield* resetWorker.sweep;
+    assert.lengthOf(
+      (yield* orchestrator.getThreadProjection(parentThreadId)).contextTransfers.filter(
+        (transfer) =>
+          transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+      ),
+      1,
+    );
+  }).pipe(Effect.provide(workers.pipe(Layer.provideMerge(makeUsageSwitchTest(preferences)))));
+});

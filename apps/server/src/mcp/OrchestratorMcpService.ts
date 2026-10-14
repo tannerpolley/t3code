@@ -416,10 +416,21 @@ function directAppOwnedChildTasks(
 
 function taskResultTransfer(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
+  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "contextTransfers">,
   task: OrchestrationV2Subagent,
 ) {
-  const originalRun = delegatedTaskRun(child, task);
+  const originalTask =
+    child.thread.forkedFrom?.type === "node" && child.thread.forkedFrom.nodeId === task.id;
+  const spawn = originalTask
+    ? child.contextTransfers.find(
+        (transfer) =>
+          transfer.type === "subagent_spawn" &&
+          transfer.sourceThreadId === task.threadId &&
+          transfer.targetThreadId === task.childThreadId,
+      )
+    : undefined;
+  const originalRun =
+    child.runs.find((run) => run.id === spawn?.targetRunId) ?? delegatedTaskRun(child, task);
   const resultRunIds = new Set(
     child.runs
       .filter(

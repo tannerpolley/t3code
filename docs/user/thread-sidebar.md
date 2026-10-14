@@ -258,6 +258,10 @@ The thread stays on its new provider after the original allowance returns. Its r
 has **Switch back** to restore the original model and effort. You can also change the provider
 through the normal model picker.
 
+When a delegated child hits a limit, Off and Wait for reset report the failure to its parent
+immediately. Switch provider allows up to two minutes for the continuation to start; otherwise
+it reports the failure. A reset-time resume after that is separate follow-up work on the child.
+
 Choose **Resume at reset** or **Snooze until reset** in an individual thread to override its
 waiting behavior. Snooze and auto-resume remain independent per thread; **Wake now** cancels
 snooze. Existing saved defaults keep their previous resume/snooze behavior under **Wait for reset**.

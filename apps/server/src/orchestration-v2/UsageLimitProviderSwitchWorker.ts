@@ -1,4 +1,4 @@
-import { CommandId, MessageId, type ProviderInstanceId, type ThreadId } from "@t3tools/contracts";
+import { CommandId, type ProviderInstanceId, type ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -16,6 +16,8 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import { isSnoozed } from "./ThreadSettlementService.ts";
+import { usageLimitSwitchMessageId } from "./usageLimitRecoveryPending.ts";
 import { usageLimitSwitchTarget } from "./usageLimitSwitchTarget.ts";
 
 export class UsageLimitProviderSwitchWorker extends Context.Service<
@@ -39,6 +41,8 @@ const make = Effect.gen(function* () {
       const preferences = yield* settings.getSettings;
       if (preferences.usageLimitRecovery !== "switch") return;
       const shell = yield* projections.getThreadShell(threadId);
+      const now = yield* DateTime.now;
+      const nowMs = DateTime.toEpochMillis(now);
       if (
         !shell ||
         shell.status !== "failed" ||
@@ -48,11 +52,9 @@ const make = Effect.gen(function* () {
         shell.deletedAt !== null ||
         shell.settledOverride === "settled" ||
         shell.pendingRuntimeRequest !== null ||
-        shell.snoozedUntil != null
+        isSnoozed(shell, nowMs)
       )
         return;
-      const now = yield* DateTime.now;
-      const nowMs = DateTime.toEpochMillis(now);
       const identity = `${threadId}:${shell.latestRunId}`;
       let marker =
         shell.autoProviderSwitch?.runId === shell.latestRunId
@@ -141,17 +143,23 @@ const make = Effect.gen(function* () {
         if (!current) return;
         const arm = limitRecoveryCommand(current, true, nowMs, true);
         if (arm?.type === "thread.metadata.update") yield* threads.dispatch(arm);
-        // A terminal decision without a schedulable reset releases the child's failure.
+        // Waiting is a terminal switch decision, even when the child schedules its own resume.
         yield* orchestrator.recoverDelegatedTask(threadId, marker.runId);
         return;
       }
-      const current = yield* projections.getThread(threadId);
-      if (!modelSelectionsEqual(current.modelSelection, marker.to)) return;
+      const current = yield* projections.getThreadRecords(threadId, ["runs"]);
+      if (
+        !modelSelectionsEqual(current.thread.modelSelection, marker.to) ||
+        current.runs.some(
+          (run) => run.userMessageId === usageLimitSwitchMessageId(threadId, marker.runId),
+        )
+      )
+        return;
       // Stable per failed run, including recovery after a crash between switching and continuing.
       yield* threads.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(`limit-switch-resume:${identity}`),
-        messageId: MessageId.make(`limit-switch-resume:${identity}`),
+        messageId: usageLimitSwitchMessageId(threadId, marker.runId),
         threadId,
         automaticProviderContinuationOfRunId: marker.runId,
         text: "Continue where you left off.",
@@ -167,6 +175,8 @@ const make = Effect.gen(function* () {
     ),
   );
   const sweep = Effect.gen(function* () {
+    // Release bounded holds independently of provider readiness, snooze, or changed settings.
+    yield* orchestrator.recoverDelegatedTasks;
     if ((yield* settings.getSettings).usageLimitRecovery !== "switch") return;
     const candidates = yield* projections.getLimitRecoveryCandidates({
       now: yield* DateTime.now,
