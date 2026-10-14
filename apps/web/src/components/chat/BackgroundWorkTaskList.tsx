@@ -72,7 +72,9 @@ export function BackgroundWorkTaskList(props: {
                 {row.startedAt ? (
                   <BackgroundShellElapsed startedAt={row.startedAt} commandKind={row.commandKind} />
                 ) : null}
-                {usage?.cpuPercent == null || usage.residentBytes == null ? (
+                {/* No sample yet (off screen or loading) says nothing; only a sampled miss is "unavailable". */}
+                {usage === undefined ? null : usage.cpuPercent == null ||
+                  usage.residentBytes == null ? (
                   <span>Usage unavailable</span>
                 ) : (
                   <BackgroundTaskResourceUsageLabel usage={usage} />
