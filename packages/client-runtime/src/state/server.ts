@@ -1146,6 +1146,14 @@ export function createServerEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
       refreshIntervalMs: 5_000,
     }),
+    // Same cadence as task usage: a thread's running commands, task status and spawned processes.
+    threadProcesses: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:thread-processes",
+      tag: WS_METHODS.serverGetThreadProcesses,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+      refreshIntervalMs: 5_000,
+    }),
     searchAcpRegistry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:acp-registry:search",
       tag: WS_METHODS.serverSearchAcpRegistry,

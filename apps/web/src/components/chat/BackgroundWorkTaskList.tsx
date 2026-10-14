@@ -10,7 +10,6 @@ import {
   type BackgroundWorkTaskRow,
 } from "../sidebar/SidebarBackgroundWork.logic";
 import {
-  BackgroundProcessOutputButton,
   BackgroundProcessOutputView,
   BackgroundShellElapsed,
   StopBackgroundShellButton,
@@ -79,15 +78,6 @@ export function BackgroundWorkTaskList(props: {
                 ) : (
                   <BackgroundTaskResourceUsageLabel usage={usage} />
                 )}
-                {processOutput ? (
-                  <BackgroundProcessOutputButton
-                    {...target}
-                    aria-label={`Follow ${row.label} in terminal`}
-                    className="cursor-pointer text-foreground hover:underline"
-                  >
-                    Follow in terminal
-                  </BackgroundProcessOutputButton>
-                ) : null}
               </div>
               {processOutput ? <BackgroundTaskOutputDetails {...target} /> : null}
             </li>

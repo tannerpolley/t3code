@@ -67,7 +67,9 @@ function formatBytes(bytes: number): string {
 }
 
 export function BackgroundTaskResourceUsageLabel(props: {
-  readonly usage: OrchestrationV2BackgroundTaskResourceUsage | undefined;
+  readonly usage:
+    | Pick<OrchestrationV2BackgroundTaskResourceUsage, "cpuPercent" | "residentBytes">
+    | undefined;
   readonly className?: string;
 }) {
   const cpuPercent = props.usage?.cpuPercent;

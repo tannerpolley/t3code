@@ -218,7 +218,7 @@ const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask]: "orchestrationV2",
   [WS_METHODS.serverGetBackgroundTaskResourceUsage]: "orchestrationV2",
-  [WS_METHODS.terminalFollowBackgroundTask]: "terminal",
+  [WS_METHODS.serverGetThreadProcesses]: "orchestrationV2",
   [WS_METHODS.issuesRepositories]: "issues",
   [WS_METHODS.issuesList]: "issues",
   [WS_METHODS.issuesDetail]: "issues",

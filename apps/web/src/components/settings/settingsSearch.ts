@@ -490,7 +490,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "background-process-output",
     title: "Background process output",
     to: "/settings/customizations",
-    searchTerms: ["background command monitor shell task terminal follow logs stop cpu memory"],
+    searchTerms: ["background command monitor shell task popup output logs stop cpu memory"],
+  },
+  {
+    id: "running-commands-and-processes",
+    title: "Show running commands and processes (experimental)",
+    to: "/settings/customizations",
+    searchTerms: ["running command process spawned worker python cpu memory experimental"],
   },
   {
     id: "thread-details-redesign",

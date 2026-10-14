@@ -52,6 +52,8 @@ import {
 } from "lucide-react";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { SidebarBackgroundWorkRows } from "./SidebarBackgroundWorkRows";
+import { SidebarProcessGroupRows, useSidebarThreadProcesses } from "./SidebarThreadProcesses";
+import { withRunningCommandRows } from "./SidebarThreadProcesses.logic";
 import {
   SidebarCaretSlot,
   SidebarCaretToggle,
@@ -83,6 +85,7 @@ import {
   type CSSProperties,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 
 import type { EnvironmentId, ProjectIconColor, ThreadId } from "@t3tools/contracts";
@@ -1268,14 +1271,23 @@ const SidebarProjectThreadRow = memo(
     );
     // Finished while you were away and not opened since: a green dot where the spinner was.
     const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
-    const workRows = describeSidebarBackgroundWork(
-      props.thread.pendingBackgroundTasks,
-      props.codexStyle
-        ? runningSubagents
-        : flattenRunningSubagents(runningSubagents, props.runningSubagentsByParentKey),
-      undefined,
-      props.relocatedThreadKeys,
+    const { watchRow, commandRows, processGroups, hiddenProcessGroups } = useSidebarThreadProcesses(
+      props.thread,
+      status === "working" || props.thread.pendingBackgroundTasks.length > 0,
     );
+    const workRows = withRunningCommandRows(
+      describeSidebarBackgroundWork(
+        props.thread.pendingBackgroundTasks,
+        props.codexStyle
+          ? runningSubagents
+          : flattenRunningSubagents(runningSubagents, props.runningSubagentsByParentKey),
+        undefined,
+        props.relocatedThreadKeys,
+      ),
+      commandRows,
+    );
+    // Spawned processes can outlive the rows that list their command (hidden while a run works).
+    const hasWork = workRows.length > 0 || processGroups.length > 0;
     // Running work shows by default, even while the thread itself works; a collapse wins for this row.
     const [workOpen, setWorkOpen] = useState(true);
     const contextDrag = useThreadContextPointerDrag(() => ({
@@ -1301,6 +1313,7 @@ const SidebarProjectThreadRow = memo(
         }
         data-thread-item={activeThreadKey}
         data-sidebar-thread-key={activeThreadKey}
+        ref={watchRow}
       >
         <button
           type="button"
@@ -1399,12 +1412,19 @@ const SidebarProjectThreadRow = memo(
             )}
           </button>
         ) : null}
-        {workRows.length > 0 && workOpen && props.codexStyle ? (
+        {hasWork && workOpen && props.codexStyle ? (
           <div>
             <SidebarSubagentTree
               environmentId={props.thread.environmentId}
               threadId={props.thread.id}
               rows={workRows}
+              afterTasks={
+                <SidebarProcessGroupRows
+                  columns
+                  groups={processGroups}
+                  hiddenGroupCount={hiddenProcessGroups}
+                />
+              }
               parentTasks={props.thread.pendingBackgroundTasks}
               runningChildren={runningSubagents}
               onChildClick={props.onClick}
@@ -1414,13 +1434,20 @@ const SidebarProjectThreadRow = memo(
               locationLeadKeys={props.locationLeadKeys}
             />
           </div>
-        ) : workRows.length > 0 && workOpen ? (
+        ) : hasWork && workOpen ? (
           <div className="ms-3 border-s border-sidebar-border/60 ps-1">
             <SidebarBackgroundWorkRows
               compact
               environmentId={props.thread.environmentId}
               threadId={props.thread.id}
               rows={workRows}
+              afterTasks={
+                <SidebarProcessGroupRows
+                  columns={false}
+                  groups={processGroups}
+                  hiddenGroupCount={hiddenProcessGroups}
+                />
+              }
               onChildClick={props.onClick}
               onChildContextMenu={props.onContextMenu}
             />
@@ -1465,6 +1492,8 @@ function SidebarSubagentTree(props: {
   readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
   readonly locationLeadKeys?: ReadonlySet<string> | undefined;
   readonly depth?: number;
+  /** This level's `SidebarBackgroundWorkRows.afterTasks`. */
+  readonly afterTasks?: ReactNode;
 }) {
   // Children open by default, like a thread's own work; a collapse is remembered for this view.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -1490,6 +1519,7 @@ function SidebarSubagentTree(props: {
       compact
       columns
       depth={props.depth ?? 1}
+      afterTasks={props.afterTasks}
       locationLeadKeys={props.locationLeadKeys}
       environmentId={props.environmentId}
       threadId={props.threadId}

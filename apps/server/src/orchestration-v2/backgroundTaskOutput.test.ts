@@ -16,8 +16,6 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ThreadId,
-  type TerminalOpenInput,
-  type TerminalSessionSnapshot,
 } from "@t3tools/contracts";
 import { shellCommandWords } from "@t3tools/shared/shellCommand";
 import * as Cause from "effect/Cause";
@@ -27,6 +25,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import { afterAll, assert, describe, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -35,7 +34,6 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
-import { TerminalManager } from "../terminal/Manager.ts";
 import {
   aggregateBackgroundTaskProcessUsage,
   backgroundTaskOutputPath,
@@ -257,28 +255,13 @@ describe("makeBackgroundTaskLogWriter", () => {
   );
 });
 
-describe("followBackgroundTaskInTerminal", () => {
-  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bg-task-follow-"));
+describe("BackgroundTasks", () => {
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "bg-task-output-"));
   afterAll(() => NodeFS.rmSync(dir, { recursive: true, force: true }));
   const claudeFile = NodePath.join(dir, "tasks", "bclaude1.output");
   NodeFS.mkdirSync(NodePath.dirname(claudeFile));
   NodeFS.writeFileSync(claudeFile, "hello\n");
 
-  const opened: Array<TerminalOpenInput> = [];
-  const written: Array<string> = [];
-  const snapshot = (input: TerminalOpenInput): TerminalSessionSnapshot => ({
-    threadId: input.threadId,
-    terminalId: input.terminalId,
-    cwd: input.cwd,
-    worktreePath: null,
-    status: "running",
-    pid: 1,
-    history: "",
-    exitCode: null,
-    exitSignal: null,
-    label: input.terminalId,
-    updatedAt: "2026-09-28T00:00:00.000Z",
-  });
   // One live Claude session, whose roster holds thread-m's running monitor.
   let sessionTasksDir: string | null = null;
   const monitorThread = {
@@ -289,11 +272,7 @@ describe("followBackgroundTaskInTerminal", () => {
   const dependencies = Layer.mergeAll(
     Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
     SqlitePersistence.layerMemory,
-    ServerConfig.layerTest(dir, { prefix: "bg-task-follow-config-" }),
-    Layer.mock(TerminalManager)({
-      open: (input) => Effect.sync(() => (opened.push(input), snapshot(input))),
-      write: (input) => Effect.sync(() => void written.push(input.data)),
-    }),
+    ServerConfig.layerTest(dir, { prefix: "bg-task-output-config-" }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       getThreadRecords: (threadId) =>
         Effect.succeed({
@@ -323,15 +302,11 @@ describe("followBackgroundTaskInTerminal", () => {
         VALUES (${id}, ${threadId}, 1, 'command_execution', 'running', '', ${payload})
       `;
     });
-  const follow = (threadId: string, taskId: string, worktreePath?: string) =>
-    Effect.flatMap(BackgroundTasks, (tasks) =>
-      tasks.followInTerminal({
-        threadId,
-        terminalId: `bg-${taskId}`,
-        cwd: dir,
-        taskId,
-        ...(worktreePath === undefined ? {} : { worktreePath }),
-      }),
+  /** The first output a viewer of the task receives. */
+  const firstOutput = (threadId: string, taskId: string) =>
+    Effect.flatMap(BackgroundTasks, (tasks) => tasks.subscribeOutput({ threadId, taskId })).pipe(
+      Effect.flatMap(Stream.runHead),
+      Effect.map((chunk) => Option.getOrNull(chunk)?.text),
     );
 
   effectIt.effect(
@@ -479,8 +454,8 @@ describe("followBackgroundTaskInTerminal", () => {
                 Layer.unwrap(
                   Effect.map(ProjectionStore.ProjectionStoreV2, (store) =>
                     Layer.mock(ThreadManagement.ThreadManagementService)({
-                      getThreadShell: (threadId) =>
-                        store.getThreadShell(threadId).pipe(Effect.orDie),
+                      getThreadRecords: (threadId, fields, filter) =>
+                        store.getThreadRecords(threadId, fields, filter).pipe(Effect.orDie),
                     }),
                   ),
                 ),
@@ -515,7 +490,7 @@ describe("followBackgroundTaskInTerminal", () => {
   );
 
   effectIt.effect(
-    "follows a Claude task's file or a Codex task's log, and only the thread's own tasks",
+    "reads a Claude task's file or a Codex task's log, and only the thread's own tasks",
     () =>
       Effect.gen(function* () {
         const { logsDir } = yield* ServerConfig.ServerConfig;
@@ -529,36 +504,19 @@ describe("followBackgroundTaskInTerminal", () => {
           "thread-a",
           `{"nativeItemRef":{"driver":"codex","nativeId":"call_codex1"}}`,
         );
+        const codexLog = codexBackgroundTaskLogPath(logsDir, "thread-a", "call_codex1");
+        NodeFS.mkdirSync(NodePath.dirname(codexLog), { recursive: true });
+        NodeFS.writeFileSync(codexLog, "codex output\n");
 
-        yield* follow("thread-a", "bclaude1");
-        yield* follow("thread-a", "call_codex1");
-        assert.deepEqual(
-          opened.map((input) => input.env?.T3CODE_BACKGROUND_OUTPUT),
-          [claudeFile, codexBackgroundTaskLogPath(logsDir, "thread-a", "call_codex1")],
-        );
-        // The Codex log doesn't exist until the command prints; tail waits for it.
-        assert.deepEqual(written, [
-          ` tail -c 204800 -F "$T3CODE_BACKGROUND_OUTPUT"\r`,
-          ` tail -c 204800 -F "$T3CODE_BACKGROUND_OUTPUT"\r`,
-        ]);
-
-        const otherThread = yield* Effect.exit(follow("thread-b", "bclaude1"));
-        const unknown = yield* Effect.exit(follow("thread-a", "nope"));
-        assert.equal(otherThread._tag, "Failure");
-        assert.equal(unknown._tag, "Failure");
-        assert.lengthOf(opened, 2);
-
-        NodeFS.rmSync(claudeFile);
-        yield* follow("thread-a", "bclaude1");
-        assert.equal(
-          written.at(-1),
-          ` echo 'This background shell no longer has an output file.'\r`,
-        );
+        assert.equal(yield* firstOutput("thread-a", "bclaude1"), "hello\n");
+        assert.equal(yield* firstOutput("thread-a", "call_codex1"), "codex output\n");
+        assert.equal((yield* Effect.exit(firstOutput("thread-b", "bclaude1")))._tag, "Failure");
+        assert.equal((yield* Effect.exit(firstOutput("thread-a", "nope")))._tag, "Failure");
       }).pipe(Effect.provide(layer)),
   );
 
   effectIt.effect(
-    "follows a running Claude monitor in the directory its live session reported, and says what's missing",
+    "reads a running Claude monitor in the directory its live session reported, and says what's missing",
     () =>
       Effect.gen(function* () {
         const messageOf = (exit: Exit.Exit<unknown, { readonly message: string }>) =>
@@ -567,69 +525,19 @@ describe("followBackgroundTaskInTerminal", () => {
             : "";
         // A Monitor's tool result names no file, and until Claude reports a task path neither
         // does anything else in its session.
-        const unreported = yield* Effect.exit(follow("thread-m", "bmon1"));
+        const unreported = yield* Effect.exit(firstOutput("thread-m", "bmon1"));
         assert.match(messageOf(unreported), /has not reported where this session keeps/);
 
         // Claude writes each monitor event, as it happens, to <session>/tasks/<taskId>.output.
         sessionTasksDir = NodePath.join(dir, "tasks");
-        const monitorFile = NodePath.join(sessionTasksDir, "bmon1.output");
-        NodeFS.writeFileSync(monitorFile, "event 1\nevent 2\n");
-        yield* follow("thread-m", "bmon1");
-        assert.equal(opened.at(-1)?.env?.T3CODE_BACKGROUND_OUTPUT, monitorFile);
-        assert.equal(written.at(-1), ` tail -c 204800 -F "$T3CODE_BACKGROUND_OUTPUT"\r`);
+        NodeFS.writeFileSync(NodePath.join(sessionTasksDir, "bmon1.output"), "event 1\nevent 2\n");
+        assert.equal(yield* firstOutput("thread-m", "bmon1"), "event 1\nevent 2\n");
 
         // Only the thread's own running tasks resolve.
-        const openedBefore = opened.length;
-        const otherThread = yield* Effect.exit(follow("thread-a", "bmon1"));
-        const notRunning = yield* Effect.exit(follow("thread-m", "bmon9"));
+        const otherThread = yield* Effect.exit(firstOutput("thread-a", "bmon1"));
+        const notRunning = yield* Effect.exit(firstOutput("thread-m", "bmon9"));
         assert.match(messageOf(otherThread), /no running background task with that id/);
         assert.match(messageOf(notRunning), /no running background task with that id/);
-        assert.lengthOf(opened, openedBefore);
       }).pipe(Effect.provide(layer)),
-  );
-
-  effectIt.effect("also follows the existing log files a waiting shell's command watches", () =>
-    Effect.gen(function* () {
-      const runLog = NodePath.join(dir, "tmp", "run.log");
-      const monitoredLog = NodePath.join(dir, "fit.log");
-      NodeFS.mkdirSync(NodePath.dirname(runLog), { recursive: true });
-      NodeFS.writeFileSync(runLog, "step 1\n");
-      NodeFS.writeFileSync(monitoredLog, "fit 1\n");
-      const waitFile = NodePath.join(dir, "tasks", "bwait1.output");
-      NodeFS.writeFileSync(waitFile, "");
-      // A subagent's Bash call backgrounds a silent wait on a relative log beside a missing one.
-      yield* insertItem(
-        "item-wait",
-        "thread-w",
-        `{"type":"command_execution","input":"until grep -q DONE tmp/run.log missing.log; do sleep 20; done","output":"${notice("bwait1", waitFile)}"}`,
-      );
-      yield* follow("thread-w", "bwait1");
-      assert.equal(opened.at(-1)?.env?.T3CODE_WATCHED_LOG_1, runLog);
-      assert.isUndefined(opened.at(-1)?.env?.T3CODE_WATCHED_LOG_2);
-      assert.equal(
-        written.at(-1),
-        ` tail -c 204800 -F "$T3CODE_BACKGROUND_OUTPUT" "$T3CODE_WATCHED_LOG_1"\r`,
-      );
-
-      const worktree = NodePath.join(dir, "worktree");
-      const worktreeLog = NodePath.join(worktree, "tmp", "run.log");
-      NodeFS.mkdirSync(NodePath.dirname(worktreeLog), { recursive: true });
-      NodeFS.writeFileSync(worktreeLog, "worktree step 1\n");
-      yield* follow("thread-w", "bwait1", worktree);
-      assert.equal(opened.at(-1)?.env?.T3CODE_WATCHED_LOG_1, worktreeLog);
-
-      // A Monitor's result names only its task id. With its own output file gone, only the log
-      // it watches is followed.
-      yield* insertItem(
-        "item-monitor",
-        "thread-m",
-        `{"type":"dynamic_tool","input":{"command":"tail -n0 -F ${monitoredLog} | grep --line-buffered Traceback"},"output":{"taskId":"bmon1"}}`,
-      );
-      sessionTasksDir = NodePath.join(dir, "tasks");
-      NodeFS.rmSync(NodePath.join(sessionTasksDir, "bmon1.output"), { force: true });
-      yield* follow("thread-m", "bmon1");
-      assert.equal(opened.at(-1)?.env?.T3CODE_WATCHED_LOG_1, monitoredLog);
-      assert.equal(written.at(-1), ` tail -c 204800 -F "$T3CODE_WATCHED_LOG_1"\r`);
-    }).pipe(Effect.provide(layer)),
   );
 });

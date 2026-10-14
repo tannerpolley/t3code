@@ -11,6 +11,7 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { CornerDownRightIcon } from "lucide-react";
 import {
+  Fragment,
   useRef,
   type ComponentProps,
   type CSSProperties,
@@ -80,6 +81,8 @@ export type SidebarBackgroundWorkRowsProps = {
   /** Nesting level of these rows below their top-level thread, which sets their tint's shade. */
   readonly depth?: number;
   readonly renderNested?: (row: BackgroundWorkTaskRow) => ReactNode;
+  /** List items placed after the thread's own tasks and commands, ahead of its agents. */
+  readonly afterTasks?: ReactNode;
   readonly nestedToggle?: (row: BackgroundWorkTaskRow) => NestedWorkToggle | null;
   readonly onChildClick?: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
   readonly onChildContextMenu?: (
@@ -102,8 +105,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
       : [],
     title: draggedChild.current?.title ?? "Thread",
   }));
-  // Rows keep describeSidebarBackgroundWork's order: the thread's own tasks, then its agents.
+  // Rows keep describeSidebarBackgroundWork's order: the thread's own tasks, then its agents;
+  // `afterTasks` goes between them.
   const rows = props.rows;
+  const firstAgent = rows.findIndex((row) => row.kind === "subagent");
   const { backgroundTasks } = groupBackgroundWorkTaskRows(rows);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
@@ -127,7 +132,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             : "max-h-48 space-y-0.5 overflow-y-auto pb-1 text-xs"
       }
     >
-      {rows.map((row, index) => {
+      {rows.flatMap((row, index) => {
         const kindLabel =
           row.kind === "subagent"
             ? row.child
@@ -304,6 +309,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               threadId={taskThreadId}
               taskId={row.taskId}
               label={row.label}
+              command={row.command}
+              startedAt={row.startedAt}
+              commandKind={row.commandKind}
+              followable={row.followable}
               className={cn(
                 "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left hover:bg-accent",
                 PROJECTS_WORK_ROW_HEIGHT,
@@ -320,7 +329,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             </div>
           );
 
-        return (
+        return [
+          ...(index === firstAgent
+            ? [<Fragment key="after-tasks">{props.afterTasks}</Fragment>]
+            : []),
           <li
             key={row.taskId}
             data-thread-item={
@@ -364,7 +376,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             ) : (
               element
             )}
-            {row.kind !== "subagent" ? (
+            {row.kind !== "subagent" && row.followable !== false ? (
               <StopBackgroundShellButton
                 environmentId={props.environmentId}
                 threadId={taskThreadId}
@@ -382,9 +394,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               />
             ) : null}
             {toggle === null || toggle.open ? props.renderNested?.(row) : null}
-          </li>
-        );
+          </li>,
+        ];
       })}
+      {firstAgent === -1 ? props.afterTasks : null}
     </ul>
   );
 }

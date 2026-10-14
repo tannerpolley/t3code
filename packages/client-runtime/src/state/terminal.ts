@@ -100,12 +100,6 @@ export function createTerminalEnvironmentAtoms<R, E>(
           Stream.scan((): ReadonlyArray<TerminalSummary> => [], applyTerminalMetadataStreamEvent),
         ),
     }),
-    followBackgroundTask: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:terminal:follow-background-task",
-      tag: WS_METHODS.terminalFollowBackgroundTask,
-      scheduler: lifecycleScheduler,
-      concurrency: lifecycleConcurrency,
-    }),
     runInline: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:run-inline",
       tag: WS_METHODS.terminalRunInline,

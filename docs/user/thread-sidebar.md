@@ -322,12 +322,20 @@ them. To clear them automatically, set **Settings → Customizations → Clear f
 automatically** to 30 minutes or 1 hour. Turn off **Redesigned Lineage** there for the
 original rows.
 
-Click a Codex or Claude background command or monitor in Projects, Lineage, or
-the background-work line above the composer to follow its live output in a terminal
-tab of the owning thread. The tab also follows log files the command reads or writes.
-Ctrl+C stops following and leaves a usable terminal; it does not stop the background
-task. Hosts that cannot follow in a terminal show live output in a popover instead.
+Click a Codex or Claude background command or monitor in Projects to open a popup
+beside it with its command, whether it is still running, a Stop control and its live
+output, which follows new lines until you scroll up. When the task ends, the popup
+stays open and says so; click outside it or press Escape to close it. In Lineage and the
+background-work line above the composer, **Show output** opens the output in place.
 Turn off **Settings → Customizations → Background process output** to disable this.
+
+With the experimental **Show running commands and processes** setting on, a working
+thread in Projects also lists the commands its agent is running now, and the processes
+those commands and background tasks started, such as `python worker.py ×10`, with
+their combined CPU and memory, after the thread's own background tasks and ahead of its
+subagents. Same-shaped processes share one row, and each thread shows up to five such
+rows. Claude shows a foreground command's output only when it
+finishes, and cannot stop it on its own; Codex streams it and can.
 
 To stop one background task, hover its row and use its Stop control. **Stop** above
 the composer stops all the thread's background work. Finished and stopped tasks

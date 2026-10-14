@@ -107,6 +107,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetProcessResourceHistory]: AuthDiagnosticsReadScope,
   // Background-task rows show their own usage beside the task, like host load above.
   [WS_METHODS.serverGetBackgroundTaskResourceUsage]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetThreadProcesses]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverRetryResourceTelemetry]: AuthDiagnosticsReadScope,
   [WS_METHODS.serverGetUsageSummary]: AuthDiagnosticsReadScope,
@@ -208,7 +209,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.terminalResize]: AuthTerminalOperateScope,
   [WS_METHODS.terminalClear]: AuthTerminalOperateScope,
   [WS_METHODS.terminalRestart]: AuthTerminalOperateScope,
-  [WS_METHODS.terminalFollowBackgroundTask]: AuthTerminalOperateScope,
   [WS_METHODS.terminalClose]: AuthTerminalOperateScope,
   [WS_METHODS.subscribeTerminalEvents]: AuthTerminalReadScope,
   [WS_METHODS.subscribeTerminalMetadata]: AuthTerminalReadScope,

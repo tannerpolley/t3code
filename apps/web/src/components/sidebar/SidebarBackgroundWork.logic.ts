@@ -50,6 +50,10 @@ export type BackgroundWorkTaskRow =
       readonly kind: "command" | "monitor" | "background_task";
       readonly commandKind?: string;
       readonly ownerThreadId?: ThreadId;
+      /** The command that started it, for its output popup. */
+      readonly command?: string;
+      /** False when its output cannot be followed or it cannot be stopped alone. */
+      readonly followable?: boolean;
     });
 
 /**
@@ -209,6 +213,7 @@ export function describeSidebarBackgroundWork(
         kind: task.kind,
         startedAt: task.startedAt ? DateTime.formatIso(task.startedAt) : null,
         ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
+        ...(task.command === undefined ? {} : { command: task.command }),
         ...(taskOwner === undefined ? {} : { ownerThreadId: taskOwner }),
       };
     });

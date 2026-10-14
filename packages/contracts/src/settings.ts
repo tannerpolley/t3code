@@ -553,8 +553,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   /** Offer to apply supported Codex project settings when onboarding imports projects. */
   onboardingCodexSettings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** Clicking a background command or monitor follows its live output. */
+  /** Clicking a background command or monitor shows its live output in a popup. */
   backgroundProcessOutput: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Experimental: a working thread's running commands and the processes they spawned. */
+  runningCommandsAndProcesses: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
   /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
   shortModelNames: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Lineage rows led by model and effort, with status marks, details and clearing. */

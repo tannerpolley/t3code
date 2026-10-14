@@ -1,4 +1,5 @@
 import { SidebarLayoutRecord, SidebarLayoutUpdate, SidebarLayoutError } from "./sidebarLayout.ts";
+import { ThreadProcesses, ThreadProcessesInput } from "./threadProcesses.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -296,7 +297,6 @@ import {
   TerminalEvent,
   TerminalMetadataStreamEvent,
   TerminalOpenInput,
-  TerminalFollowBackgroundTaskInput,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
@@ -503,7 +503,6 @@ export const WS_METHODS = {
   terminalClear: "terminal.clear",
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
-  terminalFollowBackgroundTask: "terminal.followBackgroundTask",
 
   // Preview methods
   previewOpen: "preview.open",
@@ -559,6 +558,7 @@ export const WS_METHODS = {
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverGetResourceTelemetryHistory: "server.getResourceTelemetryHistory",
   serverGetBackgroundTaskResourceUsage: "server.getBackgroundTaskResourceUsage",
+  serverGetThreadProcesses: "server.getThreadProcesses",
   serverRetryResourceTelemetry: "server.retryResourceTelemetry",
   serverCheckOtlpEndpoint: "server.checkOtlpEndpoint",
   serverSignalProcess: "server.signalProcess",
@@ -2071,14 +2071,10 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-const WsTerminalFollowBackgroundTaskRpc = Rpc.make(WS_METHODS.terminalFollowBackgroundTask, {
-  payload: TerminalFollowBackgroundTaskInput,
-  success: TerminalSessionSnapshot,
-  error: Schema.Union([
-    TerminalError,
-    OrchestrationV2BackgroundTaskOutputError,
-    EnvironmentAuthorizationError,
-  ]),
+const WsServerGetThreadProcessesRpc = Rpc.make(WS_METHODS.serverGetThreadProcesses, {
+  payload: ThreadProcessesInput,
+  success: ThreadProcesses,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerGetBackgroundTaskResourceUsageRpc = Rpc.make(
@@ -2140,7 +2136,7 @@ const forkWsRpcs = [
   WsTerminalRunInlineRpc,
   WsTerminalGetInlineRunRpc,
   WsWorktreeReturnToRootRpc,
-  WsTerminalFollowBackgroundTaskRpc,
+  WsServerGetThreadProcessesRpc,
   WsServerGetBackgroundTaskResourceUsageRpc,
   WsOrchestrationV2SubscribeBackgroundTaskOutputRpc,
   WsOrchestrationV2StopBackgroundTaskRpc,
@@ -2367,7 +2363,7 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.terminalRunInline,
   WS_METHODS.terminalGetInlineRun,
   WS_METHODS.worktreeReturnToRoot,
-  WS_METHODS.terminalFollowBackgroundTask,
+  WS_METHODS.serverGetThreadProcesses,
   WS_METHODS.serverGetBackgroundTaskResourceUsage,
   ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput,
   ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask,

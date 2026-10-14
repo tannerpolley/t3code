@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Live, read-only output of a thread's background shell or Claude monitor, for the popover viewer
- * and for a terminal tab that follows it.
+ * Live, read-only output of a thread's background shell or Claude monitor, for the output popup.
  *
  * Claude runs `run_in_background` Bash commands with output redirected to a file and reports the
  * path in the tool result ("Output is being written to: <path>"), which a subagent thread's
@@ -22,7 +21,6 @@
  * client can only name a task, never a path.
  */
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStringDecoder from "node:string_decoder";
 
@@ -32,19 +30,12 @@ import {
   type OrchestrationV2BackgroundTaskOutputChunk,
   OrchestrationV2BackgroundTaskOutputError,
   type ResourceTelemetryProcess,
-  type TerminalFollowBackgroundTaskInput,
   ThreadId,
-  type TerminalSessionSnapshot,
-  type TerminalError,
+  type ThreadProcesses,
+  type ThreadProcessesInput,
   type OrchestrationV2StopBackgroundTaskInput,
   type OrchestrationV2StopBackgroundTaskError,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  classifyShellCommand,
-  shellCommandWaitPids,
-  shellCommandWords,
-} from "@t3tools/shared/shellCommand";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
@@ -56,15 +47,17 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import { findBackgroundTaskSession, stopBackgroundTask } from "./BackgroundTaskStop.ts";
-import * as Terminal from "../terminal/Manager.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
-import { watchedLogPaths } from "./watchedLogPaths.ts";
 import { codexBackgroundTaskLogPath, reportedTaskOutputPaths } from "./backgroundTaskFiles.ts";
+import {
+  attributeCommandProcesses,
+  groupSpawnedProcesses,
+  runningThreadWork,
+} from "./threadProcesses.ts";
 
-/** Task-scoped output, terminal follow, usage and Stop, shared by transports. */
+/** Task-scoped output, usage, running processes and Stop, shared by transports. */
 export class BackgroundTasks extends Context.Service<
   BackgroundTasks,
   {
@@ -78,18 +71,13 @@ export class BackgroundTasks extends Context.Service<
       >,
       OrchestrationV2BackgroundTaskOutputError
     >;
-    readonly followInTerminal: (
-      input: TerminalFollowBackgroundTaskInput,
-    ) => Effect.Effect<
-      TerminalSessionSnapshot,
-      TerminalError | OrchestrationV2BackgroundTaskOutputError
-    >;
     readonly stop: (
       input: OrchestrationV2StopBackgroundTaskInput,
     ) => Effect.Effect<void, OrchestrationV2StopBackgroundTaskError>;
     readonly resourceUsage: (input: {
       readonly threadIds: ReadonlyArray<ThreadId>;
     }) => Effect.Effect<ReadonlyArray<OrchestrationV2BackgroundTaskResourceUsage>>;
+    readonly processes: (input: ThreadProcessesInput) => Effect.Effect<ThreadProcesses>;
   }
 >()("t3/orchestration-v2/backgroundTaskOutput/BackgroundTasks") {}
 
@@ -331,74 +319,50 @@ export function aggregateBackgroundTaskProcessUsage(input: {
   readonly command: string | null;
   readonly commandKind?: string;
 }): { readonly cpuPercent: number; readonly residentBytes: number } | null {
-  const command = input.command?.trim();
-  if (!command) return null;
-  const processes = new Map(
-    input.processes
-      .filter((process) => process.identity.pid !== input.serverPid)
-      .map((process) => [process.identity.pid, process]),
-  );
-  const matchingPids = new Set(
-    [...processes.values()]
-      .filter(
-        (process) =>
-          process.command.includes(command) ||
-          // Claude escapes the command as an eval operand before passing it to Bash.
-          (process.command.includes("eval") &&
-            shellCommandWords(process.command).some(
-              (words) => words[0] === "eval" && words.length === 2 && words[1]?.trim() === command,
-            )),
-      )
-      .map((process) => process.identity.pid),
-  );
-  if (matchingPids.size === 0) return null;
-
-  const childrenByParent = new Map<number, number[]>();
-  for (const process of processes.values()) {
-    const children = childrenByParent.get(process.ppid) ?? [];
-    children.push(process.identity.pid);
-    childrenByParent.set(process.ppid, children);
-  }
-
-  const roots = [...matchingPids].filter((pid) => {
-    const seen = new Set<number>();
-    let current = processes.get(pid)?.ppid;
-    while (current !== undefined && processes.has(current) && !seen.has(current)) {
-      if (matchingPids.has(current)) return false;
-      seen.add(current);
-      current = processes.get(current)?.ppid;
-    }
-    return true;
-  });
-  // Identical commands in separate process trees cannot be attributed to one background task.
-  if (roots.length !== 1) return null;
-  const attributed = new Set<number>();
-  const pending = [...roots];
-  while (pending.length > 0) {
-    const pid = pending.pop()!;
-    if (attributed.has(pid)) continue;
-    attributed.add(pid);
-    pending.push(...(childrenByParent.get(pid) ?? []));
-  }
-
-  const isWatcherCommand =
-    input.commandKind === "watcher" || classifyShellCommand(command) === "watcher";
-  if (isWatcherCommand) {
-    const waitPids = shellCommandWaitPids(command);
-    if (waitPids === null || waitPids.some((pid) => !attributed.has(pid))) return null;
-  }
-
+  const attributed = attributeCommandProcesses(input);
+  if (attributed === null) return null;
   let cpuPercent = 0;
   let residentBytes = 0;
-  for (const pid of attributed) {
-    const process = processes.get(pid)!;
+  for (const process of input.processes) {
+    if (!attributed.tree.has(process.identity.pid)) continue;
     cpuPercent += process.cpuPercent;
     residentBytes += process.residentBytes;
   }
   return { cpuPercent, residentBytes };
 }
 
-/** One read and one sampled process tree for the pending tasks a thread currently shows. */
+/** Each task with the command that started it, looked up when the task does not carry one. */
+const withTaskCommands = Effect.fn("orchestration.withTaskCommands")(function* (
+  tasks: ReadonlyArray<{
+    readonly threadId: ThreadId;
+    readonly task: OrchestrationV2PendingBackgroundTask;
+  }>,
+) {
+  return yield* Effect.forEach(
+    tasks,
+    ({ threadId, task }) =>
+      Effect.gen(function* () {
+        const command =
+          task.command ??
+          (yield* findBackgroundTaskCommand({ threadId, taskId: task.taskId }).pipe(
+            Effect.orElseSucceed(() => null),
+          ));
+        return { threadId, task, command };
+      }),
+    { concurrency: 4 },
+  );
+});
+
+/** A fresh sample of the processes under this server, or null while the monitor is unavailable. */
+const sampleProcesses = Effect.gen(function* () {
+  const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+  const current = yield* Effect.option(telemetry.refresh);
+  return Option.isNone(current) || current.value.health.native.status !== "healthy"
+    ? null
+    : current.value.processes;
+});
+
+/** One sampled process tree for the running tasks of the requested threads. */
 const readBackgroundTaskResourceUsage = Effect.fn("orchestration.readBackgroundTaskResourceUsage")(
   function* (input: {
     readonly threads: ReadonlyArray<{
@@ -407,40 +371,21 @@ const readBackgroundTaskResourceUsage = Effect.fn("orchestration.readBackgroundT
     }>;
   }) {
     const tasks = input.threads.flatMap(({ threadId, tasks }) =>
-      tasks.filter((task) => task.kind !== "subagent").map((task) => ({ threadId, task })),
+      tasks.map((task) => ({ threadId, task })),
     );
-    const unavailable = (): ReadonlyArray<OrchestrationV2BackgroundTaskResourceUsage> =>
-      tasks.map(({ threadId, task }) => ({
+    if (tasks.length === 0) return [];
+    const processes = yield* sampleProcesses;
+    if (processes === null) {
+      return tasks.map(({ threadId, task }) => ({
         threadId,
         taskId: task.taskId,
         cpuPercent: null,
         residentBytes: null,
       }));
-    if (tasks.length === 0) return [];
-
-    const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
-    const current = yield* Effect.option(telemetry.refresh);
-    if (Option.isNone(current) || current.value.health.native.status !== "healthy") {
-      return unavailable();
     }
-
-    const details = yield* Effect.forEach(
-      tasks,
-      ({ threadId, task }) =>
-        Effect.gen(function* () {
-          const command =
-            task.command ??
-            (yield* findBackgroundTaskCommand({
-              threadId,
-              taskId: task.taskId,
-            }).pipe(Effect.orElseSucceed(() => null)));
-          return { threadId, task, command };
-        }),
-      { concurrency: 4 },
-    );
-    return details.map(({ threadId, task, command }) => {
+    return (yield* withTaskCommands(tasks)).map(({ threadId, task, command }) => {
       const usage = aggregateBackgroundTaskProcessUsage({
-        processes: current.value.processes,
+        processes,
         serverPid: process.pid,
         command,
         ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
@@ -455,134 +400,114 @@ const readBackgroundTaskResourceUsage = Effect.fn("orchestration.readBackgroundT
   },
 );
 
-/** Most log files a follow terminal adds beside the task's own output. */
-const MAX_WATCHED_LOGS = 4;
+/** The tasks a thread's provider threads list, from the active one when the thread names it. */
+const rosterOf = (records: {
+  readonly thread: { readonly activeProviderThreadId: string | null };
+  readonly providerThreads: ReadonlyArray<{
+    readonly id: string;
+    readonly pendingBackgroundTasks?:
+      | ReadonlyArray<OrchestrationV2PendingBackgroundTask>
+      | undefined;
+  }>;
+}) =>
+  records.providerThreads
+    .filter(
+      (providerThread) =>
+        records.thread.activeProviderThreadId === null ||
+        providerThread.id === records.thread.activeProviderThreadId,
+    )
+    .flatMap((providerThread) => providerThread.pendingBackgroundTasks ?? []);
 
-const isRegularFile = (path: string) =>
-  NodeFSP.stat(path).then(
-    (stat) => stat.isFile(),
-    () => false,
-  );
-
-/** The first few of `paths` that are regular files now. */
-async function existingRegularFiles(paths: ReadonlyArray<string>): Promise<Array<string>> {
-  const files: Array<string> = [];
-  for (const path of paths) {
-    if (files.length === MAX_WATCHED_LOGS) break;
-    if (await isRegularFile(path)) files.push(path);
-  }
-  return files;
-}
-
-/** Carries the output path into the follow terminal, so the typed command never shows it. */
-const FOLLOW_OUTPUT_ENV = "T3CODE_BACKGROUND_OUTPUT";
-/** Same for the logs the task's command watches or writes: `T3CODE_WATCHED_LOG_1`, `_2`, … */
-const WATCHED_LOG_ENV = "T3CODE_WATCHED_LOG_";
-
-/**
- * Opens a terminal that follows a background shell's output: a normal shell with `tail -F` typed
- * into it, so Ctrl+C leaves a usable shell. The first screen is capped like the viewer's tail.
- *
- * Agents often start the real job detached and background only a silent wait on its log, so the
- * tab also follows the existing files the task's command reads or writes (`watchedLogPaths`),
- * relative ones resolved against the terminal's cwd, the thread's workspace.
- */
-const followBackgroundTaskInTerminal = Effect.fn("terminal.followBackgroundTask")(function* (
-  input: TerminalFollowBackgroundTaskInput,
+/** See `runningThreadWork`; the thread's running command items and the rosters it can use. */
+const readRunningThreadWork = Effect.fn("orchestration.readRunningThreadWork")(function* (
+  threadId: ThreadId,
 ) {
-  const { taskId, ...openInput } = input;
-  // ponytail: POSIX shells only (bash, zsh, fish, sh); Windows hosts fall back to the viewer.
-  if ((yield* HostProcess.Platform) === "win32") {
-    return yield* outputError(taskId, "Following a shell in a terminal needs a POSIX host.");
-  }
-  const { path, appearsLater } = yield* resolveBackgroundTaskOutputFile(input);
-  // A Codex log appears with the command's first output; a missing Claude file is gone for good.
-  const followable =
-    appearsLater ||
-    (yield* Effect.promise(() =>
-      NodeFSP.access(path).then(
-        () => true,
-        () => false,
-      ),
-    ));
-  const command = yield* findBackgroundTaskCommand(input);
-  const watched =
-    command === null
-      ? []
-      : yield* Effect.promise(() =>
-          existingRegularFiles(
-            watchedLogPaths(command, input.worktreePath ?? input.cwd, NodeOS.homedir()).filter(
-              (file) => file !== path,
-            ),
-          ),
-        );
-  const watchedEnv = Object.fromEntries(
-    watched.map((file, index) => [`${WATCHED_LOG_ENV}${index + 1}`, file]),
-  );
-  const followed = [...(followable ? [FOLLOW_OUTPUT_ENV] : []), ...Object.keys(watchedEnv)];
-  const terminals = yield* Terminal.TerminalManager;
-  const snapshot = yield* terminals.open({
-    ...openInput,
-    env: { ...openInput.env, [FOLLOW_OUTPUT_ENV]: path, ...watchedEnv },
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const own = yield* threads.getThreadRecords(threadId, ["providerThreads", "turnItems"], {
+    turnItemTypes: ["command_execution"],
+    turnItemStatuses: ["pending", "running", "waiting"],
   });
-  // A leading space keeps the line out of shell history where that is configured.
-  yield* terminals.write({
-    threadId: input.threadId,
-    terminalId: input.terminalId,
-    data:
-      followed.length > 0
-        ? ` tail -c ${BACKGROUND_TASK_OUTPUT_TAIL_BYTES} -F ${followed.map((name) => `"$${name}"`).join(" ")}\r`
-        : ` echo 'This background shell no longer has an output file.'\r`,
+  const parentId = own.thread.lineage.parentThreadId;
+  const parent =
+    parentId === null ? null : yield* threads.getThreadRecords(parentId, ["providerThreads"]);
+  const runIds = [...new Set(own.turnItems.flatMap((item) => item.runId ?? []))];
+  const { runs } =
+    runIds.length === 0
+      ? { runs: [] }
+      : yield* threads.getThreadRecords(threadId, ["runs"], { runIds });
+  return runningThreadWork({
+    threadId,
+    ownRoster: rosterOf(own),
+    parentRoster: parent === null ? [] : rosterOf(parent),
+    turnItems: own.turnItems,
+    runs,
   });
-  return snapshot;
 });
+
+const NO_THREAD_PROCESSES: ThreadProcesses = {
+  commands: [],
+  runningTaskIds: [],
+  processGroups: [],
+  hiddenProcessGroupCount: 0,
+};
 
 const make = Effect.gen(function* () {
   const context = yield* Effect.context<
     | SqlClient.SqlClient
     | ServerConfig.ServerConfig
-    | Terminal.TerminalManager
     | ThreadManagement.ThreadManagementService
     | ProviderSessionManager.ProviderSessionManagerV2
     | ResourceTelemetry.ResourceTelemetry
   >();
-  const threads = Context.get(context, ThreadManagement.ThreadManagementService);
+  // A thread that cannot be read runs nothing the caller can show.
+  const runningWork = (threadId: ThreadId) =>
+    readRunningThreadWork(threadId).pipe(
+      Effect.provide(context),
+      Effect.orElseSucceed(() => null),
+    );
   const resourceUsage = Effect.fn("BackgroundTasks.resourceUsage")(function* (input: {
     readonly threadIds: ReadonlyArray<ThreadId>;
   }) {
     const records = yield* Effect.forEach(
       [...new Set(input.threadIds)],
       (threadId) =>
-        Effect.gen(function* () {
-          const shell = yield* threads
-            .getThreadShell(threadId)
-            .pipe(Effect.orElseSucceed(() => null));
-          const parentId = shell?.lineage.parentThreadId;
-          const parent =
-            parentId == null
-              ? null
-              : yield* threads.getThreadShell(parentId).pipe(Effect.orElseSucceed(() => null));
-          return {
-            threadId,
-            tasks: pendingBackgroundWorkOfThread(
-              threadId,
-              shell?.pendingBackgroundTasks,
-              parent?.pendingBackgroundTasks,
-            ),
-          };
-        }),
+        runningWork(threadId).pipe(Effect.map((work) => ({ threadId, tasks: work?.tasks ?? [] }))),
       { concurrency: 2 },
     );
     return yield* readBackgroundTaskResourceUsage({ threads: records }).pipe(
       Effect.provide(context),
     );
   });
+  const processes = Effect.fn("BackgroundTasks.processes")(function* (input: ThreadProcessesInput) {
+    const work = yield* runningWork(input.threadId);
+    if (work === null || work.tasks.length === 0) return NO_THREAD_PROCESSES;
+    const sampled = yield* sampleProcesses.pipe(Effect.provide(context));
+    const commands =
+      sampled === null
+        ? []
+        : yield* withTaskCommands(
+            work.tasks.map((task) => ({ threadId: input.threadId, task })),
+          ).pipe(Effect.provide(context));
+    const { groups, hiddenCount } = groupSpawnedProcesses({
+      processes: sampled ?? [],
+      serverPid: process.pid,
+      commands: commands.map(({ task, command }) => ({
+        command,
+        ...(task.commandKind === undefined ? {} : { commandKind: task.commandKind }),
+      })),
+    });
+    return {
+      commands: work.commands,
+      runningTaskIds: work.tasks.map((task) => task.taskId),
+      processGroups: groups,
+      hiddenProcessGroupCount: hiddenCount,
+    };
+  });
   return BackgroundTasks.of({
     subscribeOutput: (input) => subscribeBackgroundTaskOutput(input).pipe(Effect.provide(context)),
-    followInTerminal: (input) =>
-      followBackgroundTaskInTerminal(input).pipe(Effect.provide(context)),
     stop: (input) => stopBackgroundTask(input).pipe(Effect.provide(context)),
     resourceUsage,
+    processes,
   });
 });
 export const layer = Layer.effect(BackgroundTasks, make);

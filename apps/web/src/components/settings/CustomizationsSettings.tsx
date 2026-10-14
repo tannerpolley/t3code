@@ -114,7 +114,14 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "background-process-output",
     section: "lineage",
     description:
-      "Click a Codex or Claude background command or monitor in Projects, Lineage, or the chat task list to follow its output in a terminal tab. On Windows, or if a terminal cannot follow it, view the live output in a popover. Commands also show their kind, age, available CPU and memory use, and a Stop control.",
+      "Click a Codex or Claude background command or monitor in Projects to see its live output, command and status in a popup beside it; in Lineage and the background-work list above the composer, Show output opens it in place. Commands also show their kind, age, available CPU and memory use, and a Stop control.",
+  },
+  {
+    key: "runningCommandsAndProcesses",
+    searchId: "running-commands-and-processes",
+    section: "lineage",
+    description:
+      "Experimental. Under a working thread in Projects, also list the commands its agent is running now, and the processes those commands and background tasks started, with same-shaped processes on one row (python worker.py ×10) and their combined CPU and memory. Up to five process rows per thread.",
   },
   {
     key: "shortModelNames",

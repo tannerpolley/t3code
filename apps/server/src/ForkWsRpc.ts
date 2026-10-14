@@ -45,8 +45,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
           }),
         [WS_METHODS.serverGetBackgroundTaskResourceUsage]: (input) =>
           backgroundTasks.resourceUsage(input),
-        [WS_METHODS.terminalFollowBackgroundTask]: (input) =>
-          backgroundTasks.followInTerminal(input),
+        [WS_METHODS.serverGetThreadProcesses]: (input) => backgroundTasks.processes(input),
         [ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask]: (input) => backgroundTasks.stop(input),
         [ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput]: (input) =>
           Stream.unwrap(backgroundTasks.subscribeOutput(input)),

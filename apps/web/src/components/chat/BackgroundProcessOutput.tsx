@@ -1,23 +1,19 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
 import { SquareIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { create } from "zustand";
 
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
-import { terminalEnvironment } from "../../state/terminal";
-import { readProject, readThreadShell } from "../../state/entities";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../../terminalUiStateStore";
-import { buildThreadRouteParams } from "../../threadRoutes";
 import { cn } from "../../lib/utils";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Popover, PopoverPopup } from "../ui/popover";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
@@ -30,88 +26,158 @@ interface BackgroundProcessTarget {
   readonly label: string;
 }
 
+/** What the output popup shows about a background task or running command. */
+export interface BackgroundProcessDetails extends BackgroundProcessTarget {
+  readonly command?: string | undefined;
+  readonly startedAt?: string | null | undefined;
+  readonly commandKind?: string | undefined;
+  /** False when the server can neither stream its output nor stop it alone (Claude foreground). */
+  readonly followable?: boolean | undefined;
+}
+
+const processKey = (target: BackgroundProcessTarget) =>
+  `${target.environmentId}\0${target.threadId}\0${target.taskId}`;
+
+type OpenPopup = { readonly details: BackgroundProcessDetails; readonly anchor: Element };
+const useOutputPopup = create<{ readonly open: OpenPopup | null }>(() => ({ open: null }));
+
 /**
- * Opens a background shell in a tab of its thread's terminal drawer that follows its output, and
- * shows that thread. One tab per shell: a second click returns to it. Resolves false when no tab
- * could be opened (no project, or the server can't follow this shell).
+ * A background process row. A click opens a popup beside it with the process's command, status,
+ * Stop and live output; a second click closes it. Pass the row's content as children and its
+ * classes as `className`; other button props (a tooltip trigger's) pass through.
  */
-function useFollowBackgroundProcessInTerminal() {
-  const navigate = useNavigate();
-  const follow = useAtomCommand(terminalEnvironment.followBackgroundTask, {
-    reportFailure: false,
-  });
-  return async (target: BackgroundProcessTarget): Promise<boolean> => {
-    const threadRef = scopeThreadRef(target.environmentId, target.threadId);
-    const thread = readThreadShell(threadRef);
-    const project = thread
-      ? readProject(scopeProjectRef(target.environmentId, thread.projectId))
-      : null;
-    if (!thread || !project) return false;
-    const launch = { project: { cwd: project.workspaceRoot }, worktreePath: thread.worktreePath };
-    const terminalId = `bg-${target.taskId}`.slice(0, 128);
-    const store = useTerminalUiStateStore.getState();
-    const known = selectThreadTerminalUiState(
-      store.terminalUiStateByThreadKey,
-      threadRef,
-    ).terminalIds.includes(terminalId);
-    if (!known) {
-      const result = await follow({
-        environmentId: target.environmentId,
-        input: {
-          threadId: target.threadId,
-          terminalId,
-          taskId: target.taskId,
-          cwd: projectScriptCwd(launch),
-          env: projectScriptRuntimeEnv(launch),
-          ...(thread.worktreePath === null ? {} : { worktreePath: thread.worktreePath }),
-          ...(thread.providerInstanceId === null
-            ? {}
-            : { providerInstanceId: thread.providerInstanceId }),
-        },
-      });
-      if (result._tag === "Failure") return false;
-    }
-    store.ensureTerminal(threadRef, terminalId, { open: true });
-    void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(threadRef) });
-    return true;
+export function BackgroundProcessOutputButton(
+  props: BackgroundProcessDetails & Omit<ComponentProps<"button">, "type">,
+) {
+  const {
+    environmentId,
+    threadId,
+    taskId,
+    label,
+    command,
+    startedAt,
+    commandKind,
+    followable,
+    onClick,
+    ...buttonProps
+  } = props;
+  const key = processKey(props);
+  const open = useOutputPopup(
+    (state) => state.open !== null && processKey(state.open.details) === key,
+  );
+  return (
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      {...buttonProps}
+      onClick={(event) => {
+        onClick?.(event);
+        const anchor = event.currentTarget;
+        useOutputPopup.setState((state) => ({
+          open:
+            state.open !== null && processKey(state.open.details) === key
+              ? null
+              : {
+                  details: {
+                    environmentId,
+                    threadId,
+                    taskId,
+                    label,
+                    command,
+                    startedAt,
+                    commandKind,
+                    followable,
+                  },
+                  anchor,
+                },
+        }));
+      }}
+    />
+  );
+}
+
+/** The row's last place, so the popup stays put after the row leaves (its task ended). */
+function lastPlaceOf(element: Element) {
+  let rect = element.getBoundingClientRect();
+  return {
+    // Scrolling the row's container moves the popup with it.
+    contextElement: element,
+    getBoundingClientRect: () => {
+      if (element.isConnected) rect = element.getBoundingClientRect();
+      return rect;
+    },
   };
 }
 
-/**
- * A background process row. A click opens the process in a terminal tab that follows its output;
- * where that isn't possible, it opens the live output in a popover instead. Pass the row's
- * content as children and its classes as `className`; other button props (a tooltip trigger's)
- * pass through.
- */
-export function BackgroundProcessOutputButton(
-  props: BackgroundProcessTarget & Omit<ComponentProps<"button">, "type">,
-) {
-  const { environmentId, threadId, taskId, label, ...buttonProps } = props;
-  const [open, setOpen] = useState(false);
-  const followInTerminal = useFollowBackgroundProcessInTerminal();
+/** The one output popup, mounted at the app root so it outlives the row that opened it. */
+export function BackgroundProcessPopupHost() {
+  const open = useOutputPopup((state) => state.open);
+  // The closing popup keeps its content while it fades; it unmounts, with its queries, after.
+  const [shown, setShown] = useState(open);
+  if (open !== null && open !== shown) setShown(open);
+  const anchor = useMemo(() => (shown === null ? null : lastPlaceOf(shown.anchor)), [shown]);
   return (
     <Popover
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) {
-          setOpen(false);
-          return;
-        }
-        void followInTerminal({ environmentId, threadId, taskId, label }).then((followed) => {
-          if (!followed) setOpen(true);
-        });
+      open={open !== null}
+      onOpenChange={(next, details) => {
+        if (next) return;
+        const target = details.event?.target;
+        // A press on the opening row is left to that row's click, which toggles the popup.
+        if (target instanceof Node && open?.anchor.contains(target)) return;
+        useOutputPopup.setState({ open: null });
       }}
     >
-      <PopoverTrigger {...buttonProps} />
-      <PopoverPopup side="right" align="start" className="w-[min(40rem,90vw)]">
-        <BackgroundProcessOutputView
-          environmentId={environmentId}
-          threadId={threadId}
-          taskId={taskId}
-          label={label}
-        />
+      <PopoverPopup anchor={anchor} side="right" align="start" className="w-[min(40rem,90vw)]">
+        {shown ? (
+          <BackgroundProcessPopup key={processKey(shown.details)} {...shown.details} />
+        ) : null}
       </PopoverPopup>
     </Popover>
+  );
+}
+
+function BackgroundProcessPopup(props: BackgroundProcessDetails) {
+  // The thread's running list, polled like task usage, says when this one has ended.
+  const processes = useEnvironmentQuery(
+    serverEnvironment.threadProcesses({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId },
+    }),
+  );
+  const running = processes.data?.runningTaskIds.includes(props.taskId);
+  const followable = props.followable !== false;
+  const command = props.command ? commandDisplayText(props.command) : null;
+  return (
+    <div className="space-y-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <p className="min-w-0 flex-1 truncate font-medium text-sm">{props.label}</p>
+        {followable && running !== false ? <StopBackgroundShellButton {...props} /> : null}
+      </div>
+      {command && command !== props.label ? (
+        <p className="line-clamp-3 break-all font-mono text-2xs text-muted-foreground">{command}</p>
+      ) : null}
+      <p className="flex items-center gap-1 text-2xs text-muted-foreground">
+        {running === false ? (
+          "Ended"
+        ) : (
+          <>
+            {running ? <span>Running</span> : null}
+            {running && props.startedAt ? <span>·</span> : null}
+            {props.startedAt ? (
+              <BackgroundShellElapsed startedAt={props.startedAt} commandKind={props.commandKind} />
+            ) : null}
+          </>
+        )}
+      </p>
+      {followable ? (
+        <BackgroundProcessOutputView {...props} />
+      ) : (
+        <p className="text-muted-foreground text-xs">
+          Claude shows a foreground command&apos;s output when it finishes.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -133,8 +199,7 @@ export function BackgroundProcessOutputView(props: BackgroundProcessTarget) {
   });
 
   return (
-    <div className="space-y-2">
-      <p className="truncate font-medium text-sm">{props.label}</p>
+    <div>
       {output.error ? (
         <p className="text-destructive text-xs">{output.error}</p>
       ) : (
