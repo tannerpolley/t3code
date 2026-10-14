@@ -9,10 +9,14 @@
   font-weight: normal;
 }
 @utility sidebar-caret-toggle {
-  inset-inline-start: calc(
-    0.125rem + var(--sidebar-thread-lead, 0px) + var(--sidebar-thread-depth, 0) *
-      var(--sidebar-thread-step, 1rem)
-  );
+  inset-inline-start: calc(0.125rem + var(--sidebar-thread-lead, 0px));
+}
+/* Depth shows as a bar instead of an indent: none at the top level, then light, medium, strong. */
+@utility sidebar-thread-bar {
+  align-self: stretch;
+  border-radius: 9999px;
+  background-color: var(--primary);
+  opacity: calc(min(var(--sidebar-thread-depth, 0), 3) / 3);
 }
 @utility sidebar-thread-caret {
   display: flex;
@@ -58,33 +62,4 @@
 }
 .sidebar-caret-toggle > span {
   width: var(--sidebar-caret-width, 1rem);
-}
-.sidebar-tree-row::before,
-.sidebar-tree-row::after {
-  content: "";
-  position: absolute;
-  pointer-events: none;
-  inset-inline-start: calc(
-    0.5rem + var(--sidebar-thread-lead) + (var(--sidebar-thread-depth) - 1) *
-      var(--sidebar-thread-step) + var(--sidebar-caret-width) / 2
-  );
-  border-color: var(--sidebar-border);
-}
-.sidebar-tree-row::before {
-  top: -0.75rem;
-  bottom: 0;
-  border-inline-start-width: 1px;
-}
-.sidebar-tree-row::after {
-  top: 0.75rem;
-  width: var(--sidebar-thread-step);
-  border-top-width: 1px;
-}
-.sidebar-tree-row:last-child::before {
-  bottom: auto;
-  height: 1.5rem;
-}
-
-@utility sidebar-tree-row {
-  position: relative;
 }

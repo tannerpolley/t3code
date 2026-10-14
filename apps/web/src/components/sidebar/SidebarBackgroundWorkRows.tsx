@@ -14,7 +14,6 @@ import {
   useRef,
   type ComponentProps,
   type MouseEvent as ReactMouseEvent,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 
@@ -75,7 +74,7 @@ export type SidebarBackgroundWorkRowsProps = {
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
   readonly columns?: boolean;
-  /** Rows nested below another columns row, whose caret sits lower in the shorter row. */
+  /** Nesting level of these rows below their thread, shown by the depth bar. */
   readonly depth?: number;
   readonly renderNested?: (row: BackgroundWorkTaskRow) => ReactNode;
   readonly nestedToggle?: (row: BackgroundWorkTaskRow) => NestedWorkToggle | null;
@@ -322,13 +321,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               row.kind !== "subagent" && "group/shell",
               index === agents.length && agents.length > 0 && "border-t border-sidebar-border/40",
               "relative",
-              props.columns && "sidebar-tree-row",
             )}
-            style={
-              props.columns
-                ? ({ "--sidebar-thread-depth": props.depth ?? 0 } as CSSProperties)
-                : undefined
-            }
           >
             {props.compact ? (
               <Tooltip>
@@ -367,7 +360,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 label={`${toggle.open ? "Hide" : "Show"} ${toggle.count} running ${toggle.count === 1 ? "task" : "tasks"} under ${row.label}`}
                 onToggle={toggle.onToggle}
                 className="top-0.5 h-5"
-                depth={props.depth ?? 0}
               />
             ) : null}
             {toggle === null || toggle.open ? props.renderNested?.(row) : null}

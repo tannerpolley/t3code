@@ -365,7 +365,8 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 
 With **Codex-style sidebar** enabled on web and desktop, the Projects view aligns each thread's token usage, location,
 role, provider, model, effort, name, time, and work status. Expand a thread to follow
-its child agents; each level indents while usage, time, and status stay aligned.
+its child agents. Child rows keep the same columns as their parent; a colored bar
+after the token count marks each level, darker the deeper it is.
 Turn it off in **Settings → Customizations** to use the classic rows and flat child list.
 The Activity view keeps its cards. To title rows by role (Orchestrator, Implementor, and so on)
 instead of thread name, set **Thread row title** to **Role** there; hover a role to see the

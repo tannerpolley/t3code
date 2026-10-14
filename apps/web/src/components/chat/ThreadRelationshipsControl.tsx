@@ -918,7 +918,6 @@ export function ThreadRelationshipsPanel(props: {
                         onToggle={() =>
                           setLineageDetailsExpanded([detailsKey(threadId)], !rowExpanded)
                         }
-                        depth={Math.max(0, depth - 1)}
                         className="top-1 h-6 ms-0.5"
                       />
                     );

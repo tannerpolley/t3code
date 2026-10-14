@@ -59,16 +59,10 @@ export function SidebarCaretToggle(props: {
   readonly label: string;
   readonly onToggle: () => void;
   readonly className: string;
-  readonly depth?: number;
 }) {
   return (
     <button
       type="button"
-      style={
-        props.depth === undefined
-          ? undefined
-          : ({ "--sidebar-thread-depth": props.depth } as CSSProperties)
-      }
       aria-expanded={props.open}
       aria-label={props.label}
       className={cn(
@@ -107,8 +101,8 @@ export function SidebarTrailingColumns(props: {
 }
 
 /**
- * All thread surfaces share these fixed tracks; only the name gets spare width. Usage leads every
- * row unindented, so token counts line up at all depths; the tree indents from the caret on.
+ * All thread surfaces share these fixed tracks; only the name gets spare width. Rows never indent,
+ * so every column lines up at every depth; a bar after usage, darker per level, marks the depth.
  */
 export function SidebarThreadColumns(props: {
   readonly depth?: number | undefined;
@@ -131,6 +125,7 @@ export function SidebarThreadColumns(props: {
       style={{ "--sidebar-thread-depth": props.depth ?? 0 } as CSSProperties}
     >
       <span className="sidebar-thread-usage">{props.usage}</span>
+      <span aria-hidden className="sidebar-thread-bar" />
       <span className="sidebar-thread-caret">{props.caret ?? <SidebarCaretSlot />}</span>
       <span className="sidebar-thread-icon">{props.location}</span>
       <span className="sidebar-thread-icon">{props.role}</span>
