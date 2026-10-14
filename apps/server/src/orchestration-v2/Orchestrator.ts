@@ -2946,6 +2946,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .pipe(mapDispatchError(command))
       : null;
+    // Handoffs compare the binding under this lock and must have a session that can end
+    // each unfinished run. Preparing or disconnected work cannot be safely moved.
+    if (
+      command.type === "thread.metadata.update" &&
+      command.expectedWorktreePath !== undefined &&
+      command.worktreePath !== undefined &&
+      command.worktreePath !== thread.worktreePath
+    ) {
+      const { runs, providerThreads } = yield* loadProjectionForCommand(command, [
+        "runs",
+        "providerThreads",
+      ]);
+      const unsafeRun = runs.find(
+        (run) =>
+          isBlockingRun(run) &&
+          !providerThreads.some(
+            (providerThread) =>
+              providerThread.id === run.providerThreadId &&
+              providerContext!.providerSessions.some(
+                (session) =>
+                  session.id === providerThread.providerSessionId &&
+                  session.status !== "stopped" &&
+                  session.status !== "error",
+              ),
+          ),
+      );
+      if (thread.archivedAt !== null || unsafeRun !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            thread.archivedAt !== null
+              ? `Thread ${command.threadId} is archived and cannot change workspace.`
+              : `Thread ${command.threadId} has an unfinished run without a live provider session to detach. Stop it before changing workspace.`,
+        });
+      }
+    }
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
         ? yield* Effect.gen(function* () {

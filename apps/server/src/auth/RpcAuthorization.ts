@@ -189,6 +189,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.mcpAppsUpdateModelContext]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeVcsStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeWorktreeSetup]: AuthOrchestrationReadScope,
+  [WS_METHODS.worktreeReturnToRoot]: AuthOrchestrationOperateScope,
   [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeResourceTelemetry]: AuthDiagnosticsReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,

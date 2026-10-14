@@ -7,6 +7,8 @@ import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   type ApplicationStoredEvent,
+  type Project,
+  EnvironmentId,
   CheckpointId,
   CheckpointRef,
   CommandId,
@@ -73,6 +75,10 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as ThreadWorkspaceService from "./ThreadWorkspaceService.ts";
+import * as WorktreeMcpService from "../mcp/WorktreeMcpService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -5726,3 +5732,313 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
     );
   },
 );
+
+it.layer(layerTest)("thread workspace handoffs", (it) => {
+  const projectId = ProjectId.make("workspace-return-project");
+  const workspaceRoot = "/workspace/root";
+  const worktreePath = "/workspace/feature";
+  const layerWorkspace = (rootBranch: string | null = "release/current-root") => {
+    let rootStatusInvalidated = false;
+    return WorktreeMcpService.layer.pipe(
+      Layer.provideMerge(ThreadWorkspaceService.layer),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeed(
+                Option.some({
+                  id: projectId,
+                  title: "Workspace return",
+                  workspaceRoot,
+                  scripts: [],
+                  defaultModelSelection: null,
+                  deletedAt: null,
+                  createdAt: "2026-10-13T00:00:00.000Z",
+                  updatedAt: "2026-10-13T00:00:00.000Z",
+                } as Project),
+              ),
+          }),
+          Layer.mock(GitWorkflow.GitWorkflowService)({
+            localStatus: (input) => {
+              assert.equal(input.cwd, workspaceRoot);
+              return Effect.succeed({
+                isRepo: true,
+                refName: rootStatusInvalidated ? rootBranch : "cached/old-root",
+              } as never);
+            },
+            invalidateLocalStatus: (cwd) => {
+              assert.equal(cwd, workspaceRoot);
+              rootStatusInvalidated = true;
+              return Effect.void;
+            },
+            listLocalBranchNames: () => Effect.succeed([]),
+            createWorktree: () =>
+              Effect.succeed({ worktree: { path: worktreePath, refName: "feature/new" } } as never),
+            removeWorktree: () => Effect.void,
+            deleteLocalBranch: () => Effect.void,
+          }),
+          Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+            runForThread: () => Effect.succeed({ status: "no-script" } as const),
+          }),
+          Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+            refreshStatus: () => Effect.succeed({} as never),
+          }),
+          ServerSettings.layerTest(),
+          NodeServices.layer,
+        ),
+      ),
+    );
+  };
+  const scope = (threadId: ThreadId) => ({
+    environmentId: EnvironmentId.make("workspace-return-environment"),
+    requestNamespace: "workspace-return-session",
+    capabilities: new Set(["worktree"] as const),
+    thread: {
+      threadId,
+      providerSessionId: "workspace-return-session",
+      providerInstanceId: modelSelection.instanceId,
+    },
+    client: undefined,
+    issuedAt: 1,
+  });
+  const create = (threadId: ThreadId, path: string | null) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* seedProject({
+        projectId,
+        title: "Workspace return",
+        workspaceRoot,
+        defaultModelSelection: null,
+        createdAt: "2026-10-13T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId,
+        title: "Workspace return",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: path === null ? "release/current-root" : "feature/old",
+        worktreePath: path,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      return orchestrator;
+    });
+
+  it.effect(
+    "returns a live thread to root, queues continuation, and executes its detach after commit",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("workspace-return-live");
+        const orchestrator = yield* create(threadId, worktreePath);
+        const sink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("workspace-return-first"),
+          threadId,
+          messageId: MessageId.make("workspace-return-first"),
+          text: "Work in the feature checkout.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const initial = yield* orchestrator.getThreadProjection(threadId);
+        const run = initial.runs[0]!;
+        const providerThread = initial.providerThreads[0]!;
+        const now = yield* DateTime.now;
+        const session = {
+          id: providerThread.providerSessionId!,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          status: "running" as const,
+          cwd: worktreePath,
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("workspace-return-running"),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "running", startedAt: now },
+            },
+            {
+              id: EventId.make("workspace-return-session"),
+              type: "provider-session.attached",
+              threadId,
+              occurredAt: now,
+              payload: session,
+            },
+          ],
+        });
+        yield* outbox.cancelUnsettled({
+          threadId,
+          effectTypes: ["provider-turn.start"],
+          reason: "Session seeded by test",
+        });
+        const detach = vi.spyOn(sessions, "detach").mockReturnValue(Effect.void);
+        yield* Effect.addFinalizer(() => Effect.sync(() => detach.mockRestore()));
+        const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
+        const result = yield* workspace.returnToRoot(
+          threadId,
+          { continuationPrompt: "Continue coordinating from root." },
+          { createdBy: "agent", creationSource: "mcp" },
+        );
+        assert.isNull(result.worktreePath);
+        assert.equal(result.branch, "release/current-root");
+        assert.deepEqual(result.continuation, { status: "scheduled", delivery: "queued" });
+        const moved = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNull(moved.thread.worktreePath);
+        assert.equal(moved.thread.branch, "release/current-root");
+        assert.equal(moved.runs[1]?.status, "queued");
+        assert.equal(moved.messages.at(-1)?.text, "Continue coordinating from root.");
+        const worktrees = yield* WorktreeMcpService.WorktreeMcpService;
+        const status = yield* worktrees.status(scope(threadId));
+        assert.deepEqual(
+          {
+            attached: status.attached,
+            worktreePath: status.worktreePath,
+            branch: status.branch,
+            root: status.projectWorkspaceRoot,
+          },
+          {
+            attached: false,
+            worktreePath: null,
+            branch: "release/current-root",
+            root: workspaceRoot,
+          },
+        );
+        assert.equal(detach.mock.calls.length, 0);
+        yield* worker.drain();
+        assert.equal(detach.mock.calls.length, 1);
+        assert.equal(detach.mock.calls[0]?.[0].providerSessionId, session.id);
+      }).pipe(Effect.provide(layerWorkspace())),
+  );
+
+  it.effect.each(["release/current-root", null])(
+    "moves an idle thread without continuation and rejects stale bindings (%s)",
+    (rootBranch) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(`workspace-return-idle:${rootBranch ?? "detached"}`);
+        const orchestrator = yield* create(threadId, worktreePath);
+        const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
+        const result = yield* workspace.returnToRoot(
+          threadId,
+          {},
+          { createdBy: "user", creationSource: "web" },
+        );
+        assert.equal(result.continuation.status, "skipped");
+        const moved = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNull(moved.thread.worktreePath);
+        assert.equal(moved.thread.branch, rootBranch);
+        assert.equal(moved.messages.length, 0);
+        assert.equal(
+          (yield* workspace
+            .returnToRoot(threadId, {}, { createdBy: "user", creationSource: "web" })
+            .pipe(Effect.exit))._tag,
+          "Failure",
+        );
+        const stale = yield* workspace
+          .bind({
+            command: {
+              type: "thread.metadata.update",
+              commandId: CommandId.make("workspace-stale"),
+              threadId,
+              branch: "feature/stale",
+              worktreePath,
+              expectedWorktreePath: worktreePath,
+            },
+            continuationCommandId: CommandId.make("workspace-stale-continuation"),
+            continuationMessageId: MessageId.make("workspace-stale-continuation"),
+            projectId,
+            provenance: { createdBy: "user", creationSource: "web" },
+          })
+          .pipe(Effect.exit);
+        assert.equal(stale._tag, "Failure");
+        assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.worktreePath);
+      }).pipe(Effect.provide(layerWorkspace(rootBranch))),
+  );
+
+  it.effect.each(["preparing", "starting", "running", "waiting", "archived"] as const)(
+    "refuses both handoff directions for %s without detaching live work",
+    (state) =>
+      Effect.gen(function* () {
+        const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
+        const handoff = yield* WorktreeMcpService.WorktreeMcpService;
+        const sink = yield* EventSink.EventSinkV2;
+        for (const direction of ["root", "worktree"] as const) {
+          const threadId = ThreadId.make(`workspace-refusal:${direction}:${state}`);
+          const orchestrator = yield* create(threadId, direction === "root" ? worktreePath : null);
+          if (state === "archived") {
+            yield* orchestrator.dispatch({
+              type: "thread.archive",
+              commandId: CommandId.make(`archive:${threadId}`),
+              threadId,
+            });
+          } else {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`message:${threadId}`),
+              threadId,
+              messageId: MessageId.make(`message:${threadId}`),
+              text: "Unfinished work.",
+              attachments: [],
+              dispatchMode: { type: "defer_start" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make(`run:${threadId}`),
+                  type: "run.updated",
+                  threadId,
+                  runId: run.id,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...run, status: state },
+                },
+              ],
+            });
+          }
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const exit =
+            direction === "root"
+              ? yield* workspace
+                  .returnToRoot(
+                    threadId,
+                    { continuationPrompt: "Must not queue." },
+                    { createdBy: "agent", creationSource: "mcp" },
+                  )
+                  .pipe(Effect.exit)
+              : yield* handoff
+                  .handoff(scope(threadId), {
+                    branch: "feature/new",
+                    continuationPrompt: "Must not queue.",
+                    startFromOrigin: false,
+                    runSetupScript: false,
+                  })
+                  .pipe(Effect.exit);
+          assert.equal(exit._tag, "Failure");
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(after.thread.worktreePath, before.thread.worktreePath);
+          assert.equal(after.thread.branch, before.thread.branch);
+          assert.equal(after.messages.length, before.messages.length);
+          assert.equal(after.providerSessions.length, 0);
+        }
+      }).pipe(Effect.provide(layerWorkspace())),
+  );
+});

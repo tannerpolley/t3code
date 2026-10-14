@@ -1,3 +1,10 @@
+import { useAtomValue } from "@effect/atom-react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { useAtomCommand } from "../state/use-atom-command";
+import { vcsEnvironment } from "../state/vcs";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -55,6 +62,7 @@ import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -154,6 +162,8 @@ interface RunContextSelectorProps {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
+  onReturnToRoot?: (() => void) | undefined;
+  returnToRootDisabled?: boolean | undefined;
   previousWorktreeLabel: string | null;
   previousWorktreeBranch: string | null;
   onUsePreviousWorktree: () => void;
@@ -178,6 +188,8 @@ const RunContextSelector = memo(function RunContextSelector({
   previousWorktreeLabel,
   previousWorktreeBranch,
   onUsePreviousWorktree,
+  onReturnToRoot,
+  returnToRootDisabled,
 }: RunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(
@@ -263,7 +275,7 @@ const RunContextSelector = memo(function RunContextSelector({
     </>
   );
 
-  if (isLocked) {
+  if (isLocked && !onReturnToRoot) {
     return (
       <span
         className={cn(
@@ -364,6 +376,12 @@ const RunContextSelector = memo(function RunContextSelector({
         ) : null}
         <MenuGroup>
           <MenuGroupLabel>Workspace</MenuGroupLabel>
+          {onReturnToRoot ? (
+            <MenuItem disabled={returnToRootDisabled} onClick={onReturnToRoot}>
+              <FolderIcon className="size-3" />
+              Move to main checkout
+            </MenuItem>
+          ) : null}
           <MenuRadioGroup
             value={effectiveEnvMode}
             onValueChange={(value) => {
@@ -617,6 +635,33 @@ export const BranchToolbar = memo(function BranchToolbar({
   composerControlsHostRef,
   contextStripVisible = true,
 }: BranchToolbarProps) {
+  const returnToRoot = useAtomCommand(vcsEnvironment.returnToRoot, { reportFailure: false });
+  const canReturnToRoot = useAtomValue(vcsEnvironment.returnToRoot.permissionAtom(environmentId));
+  const [returningToRoot, setReturningToRoot] = useState(false);
+  const handleReturnToRoot = async () => {
+    if (returningToRoot || !canReturnToRoot) return;
+    setReturningToRoot(true);
+    try {
+      const result = await returnToRoot({ environmentId, input: { threadId } });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not move to main checkout",
+              description: error instanceof Error ? error.message : "Workspace move failed.",
+            }),
+          );
+        }
+        return;
+      }
+      onActiveThreadBranchOverrideChange?.(result.value.branch);
+      onEnvModeChange("local");
+    } finally {
+      setReturningToRoot(false);
+    }
+  };
   const branchSelectorRef = useRef<BranchToolbarBranchSelectorHandle>(null);
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -728,6 +773,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
+            onReturnToRoot={serverThread && activeWorktreePath ? handleReturnToRoot : undefined}
+            returnToRootDisabled={!canReturnToRoot || returningToRoot}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
@@ -782,6 +829,8 @@ export const BranchToolbar = memo(function BranchToolbar({
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
+            onReturnToRoot={serverThread && activeWorktreePath ? handleReturnToRoot : undefined}
+            returnToRootDisabled={!canReturnToRoot || returningToRoot}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
@@ -822,6 +871,8 @@ export const BranchToolbar = memo(function BranchToolbar({
               effectiveEnvMode={effectiveEnvMode}
               activeWorktreePath={activeWorktreePath}
               onEnvModeChange={onEnvModeChange}
+              onReturnToRoot={serverThread && activeWorktreePath ? handleReturnToRoot : undefined}
+              returnToRootDisabled={!canReturnToRoot || returningToRoot}
               previousWorktreeLabel={previousWorktreeLabel}
               previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
               onUsePreviousWorktree={onUsePreviousWorktree}

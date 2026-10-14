@@ -95,6 +95,20 @@ export const WorktreeMcpHandoffResult = Schema.Struct({
 });
 export type WorktreeMcpHandoffResult = typeof WorktreeMcpHandoffResult.Type;
 
+export const WorktreeReturnToRootInput = Schema.Struct({
+  continuationPrompt: WorktreeMcpHandoffInput.fields.continuationPrompt,
+});
+export type WorktreeReturnToRootInput = typeof WorktreeReturnToRootInput.Type;
+
+export const WorktreeReturnToRootResult = Schema.Struct({
+  projectWorkspaceRoot: TrimmedNonEmptyString,
+  worktreePath: Schema.Null,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  continuation: WorktreeMcpContinuationStatus,
+  note: Schema.String,
+});
+export type WorktreeReturnToRootResult = typeof WorktreeReturnToRootResult.Type;
+
 export const WorktreeMcpStatusResult = Schema.Struct({
   attached: Schema.Boolean.annotate({
     description: "True when this thread is already attached to a git worktree.",

@@ -31,6 +31,11 @@ import {
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
+import {
+  WorktreeMcpFailure,
+  WorktreeReturnToRootInput,
+  WorktreeReturnToRootResult,
+} from "./worktreeMcp.ts";
 import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
@@ -457,6 +462,7 @@ export const WS_METHODS = {
   vcsPull: "vcs.pull",
   vcsRefreshStatus: "vcs.refreshStatus",
   vcsListRefs: "vcs.listRefs",
+  worktreeReturnToRoot: "worktree.returnToRoot",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
   vcsCreateRef: "vcs.createRef",
@@ -1537,6 +1543,12 @@ const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsWorktreeReturnToRootRpc = Rpc.make(WS_METHODS.worktreeReturnToRoot, {
+  payload: Schema.Struct({ threadId: ThreadId, ...WorktreeReturnToRootInput.fields }),
+  success: WorktreeReturnToRootResult,
+  error: Schema.Union([WorktreeMcpFailure, EnvironmentAuthorizationError]),
+});
+
 const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
   payload: VcsCreateWorktreeInput,
   success: VcsCreateWorktreeResult,
@@ -2054,6 +2066,7 @@ const WsOrchestrationV2StopBackgroundTaskRpc = Rpc.make(
  * one flat `make`: building it with `merge` or `add` made the web typecheck take minutes.
  */
 const forkWsRpcs = [
+  WsWorktreeReturnToRootRpc,
   WsTerminalFollowBackgroundTaskRpc,
   WsServerGetBackgroundTaskResourceUsageRpc,
   WsOrchestrationV2SubscribeBackgroundTaskOutputRpc,
@@ -2272,6 +2285,7 @@ export const WsRpcGroup = RpcGroup.make(
 ).middleware(RpcScopeAuthorization);
 export const ForkWsRpcGroup = RpcGroup.make(...forkWsRpcs).middleware(RpcScopeAuthorization);
 export const UpstreamWsRpcGroup = WsRpcGroup.omit(
+  WS_METHODS.worktreeReturnToRoot,
   WS_METHODS.terminalFollowBackgroundTask,
   WS_METHODS.serverGetBackgroundTaskResourceUsage,
   ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput,

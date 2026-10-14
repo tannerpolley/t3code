@@ -31,6 +31,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as ThreadWorkspaceService from "../orchestration-v2/ThreadWorkspaceService.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 
 const environmentId = EnvironmentId.make("environment-worktree-test");
@@ -305,6 +306,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           ),
         );
   const layer = layerService.pipe(
+    Layer.provide(ThreadWorkspaceService.layer),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({

@@ -3,7 +3,6 @@ import {
   MessageId,
   type ProjectId,
   WorktreeMcpFailure,
-  type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
   type WorktreeMcpHandoffResult,
   type WorktreeMcpSetupScriptStatus,
@@ -18,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ThreadWorkspaceService from "../orchestration-v2/ThreadWorkspaceService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -58,6 +58,7 @@ const asOperationFailed = (prefix: string) =>
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
+  const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -156,8 +157,8 @@ const make = Effect.gen(function* () {
     if (projection.thread.worktreePath !== null) {
       return yield* alreadyInWorktree(projection.thread.worktreePath);
     }
-    // An archived thread would accept the binding but refuse the continuation
-    // message (and any other follow-up), so reject the handoff outright.
+    // An archived thread cannot continue in a new checkout, so reject it before
+    // creating a worktree that it cannot use.
     if (projection.thread.archivedAt !== null) {
       return yield* failure(
         "invalid_request",
@@ -317,31 +318,23 @@ const make = Effect.gen(function* () {
               `Thread '${scope.thread.threadId}' was archived while the worktree was being created; the handoff was rolled back.`,
             );
           }
-          yield* threadManagement
-            .dispatch({
+          return yield* workspace.bind({
+            command: {
               type: "thread.metadata.update",
               commandId: ids.commandId,
               threadId: scope.thread.threadId,
               branch: worktree.worktree.refName,
               worktreePath,
               expectedWorktreePath: null,
-            })
-            .pipe(
-              Effect.catchCause((cause) =>
-                // Interrupt-only causes propagate unchanged: whether the
-                // dispatch committed is unknown, so neither a typed failure
-                // nor a rollback would be correct. Failures and defects
-                // (including mixed causes) map to a typed operation_failed.
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause as Cause.Cause<never>)
-                  : Effect.fail(
-                      failure(
-                        "operation_failed",
-                        `Unable to re-point the thread at the worktree: ${errorMessage(Cause.squash(cause))}`,
-                      ),
-                    ),
-              ),
-            );
+            },
+            ...(input.continuationPrompt === undefined
+              ? {}
+              : { continuationPrompt: input.continuationPrompt }),
+            continuationCommandId: ids.continuationCommandId,
+            continuationMessageId: ids.continuationMessageId,
+            projectId: projection.thread.projectId,
+            provenance: { createdBy: "agent", creationSource: "mcp" },
+          });
         }).pipe(
           // onError: the worktree was already created, so any failure between
           // here and the committed binding (recheck read, recheck race,
@@ -354,42 +347,7 @@ const make = Effect.gen(function* () {
           ),
         );
 
-        // Queue the continuation right after the binding commits: the detach
-        // that the metadata update schedules will terminate the calling
-        // session, and a durably queued message is what guarantees the thread
-        // re-launches inside the worktree. When the dying run reaches a
-        // terminal state the orchestrator promotes the queued run, which
-        // derives its cwd from the updated projection.
-        // suspend: build the send effect only when the binding has succeeded,
-        // so a failed dispatch never even constructs the continuation call.
-        const queueContinuation: Effect.Effect<WorktreeMcpContinuationStatus, WorktreeMcpFailure> =
-          Effect.suspend(() =>
-            input.continuationPrompt === undefined
-              ? Effect.succeed<WorktreeMcpContinuationStatus>({ status: "skipped" })
-              : threadManagement
-                  .sendToThread({
-                    projectId: projection.thread.projectId,
-                    commandId: ids.continuationCommandId,
-                    threadId: scope.thread.threadId,
-                    messageId: ids.continuationMessageId,
-                    text: input.continuationPrompt,
-                    attachments: [],
-                    mode: "queue",
-                    createdBy: "agent",
-                    creationSource: "mcp",
-                  })
-                  .pipe(
-                    Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
-                      status: "scheduled",
-                      delivery: sendResult.delivery,
-                    })),
-                    // catchCause via reportFailed: the binding is already recorded,
-                    // so a failed continuation must be reported, not fail the handoff.
-                    reportFailed("worktree handoff continuation failed to queue"),
-                  ),
-          );
-
-        const continuation = yield* recheckAndBind.pipe(Effect.andThen(queueContinuation));
+        const continuation = yield* recheckAndBind;
 
         yield* vcsStatusBroadcaster
           .refreshStatus(worktreePath)
@@ -498,6 +456,7 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   WorktreeMcpService,
   never,
+  | ThreadWorkspaceService.ThreadWorkspaceService
   | Crypto.Crypto
   | Path.Path
   | ThreadManagementService.ThreadManagementService

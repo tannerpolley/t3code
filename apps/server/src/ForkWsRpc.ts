@@ -11,6 +11,7 @@ import * as IssueChangeService from "./issues/IssueChangeService.ts";
 import * as IssueService from "./issues/IssueService.ts";
 import * as IssueWorkService from "./issues/IssueWorkService.ts";
 import { RpcInstrumentation } from "./observability/RpcInstrumentation.ts";
+import * as ThreadWorkspaceService from "./orchestration-v2/ThreadWorkspaceService.ts";
 import * as BackgroundTasks from "./orchestration-v2/backgroundTaskOutput.ts";
 
 export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
@@ -19,10 +20,16 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const backgroundTasks = yield* BackgroundTasks.BackgroundTasks.pipe(
         Effect.provide(BackgroundTasks.layer),
       );
+      const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
       const issues = yield* IssueService.IssueService;
       const issueWork = yield* IssueWorkService.IssueWorkService;
       const issueChanges = yield* IssueChangeService.IssueChangeService;
       return {
+        [WS_METHODS.worktreeReturnToRoot]: (input) =>
+          workspace.returnToRoot(input.threadId, input, {
+            createdBy: "user",
+            creationSource: "web",
+          }),
         [WS_METHODS.serverGetBackgroundTaskResourceUsage]: (input) =>
           backgroundTasks.resourceUsage(input),
         [WS_METHODS.terminalFollowBackgroundTask]: (input) =>

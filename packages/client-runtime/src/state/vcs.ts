@@ -308,6 +308,10 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    returnToRoot: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:worktree:return-to-root",
+      tag: WS_METHODS.worktreeReturnToRoot,
+    }),
     createWorktree: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-worktree",
       tag: WS_METHODS.vcsCreateWorktree,

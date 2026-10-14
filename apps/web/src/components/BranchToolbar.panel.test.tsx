@@ -5,6 +5,12 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
+vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../state/vcs", () => ({
+  vcsEnvironment: { returnToRoot: { permissionAtom: () => null } },
+}));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => true }));
+
 const state = vi.hoisted(() => ({
   worktreePath: "/tmp/worktree" as string | null,
   showContextMenu: vi.fn().mockResolvedValue("copy-path"),

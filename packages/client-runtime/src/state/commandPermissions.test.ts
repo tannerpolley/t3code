@@ -338,6 +338,26 @@ it.effect(
     ),
 );
 
+it.effect(
+  "requires thread operation permission in the destination environment to return to root",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const command = createCommandPermissions(runtime, WS_METHODS.worktreeReturnToRoot);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(command.permissionAtom(env))).toBe(false);
+        expect((yield* command.authorize(registry, env).pipe(Effect.flip)).requiredScope).toBe(
+          AuthOrchestrationOperateScope,
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(command.permissionAtom(env))).toBe(true);
+        yield* command.authorize(registry, env);
+        expect(registry.get(command.permissionAtom(other))).toBe(false);
+      }),
+    ),
+);
+
 it.effect("honors exact empty permissions and preserves legacy parent grants", () =>
   Effect.scoped(
     Effect.gen(function* () {

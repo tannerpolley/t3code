@@ -10,6 +10,11 @@ and mode selections, unless the destination project has its own model default.
 Its branch and workspace mode come from your configured defaults. To continue in
 an existing worktree, use **New thread in this worktree** from the branch toolbar.
 
+To move a worktree thread back to the project's main checkout on web or desktop,
+choose **Move to main checkout** from its workspace control. This ends the live agent
+session; your next message resumes the conversation in the main checkout on its
+current branch. The previous worktree stays on disk.
+
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 

@@ -47,6 +47,7 @@ import {
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
+import * as ThreadWorkspaceService from "../orchestration-v2/ThreadWorkspaceService.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
@@ -819,7 +820,7 @@ export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandl
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
   WorktreeHandlers.layer,
-).pipe(Layer.provide(WorktreeMcpService.layer));
+).pipe(Layer.provide(WorktreeMcpService.layer), Layer.provide(ThreadWorkspaceService.layer));
 
 const layerPreviewControlsRegistration = toolkitRegistration(
   PreviewControlsToolkit,
