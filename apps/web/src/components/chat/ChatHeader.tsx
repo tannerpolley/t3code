@@ -478,6 +478,8 @@ function HeaderThreadRoleIcon({
   const atom = environmentThreadShells.threadShellAtom(scopeThreadRef(environmentId, threadId));
   const role = useAtomValue(atom, (thread) => thread?.source.role);
   const creationSource = useAtomValue(atom, (thread) => thread?.source.creationSource);
+  const branch = useAtomValue(atom, (thread) => thread?.source.branch ?? null);
+  const worktreePath = useAtomValue(atom, (thread) => thread?.source.worktreePath ?? null);
   const relationshipToParent = useAtomValue(
     atom,
     (thread) => thread?.source.lineage.relationshipToParent,
@@ -487,6 +489,8 @@ function HeaderThreadRoleIcon({
       thread={{
         role,
         creationSource,
+        branch,
+        worktreePath,
         lineage: { relationshipToParent: relationshipToParent ?? null },
       }}
     />

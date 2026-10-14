@@ -1,4 +1,5 @@
 import {
+  effectiveThreadRole,
   isProviderNativeSubagentThread,
   THREAD_ROLE_LABELS,
   type OrchestrationV2AppThread,
@@ -6,7 +7,6 @@ import {
 import {
   BotIcon,
   ListChecksIcon,
-  MessagesSquareIcon,
   NetworkIcon,
   SearchIcon,
   ShieldCheckIcon,
@@ -26,18 +26,20 @@ const ROLE_ICONS = {
 export function ThreadRoleIcon({
   thread,
 }: {
-  readonly thread: Pick<OrchestrationV2AppThread, "role" | "creationSource"> & {
+  readonly thread: Pick<
+    OrchestrationV2AppThread,
+    "role" | "creationSource" | "branch" | "worktreePath"
+  > & {
     readonly lineage: Pick<OrchestrationV2AppThread["lineage"], "relationshipToParent">;
   };
 }) {
   const native = isProviderNativeSubagentThread(thread);
   const child = thread.lineage.relationshipToParent === "subagent" && !native;
-  if (!native && !thread.role && !child) return null;
-  const RoleIcon = thread.role ? ROLE_ICONS[thread.role] : null;
-  const Icon = native ? BotIcon : (RoleIcon ?? MessagesSquareIcon);
+  const role = effectiveThreadRole(thread);
+  const RoleIcon = ROLE_ICONS[role];
   const label = native
-    ? `Native subagent${thread.role ? ` · ${THREAD_ROLE_LABELS[thread.role]}` : ""} · Runs on its own · Open parent to direct it`
-    : `${thread.role ? THREAD_ROLE_LABELS[thread.role] : "Child thread"}${child ? `${thread.role ? " · Child thread" : ""} · You can send messages here` : ""}`;
+    ? `Native subagent · ${THREAD_ROLE_LABELS[role]} · Runs on its own · Open parent to direct it`
+    : `${THREAD_ROLE_LABELS[role]}${child ? " · Child thread · You can send messages here" : ""}`;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -49,8 +51,8 @@ export function ThreadRoleIcon({
           />
         }
       >
-        <Icon aria-hidden className="size-3 shrink-0" />
-        {native && RoleIcon ? <RoleIcon aria-hidden className="size-3 shrink-0" /> : null}
+        {native ? <BotIcon aria-hidden className="size-3 shrink-0" /> : null}
+        <RoleIcon aria-hidden className="size-3 shrink-0" />
       </TooltipTrigger>
       <TooltipPopup side="right">{label}</TooltipPopup>
     </Tooltip>

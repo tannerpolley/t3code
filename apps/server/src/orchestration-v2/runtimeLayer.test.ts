@@ -6824,6 +6824,22 @@ it.effect.each([
     autoResumeLimitedThreads: mode === "wait",
     snoozeLimitedThreads: mode === "wait",
     usageLimitFallbackModels: scenario === "no-target" ? [] : [claudeSelection],
+    // The delegated child is an Implementor: keep its profiles on its own provider so they offer
+    // no switch target either.
+    ...(scenario === "no-target"
+      ? {
+          modelRoles: (["fast", "thorough"] as const).map((profile) => ({
+            id: `implementor-${profile}`,
+            role: "implementor" as const,
+            profile,
+            name: "Implementor",
+            description: "",
+            targets: [
+              { providerInstanceId: modelSelection.instanceId, model: modelSelection.model },
+            ],
+          })),
+        }
+      : {}),
   } satisfies Parameters<typeof ServerSettings.layerTest>[0];
   const workers = Layer.merge(
     UsageLimitProviderSwitchWorker.layer,

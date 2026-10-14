@@ -607,7 +607,8 @@ it.effect.each([undefined, "reviewer"] as const)(
         parentRunId: parentRun.id,
         parentNodeId: parentRun.rootNodeId!,
         task: "Review the changes",
-        role: "reviewer",
+        // A child delegated without a role is stored as an Implementor.
+        ...(parentRole === undefined ? {} : { role: "reviewer" as const }),
         modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -618,12 +619,13 @@ it.effect.each([undefined, "reviewer"] as const)(
       const childThreadId = updatedParent.subagents[0]!.childThreadId!;
       const child = yield* projections.getThreadProjection(childThreadId);
       assert.equal(updatedParent.thread.role, parentRole ?? "orchestrator");
-      assert.equal(child.thread.role, "reviewer");
+      const childRole = parentRole === undefined ? "implementor" : "reviewer";
+      assert.equal(child.thread.role, childRole);
       assert.equal(
         (yield* projections.getThreadShell(parentThreadId))?.role,
         parentRole ?? "orchestrator",
       );
-      assert.equal((yield* projections.getThreadShell(childThreadId))?.role, "reviewer");
+      assert.equal((yield* projections.getThreadShell(childThreadId))?.role, childRole);
       assert.isNull(child.thread.linkedPullRequest);
       assert.deepEqual(child.thread.pullRequests, []);
       assert.equal(child.thread.branch, parent.thread.branch);

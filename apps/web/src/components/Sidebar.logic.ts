@@ -15,11 +15,11 @@ import {
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
+  effectiveThreadRole,
   isProviderNativeSubagentThread,
   type ContextMenuItem,
   type EnvironmentId,
   type ThreadId,
-  type ThreadRole,
 } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
@@ -1184,16 +1184,6 @@ export function groupThreadsByLocation<
 }
 
 /**
- * A thread's role as the sidebar reads it: an agent in a worktree without a role is an
- * implementor, since implementors are the ones given worktrees.
- */
-export function effectiveThreadRole(
-  thread: Pick<SidebarThreadSummary["source"], "role" | "worktreePath">,
-): ThreadRole | undefined {
-  return thread.role ?? (thread.worktreePath ? "implementor" : undefined);
-}
-
-/**
  * The one thread per location that carries its location icon. A worktree is led by its
  * implementor; the main checkout by its orchestrator, else its implementor. Without either, the
  * top-level thread leads, else the first. Ties go to the earliest row. `rows` lists every shown
@@ -1201,17 +1191,17 @@ export function effectiveThreadRole(
  */
 export function resolveLocationLeads<
   TThread extends Pick<SidebarThreadSummary, "environmentId" | "worktreePath"> & {
-    readonly source: Pick<SidebarThreadSummary["source"], "role">;
+    readonly source: Pick<
+      SidebarThreadSummary["source"],
+      "role" | "branch" | "worktreePath" | "lineage"
+    >;
   },
 >(
   rows: ReadonlyArray<{ readonly thread: TThread; readonly topLevel: boolean }>,
 ): ReadonlyMap<string, TThread> {
   const leads = new Map<string, { readonly thread: TThread; readonly rank: number }>();
   for (const { thread, topLevel } of rows) {
-    const role = effectiveThreadRole({
-      role: thread.source.role,
-      worktreePath: thread.worktreePath,
-    });
+    const role = effectiveThreadRole(thread.source);
     const leadRole = thread.worktreePath ? "implementor" : "orchestrator";
     const rank = role === leadRole ? 0 : role === "implementor" ? 1 : topLevel ? 2 : 3;
     const key = threadLocationKey(thread);

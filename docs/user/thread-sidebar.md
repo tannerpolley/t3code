@@ -354,13 +354,14 @@ are marked. Codex agents see changes on their next turn and
 Claude agents in their next session. Reset model roles to get the latest
 defaults; this replaces your customizations.
 
-Threads that start in a worktree, or move into one, are Implementors. Other
-threads you create have no role until they delegate work, when they become
-Orchestrators. Forks keep their source's role. A native provider subagent takes
-its role from its agent type: Codex's manager is an Orchestrator; the default
-agents and worker or builder types are Implementors; reviewer types are
-Reviewers; explorer or researcher types are Investigators; and tester or checker
-types are Checkers. Role icons appear in thread rows and the chat header.
+Every thread has a role. Threads that start in a worktree, or move into one, are
+Implementors. Other threads you start are Orchestrators. Child agents are
+Implementors unless their parent gives them another role. Forks keep their source's
+role. A native provider subagent takes its role from its agent type: Codex's manager
+is an Orchestrator; reviewer types are Reviewers; explorer or researcher types are
+Investigators; tester or checker types are Checkers; and every other type, including
+the default agents, is an Implementor. Role icons appear in thread rows and the chat
+header.
 
 Native provider subagents have a bot icon before their role icon and run on their
 own. They cannot take messages; use **Open parent** to direct them. App-owned child
@@ -396,10 +397,9 @@ Turn it off in **Settings → Customizations** to use the classic rows and flat 
 The Activity view keeps its cards.
 
 Rows are titled by what each thread does rather than its task name: a thread working
-on an issue shows the issue, such as **#42 Fix login**; a thread with a role shows it
-(Orchestrator, Implementor, Reviewer, Investigator, Checker); an agent without a role
-working in a worktree is an **Implementor**; other top-level threads show **Main** and
-other child agents **Subagent**. Hover a title to see the thread's name.
+on an issue shows the issue, such as **#42 Fix login**; every other thread shows its
+role (Orchestrator, Implementor, Reviewer, Investigator, Checker), matching its role
+icon. Hover a title to see the thread's name.
 
 For Codex and Claude, the percent between the title and the time estimates how much
 of your weekly limit the thread has used, such as **4%**. It appears once a thread

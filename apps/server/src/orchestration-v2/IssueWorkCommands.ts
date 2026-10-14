@@ -363,9 +363,7 @@ export function makeIssueWorkCommands({
     ...(request.issue === undefined
       ? {}
       : { linkedIssue: request.issue, titleSource: "generated" as const }),
-    ...(request.role === undefined && request.issue === undefined
-      ? {}
-      : { role: request.role ?? "implementor" }),
+    ...(request.role === undefined ? {} : { role: request.role }),
   });
 
   // A child with its own worktree has no checkout until its deferred run's

@@ -1273,8 +1273,8 @@ it("shows the parent's own visible status as parent and child activity change", 
       .findAll((node) => typeof node.type === "string" && node.props.className !== "sr-only")
       .flatMap((node) => node.children.filter((child) => typeof child === "string"))
       .join(" ");
-  // A role-less top-level parent is titled Main, with its name on hover.
-  expect(visibleText()).toContain("Main");
+  // A role-less top-level parent is titled Orchestrator, with its name on hover.
+  expect(visibleText()).toContain("Orchestrator");
   expect(JSON.stringify(renderer.toJSON())).toContain("Parent conversation");
   expect(visibleText()).toContain("Running");
   state.shells = shells(
@@ -1333,8 +1333,8 @@ it.each(["source", "target"])(
         .findAll((node) => typeof node.type === "string")
         .flatMap((node) => node.children.filter((child) => typeof child === "string"))
         .join(" ");
-      // The related conversation is titled Main; its name is on hover.
-      expect(visibleText).toContain("Main");
+      // The related role-less conversation is titled Orchestrator; its name is on hover.
+      expect(visibleText).toContain("Orchestrator");
       expect(visibleText).toContain(label);
       expect(visibleText).not.toContain("Unknown");
       expect(visibleText).not.toContain("Running");

@@ -332,7 +332,7 @@ describe("background task metadata", () => {
 });
 
 describe("sidebarThreadTitle", () => {
-  it("titles issue workers by issue, then by role, then by where a role-less thread works", () => {
+  it("titles issue workers by issue, else by the role the thread works as", () => {
     const top = { relationshipToParent: null } as const;
     const child = { relationshipToParent: "subagent" } as const;
     const issue = { number: 42, title: "Fix login" } as ThreadLinkedIssue;
@@ -341,15 +341,21 @@ describe("sidebarThreadTitle", () => {
       lineage: { readonly relationshipToParent: "subagent" | "fork" | null },
       worktreePath: string | null = null,
       linkedIssue?: ThreadLinkedIssue,
-    ) => sidebarThreadTitle({ role, lineage, worktreePath, linkedIssue });
+    ) =>
+      sidebarThreadTitle({
+        role,
+        lineage,
+        branch: worktreePath === null ? null : "t3/x",
+        worktreePath,
+        linkedIssue,
+      });
     expect(title("implementor", child, "/wt/x", issue)).toBe("#42 Fix login");
     expect(title("checker", child)).toBe("Checker");
-    expect(title(undefined, top)).toBe("Main");
-    expect(title(undefined, child)).toBe("Subagent");
-    // A fork is a top-level thread of its own.
-    expect(title(undefined, { relationshipToParent: "fork" })).toBe("Main");
-    // Implementors are the agents given worktrees; an explicit role still wins there.
-    expect(title(undefined, child, "/wt/x")).toBe("Implementor");
+    // A role-less thread the user starts outside a worktree, or forks there, is an Orchestrator.
+    expect(title(undefined, top)).toBe("Orchestrator");
+    expect(title(undefined, { relationshipToParent: "fork" })).toBe("Orchestrator");
+    // Role-less child agents and threads in worktrees are Implementors; a stored role still wins.
+    expect(title(undefined, child)).toBe("Implementor");
     expect(title(undefined, top, "/wt/x")).toBe("Implementor");
     expect(title("reviewer", child, "/wt/x")).toBe("Reviewer");
   });

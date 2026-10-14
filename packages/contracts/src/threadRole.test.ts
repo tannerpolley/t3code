@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { nativeSubagentRole } from "./threadRole.ts";
+import { effectiveThreadRole, nativeSubagentRole } from "./threadRole.ts";
 
 describe("nativeSubagentRole", () => {
   it.each([
@@ -31,16 +31,34 @@ describe("nativeSubagentRole", () => {
     ["default", "implementor"],
     ["general-purpose", "implementor"],
     ["General-Purpose", "implementor"],
-    ["task-manager", undefined],
+    ["task-manager", "implementor"],
     ["default-reviewer", "reviewer"],
-    // Unmappable types stay role-less.
-    ["Plan", undefined],
-    ["claude", undefined],
-    ["statusline-setup", undefined],
+    // Other named types are Implementors; a missing type stays open for a later frame.
+    ["Plan", "implementor"],
+    ["claude", "implementor"],
+    ["statusline-setup", "implementor"],
     ["", undefined],
     [null, undefined],
     [undefined, undefined],
   ] as const)("maps %j to %s", (agentType, role) => {
     expect(nativeSubagentRole(agentType)).toBe(role);
+  });
+});
+
+describe("effectiveThreadRole", () => {
+  const thread = (
+    relationshipToParent: "fork" | "subagent" | null,
+    branch: string | null = null,
+    worktreePath: string | null = null,
+  ) => ({ branch, worktreePath, lineage: { relationshipToParent } });
+
+  it("defaults user-started threads to Orchestrator and agents or worktree threads to Implementor", () => {
+    expect(effectiveThreadRole(thread(null))).toBe("orchestrator");
+    expect(effectiveThreadRole(thread("fork"))).toBe("orchestrator");
+    // A Scratch thread's own folder has no branch and is not a worktree.
+    expect(effectiveThreadRole(thread(null, null, "/scratch/notes"))).toBe("orchestrator");
+    expect(effectiveThreadRole(thread(null, "t3/x", "/wt/x"))).toBe("implementor");
+    expect(effectiveThreadRole(thread("subagent"))).toBe("implementor");
+    expect(effectiveThreadRole({ ...thread("subagent"), role: "reviewer" })).toBe("reviewer");
   });
 });

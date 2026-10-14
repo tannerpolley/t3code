@@ -8,7 +8,7 @@ import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { supportsManagedIssueWork, managedIssueProviderError } from "../issues/IssueEligibility.ts";
 import { deriveIssueWorkStatus } from "../issues/IssueWorkStatus.ts";
 import { issueCloseoutEffect } from "../issues/IssueCommentEffects.ts";
-import { issueThreadTitle, worktreeRole } from "@t3tools/contracts";
+import { effectiveThreadRole, issueThreadTitle, worktreeRole } from "@t3tools/contracts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -7146,7 +7146,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ordinal: parentProjection.subagents.length + 1,
             })
           : issueThreadTitle(request.issue);
-      const childThread: OrchestrationV2AppThread = {
+      const childThreadFields: OrchestrationV2AppThread = {
         ...makeSubagentChildThread({
           parentThread: parentProjection.thread,
           childThreadId,
@@ -7163,6 +7163,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runtimeMode: request.runtimeMode,
         interactionMode: request.interactionMode,
         ...issueWork.childWorkspaceFields(request),
+      };
+      // A child's default role does not depend on where it works, so it is stored now.
+      const childThread: OrchestrationV2AppThread = {
+        ...childThreadFields,
+        role: effectiveThreadRole(childThreadFields),
       };
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,

@@ -4,6 +4,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import { fileBasename } from "@t3tools/shared/path";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import {
+  effectiveThreadRole,
   isProviderNativeSubagentThread,
   THREAD_ROLE_LABELS,
   type OrchestrationV2PendingBackgroundTask,
@@ -19,11 +20,7 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import type { SidebarThreadSummary } from "../../types";
-import {
-  effectiveThreadRole,
-  resolveSidebarThreadStatus,
-  type SidebarThreadStatus,
-} from "../Sidebar.logic";
+import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 import { shortModelName } from "../chat/providerIconUtils";
 
 type ChildThread = SidebarThreadSummary;
@@ -95,19 +92,16 @@ export function resolveSidebarThreadModelLabel(
 }
 
 /**
- * What a thread row is titled instead of its task name: an issue worker's issue, else the thread's
- * role (a role-less thread in a worktree is an Implementor), else Main for a top-level thread or
- * Subagent for a child. The name shows on hover.
+ * What a thread row is titled instead of its task name: an issue worker's issue, else the role it
+ * works as, the same one its role icon shows. The name shows on hover.
  */
 export function sidebarThreadTitle(
-  thread: Pick<OrchestrationV2ThreadShell, "role" | "linkedIssue" | "worktreePath"> & {
+  thread: Pick<OrchestrationV2ThreadShell, "role" | "linkedIssue" | "branch" | "worktreePath"> & {
     readonly lineage: Pick<OrchestrationV2ThreadShell["lineage"], "relationshipToParent">;
   },
 ): string {
   if (thread.linkedIssue) return `#${thread.linkedIssue.number} ${thread.linkedIssue.title}`;
-  const role = effectiveThreadRole(thread);
-  if (role) return THREAD_ROLE_LABELS[role];
-  return thread.lineage.relationshipToParent === "subagent" ? "Subagent" : "Main";
+  return THREAD_ROLE_LABELS[effectiveThreadRole(thread)];
 }
 
 /**

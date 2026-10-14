@@ -120,10 +120,9 @@ function WorkflowMemberRow({
             effort={shortModelSelectionEffort(member.effort ?? null)}
             name={
               <span>
-                {sidebarThreadName(
-                  member.title,
-                  thread ? sidebarThreadTitle(thread.source) : "Subagent",
-                )}
+                {thread
+                  ? sidebarThreadName(member.title, sidebarThreadTitle(thread.source))
+                  : member.title}
                 <span className="sr-only">
                   Status: {threadRelationshipStatusLabel(member.status)}
                 </span>

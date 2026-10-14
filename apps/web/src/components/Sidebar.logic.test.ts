@@ -2566,11 +2566,17 @@ describe("thread locations", () => {
     id: string,
     worktreePath: string | null,
     role?: "orchestrator" | "implementor" | "reviewer",
+    relationshipToParent: "subagent" | null = null,
   ) => ({
     id: ThreadId.make(id),
     environmentId: localEnvironmentId,
     worktreePath,
-    source: { role },
+    source: {
+      role,
+      branch: worktreePath === null ? null : `t3/${id}`,
+      worktreePath,
+      lineage: { parentThreadId: null, relationshipToParent, rootThreadId: ThreadId.make(id) },
+    },
   });
   const keyOf = (thread: { readonly id: ThreadId }) =>
     scopedThreadKey(scopeThreadRef(localEnvironmentId, thread.id));
@@ -2606,15 +2612,16 @@ describe("thread locations", () => {
 
   it("leads the main checkout with its orchestrator and a worktree with its implementor", () => {
     const leads = resolveLocationLeads([
+      // A role-less child is an implementor; a role-less top-level thread there is the orchestrator.
+      { thread: at("helper", null, undefined, "subagent"), topLevel: false },
       { thread: at("main", null), topLevel: true },
-      { thread: at("helper", null), topLevel: false },
       { thread: at("orchestrator", null, "orchestrator"), topLevel: true },
       // A role-less agent in a worktree counts as its implementor; a reviewer there does not lead.
       { thread: at("reviewer", "/wt/x", "reviewer"), topLevel: true },
       { thread: at("worker", "/wt/x"), topLevel: false },
       { thread: at("implementor", "/wt/x", "implementor"), topLevel: false },
     ]);
-    expect([...leads.values()].map((thread) => thread.id)).toEqual(["orchestrator", "worker"]);
+    expect([...leads.values()].map((thread) => thread.id)).toEqual(["main", "worker"]);
   });
 });
 

@@ -244,11 +244,8 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   className="min-w-0 flex-1 truncate"
                   command={row.kind === "subagent" ? undefined : row.command}
                 >
-                  {row.kind === "subagent"
-                    ? sidebarThreadName(
-                        row.label,
-                        row.child ? sidebarThreadTitle(row.child.source) : "Subagent",
-                      )
+                  {row.kind === "subagent" && row.child
+                    ? sidebarThreadName(row.label, sidebarThreadTitle(row.child.source))
                     : row.label}
                 </RowLabel>
                 {row.kind === "subagent" ? null : usage}
