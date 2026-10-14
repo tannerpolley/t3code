@@ -2255,41 +2255,58 @@ const make = Effect.gen(function* () {
         // ThreadManagementService.dispatch is the chokepoint for this command
         // type's own enablement check, using the same command id and its
         // receipt-replay exemption, so no separate assert runs here.
-        const workspace = yield* resolveDelegatedWorkspace({ parent, input, commandId });
+        const workspace =
+          linkedIssue === undefined
+            ? yield* resolveDelegatedWorkspace({ parent, input, commandId })
+            : {};
         const withNote = (result: OrchestratorMcpDelegateTaskResult) =>
           workspace.note === undefined ? result : { ...result, workspaceNote: workspace.note };
-        const result = yield* threadManagement
-          .dispatch({
-            type: "delegated_task.request",
-            ...(linkedIssue === undefined ? {} : { issue: linkedIssue }),
-            createdBy: "agent",
-            creationSource: "mcp",
-            commandId,
-            parentThreadId: scope.thread.threadId,
-            parentRunId: parentRun.id,
-            parentNodeId: parentRun.rootNodeId,
-            task: taskPrompt(input),
-            ...(input.role === undefined ? {} : { role: resolveThreadRole(input.role)! }),
-            ...(input.title === undefined ? {} : { title: input.title }),
-            modelSelection: target.modelSelection,
-            runtimeMode,
-            interactionMode,
-            // Async delegations wake the parent on every child terminal; wait
-            // delegations deliver through the blocking tool call, so a wake is
-            // only needed if the parent settled first (timeout, disconnect).
-            completionWake: input.mode === "wait" ? "settled_only" : "always",
-            ...(workspace.worktree === undefined ? {} : { worktree: workspace.worktree }),
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              error._tag === "ThreadManagementProviderInstanceDisabledError"
-                ? threadManagementFailure(error)
-                : failure(
-                    "orchestration_error",
-                    `Unable to create delegated task: ${errorMessage(error)}`,
-                  ),
-            ),
+        const taskCommand = {
+          type: "delegated_task.request",
+          ...(linkedIssue === undefined ? {} : { issue: linkedIssue }),
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId,
+          parentThreadId: scope.thread.threadId,
+          parentRunId: parentRun.id,
+          parentNodeId: parentRun.rootNodeId,
+          task: taskPrompt(input),
+          ...(input.role === undefined ? {} : { role: resolveThreadRole(input.role)! }),
+          ...(input.title === undefined ? {} : { title: input.title }),
+          modelSelection: target.modelSelection,
+          runtimeMode,
+          interactionMode,
+          // Async delegations wake the parent on every child terminal; wait
+          // delegations deliver through the blocking tool call, so a wake is
+          // only needed if the parent settled first (timeout, disconnect).
+          completionWake: input.mode === "wait" ? "settled_only" : "always",
+          ...(workspace.worktree === undefined ? {} : { worktree: workspace.worktree }),
+        } satisfies Extract<
+          import("@t3tools/contracts").OrchestrationV2ServerCommand,
+          { type: "delegated_task.request" }
+        >;
+        if (linkedIssue !== undefined && Option.isNone(issueWork))
+          return yield* failure(
+            "orchestration_error",
+            "Issue-managed delegation is unavailable on this server.",
+
           );
+        const result = yield* linkedIssue !== undefined && Option.isSome(issueWork)
+          ? issueWork.value
+              .startWorker(taskCommand)
+              .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)))
+          : threadManagement
+              .dispatch(taskCommand)
+              .pipe(
+                Effect.mapError((error) =>
+                  error._tag === "ThreadManagementProviderInstanceDisabledError"
+                    ? threadManagementFailure(error)
+                    : failure(
+                        "orchestration_error",
+                        `Unable to create delegated task: ${errorMessage(error)}`,
+                      ),
+                ),
+              );
         const taskEvent = result.storedEvents.find(
           (stored) =>
             stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
@@ -2302,7 +2319,7 @@ const make = Effect.gen(function* () {
         }
         const taskId = taskEvent.event.payload.id;
         const childThreadId = taskEvent.event.payload.childThreadId;
-        if (childThreadId !== null) {
+        if (childThreadId !== null && linkedIssue === undefined) {
           // A worktree child's first run waits in "preparing" until the same
           // preparation a worktree launch uses creates, binds and sets up its
           // worktree, then releases it; a failure there fails the child's run.

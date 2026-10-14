@@ -1,7 +1,7 @@
 import {
   CommandId,
+  type OrchestrationV2ServerCommand,
   DEFAULT_REPOSITORY_WORK_SETTINGS,
-  MessageId,
   IssueWorkError,
   type IssueRef,
   type IssueWorkStartInput,
@@ -23,6 +23,8 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import type { OrchestratorV2DispatchResult } from "../orchestration-v2/Orchestrator.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
@@ -62,6 +64,12 @@ export class IssueWorkService extends Context.Service<
     readonly start: (
       input: IssueWorkStartInput,
     ) => Effect.Effect<IssueWorkStartResult, IssueWorkError>;
+    readonly startWorker: (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { type: "issue.work.start" | "delegated_task.request" }
+      >,
+    ) => Effect.Effect<OrchestratorV2DispatchResult, IssueWorkError>;
     /** User-only recovery. Cancellation never interrupts a claimed worker. */
     readonly cancelRequest: (
       input: IssueWorkCancelInput,
@@ -359,6 +367,62 @@ export const layer = Layer.effect(
         return { root, selection, createdRoot };
       });
 
+    // All issue entry points share repository workspace policy and post-commit preparation.
+    const startWorker: IssueWorkService["Service"]["startWorker"] = Effect.fn(
+      "IssueWorkService.startWorker",
+    )(function* (command) {
+      if (command.issue === undefined)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Managed workers require an issue.",
+        });
+      const owner = yield* store.repositoryOwner(command.issue);
+      const config = owner === null ? null : yield* store.configuration(owner.rootThreadId);
+      if (owner === null || config === null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "The repository orchestrator is unavailable.",
+        });
+      let worktree: { baseRef: string; branch: string } | undefined;
+      if (config.workspace === "worktree" && !(yield* threads.hasReceipt(command.commandId))) {
+        const baseRef = yield* launch
+          .readDefaultBranch({ commandId: command.commandId, projectId: config.projectId })
+          .pipe(Effect.mapError(mapError));
+        const suffix = (yield* randomUuidV4).replaceAll("-", "");
+        worktree = { baseRef, branch: `t3/issue-${command.issue.number}-${suffix}` };
+      }
+      const dispatched = yield* threads
+        .dispatch({
+          ...command,
+          worktree,
+          ...(command.type === "issue.work.start" ? { workspace: config.workspace } : {}),
+        })
+        .pipe(Effect.mapError(mapError));
+      const childId = dispatched.storedEvents.find(
+        (stored) => stored.event.type === "subagent.updated",
+      )?.event;
+      if (childId?.type === "subagent.updated" && childId.payload.childThreadId !== null) {
+        const child = yield* threads
+          .getThreadRecords(childId.payload.childThreadId, ["runs"])
+          .pipe(Effect.mapError(mapError));
+        const run = child.runs.find(
+          (candidate) =>
+            candidate.status === "preparing" && candidate.workspacePreparation !== undefined,
+        );
+        if (run?.workspacePreparation !== undefined)
+          yield* launch
+            .prepareDeferredRun({
+              commandId: run.workspacePreparationCommandId ?? command.commandId,
+              projectId: config.projectId,
+              threadId: child.thread.id,
+              runId: run.id,
+              workspaceStrategy: run.workspacePreparation,
+            })
+            .pipe(Effect.mapError(mapError));
+      }
+      return dispatched;
+    });
+
     const start = (
       input: IssueWorkStartInput,
     ): Effect.Effect<IssueWorkStartResult, IssueWorkError> =>
@@ -455,18 +519,16 @@ export const layer = Layer.effect(
             message:
               "The registered repository orchestrator is unavailable. Restore it to resume issue work.",
           });
-        const dispatched = yield* threads
-          .dispatch({
-            type: "issue.work.start",
-            commandId: input.clientRequestId,
-            threadId: root.rootThreadId,
-            issue,
-            workerModelSelection: selection,
-            workspace: input.workspace,
-            createdBy: "user",
-            creationSource: "web",
-          })
-          .pipe(Effect.mapError(mapError));
+        const dispatched = yield* startWorker({
+          type: "issue.work.start",
+          commandId: input.clientRequestId,
+          threadId: root.rootThreadId,
+          issue,
+          workerModelSelection: selection,
+          workspace: input.workspace,
+          createdBy: "user",
+          creationSource: "web",
+        }).pipe(Effect.mapError(mapError));
         const requestEvent = dispatched.storedEvents.find(
           (stored) => stored.event.type === "issue.work.requested",
         );
@@ -688,49 +750,34 @@ export const layer = Layer.effect(
             // The parent's last attempt drained under a retired root. Start its successor here;
             // this request is delivered once that successor owns the parent.
             if ((yield* store.issueOwner(parent)) !== null)
-              yield* threads
-                .dispatch({
-                  type: "issue.work.start",
-                  commandId: CommandId.make(
-                    `issue-ancestor-successor:${request.requestId}:${rootThreadId}:${config.revision}`,
-                  ),
-                  threadId: rootThreadId,
-                  issue: parent,
-                  workerModelSelection: request.modelSelection,
-                  workspace: request.workspace,
-                  createdBy: "agent",
-                  creationSource: "server",
-                })
-                .pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("Could not start the successor parent attempt", { cause }),
-                  ),
-                );
+              yield* startWorker({
+                type: "issue.work.start",
+                commandId: CommandId.make(
+                  `issue-ancestor-successor:${request.requestId}:${rootThreadId}:${config.revision}`,
+                ),
+                threadId: rootThreadId,
+                issue: parent,
+                workerModelSelection: request.modelSelection,
+                workspace: request.workspace,
+                createdBy: "agent",
+                creationSource: "server",
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not start the successor parent attempt", { cause }),
+                ),
+              );
             continue;
           }
-          const issueArgument = yield* encodeToolArgument(request.issue).pipe(
-            Effect.mapError(mapError),
-          );
-          const targetArgument = yield* encodeToolArgument({
-            providerInstanceId: request.modelSelection.instanceId,
-            model: request.modelSelection.model,
-            ...(request.modelSelection.options === undefined
-              ? {}
-              : { options: request.modelSelection.options }),
-          }).pipe(Effect.mapError(mapError));
-          yield* threads
-            .sendToThread({
-              projectId: config.projectId,
-              threadId: parentOwner,
-              commandId: CommandId.make(`issue-parent-start:${request.requestId}:${parentOwner}`),
-              messageId: MessageId.make(`issue-parent-start:${request.requestId}:${parentOwner}`),
-              text: `Start your authorized sub-issue #${request.issue.number}: ${request.issue.title}\n${request.issue.url}\nDelegate through delegate_task with issue=${issueArgument}, mode=async, workspace=${request.workspace === "worktree" ? "worktree" : "inherit"}, target=${targetArgument}. Finish your turn while children work.`,
-              attachments: [],
-              mode: "queue",
-              createdBy: "agent",
-              creationSource: "server",
-            })
-            .pipe(Effect.mapError(mapError));
+          yield* startWorker({
+            type: "issue.work.start",
+            commandId: CommandId.make(`issue-parent-start:${request.requestId}:${parentOwner}`),
+            threadId: rootThreadId,
+            issue: request.issue,
+            workerModelSelection: request.modelSelection,
+            workspace: config.workspace,
+            createdBy: "agent",
+            creationSource: "server",
+          });
         }
         yield* threads
           .dispatch({
@@ -1261,6 +1308,7 @@ export const layer = Layer.effect(
           };
         }),
       start: (input) => start(input),
+      startWorker,
       cancelRequest,
       restoreRoot,
       workMilestone,

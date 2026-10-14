@@ -170,7 +170,7 @@ export type OrchestratorMcpTerminalDelegatedTaskStatus =
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   issue: Schema.optional(IssueRef).annotate({
     description:
-      "Required for repository-managed children. Identifies the GitHub issue this child owns.",
+      "Required for repository-managed children. Starts or claims this eligible GitHub issue directly; an existing current worker is reused.",
   }),
   task: OrchestratorMcpPrompt.annotate({
     description: "Self-contained task for one delegated child agent/subagent.",
@@ -197,7 +197,8 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   workspace: Schema.optional(
     Schema.Literals(["inherit", "worktree"]).annotate({
       description:
-        "Defaults to worktree for Implementor, inherit for Orchestrator, Reviewer, Investigator and Checker. Legacy general also inherits. inherit keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's branch, or the branch its checkout is on (local commits; uncommitted changes are not copied), with the project's setup script run before the child starts. Explicit workspace always overrides the role default.",
+        "Managed issue workers use the repository workspace setting regardless of this argument, with new worktrees cut from the default branch. For other tasks, defaults to worktree for Implementor, inherit for Orchestrator, Reviewer, Investigator and Checker. Legacy general also inherits. inherit keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's branch, or the branch its checkout is on (local commits; uncommitted changes are not copied), with the project's setup script run before the child starts. Explicit workspace always overrides the role default.",
+
     }),
   ),
 });

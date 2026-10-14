@@ -3255,6 +3255,9 @@ export const OrchestrationV2Command = Schema.Union([
     issue: ThreadLinkedIssue,
     workerModelSelection: ModelSelection,
     workspace: Schema.Literals(["project", "worktree"]),
+    worktree: Schema.optional(
+      Schema.Struct({ baseRef: TrimmedNonEmptyString, branch: TrimmedNonEmptyString }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),

@@ -205,6 +205,10 @@ export class ThreadLaunchService extends Context.Service<
       readonly projectId: ProjectId;
       readonly worktreePath: string | null;
     }) => Effect.Effect<string | null, ThreadLaunchError>;
+    readonly readDefaultBranch: (input: {
+      readonly commandId: CommandId;
+      readonly projectId: ProjectId;
+    }) => Effect.Effect<string, ThreadLaunchError>;
     /** Dispatches prepared-run.retry and prepares the run's workspace again. */
     readonly retryPreparation: (input: ThreadLaunchRetryInput) => Effect.Effect<
       Orchestrator.OrchestratorV2DispatchResult,
@@ -1116,6 +1120,25 @@ const make = Effect.gen(function* () {
     checkWorktreeBase,
     prepareDeferredRun: (input) => ensurePreparation(input, input.threadId, input.runId),
     readCheckoutBranch,
+    readDefaultBranch: Effect.fn("ThreadLaunchService.readDefaultBranch")(function* (input) {
+      const project = yield* projects
+        .getById(input.projectId)
+        .pipe(Effect.mapError(mapError(input, "resolve-project")));
+      if (Option.isNone(project))
+        return yield* mapError(input, "resolve-project")("Project no longer exists.");
+      const refs = yield* git
+        .listRefs({ cwd: project.value.workspaceRoot })
+        .pipe(Effect.mapError(mapError(input, "read-branch")));
+      const base = refs.refs.find((ref) => ref.isDefault);
+      if (base === undefined)
+        return yield* mapError(
+          input,
+          "read-branch",
+        )("The repository default branch is unavailable.");
+      return base.isRemote && base.remoteName !== undefined
+        ? base.name.slice(base.remoteName.length + 1)
+        : base.name;
+    }),
     retryPreparation,
   });
 });
