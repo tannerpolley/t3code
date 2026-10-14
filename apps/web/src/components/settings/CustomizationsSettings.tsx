@@ -96,6 +96,13 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
       "When onboarding imports projects you used with Codex, preview their Codex trust level and offer to apply it as the project's runtime mode.",
   },
   {
+    key: "lineageInDetails",
+    searchId: "lineage-in-details",
+    section: "lineage",
+    description:
+      "List the thread's Lineage (parent, subagents and forks) in the thread details pane. Off hides the section there; Projects in the sidebar still shows the same agents.",
+  },
+  {
     key: "threadDetailsRedesign",
     searchId: "thread-details-redesign",
     section: "lineage",

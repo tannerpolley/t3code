@@ -499,6 +499,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["running command process spawned worker python cpu memory experimental"],
   },
   {
+    id: "lineage-in-details",
+    title: "Show Lineage in thread details",
+    to: "/settings/customizations",
+    searchTerms: ["customization fork lineage thread details pane hide subagent parent"],
+  },
+  {
     id: "thread-details-redesign",
     title: "Redesigned Lineage",
     to: "/settings/customizations",

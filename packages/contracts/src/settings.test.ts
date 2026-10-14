@@ -1340,6 +1340,9 @@ describe("fork sidebar preferences", () => {
       "autoOrganizeByFolder",
     );
   });
+  it("hides Lineage in the thread details pane by default", () => {
+    expect(decodeClientSettings({}).lineageInDetails).toBe(false);
+  });
   it("retains existing persisted settings through snapshots, encoding, and patches", () => {
     const input = {
       projectsView: false,
@@ -1351,6 +1354,7 @@ describe("fork sidebar preferences", () => {
       revealOpenThreadInSidebar: false,
       lineageDetailsExpanded: true,
       lineageAutoClearMinutes: 5,
+      lineageInDetails: true,
     };
     expect(encodeClientSettings(decodeClientSettings(input))).toMatchObject(input);
     expect(decodeClientSettingsPatch(input)).toEqual(input);

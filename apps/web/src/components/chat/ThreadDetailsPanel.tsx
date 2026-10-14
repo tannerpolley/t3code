@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 
 import type { DraftId } from "../../composerDraftStore";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
@@ -70,6 +71,7 @@ export interface ThreadDetailsPanelProps extends Pick<
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+  const showLineage = useClientSettings((settings) => settings.lineageInDetails);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
@@ -192,10 +194,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 environmentId={props.environmentId}
                 threadId={props.threadId}
               />
-              <ThreadRelationshipsPanel
-                environmentId={props.environmentId}
-                threadId={props.threadId}
-              />
+              {showLineage ? (
+                <ThreadRelationshipsPanel
+                  environmentId={props.environmentId}
+                  threadId={props.threadId}
+                />
+              ) : null}
             </div>
           ) : null}
         </>
