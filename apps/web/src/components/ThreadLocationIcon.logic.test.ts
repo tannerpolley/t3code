@@ -2,25 +2,46 @@ import { describe, expect, it } from "vite-plus/test";
 import { threadLocation } from "./ThreadLocationIcon.logic";
 
 describe("threadLocation", () => {
-  it("names the environment and folder for cloud even in the primary environment", () => {
+  it("names the main checkout or the worktree, then the branch", () => {
+    expect(
+      threadLocation({
+        remote: false,
+        environmentName: "Desktop",
+        worktreePath: null,
+        branch: "main",
+      }),
+    ).toEqual({ kind: "checkout", label: "Local · main" });
+    expect(
+      threadLocation({
+        remote: false,
+        environmentName: "Desktop",
+        worktreePath: "C:\\work\\feature\\",
+        branch: "t3/feature",
+      }),
+    ).toEqual({ kind: "worktree", label: "Worktree feature · t3/feature" });
+    // An unknown branch leaves the location alone.
+    expect(
+      threadLocation({ remote: false, environmentName: "Desktop", worktreePath: "/work/feature" }),
+    ).toEqual({ kind: "worktree", label: "Worktree feature" });
+  });
+  it("leads with the environment elsewhere, including cloud in the primary environment", () => {
+    expect(
+      threadLocation({
+        remote: true,
+        environmentName: "Laptop",
+        worktreePath: "/work/feature",
+        branch: "t3/feature",
+      }),
+    ).toEqual({ kind: "environment", label: "Laptop · Worktree feature · t3/feature" });
     expect(
       threadLocation({
         remote: false,
         machine: "cloud",
         environmentName: "Cloud",
         worktreePath: null,
-        projectRoot: "/work/aurora-web",
         branch: "main",
       }),
-    ).toEqual({ kind: "environment", label: "Cloud · aurora-web" });
-    expect(
-      threadLocation({
-        remote: true,
-        machine: "desktop",
-        environmentName: "Laptop",
-        worktreePath: "/work/feature",
-      }),
-    ).toEqual({ kind: "environment", label: "Laptop · feature (worktree)" });
+    ).toEqual({ kind: "environment", label: "Cloud · Local · main" });
   });
   it("marks a worktree while preparation has not bound its path", () => {
     expect(
@@ -29,41 +50,8 @@ describe("threadLocation", () => {
         environmentName: "Desktop",
         preparingWorktree: true,
         worktreePath: null,
-        projectRoot: "/work/aurora-web",
-        branch: "feature",
-      }),
-    ).toEqual({ kind: "worktree", label: "Preparing worktree" });
-  });
-  it("names the local folder and branch of checkouts and worktrees", () => {
-    expect(
-      threadLocation({
-        remote: false,
-        environmentName: "Desktop",
-        worktreePath: null,
-        projectRoot: "/work/aurora-web/",
-        branch: "main",
-      }),
-    ).toEqual({ kind: "checkout", label: "aurora-web · main" });
-    expect(
-      threadLocation({
-        remote: false,
-        environmentName: "Desktop",
-        worktreePath: "C:\\work\\feature",
-        projectRoot: "C:\\work\\aurora-web",
         branch: "t3/feature",
       }),
-    ).toEqual({ kind: "worktree", label: "feature (worktree) · t3/feature" });
-    // An unknown branch leaves the folder; an unknown project leaves the environment.
-    expect(
-      threadLocation({
-        remote: false,
-        environmentName: "Desktop",
-        worktreePath: "/work/feature/",
-        branch: null,
-      }),
-    ).toEqual({ kind: "worktree", label: "feature (worktree)" });
-    expect(
-      threadLocation({ remote: false, environmentName: "Desktop", worktreePath: null }),
-    ).toEqual({ kind: "checkout", label: "Desktop" });
+    ).toEqual({ kind: "worktree", label: "Preparing worktree" });
   });
 });

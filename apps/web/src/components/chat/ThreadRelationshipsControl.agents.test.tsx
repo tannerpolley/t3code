@@ -50,7 +50,6 @@ vi.mock("../../state/entities", () => ({
   useProjects: () => state.projects,
   useServerConfigs: () => state.configs,
   useThreadShell: () => null,
-  useProject: () => null,
 }));
 vi.mock("../../lib/archivedThreadsState", () => ({
   useArchivedThreadSnapshots: () => ({ snapshots: [] }),
@@ -1189,7 +1188,8 @@ it("shows readable models and only differing workspace details in agent tooltips
   await rerender();
   expect(text()).toContain("Branch");
   expect(text()).toContain("fix/checker");
-  expect(text()).not.toContain("Worktree");
+  // The details name the branch instead of the worktree; the location hover still names both.
+  expect(text()).not.toContain("Worktreechecker");
   expect(text()).not.toContain("/main/worktrees");
 
   child.projectId = "other";

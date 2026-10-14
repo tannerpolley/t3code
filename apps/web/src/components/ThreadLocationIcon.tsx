@@ -1,6 +1,4 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { FolderGit2Icon, FolderIcon } from "lucide-react";
-import { useProject } from "../state/entities";
 import {
   useEnvironmentIdentities,
   useEnvironmentMachines,
@@ -15,17 +13,13 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 export function ThreadLocationIcon({
   thread,
 }: {
-  readonly thread: Pick<
-    SidebarThreadSummary,
-    "environmentId" | "projectId" | "worktreePath" | "branch"
-  > & {
+  readonly thread: Pick<SidebarThreadSummary, "environmentId" | "worktreePath" | "branch"> & {
     readonly source?: SidebarThreadSummary["source"];
   };
 }) {
   const identities = useEnvironmentIdentities();
   const machines = useEnvironmentMachines();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const project = useProject(scopeProjectRef(thread.environmentId, thread.projectId));
   const machine = machines.get(thread.environmentId) ?? "desktop";
   const environmentName = identities.find(
     (entry) => entry.environmentId === thread.environmentId,
@@ -36,7 +30,6 @@ export function ThreadLocationIcon({
     machine,
     environmentName: environmentName ?? (remote ? "Remote environment" : "Local checkout"),
     worktreePath: thread.worktreePath,
-    projectRoot: project?.workspaceRoot ?? null,
     branch: thread.branch,
     // App-owned worktree children prepare before their path can be bound.
     preparingWorktree:
