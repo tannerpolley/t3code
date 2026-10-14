@@ -2190,3 +2190,48 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 });
+
+it.effect.each([
+  { saved: { autoResumeLimitedThreads: true }, mode: "wait", resume: true, snooze: false },
+  { saved: { snoozeLimitedThreads: true }, mode: "wait", resume: false, snooze: true },
+  { saved: {}, mode: "off", resume: false, snooze: false },
+  {
+    saved: { usageLimitRecovery: "off", autoResumeLimitedThreads: true },
+    mode: "off",
+    resume: true,
+    snooze: false,
+  },
+  {
+    saved: { usageLimitRecovery: "unknown", snoozeLimitedThreads: true },
+    mode: "wait",
+    resume: false,
+    snooze: true,
+  },
+])("migrates saved limit recovery tolerantly: %j", (testCase) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const service = yield* ServerSettingsModule.ServerSettingsService;
+    yield* fs.writeFileString(config.settingsPath, JSON.stringify(testCase.saved));
+    const settings = yield* service.getSettings;
+    assert.equal(settings.usageLimitRecovery, testCase.mode);
+    assert.equal(settings.autoResumeLimitedThreads, testCase.resume);
+    assert.equal(settings.snoozeLimitedThreads, testCase.snooze);
+    const changed = yield* service.updateSettings({
+      usageLimitRecovery: "switch",
+      usageLimitFallbackModels: [
+        {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5-5",
+          options: [{ id: "effort", value: "high" }],
+        },
+      ],
+    });
+    assert.isFalse(changed.autoResumeLimitedThreads);
+    assert.isFalse(changed.snoozeLimitedThreads);
+    assert.equal(changed.usageLimitFallbackModels[0]?.options?.[0]?.value, "high");
+    assert.equal((yield* service.getSettings).usageLimitRecovery, "switch");
+    const off = yield* service.updateSettings({ usageLimitRecovery: "off" });
+    assert.equal(off.usageLimitRecovery, "off");
+  }).pipe(Effect.provide(layerServerSettings().pipe(Layer.provideMerge(NodeServices.layer)))),
+);

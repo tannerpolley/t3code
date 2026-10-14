@@ -318,6 +318,7 @@ const PersistedResponseStreamingMode = Schema.Union([
 const ServerSettingsJson = fromLenientJson(
   Schema.Struct({
     ...ServerSettings.fields,
+    usageLimitRecovery: Schema.optionalKey(Schema.Unknown),
     responseStreamingMode: PersistedResponseStreamingMode.pipe(
       Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
     ),
@@ -328,7 +329,25 @@ const ServerSettingsJson = fromLenientJson(
         responseStreamingMode: Schema.optionalKey(PersistedResponseStreamingMode),
       }),
     ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  }),
+  }).pipe(
+    Schema.decodeTo(
+      Schema.toType(ServerSettings),
+      SchemaTransformation.transform({
+        decode: (saved): ServerSettings => ({
+          ...saved,
+          usageLimitRecovery:
+            saved.usageLimitRecovery === "off" ||
+            saved.usageLimitRecovery === "wait" ||
+            saved.usageLimitRecovery === "switch"
+              ? saved.usageLimitRecovery
+              : saved.autoResumeLimitedThreads || saved.snoozeLimitedThreads
+                ? "wait"
+                : "off",
+        }),
+        encode: (settings) => settings,
+      }),
+    ),
+  ),
 );
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
 /**

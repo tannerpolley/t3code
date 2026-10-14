@@ -237,20 +237,32 @@ or interrupted turn manually.
 Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 
-When the provider reports a reset time, choose **Resume at reset** to schedule a
-continuation. You can cancel it from the thread. Enable **Auto-resume limited
-threads** in **Settings → General** on web and desktop, or **Settings → Thread
-behavior** on mobile, to schedule limit stops by default.
-The environment must be running when the reset arrives; it resumes overdue
-continuations after a restart. Sending a new message, archiving, or settling the
-thread prevents a pending continuation from starting.
+On web and desktop, choose **Usage limit recovery** in **Settings → General**:
 
-Choose **Snooze until reset** to hide the thread until its allowance returns.
-Snooze and auto-resume are independent: snooze alone wakes the thread without
-sending a message; enabling both wakes and continues it. **Wake now** cancels
-the snooze. Enable **Snooze limited threads** in thread behavior settings to
-snooze limit stops by default. Providers without a reset time offer manual
-retry and the normal snooze choices.
+- **Off** leaves recovery to you.
+- **Wait for reset** snoozes and continues limited threads when the reported allowance returns.
+- **Switch provider** moves the limited thread between Codex and Claude and sends
+  “Continue where you left off.” with a context handoff. Other threads and children keep running.
+  Switching proceeds without asking, including in Don't ask mode.
+
+A thread with a model role uses that role's available alternatives, ordered by weekly headroom.
+Implementor threads use the profile matching their current model and effort, or the first
+configured Implementor profile if none matches. Threads without a role use the first role
+matching their provider, model, and options; otherwise they use the fallback model configured
+for the alternative provider. Set each fallback's effort separately; efforts are not translated.
+If no alternative is available, the thread says so and waits for reset. Without a reported reset
+time, retry manually.
+
+The thread stays on its new provider after the original allowance returns. Its recovery notice
+has **Switch back** to restore the original model and effort. You can also change the provider
+through the normal model picker.
+
+Choose **Resume at reset** or **Snooze until reset** in an individual thread to override its
+waiting behavior. Snooze and auto-resume remain independent per thread; **Wake now** cancels
+snooze. Existing saved defaults keep their previous resume/snooze behavior under **Wait for reset**.
+Mobile retains its existing thread behavior controls.
+The environment must be running when the reset arrives; it resumes overdue continuations after
+a restart. Sending a new message, archiving, or settling prevents a pending continuation.
 
 On web and desktop, open **Agents** to follow delegated work and **Lineage** to see
 parent and fork relationships. Stop on a thread also stops the subagents it delegated to.

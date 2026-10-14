@@ -4,7 +4,10 @@ import { BackgroundWorkTaskList } from "./chat/BackgroundWorkTaskList";
 import { describeSidebarBackgroundWork } from "./sidebar/SidebarBackgroundWork.logic";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
-import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
+import {
+  automaticProviderSwitchBannerItem,
+  usageLimitRecoveryBannerItem,
+} from "./chat/UsageLimitRecoveryBanner";
 import { IssueChangeCards } from "./issues/IssueChangeCards";
 import {
   resolveBackgroundDraftWorkspaceOptions,
@@ -7920,6 +7923,7 @@ export default function ChatView(props: ChatViewProps) {
     serverRuntime.lastErrorClass === "usage_limit" &&
     activeThreadShell?.latestRun
       ? usageLimitRecoveryBannerItem({
+          mode: settings.usageLimitRecovery,
           runId: activeThreadShell.latestRun.runId,
           resetAt: serverRuntime.usageLimitResetAt ?? null,
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
@@ -7934,8 +7938,29 @@ export default function ChatView(props: ChatViewProps) {
           },
         })
       : null;
+  const switchMarker = activeThreadShell?.autoProviderSwitch;
+  const automaticSwitchBanner =
+    switchMarker &&
+    (switchMarker.to === null
+      ? activeThreadShell?.latestRun?.runId === switchMarker.runId
+      : activeThreadShell?.modelSelection.instanceId === switchMarker.to.instanceId)
+      ? automaticProviderSwitchBannerItem(
+          switchMarker,
+          async (modelSelection) => {
+            if (!activeThreadShell) return;
+            const result = await updateThreadMetadata({
+              environmentId,
+              input: { threadId: activeThreadShell.id, modelSelection },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+          },
+          canOperateThread,
+        )
+      : null;
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
-    const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
+    const limitRecoveryItems = [automaticSwitchBanner, limitRecoveryBanner].filter(
+      (item) => item !== null,
+    );
     const backgroundWorkItems = [
       childInputBannerItem,
       goalBannerItem,
@@ -8008,6 +8033,7 @@ export default function ChatView(props: ChatViewProps) {
     canWriteSourceControl,
     feedbackBannerItems,
     limitRecoveryBanner,
+    automaticSwitchBanner,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     backgroundWorkBannerItem,

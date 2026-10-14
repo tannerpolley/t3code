@@ -439,6 +439,7 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
+    readonly switchProvider?: boolean;
     readonly autoResume: boolean;
     readonly snooze: boolean;
   }) => Effect.Effect<ReadonlyArray<ProjectionLimitRecoveryCandidate>, ProjectionStoreV2Error>;
@@ -1666,6 +1667,7 @@ export function threadShellFromProjection(
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     titleEvaluation: projection.thread.titleEvaluation ?? null,
+    autoProviderSwitch: projection.thread.autoProviderSwitch ?? null,
     limitRecovery: projection.thread.limitRecovery ?? null,
     deletedAt: projection.thread.deletedAt,
   };
@@ -1993,6 +1995,7 @@ function shellFromState(input: {
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     titleEvaluation: input.state.thread.titleEvaluation ?? null,
+    autoProviderSwitch: input.state.thread.autoProviderSwitch ?? null,
     limitRecovery: input.state.thread.limitRecovery ?? null,
     deletedAt: input.state.thread.deletedAt,
   };
@@ -3885,7 +3888,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
-            AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
+            AND ((
+              ${booleanInt(options.switchProvider ?? false)} AND (
+                json_extract(t.payload_json, '$.autoProviderSwitch.runId') IS NOT r.run_id
+                OR json_extract(t.payload_json, '$.autoProviderSwitch.to.instanceId') IS NOT NULL
+                OR (
+                  json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
+                  AND json_extract(t.payload_json, '$.limitRecovery.runId') IS NOT r.run_id
+                )
+              )
+            ) OR (
+            json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
             AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
             AND (
               (
@@ -3908,6 +3921,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   OR (${booleanInt(options.snooze)} AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(${DateTime.formatIso(options.now)}))
                 )
               )
+            )
+            ))
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runs active
+              WHERE active.thread_id = t.thread_id AND active.status IN ('preparing', 'starting', 'running', 'waiting')
             )
             AND NOT EXISTS (
               SELECT 1 FROM orchestration_v2_projection_runtime_requests request

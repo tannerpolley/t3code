@@ -1,3 +1,8 @@
+import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorker.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as Scheduler from "../scheduling/Scheduler.ts";
+import { type ServerProvider, type ModelRole } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -6040,5 +6045,452 @@ it.layer(layerTest)("thread workspace handoffs", (it) => {
           assert.equal(after.providerSessions.length, 0);
         }
       }).pipe(Effect.provide(layerWorkspace())),
+  );
+});
+
+const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+const claudeSelection: ModelSelection = {
+  instanceId: claudeInstanceId,
+  model: "claude-opus-5-5",
+  options: [{ id: "effort", value: "high" }],
+};
+const claudeInstance: ProviderInstance = {
+  ...providerInstance,
+  instanceId: claudeInstanceId,
+  driverKind: ProviderDriverKind.make("claudeAgent"),
+  continuationIdentity: {
+    driverKind: ProviderDriverKind.make("claudeAgent"),
+    continuationKey: "claude:test",
+  },
+  orchestrationAdapter: {
+    ...orchestrationAdapter,
+    instanceId: claudeInstanceId,
+    driver: ProviderDriverKind.make("claudeAgent"),
+  },
+};
+const layerSwitchInstances = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+  getInstance: (id) =>
+    Effect.succeed(
+      [providerInstance, alternateProviderInstance, claudeInstance].find(
+        (instance) => instance.instanceId === id,
+      ),
+    ),
+  listInstances: Effect.succeed([providerInstance, alternateProviderInstance, claudeInstance]),
+  listUnavailable: Effect.succeed([]),
+  streamChanges: Stream.empty,
+  subscribeChanges: Effect.never,
+});
+const layerUsageSwitchTest = Layer.mergeAll(
+  RuntimeLayer.layer,
+  RuntimeLayer.layerEventSink,
+  ProjectStore.layer,
+  ProjectionStore.layer,
+  EffectOutbox.layer,
+  ThreadCommandExecutor.layer,
+).pipe(
+  Layer.provide(McpSessionRegistryTestkit.layer),
+  Layer.provide(McpProviderSessions.layer),
+  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provide(layerCheckpointStoreTest),
+  Layer.provide(layerServerConfig),
+  Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(layerSwitchInstances),
+  Layer.provide(layerGitWorkflowTest),
+  Layer.provide(layerProjectServiceTest),
+  Layer.provide(layerPlatformTest),
+);
+const switchSnapshots: readonly ServerProvider[] = [modelSelection, claudeSelection].map(
+  (selection) => ({
+    instanceId: selection.instanceId,
+    driver: ProviderDriverKind.make(selection.instanceId),
+    displayName: selection.instanceId,
+    enabled: true,
+    installed: true,
+    version: "test",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-13T00:00:00Z",
+    models: [{ slug: selection.model, name: selection.model, isCustom: false, capabilities: null }],
+    slashCommands: [],
+    skills: [],
+  }),
+);
+
+it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => {
+  it.effect.each([
+    "role",
+    "no-role",
+    "off",
+    "wait",
+    "unavailable",
+    "unknown-reset",
+    "restart",
+    "user-race",
+    "reactor",
+    "claude-to-codex",
+    "both-limited",
+  ] as const)("recovers committed failures: %s", (scenario) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make(`auto-switch:${scenario}`);
+      const otherId = ThreadId.make(`auto-switch:${scenario}:other`);
+      const projectId = ProjectId.make(`auto-switch:${scenario}:project`);
+      const source =
+        scenario === "claude-to-codex"
+          ? { ...claudeSelection, options: [{ id: "effort", value: "low" }] }
+          : modelSelection;
+      const target: ModelSelection =
+        scenario === "claude-to-codex" ? modelSelection : claudeSelection;
+      const now = yield* DateTime.now;
+      yield* seedProject({
+        projectId,
+        title: "Provider switch",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: source,
+        createdAt: DateTime.formatIso(now),
+      });
+      for (const id of [threadId, otherId]) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${id}:create`),
+          threadId: id,
+          projectId,
+          title: "Switch test",
+          modelSelection: source,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${id}:start`),
+          threadId: id,
+          messageId: MessageId.make(`${id}:start`),
+          text: "Finish the work",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      const initial = yield* orchestrator.getThreadProjection(threadId);
+      const original = initial.runs[0]!;
+      const resetAt =
+        scenario === "unknown-reset" ? null : DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+      const role: ModelRole = {
+        id: "implementor-thorough",
+        role: "implementor",
+        profile: "thorough",
+        name: "Implementor",
+        description: "",
+        // The source need not match: persisted role must take precedence.
+        targets: [
+          {
+            providerInstanceId: target.instanceId,
+            model: target.model,
+            ...(target.options === undefined ? {} : { options: target.options }),
+          },
+        ],
+      };
+      const settings = {
+        usageLimitRecovery:
+          scenario === "off"
+            ? ("off" as const)
+            : scenario === "wait"
+              ? ("wait" as const)
+              : ("switch" as const),
+        modelRoles: scenario === "role" || scenario === "reactor" ? [role] : [],
+        usageLimitFallbackModels: scenario === "unavailable" ? [] : [target],
+        dontAskMode: true,
+        autoResumeLimitedThreads: scenario === "wait",
+        snoozeLimitedThreads: scenario === "wait",
+      };
+      const workerLayer = UsageLimitProviderSwitchWorker.layer.pipe(
+        Layer.provide(ServerSettings.layerTest(settings)),
+        Layer.provide(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed(switchSnapshots),
+          }),
+        ),
+        Layer.provide(
+          ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+            Layer.provide(layerSwitchInstances),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const worker = yield* UsageLimitProviderSwitchWorker.UsageLimitProviderSwitchWorker;
+        const afterSequence = yield* sink.latestSequence();
+        const continued = yield* Deferred.make<void>();
+        if (scenario === "reactor") {
+          yield* sink.stream({ threadId, afterSequence }).pipe(
+            Stream.runForEach(({ event }) =>
+              event.type === "run.created" && event.payload.providerInstanceId === target.instanceId
+                ? Deferred.succeed(continued, undefined)
+                : Effect.void,
+            ),
+            Effect.forkScoped,
+          );
+          yield* Layer.build(
+            UsageLimitProviderSwitchWorker.workerLive.pipe(
+              Layer.provide(Layer.mock(Scheduler.Scheduler)({ register: () => Effect.void })),
+            ),
+          );
+        }
+        yield* sink.write({
+          commandId: CommandId.make(`${threadId}:failure`),
+          events: [
+            ...(scenario === "role" || scenario === "reactor"
+              ? [
+                  {
+                    id: EventId.make(`${threadId}:role`),
+                    type: "thread.metadata-updated" as const,
+                    threadId,
+                    occurredAt: now,
+                    payload: { ...initial.thread, role: "implementor" as const },
+                  },
+                ]
+              : []),
+            {
+              id: EventId.make(`${threadId}:failed`),
+              type: "run.updated",
+              threadId,
+              runId: original.id,
+              occurredAt: now,
+              payload: { ...original, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make(`${threadId}:error`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`${threadId}:error`),
+                type: "error",
+                threadId,
+                runId: original.id,
+                nodeId: original.rootNodeId,
+                providerThreadId: original.providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Allowance used",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  ...(resetAt === null ? {} : { resetAt }),
+                },
+              },
+            },
+          ],
+        });
+        const otherBefore = yield* orchestrator.getThreadProjection(otherId);
+        const limited = (yield* projections.getThreadShell(threadId))!;
+        if (scenario === "user-race") {
+          // A saved automatic command cannot override a later user-selected model.
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${threadId}:user-change`),
+            threadId,
+            modelSelection: { ...source, model: "user-selected" },
+          });
+          const raced = yield* orchestrator
+            .dispatch({
+              type: "provider.switch",
+              commandId: CommandId.make(`${threadId}:stale-switch`),
+              threadId,
+              modelSelection: target,
+              autoProviderSwitch: {
+                runId: original.id,
+                from: source,
+                to: target,
+                resetAt,
+                message: "Automatic switch",
+              },
+            })
+            .pipe(Effect.result);
+          assert.equal(raced._tag, "Failure");
+          yield* worker.recover(threadId);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection.model,
+            "user-selected",
+          );
+          assert.isNull((yield* projections.getThreadShell(threadId))?.autoProviderSwitch ?? null);
+          return;
+        }
+        if (scenario === "restart") {
+          yield* orchestrator.dispatch({
+            type: "provider.switch",
+            commandId: CommandId.make(`limit-switch:${threadId}:${original.id}`),
+            threadId,
+            modelSelection: target,
+            autoProviderSwitch: {
+              runId: original.id,
+              from: source,
+              to: target,
+              resetAt,
+              message: "Automatic switch",
+            },
+          });
+        }
+        if (scenario === "reactor") yield* Deferred.await(continued);
+        else yield* worker.sweep;
+        const changed = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(yield* orchestrator.getThreadProjection(otherId), otherBefore);
+        if (scenario === "off" || scenario === "wait") {
+          assert.deepEqual(changed.thread.modelSelection, source);
+          assert.isNull(changed.thread.autoProviderSwitch ?? null);
+          assert.equal(changed.runs.length, 1);
+          const recovery = limitRecoveryCommand(
+            limited,
+            settings.autoResumeLimitedThreads,
+            DateTime.toEpochMillis(now),
+            settings.snoozeLimitedThreads,
+          );
+          if (scenario === "off") assert.isNull(recovery);
+          else {
+            assert.isNotNull(recovery);
+            yield* orchestrator.dispatch(recovery!);
+            const armed = (yield* projections.getThreadShell(threadId))!;
+            const resume = limitRecoveryCommand(armed, true, Date.parse(resetAt!));
+            assert.isNotNull(resume);
+            yield* TestClock.adjust("1 hour");
+            yield* orchestrator.dispatch(resume!);
+            assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 2);
+          }
+          return;
+        }
+        if (scenario === "unavailable") {
+          assert.deepEqual(changed.thread.modelSelection, source);
+          assert.equal(changed.thread.autoProviderSwitch?.to, null);
+          assert.include(changed.thread.autoProviderSwitch!.message, "No alternative");
+          assert.isTrue(changed.thread.limitRecovery?.autoResume);
+          assert.isTrue(changed.thread.limitRecovery?.snooze);
+          const armed = (yield* projections.getThreadShell(threadId))!;
+          yield* TestClock.adjust("1 hour");
+          yield* orchestrator.dispatch(limitRecoveryCommand(armed, false, Date.parse(resetAt!))!);
+          assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs.length, 2);
+          return;
+        }
+        assert.deepEqual(changed.thread.modelSelection, target);
+        assert.deepEqual(changed.thread.autoProviderSwitch?.from, source);
+        assert.equal(changed.runs.length, 2);
+        assert.equal(changed.runs[1]?.providerInstanceId, target.instanceId);
+        assert.isTrue(
+          changed.turnItems.some(
+            (item) => item.type === "user_message" && item.text === "Continue where you left off.",
+          ),
+        );
+        const handoffItem = changed.turnItems.find((item) => item.type === "handoff");
+        assert.isDefined(handoffItem);
+        if (handoffItem?.type === "handoff") {
+          assert.include(handoffItem.fromProviderInstanceIds, source.instanceId);
+          assert.equal(handoffItem.toProviderInstanceId, target.instanceId);
+        }
+        assert.isTrue(
+          changed.turnItems.some(
+            (item) =>
+              item.type === "system_notice" &&
+              item.message === changed.thread.autoProviderSwitch?.message,
+          ),
+        );
+        const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+        const marker = changed.thread.autoProviderSwitch!;
+        yield* orchestrator.dispatch({
+          type: "provider.switch",
+          commandId: CommandId.make(`limit-switch:${threadId}:${original.id}`),
+          threadId,
+          modelSelection: target,
+          autoProviderSwitch: marker,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`limit-switch-resume:${threadId}:${original.id}`),
+          messageId: MessageId.make(`limit-switch-resume:${threadId}:${original.id}`),
+          threadId,
+          automaticProviderContinuationOfRunId: original.id,
+          text: "Continue where you left off.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "server",
+        });
+        yield* worker.sweep;
+        yield* worker.recover(threadId);
+        assert.equal(
+          yield* orchestrator.getThreadEventSequence(threadId),
+          sequence,
+          "replay must not switch or continue twice",
+        );
+        if (scenario === "both-limited") {
+          const second = changed.runs[1]!;
+          const error = changed.turnItems.find((item) => item.type === "error")!;
+          if (error.type !== "error") return;
+          yield* sink.write({
+            commandId: CommandId.make(`${threadId}:second-failure`),
+            events: [
+              {
+                id: EventId.make(`${threadId}:second-failed`),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...second, status: "failed", completedAt: now },
+              },
+              {
+                id: EventId.make(`${threadId}:second-error`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...error,
+                  id: TurnItemId.make(`${threadId}:second-error`),
+                  runId: second.id,
+                  nodeId: second.rootNodeId,
+                  providerThreadId: second.providerThreadId,
+                },
+              },
+            ],
+          });
+          yield* worker.recover(threadId);
+          const waiting = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(waiting.thread.modelSelection, target);
+          assert.equal(waiting.thread.autoProviderSwitch?.to, null);
+          assert.equal(
+            waiting.runs.length,
+            2,
+            "both limited providers must wait instead of cycling",
+          );
+          return;
+        }
+        yield* TestClock.adjust("1 hour");
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
+          target,
+          "reset must not switch back",
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${threadId}:switch-back`),
+          threadId,
+          modelSelection: source,
+        });
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
+          source,
+        );
+      }).pipe(Effect.provide(workerLayer));
+    }),
   );
 });

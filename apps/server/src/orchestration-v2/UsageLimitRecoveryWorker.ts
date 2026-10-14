@@ -80,16 +80,16 @@ const makeSweep = Effect.gen(function* () {
     const now = yield* DateTime.now;
     const candidates = yield* projections.getLimitRecoveryCandidates({
       now,
-      autoResume: preferences.autoResumeLimitedThreads,
-      snooze: preferences.snoozeLimitedThreads,
+      autoResume: preferences.usageLimitRecovery === "wait" && preferences.autoResumeLimitedThreads,
+      snooze: preferences.usageLimitRecovery === "wait" && preferences.snoozeLimitedThreads,
     });
     const nowMs = DateTime.toEpochMillis(now);
     for (const thread of candidates) {
       const command = limitRecoveryCommand(
         thread,
-        preferences.autoResumeLimitedThreads,
+        preferences.usageLimitRecovery === "wait" && preferences.autoResumeLimitedThreads,
         nowMs,
-        preferences.snoozeLimitedThreads,
+        preferences.usageLimitRecovery === "wait" && preferences.snoozeLimitedThreads,
       );
       if (command === null) continue;
       yield* threads.dispatch(command).pipe(

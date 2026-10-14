@@ -1,4 +1,7 @@
 import {
+  type ModelSelection,
+  type OrchestrationV2AutoProviderSwitch,
+  type UsageLimitRecoveryMode,
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
   type RunId,
@@ -9,6 +12,7 @@ import { Button } from "../ui/button";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 type RecoveryProps = {
+  mode: UsageLimitRecoveryMode;
   runId: RunId;
   resetAt: string | null;
   stoppedAt: string;
@@ -26,9 +30,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     priority: "urgent",
     icon: <GaugeIcon />,
     title: "Usage limit reached",
-    description: resetAt
-      ? `Resets ${new Date(resetAt).toLocaleString()}`
-      : "Reset time unavailable; retry manually",
+    description: `${props.mode === "off" ? "Automatic recovery is off. " : props.mode === "switch" ? "Automatic provider recovery is enabled. " : "Waiting for reset. "}${resetAt ? `Resets ${new Date(resetAt).toLocaleString()}` : "Reset time unavailable; retry manually"}`,
     actions: canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null,
   };
 }
@@ -90,6 +92,65 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
       ) : null}
       {error ? (
         <p role="alert" className="basis-full text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export function automaticProviderSwitchBannerItem(
+  marker: OrchestrationV2AutoProviderSwitch,
+  onSwitchBack: (selection: ModelSelection) => Promise<void>,
+  canSwitchBack: boolean,
+): ComposerBannerStackItem {
+  return {
+    id: `auto-provider-switch:${marker.runId}`,
+    variant: marker.to === null ? "warning" : "info",
+    priority: "notice",
+    icon: <GaugeIcon />,
+    title: marker.to === null ? "Waiting for reset" : "Provider switched automatically",
+    description: marker.message,
+    actions:
+      marker.to === null ? null : (
+        <SwitchBackAction
+          onSwitchBack={() => onSwitchBack(marker.from)}
+          disabled={!canSwitchBack}
+        />
+      ),
+  };
+}
+
+function SwitchBackAction({
+  onSwitchBack,
+  disabled,
+}: {
+  onSwitchBack: () => Promise<void>;
+  disabled: boolean;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={disabled || pending}
+        onClick={async () => {
+          setPending(true);
+          setError(null);
+          try {
+            await onSwitchBack();
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Could not switch provider.");
+          }
+          setPending(false);
+        }}
+      >
+        {pending ? "Switching..." : "Switch back"}
+      </Button>
+      {error ? (
+        <p role="alert" className="text-xs text-destructive">
           {error}
         </p>
       ) : null}

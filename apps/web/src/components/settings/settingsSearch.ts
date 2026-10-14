@@ -348,16 +348,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sort projects sidebar manual created recent"],
   },
   {
-    id: "snooze-limited-threads",
-    title: "Snooze limited threads",
+    id: "usage-limit-recovery",
+    title: "Usage limit recovery",
     to: "/settings/general",
-    searchTerms: ["usage quota rate limit reset wake recover continue"],
-  },
-  {
-    id: "auto-resume-limited-threads",
-    title: "Auto-resume limited threads",
-    to: "/settings/general",
-    searchTerms: ["usage quota rate limit reset recover continue"],
+    searchTerms: [
+      "auto resume snooze usage quota rate limit reset switch provider fallback model effort recover continue",
+    ],
   },
   {
     id: "working-shelf",

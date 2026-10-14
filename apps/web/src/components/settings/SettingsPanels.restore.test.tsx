@@ -62,11 +62,15 @@ beforeEach(() => {
 
 describe("restoring V2 settings", () => {
   it.each([
-    ["persistComposerContextStrip", "Composer context"],
-    ["autoResumeLimitedThreads", "Auto-resume limited threads"],
-    ["snoozeLimitedThreads", "Snooze limited threads"],
-  ] as const)("restores %s when it is the only changed setting", async (key, label) => {
-    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, [key]: true };
+    ["persistComposerContextStrip", "Composer context", true],
+    ["usageLimitRecovery", "Usage limit recovery", "switch"],
+    [
+      "usageLimitFallbackModels",
+      "Usage limit fallback models",
+      [{ instanceId: "codex", model: "gpt-6.1-sol" }],
+    ],
+  ] as const)("restores %s when it is the only changed setting", async (key, label, value) => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, [key]: value };
     hooks.beginRender();
     const restore = useSettingsRestore();
 
@@ -79,7 +83,7 @@ describe("restoring V2 settings", () => {
   });
 
   it("does not reset settings after cancellation", async () => {
-    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, autoResumeLimitedThreads: true };
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, usageLimitRecovery: "switch" };
     state.confirm.mockResolvedValue(false);
     hooks.beginRender();
 

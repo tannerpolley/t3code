@@ -4,6 +4,7 @@ import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EventStoreCompaction from "./EventStoreCompaction.ts";
 import * as DontAskModeWorker from "./DontAskModeWorker.ts";
+import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorker.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ThreadTitleRefreshWorker from "./ThreadTitleRefreshWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -393,6 +394,17 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,
+  UsageLimitProviderSwitchWorker.workerLive.pipe(
+    Layer.provide(UsageLimitProviderSwitchWorker.layer),
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectionStore.layer,
+        layerThreadManagementProvided,
+        layerProviderAdapterRegistryProvided,
+        layerEventSinkProvided,
+      ),
+    ),
+  ),
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided)),
   ),

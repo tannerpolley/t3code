@@ -1,0 +1,86 @@
+import {
+  resolveThreadRole,
+  type ModelRole,
+  type ModelSelection,
+  type OrchestrationV2AppThread,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
+import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelRoleStatuses } from "../mcp/delegateTaskTarget.ts";
+
+/** Role ownership wins over selection matching. Implementor profiles live in settings. */
+export function usageLimitThreadRole(
+  thread: Pick<OrchestrationV2AppThread, "modelSelection" | "role">,
+  roles: readonly ModelRole[],
+): ModelRole | undefined {
+  const selection = thread.modelSelection;
+  const owned =
+    thread.role === undefined
+      ? roles
+      : roles.filter((role) => (role.role ?? resolveThreadRole(role.id)) === thread.role);
+  const matched = owned.find((role) =>
+    role.targets.some((target) =>
+      modelSelectionsEqual(selection, {
+        instanceId: target.providerInstanceId,
+        model: target.model,
+        ...(target.options === undefined ? {} : { options: target.options }),
+      }),
+    ),
+  );
+  return thread.role === undefined ? matched : (matched ?? owned[0]);
+}
+
+export function usageLimitSwitchTarget(
+  thread: Pick<OrchestrationV2AppThread, "modelSelection" | "role">,
+  settings: Pick<ServerSettings, "modelRoles" | "usageLimitFallbackModels">,
+  providers: readonly ServerProvider[],
+  capableIds: ReadonlySet<ProviderInstanceId>,
+  now: number,
+): ModelSelection | null {
+  const source = providers.find(
+    (provider) => provider.instanceId === thread.modelSelection.instanceId,
+  );
+  if (source?.driver !== "codex" && source?.driver !== "claudeAgent") return null;
+  const role = usageLimitThreadRole(thread, settings.modelRoles);
+  // Reuse the role ranking and its model/option validation for fallback targets too.
+  const fallbackTargets = settings.usageLimitFallbackModels.map((selection) => ({
+    providerInstanceId: selection.instanceId,
+    model: selection.model,
+    ...(selection.options === undefined ? {} : { options: selection.options }),
+  }));
+  const first = fallbackTargets[0];
+  if (!role && !first) return null;
+  const candidates = role ?? {
+    id: "usage-limit-fallback",
+    name: "Usage limit fallback",
+    description: "",
+    targets: [first!, ...fallbackTargets.slice(1)] as const,
+  };
+  const choices = modelRoleStatuses([candidates], providers, capableIds, now)[0]?.targets ?? [];
+  const choice = choices.find((target) => {
+    const provider = providers.find(
+      (provider) => provider.instanceId === target.providerInstanceId,
+    );
+    return (
+      target.unavailableReason === null &&
+      provider !== undefined &&
+      (provider.driver === "codex" || provider.driver === "claudeAgent") &&
+      provider.driver !== source.driver &&
+      target.weeklyUsage?.remainingPercent !== 0 &&
+      !provider.usageLimits?.windows.some(
+        (window) =>
+          window.kind !== "weekly" && window.usedPercent >= 100 && !isUsageWindowStale(window, now),
+      )
+    );
+  });
+  return choice === undefined
+    ? null
+    : {
+        instanceId: choice.providerInstanceId,
+        model: choice.model,
+        ...(choice.options === undefined ? {} : { options: choice.options }),
+      };
+}

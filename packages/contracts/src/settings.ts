@@ -1387,6 +1387,9 @@ function migrateModelRoles(saved: ReadonlyArray<ModelRole>): ReadonlyArray<Model
 export const PROJECT_LOCAL_WORKTREES = "project-local";
 export const PROJECT_WORKTREES_FOLDER = ".worktrees";
 
+export const UsageLimitRecoveryMode = Schema.Literals(["off", "wait", "switch"]);
+export type UsageLimitRecoveryMode = typeof UsageLimitRecoveryMode.Type;
+
 export const ServerSettings = Schema.Struct({
   issueUpkeepRequiresApproval: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -1499,6 +1502,13 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
+  usageLimitRecovery: UsageLimitRecoveryMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("off")),
+  ),
+  usageLimitFallbackModels: Schema.Array(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  // Compatibility for saved settings and mobile. Web edits the single recovery choice.
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1899,6 +1909,8 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
+  usageLimitRecovery: Schema.optionalKey(UsageLimitRecoveryMode),
+  usageLimitFallbackModels: Schema.optionalKey(Schema.Array(ModelSelection)),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(

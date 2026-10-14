@@ -384,7 +384,25 @@ export function applyServerSettingsPatch(
   current: ServerSettings,
   rawPatch: ServerSettingsPatch,
 ): ServerSettings {
-  const patch = translateLegacyProjectOverridePatch(current, rawPatch);
+  const recoveryPatch =
+    rawPatch.usageLimitRecovery !== undefined
+      ? {
+          ...rawPatch,
+          autoResumeLimitedThreads: rawPatch.usageLimitRecovery === "wait",
+          snoozeLimitedThreads: rawPatch.usageLimitRecovery === "wait",
+        }
+      : rawPatch.autoResumeLimitedThreads !== undefined ||
+          rawPatch.snoozeLimitedThreads !== undefined
+        ? {
+            ...rawPatch,
+            usageLimitRecovery:
+              (rawPatch.autoResumeLimitedThreads ?? current.autoResumeLimitedThreads) ||
+              (rawPatch.snoozeLimitedThreads ?? current.snoozeLimitedThreads)
+                ? ("wait" as const)
+                : ("off" as const),
+          }
+        : rawPatch;
+  const patch = translateLegacyProjectOverridePatch(current, recoveryPatch);
   const selectionPatch = patch.textGenerationModelSelection;
   const {
     migrateModelPreferences,

@@ -2951,6 +2951,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
+    if (
+      (command.type === "provider.switch" || command.type === "thread.metadata.update") &&
+      command.autoProviderSwitch !== undefined
+    ) {
+      const projection = yield* loadProjectionForCommand(command, [
+        "runs",
+        "turnItems",
+        "runtimeRequests",
+      ]);
+      const source = latestExecutedRun(projection.runs);
+      const marker = command.autoProviderSwitch;
+      if (
+        source?.id !== marker.runId ||
+        source.status !== "failed" ||
+        latestRootProviderFailure(source, projection.turnItems)?.class !== "usage_limit" ||
+        !modelSelectionsEqual(source.modelSelection, marker.from) ||
+        !modelSelectionsEqual(thread.modelSelection, marker.from) ||
+        thread.archivedAt !== null ||
+        thread.deletedAt !== null ||
+        thread.settledOverride === "settled" ||
+        thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
+        projection.runs.some(isBlockingRun) ||
+        projection.runtimeRequests.some((request) => request.status === "pending")
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "This usage-limit failure can no longer switch provider.",
+        });
+      }
+    }
     const needsProviderState =
       command.type === "thread.runtime-mode.set" ||
       command.type === "thread.model-selection.set" ||
@@ -3292,6 +3323,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     Date.parse(thread.limitRecovery.resetAt)
                 ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
                 : {}),
+            ...(command.autoProviderSwitch === undefined
+              ? {}
+              : { autoProviderSwitch: command.autoProviderSwitch }),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined
@@ -3556,6 +3590,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             providerInstanceId: command.modelSelection.instanceId,
             modelSelection: command.modelSelection,
+            ...(command.type === "provider.switch" && command.autoProviderSwitch !== undefined
+              ? {
+                  autoProviderSwitch: command.autoProviderSwitch,
+                  limitRecovery: null,
+                  snoozedUntil: null,
+                  snoozedAt: null,
+                }
+              : {}),
             updatedAt: now,
           };
       }
@@ -3619,6 +3661,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: updatedThread,
     });
 
+    if (
+      (command.type === "provider.switch" || command.type === "thread.metadata.update") &&
+      command.autoProviderSwitch !== undefined
+    ) {
+      const marker = command.autoProviderSwitch;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: marker.runId,
+        occurredAt: now,
+        payload: {
+          id: idAllocator.derive.runSignalTurnItem({
+            runId: marker.runId,
+            signal: "auto-provider-switch",
+          }),
+          type: "system_notice",
+          threadId: command.threadId,
+          runId: marker.runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal({ thread, turnItems: [] }),
+          status: "completed",
+          title: marker.to === null ? "Waiting for reset" : "Provider switched automatically",
+          message: marker.message,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+    }
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
@@ -4874,6 +4952,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             commandType: command.type,
             cause: "This thread can no longer be resumed from that run.",
+          });
+        }
+      }
+      if (command.automaticProviderContinuationOfRunId !== undefined) {
+        const marker = projection.thread.autoProviderSwitch;
+        const source = latestExecutedRun(projection.runs);
+        if (
+          source?.id !== command.automaticProviderContinuationOfRunId ||
+          source.status !== "failed" ||
+          latestRootProviderFailure(source, projection.turnItems)?.class !== "usage_limit" ||
+          marker?.runId !== source.id ||
+          marker.to === null ||
+          !modelSelectionsEqual(projection.thread.modelSelection, marker.to) ||
+          projection.thread.archivedAt !== null ||
+          projection.thread.deletedAt !== null ||
+          projection.thread.settledOverride === "settled" ||
+          projection.thread.snoozedUntil != null ||
+          projection.thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
+          projection.runs.some(isBlockingRun) ||
+          projection.runtimeRequests.some((request) => request.status === "pending")
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This automatic provider switch can no longer continue.",
           });
         }
       }
