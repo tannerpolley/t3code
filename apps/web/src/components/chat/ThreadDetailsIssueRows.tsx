@@ -7,7 +7,8 @@ import type {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
-import { CheckCircle2Icon, CircleDotIcon, ListIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { ListIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { IssueStateIcon } from "../issues/IssueStateIcon";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -352,14 +353,7 @@ function IssueMilestoneGroup({
                 })
               }
             >
-              {issue.state === "closed" ? (
-                <CheckCircle2Icon
-                  aria-hidden
-                  className="-mx-0.5 size-4 shrink-0 text-muted-foreground"
-                />
-              ) : (
-                <CircleDotIcon aria-hidden className="-mx-0.5 size-4 shrink-0 text-success" />
-              )}
+              <IssueStateIcon issue={issue} className="-mx-0.5 size-4" />
               <span className="min-w-0 flex-1 truncate text-left">
                 <span className="me-1 text-muted-foreground">#{issue.number}</span>
                 {issue.title || "Untitled issue"}

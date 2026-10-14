@@ -13,14 +13,13 @@ import {
   IssueReadError as IssueReadErrorClass,
 } from "@t3tools/contracts";
 import {
-  CheckCircle2Icon,
-  CircleDotIcon,
   ExternalLinkIcon,
   GitBranchPlusIcon,
   MessageSquareIcon,
   PanelRightIcon,
   RefreshCwIcon,
 } from "lucide-react";
+import { IssueStateIcon } from "./IssueStateIcon";
 import { useEffect, useRef, useState } from "react";
 
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -380,11 +379,7 @@ export function IssueDetailPanel({
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       <header className="shrink-0 border-b border-border/60 px-4 py-3">
         <div className="flex items-start gap-3">
-          {issue.state === "closed" ? (
-            <CheckCircle2Icon aria-hidden className="mt-1 size-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <CircleDotIcon aria-hidden className="mt-1 size-4 shrink-0 text-success" />
-          )}
+          <IssueStateIcon issue={issue} className="mt-1 size-4" />
           <div className="min-w-0 flex-1">
             <p className="font-mono text-xs text-muted-foreground">
               {repository.repository} #{issue.number}

@@ -6,7 +6,8 @@ import type {
   IssueRepositoryRef,
   IssueSummary,
 } from "@t3tools/contracts";
-import { CircleDotIcon, CirclePauseIcon, LinkIcon, RadioIcon } from "lucide-react";
+import { CirclePauseIcon, LinkIcon, RadioIcon } from "lucide-react";
+import { IssueStateIcon } from "./IssueStateIcon";
 import { Badge } from "~/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -142,10 +143,7 @@ export function IssueRoadmap({
                       )}
                       onClick={() => onSelect(issue)}
                     >
-                      <CircleDotIcon
-                        aria-hidden
-                        className="mt-0.5 size-3.5 shrink-0 text-success"
-                      />
+                      <IssueStateIcon issue={issue} className="mt-0.5 size-3.5" />
                       <span className="min-w-0 break-words">
                         <span className="me-1 font-mono text-xs text-muted-foreground">
                           #{issue.number}

@@ -1,5 +1,6 @@
 import type { IssueMilestone, IssueSummary } from "@t3tools/contracts";
-import { CheckCircle2Icon, ChevronRightIcon, CircleDotIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
+import { IssueStateIcon } from "./IssueStateIcon";
 import { type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -71,14 +72,6 @@ export interface IssueTreeProps {
   readonly renderMilestoneActions?: (milestone: IssueMilestone) => ReactNode;
 }
 
-function issueStateIcon(issue: IssueSummary) {
-  return issue.state === "closed" ? (
-    <CheckCircle2Icon aria-label="Closed" className="size-3.5 shrink-0 text-muted-foreground" />
-  ) : (
-    <CircleDotIcon aria-label="Open" className="size-3.5 shrink-0 text-success" />
-  );
-}
-
 /**
  * A repository's milestones and their issues. Milestones with issues start expanded; a user's
  * choice is kept by id, so it survives refreshes.
@@ -140,7 +133,7 @@ export function IssueTree({
                         )}
                         onClick={() => onSelect(issue)}
                       >
-                        {issueStateIcon(issue)}
+                        <IssueStateIcon issue={issue} className="size-3.5" />
                         <span className="min-w-0 flex-1 break-words">
                           <span className="me-1 font-mono text-xs text-muted-foreground">
                             #{issue.number}
