@@ -24,7 +24,7 @@ type EndedRunStatus = Extract<
   "completed" | "failed" | "interrupted" | "cancelled"
 >;
 
-export function isEndedRunStatus(status: OrchestrationV2Run["status"]): status is EndedRunStatus {
+function isEndedRunStatus(status: OrchestrationV2Run["status"]): status is EndedRunStatus {
   return (
     status === "completed" ||
     status === "failed" ||
@@ -34,12 +34,12 @@ export function isEndedRunStatus(status: OrchestrationV2Run["status"]): status i
 }
 
 /** Whether `item` is still running although it cannot outlive its run. */
-export function isTurnBoundItemOpen(item: OrchestrationV2TurnItem): boolean {
+function isTurnBoundItemOpen(item: OrchestrationV2TurnItem): boolean {
   return item.status === "running" && !isBackgroundTurnItemType(item.type);
 }
 
 /** `item` ended with its run: completed when the run completed, otherwise interrupted. */
-export function endTurnItem(
+function endTurnItem(
   item: OrchestrationV2TurnItem,
   runStatus: EndedRunStatus,
   endedAt: DateTime.Utc,
@@ -105,4 +105,38 @@ export const endTurnItemsOfEndedRuns = (
       }
     }
     return ended.length === 0 ? events : [...events, ...ended];
+  });
+
+/**
+ * Ends the turn-bound items a run left running although it already ended, as an
+ * older build or a provider update arriving after the run ended can. Startup
+ * recovery runs it.
+ */
+export const endTurnItemsLeftRunning = <E>(input: {
+  readonly projection: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  };
+  readonly now: DateTime.Utc;
+  readonly allocateEventId: () => Effect.Effect<EventId, E>;
+}) =>
+  Effect.gen(function* () {
+    const events: Array<OrchestrationV2DomainEvent> = [];
+    for (const item of input.projection.turnItems) {
+      const run = input.projection.runs.find((candidate) => candidate.id === item.runId);
+      if (run === undefined || !isEndedRunStatus(run.status) || !isTurnBoundItemOpen(item)) {
+        continue;
+      }
+      events.push({
+        id: yield* input.allocateEventId(),
+        type: "turn-item.updated",
+        threadId: item.threadId,
+        runId: run.id,
+        ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: input.now,
+        payload: endTurnItem(item, run.status, input.now),
+      });
+    }
+    return events;
   });

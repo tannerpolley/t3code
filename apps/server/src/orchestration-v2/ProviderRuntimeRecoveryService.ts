@@ -23,7 +23,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
-import { endTurnItem, isEndedRunStatus, isTurnBoundItemOpen } from "./EndedRunTurnItems.ts";
+import { endTurnItemsLeftRunning } from "./EndedRunTurnItems.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import {
   endOrphanedNativeSubagent,
@@ -527,23 +527,13 @@ export const make = Effect.gen(function* () {
           }
         }
       }
-      // A run that already ended left these running; it will not end them now.
-      for (const item of projection.turnItems ?? []) {
-        const run = projection.runs.find((candidate) => candidate.id === item.runId);
-        if (run === undefined || !isEndedRunStatus(run.status) || !isTurnBoundItemOpen(item)) {
-          continue;
-        }
-        events.push({
-          id: yield* allocateEventId(),
-          type: "turn-item.updated",
-          threadId: projection.thread.id,
-          runId: run.id,
-          ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: endTurnItem(item, run.status, now),
-        });
-      }
+      events.push(
+        ...(yield* endTurnItemsLeftRunning({
+          projection: { runs: projection.runs, turnItems: projection.turnItems ?? [] },
+          now,
+          allocateEventId,
+        })),
+      );
       // No provider process outlives the server, so a native subagent still open
       // here never reports its end, whatever state its run and item are in.
       for (const subagent of projection.subagents ?? []) {
