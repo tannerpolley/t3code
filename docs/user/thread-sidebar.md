@@ -105,13 +105,15 @@ With **Codex-style sidebar** on, each project lists its threads under one small
 header per location: **Local · main** for the project's own checkout, then
 **Worktree feature · t3/feature** for each worktree, led by the environment's name
 when it is elsewhere. The location is the folder; the branch is what is checked out
-there. Child agents stay under their parent even when they work elsewhere.
+there. Each thread sits under the location it works in: a child agent working in a
+worktree is listed under that worktree's section even when its parent works in the
+local checkout, with the agents working alongside it nested under it. It keeps its
+family's tint color.
 
 Within a location, only its lead thread shows the folder or branch icon: the
-orchestrator if there is one, otherwise the implementor or top-level thread. Hover
-the icon for the location and branch. A child working in a different worktree from
-the rest of its group shows its own icon. A child's question or approval also
-appears on the parent.
+implementor in a worktree; in the local checkout, the orchestrator if there is one,
+otherwise the implementor or top-level thread. Hover the icon for the location and
+branch. A child's question or approval also appears on the parent.
 An amber spinner means the thread is waiting on its background work. Times show
 how long the work has run, such as **05m 09s** or **01h 05m 09s**, rather than time
 since the last message.
@@ -387,9 +389,9 @@ The Activity view keeps its cards.
 
 Rows are titled by what each thread does rather than its task name: a thread working
 on an issue shows the issue, such as **#42 Fix login**; a thread with a role shows it
-(Orchestrator, Implementor, Reviewer, Investigator, Checker); other top-level threads
-show **Main** and other child agents **Subagent**. Hover a title to see the thread's
-name.
+(Orchestrator, Implementor, Reviewer, Investigator, Checker); an agent without a role
+working in a worktree is an **Implementor**; other top-level threads show **Main** and
+other child agents **Subagent**. Hover a title to see the thread's name.
 
 For Codex and Claude, the percent between the title and the time estimates how much
 of your weekly limit the thread has used, such as **4%**. It appears once a thread

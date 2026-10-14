@@ -19,7 +19,11 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import type { SidebarThreadSummary } from "../../types";
-import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
+import {
+  effectiveThreadRole,
+  resolveSidebarThreadStatus,
+  type SidebarThreadStatus,
+} from "../Sidebar.logic";
 import { shortModelName } from "../chat/providerIconUtils";
 
 type ChildThread = SidebarThreadSummary;
@@ -88,15 +92,17 @@ export function resolveSidebarThreadModelLabel(
 
 /**
  * What a thread row is titled instead of its task name: an issue worker's issue, else the thread's
- * role, else Main for a top-level thread or Subagent for a child. The name shows on hover.
+ * role (a role-less thread in a worktree is an Implementor), else Main for a top-level thread or
+ * Subagent for a child. The name shows on hover.
  */
 export function sidebarThreadTitle(
-  thread: Pick<OrchestrationV2ThreadShell, "role" | "linkedIssue"> & {
+  thread: Pick<OrchestrationV2ThreadShell, "role" | "linkedIssue" | "worktreePath"> & {
     readonly lineage: Pick<OrchestrationV2ThreadShell["lineage"], "relationshipToParent">;
   },
 ): string {
   if (thread.linkedIssue) return `#${thread.linkedIssue.number} ${thread.linkedIssue.title}`;
-  if (thread.role) return THREAD_ROLE_LABELS[thread.role];
+  const role = effectiveThreadRole(thread);
+  if (role) return THREAD_ROLE_LABELS[role];
   return thread.lineage.relationshipToParent === "subagent" ? "Subagent" : "Main";
 }
 
@@ -134,7 +140,16 @@ export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,
   ownerThreadId?: ThreadId,
+  /** Children listed under another location's section instead (see placeThreadsByLocation). */
+  relocated?: ReadonlySet<string>,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
+  // Moved children stay "listed", so their tasks and commands do not resurface here.
+  const shownChildren =
+    relocated === undefined
+      ? runningChildren
+      : runningChildren.filter(
+          (child) => !relocated.has(scopedThreadKey(scopeThreadRef(child.environmentId, child.id))),
+        );
   const listedChildIds = new Set(runningChildren.map((child) => child.id));
   const linked = tasks.filter(
     (task): task is LinkedSubagentTask =>
@@ -150,7 +165,7 @@ export function describeSidebarBackgroundWork(
     (child) => !linked.some((task) => task.childThreadId === child.id),
   ).length;
 
-  const childRows: BackgroundWorkTaskRow[] = runningChildren.map((child) => {
+  const childRows: BackgroundWorkTaskRow[] = shownChildren.map((child) => {
     const currentStatus = resolveSidebarThreadStatus(child);
     const hasPendingWork =
       backgroundWorkHoldsCompletion(
@@ -200,7 +215,7 @@ export function describeSidebarBackgroundWork(
 
   // Native children come first (see groupRunningSubagentsByParent). Roster-only subagents are the
   // provider's own, so they join the natives, ahead of app-owned children.
-  const firstAppOwned = runningChildren.findIndex(
+  const firstAppOwned = shownChildren.findIndex(
     (child) => !isProviderNativeSubagentThread(child.source),
   );
   const split = firstAppOwned === -1 ? childRows.length : firstAppOwned;

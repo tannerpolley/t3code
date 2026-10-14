@@ -5,7 +5,9 @@ import {
   RunId,
   type ServerProvider,
   type ThreadLinkedIssue,
+  type ThreadRole,
 } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as DateTime from "effect/DateTime";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { describe, expect, it } from "vite-plus/test";
@@ -88,6 +90,21 @@ describe("describeSidebarBackgroundWork", () => {
     });
     expect(rows[4]).toMatchObject({ childThreadId: null, startedAt: null });
     expect(rows[0]).not.toHaveProperty("childThreadId");
+  });
+
+  it("leaves out a child listed in another location's section, with no placeholder row", () => {
+    const tasks = [
+      {
+        taskId: "linked-agent",
+        description: "Review the diff",
+        kind: "subagent" as const,
+        childThreadId: runningChild.id,
+      },
+    ];
+    const moved = new Set([
+      scopedThreadKey(scopeThreadRef(runningChild.environmentId, runningChild.id)),
+    ]);
+    expect(describeSidebarBackgroundWork(tasks, [runningChild], undefined, moved)).toEqual([]);
   });
 
   it("uses the pending-work kind to distinguish waiting from a leftover command", () => {
@@ -315,20 +332,26 @@ describe("background task metadata", () => {
 });
 
 describe("sidebarThreadTitle", () => {
-  it("titles issue workers by issue, then by role, then Main or Subagent", () => {
+  it("titles issue workers by issue, then by role, then by where a role-less thread works", () => {
     const top = { relationshipToParent: null } as const;
     const child = { relationshipToParent: "subagent" } as const;
     const issue = { number: 42, title: "Fix login" } as ThreadLinkedIssue;
-    expect(sidebarThreadTitle({ role: "implementor", linkedIssue: issue, lineage: child })).toBe(
-      "#42 Fix login",
-    );
-    expect(sidebarThreadTitle({ role: "checker", lineage: child })).toBe("Checker");
-    expect(sidebarThreadTitle({ role: undefined, lineage: top })).toBe("Main");
-    expect(sidebarThreadTitle({ role: undefined, lineage: child })).toBe("Subagent");
+    const title = (
+      role: ThreadRole | undefined,
+      lineage: { readonly relationshipToParent: "subagent" | "fork" | null },
+      worktreePath: string | null = null,
+      linkedIssue?: ThreadLinkedIssue,
+    ) => sidebarThreadTitle({ role, lineage, worktreePath, linkedIssue });
+    expect(title("implementor", child, "/wt/x", issue)).toBe("#42 Fix login");
+    expect(title("checker", child)).toBe("Checker");
+    expect(title(undefined, top)).toBe("Main");
+    expect(title(undefined, child)).toBe("Subagent");
     // A fork is a top-level thread of its own.
-    expect(sidebarThreadTitle({ role: undefined, lineage: { relationshipToParent: "fork" } })).toBe(
-      "Main",
-    );
+    expect(title(undefined, { relationshipToParent: "fork" })).toBe("Main");
+    // Implementors are the agents given worktrees; an explicit role still wins there.
+    expect(title(undefined, child, "/wt/x")).toBe("Implementor");
+    expect(title(undefined, top, "/wt/x")).toBe("Implementor");
+    expect(title("reviewer", child, "/wt/x")).toBe("Reviewer");
   });
 });
 

@@ -223,6 +223,8 @@ interface SidebarProjectSectionsProps {
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  /** Subagents listed under their own location's section; see `placeThreadsByLocation`. */
+  readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
   readonly isProjectExpanded: (projectKey: string) => boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
   readonly activeThreadKey: string | null;
@@ -252,6 +254,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     sections,
     selectedProjectKey,
     runningSubagentsByParentKey,
+    relocatedThreadKeys,
     threadsByProjectKey,
   } = props;
   // Off restores the original Projects view: heading, action row, All projects, chevrons and grips.
@@ -602,6 +605,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                   selectedProjectKey={selectedProjectKey}
                   threadsByProjectKey={threadsByProjectKey}
                   runningSubagentsByParentKey={runningSubagentsByParentKey}
+                  relocatedThreadKeys={relocatedThreadKeys}
                 />
               ))}
           </SortableContext>
@@ -659,6 +663,8 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  /** Subagents listed under their own location's section; see `placeThreadsByLocation`. */
+  readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
 }) {
   const { setNodeRef: setDropRef } = useDroppable({
     data: {
@@ -729,6 +735,7 @@ const ProjectSection = memo(function ProjectSection(props: {
                     selected={props.selectedProjectKey === projectKey}
                     threads={props.threadsByProjectKey.get(project.projectKey) ?? []}
                     runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+                    relocatedThreadKeys={props.relocatedThreadKeys}
                   />
                 </Fragment>
               ) : null;
@@ -962,6 +969,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   ) => void;
   readonly threads: readonly SidebarThreadSummary[];
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
 }) {
   const { project, codexStyle } = props;
   const canWrite = useSidebarLayoutPermission(null, project.environmentId);
@@ -978,23 +986,23 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   );
   const { folderColor, forceFolder } = useProjectFolderAppearance(project.projectKey);
   // Each location's lead thread, over every shown row: threads and their running subagents.
-  const locationLeads = useMemo(
-    () =>
-      codexStyle
-        ? resolveLocationLeads(
-            props.threads.flatMap((thread) => [
-              { thread, topLevel: true },
-              ...flattenRunningSubagents(
-                props.runningSubagentsByParentKey.get(
-                  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                ) ?? [],
-                props.runningSubagentsByParentKey,
-              ).map((child) => ({ thread: child, topLevel: false })),
-            ]),
-          )
-        : null,
-    [codexStyle, props.threads, props.runningSubagentsByParentKey],
-  );
+  const locationLeads = useMemo(() => {
+    if (!codexStyle) return null;
+    const keyOf = (thread: SidebarThreadSummary) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    // A moved subagent is its own section row, so its parent's tree leaves it out.
+    const descendants = (
+      thread: SidebarThreadSummary,
+    ): { readonly thread: SidebarThreadSummary; readonly topLevel: boolean }[] =>
+      (props.runningSubagentsByParentKey.get(keyOf(thread)) ?? []).flatMap((child) =>
+        props.relocatedThreadKeys?.has(keyOf(child))
+          ? []
+          : [{ thread: child, topLevel: false }, ...descendants(child)],
+      );
+    return resolveLocationLeads(
+      props.threads.flatMap((thread) => [{ thread, topLevel: true }, ...descendants(thread)]),
+    );
+  }, [codexStyle, props.threads, props.runningSubagentsByParentKey, props.relocatedThreadKeys]);
   // One set per distinct list of leads, so rows re-render only when a lead changes.
   const leadKeyList =
     locationLeads === null
@@ -1186,6 +1194,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
                   onContextMenu={props.onThreadContextMenu}
                   thread={thread}
                   runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+                  relocatedThreadKeys={props.relocatedThreadKeys}
                   locationLeadKeys={locationLeadKeys}
                 />
               </Fragment>
@@ -1243,6 +1252,7 @@ const SidebarProjectThreadRow = memo(
     readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
     /** Threads that carry their location's icon; see `resolveLocationLeads`. */
     readonly locationLeadKeys?: ReadonlySet<string> | undefined;
+    readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
   }) {
     const activeThreadKey = scopedThreadKey(
       scopeThreadRef(props.thread.environmentId, props.thread.id),
@@ -1263,6 +1273,8 @@ const SidebarProjectThreadRow = memo(
       props.codexStyle
         ? runningSubagents
         : flattenRunningSubagents(runningSubagents, props.runningSubagentsByParentKey),
+      undefined,
+      props.relocatedThreadKeys,
     );
     // Running work shows by default, even while the thread itself works; a collapse wins for this row.
     const [workOpen, setWorkOpen] = useState(true);
@@ -1276,10 +1288,15 @@ const SidebarProjectThreadRow = memo(
     return (
       <li
         className={cn("relative list-none", props.codexStyle && "sidebar-thread-outdent")}
-        // A thread with listed descendants is a group: its rows share one hue.
+        // A family of threads shares one hue, from its root: a thread with listed descendants, and a
+        // subagent listed in its own location's section away from its parent.
         style={
-          props.codexStyle && workRows.some((row) => row.kind === "subagent")
-            ? ({ "--sidebar-group-hue": threadGroupHue(props.thread.id) } as CSSProperties)
+          props.codexStyle &&
+          (workRows.some((row) => row.kind === "subagent") ||
+            props.thread.lineage.relationshipToParent === "subagent")
+            ? ({
+                "--sidebar-group-hue": threadGroupHue(props.thread.lineage.rootThreadId),
+              } as CSSProperties)
             : undefined
         }
         data-thread-item={activeThreadKey}
@@ -1393,6 +1410,7 @@ const SidebarProjectThreadRow = memo(
               onChildClick={props.onClick}
               onChildContextMenu={props.onContextMenu}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+              relocatedThreadKeys={props.relocatedThreadKeys}
               locationLeadKeys={props.locationLeadKeys}
             />
           </div>
@@ -1420,6 +1438,7 @@ const SidebarProjectThreadRow = memo(
       previous.onClick === next.onClick &&
       previous.onContextMenu === next.onContextMenu &&
       previous.locationLeadKeys === next.locationLeadKeys &&
+      previous.relocatedThreadKeys === next.relocatedThreadKeys &&
       sameSidebarSubagentTree(
         key,
         previous.runningSubagentsByParentKey,
@@ -1443,6 +1462,7 @@ function SidebarSubagentTree(props: {
     position: { x: number; y: number },
   ) => void;
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
   readonly locationLeadKeys?: ReadonlySet<string> | undefined;
   readonly depth?: number;
 }) {
@@ -1461,6 +1481,7 @@ function SidebarSubagentTree(props: {
       pendingBackgroundWorkOfThread(child.id, child.pendingBackgroundTasks, props.parentTasks),
       grandchildren,
       child.id,
+      props.relocatedThreadKeys,
     );
     return rows.length === 0 ? null : { child, grandchildren, rows };
   };
@@ -1507,6 +1528,7 @@ function SidebarSubagentTree(props: {
               onChildClick={props.onChildClick}
               onChildContextMenu={props.onChildContextMenu}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+              relocatedThreadKeys={props.relocatedThreadKeys}
               locationLeadKeys={props.locationLeadKeys}
             />
           </div>

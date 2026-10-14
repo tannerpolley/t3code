@@ -21,6 +21,7 @@ import {
   flattenRunningSubagents,
   groupRunningSubagentsByParent,
   groupThreadsByLocation,
+  placeThreadsByLocation,
   resolveLocationLeads,
   withChildNeeds,
   resolveThreadStatusMark,
@@ -2561,12 +2562,18 @@ describe("groupRunningSubagentsByParent", () => {
 });
 
 describe("thread locations", () => {
-  const at = (id: string, worktreePath: string | null, role?: "orchestrator" | "implementor") => ({
-    id,
+  const at = (
+    id: string,
+    worktreePath: string | null,
+    role?: "orchestrator" | "implementor" | "reviewer",
+  ) => ({
+    id: ThreadId.make(id),
     environmentId: localEnvironmentId,
     worktreePath,
     source: { role },
   });
+  const keyOf = (thread: { readonly id: ThreadId }) =>
+    scopedThreadKey(scopeThreadRef(localEnvironmentId, thread.id));
 
   it("groups main checkouts first, then worktrees, keeping each group's order", () => {
     const threads = [at("a", "/wt/x"), at("b", null), at("c", "/wt/y"), at("d", "/wt/x")];
@@ -2578,22 +2585,36 @@ describe("thread locations", () => {
     ]);
   });
 
-  it("leads each location with its orchestrator, else implementor, else top-level thread", () => {
+  it("moves a subagent working elsewhere into its own location's section", () => {
+    const orchestrator = at("orchestrator", null, "orchestrator");
+    const reviewer = at("reviewer", null, "reviewer");
+    const implementor = at("implementor", "/wt/x");
+    // Native helpers of the implementor work in its worktree and stay nested under it.
+    const helper = at("helper", "/wt/x");
+    const byParent = new Map([
+      [keyOf(orchestrator), [reviewer, implementor]],
+      [keyOf(implementor), [helper]],
+    ]);
+    const placed = placeThreadsByLocation([orchestrator, at("other", "/wt/y")], byParent);
+    expect(placed.threads.map((thread) => thread.id)).toEqual([
+      "orchestrator",
+      "implementor",
+      "other",
+    ]);
+    expect([...placed.relocated]).toEqual([keyOf(implementor)]);
+  });
+
+  it("leads the main checkout with its orchestrator and a worktree with its implementor", () => {
     const leads = resolveLocationLeads([
       { thread: at("main", null), topLevel: true },
       { thread: at("helper", null), topLevel: false },
       { thread: at("orchestrator", null, "orchestrator"), topLevel: true },
-      // A child in its own worktree leads that worktree, even under another location's thread.
+      // A role-less agent in a worktree counts as its implementor; a reviewer there does not lead.
+      { thread: at("reviewer", "/wt/x", "reviewer"), topLevel: true },
       { thread: at("worker", "/wt/x"), topLevel: false },
       { thread: at("implementor", "/wt/x", "implementor"), topLevel: false },
-      { thread: at("first", "/wt/y"), topLevel: false },
-      { thread: at("second", "/wt/y"), topLevel: true },
     ]);
-    expect([...leads.values()].map((thread) => thread.id)).toEqual([
-      "orchestrator",
-      "implementor",
-      "second",
-    ]);
+    expect([...leads.values()].map((thread) => thread.id)).toEqual(["orchestrator", "worker"]);
   });
 });
 

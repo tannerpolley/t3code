@@ -19,6 +19,7 @@ import {
   type ContextMenuItem,
   type EnvironmentId,
   type ThreadId,
+  type ThreadRole,
 } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
@@ -1177,17 +1178,26 @@ export function groupThreadsByLocation<
   }
   const all = [...groups.values()];
   return [
-    ...all.filter((group) => group[0]!.worktreePath === null),
-    ...all.filter((group) => group[0]!.worktreePath !== null),
+    ...all.filter((group) => !group[0]!.worktreePath),
+    ...all.filter((group) => group[0]!.worktreePath),
   ].flat();
 }
 
-const LOCATION_LEAD_RANK = { orchestrator: 0, implementor: 1 } as const;
+/**
+ * A thread's role as the sidebar reads it: an agent in a worktree without a role is an
+ * implementor, since implementors are the ones given worktrees.
+ */
+export function effectiveThreadRole(
+  thread: Pick<SidebarThreadSummary["source"], "role" | "worktreePath">,
+): ThreadRole | undefined {
+  return thread.role ?? (thread.worktreePath ? "implementor" : undefined);
+}
 
 /**
- * The one thread per location that carries its location icon: the orchestrator working there,
- * else the implementor, else the top-level thread, else the first. Ties go to the earliest row.
- * `rows` lists every shown thread in display order, each top-level thread before its children.
+ * The one thread per location that carries its location icon. A worktree is led by its
+ * implementor; the main checkout by its orchestrator, else its implementor. Without either, the
+ * top-level thread leads, else the first. Ties go to the earliest row. `rows` lists every shown
+ * thread in display order, each thread before its children.
  */
 export function resolveLocationLeads<
   TThread extends Pick<SidebarThreadSummary, "environmentId" | "worktreePath"> & {
@@ -1198,18 +1208,54 @@ export function resolveLocationLeads<
 ): ReadonlyMap<string, TThread> {
   const leads = new Map<string, { readonly thread: TThread; readonly rank: number }>();
   for (const { thread, topLevel } of rows) {
-    const role = thread.source.role;
-    const rank =
-      role === "orchestrator" || role === "implementor"
-        ? LOCATION_LEAD_RANK[role]
-        : topLevel
-          ? 2
-          : 3;
+    const role = effectiveThreadRole({
+      role: thread.source.role,
+      worktreePath: thread.worktreePath,
+    });
+    const leadRole = thread.worktreePath ? "implementor" : "orchestrator";
+    const rank = role === leadRole ? 0 : role === "implementor" ? 1 : topLevel ? 2 : 3;
     const key = threadLocationKey(thread);
     const current = leads.get(key);
     if (current === undefined || rank < current.rank) leads.set(key, { thread, rank });
   }
   return new Map([...leads].map(([key, { thread }]) => [key, thread]));
+}
+
+/**
+ * Projects lists each thread under the location it works in. A running subagent working somewhere
+ * other than its parent leaves its parent's tree for its own location's section, where its
+ * same-location descendants stay nested under it. Returns the section rows, grouped by location,
+ * and the keys of the subagents that moved, which their parents' trees leave out.
+ */
+export function placeThreadsByLocation<
+  TThread extends Pick<SidebarThreadSummary, "id" | "environmentId" | "worktreePath">,
+>(
+  threads: readonly TThread[],
+  byParent: ReadonlyMap<string, readonly TThread[]>,
+): { readonly threads: TThread[]; readonly relocated: ReadonlySet<string> } {
+  const keyOf = (thread: TThread) =>
+    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+  const placed: TThread[] = [];
+  const relocated = new Set<string>();
+  const seen = new Set<string>();
+  const walk = (parent: TThread) => {
+    for (const child of byParent.get(keyOf(parent)) ?? []) {
+      const key = keyOf(child);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (threadLocationKey(child) !== threadLocationKey(parent)) {
+        relocated.add(key);
+        placed.push(child);
+      }
+      walk(child);
+    }
+  };
+  for (const thread of threads) {
+    placed.push(thread);
+    seen.add(keyOf(thread));
+    walk(thread);
+  }
+  return { threads: groupThreadsByLocation(placed), relocated };
 }
 
 /** Running subagents, each followed by its own running subagents, for lists without nesting. */
