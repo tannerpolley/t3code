@@ -59,6 +59,7 @@ import {
   type ChatAttachment,
   ClaudeSettings,
   defaultInstanceIdForDriver,
+  nativeSubagentRole,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
@@ -3213,6 +3214,8 @@ interface ActiveClaudeToolCall {
 interface PendingClaudeSubagentLaunch {
   readonly model?: string;
   readonly effort?: string;
+  // The Agent call's subagent_type, for a task_started frame that omits it.
+  readonly subagentType?: string;
   // parent_tool_use_id of the subagent whose own Agent call launches this one.
   readonly ownerToolUseId?: string;
 }
@@ -3292,18 +3295,16 @@ function rememberClaudeSubagentLaunch(
         ? context.input.modelSelection.model
         : undefined;
   const effort = firstStringInputField(input, ["effort"]);
+  const subagentType = firstStringInputField(input, ["subagent_type"]);
   // A model already known (a snapshot's, or an earlier sighting of this
   // call) wins over the requested one.
   const launch: PendingClaudeSubagentLaunch = {
     ...(model === undefined || pending.get(toolUseId)?.model !== undefined ? {} : { model }),
     ...(effort === undefined ? {} : { effort }),
+    ...(subagentType === undefined ? {} : { subagentType }),
     ...(ownerToolUseId === null ? {} : { ownerToolUseId }),
   };
-  if (
-    launch.model !== undefined ||
-    launch.effort !== undefined ||
-    launch.ownerToolUseId !== undefined
-  ) {
+  if (Object.keys(launch).length > 0) {
     rememberPendingClaudeSubagentLaunch(pending, toolUseId, launch);
   }
 }
@@ -5075,7 +5076,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly prompt?: string;
           readonly title?: string;
           readonly model?: string;
-          /** The SDK's subagent_type; read only when this call creates the child thread. */
+          /** The SDK's subagent_type; it sets the child thread's role while that is unset. */
           readonly subagentType?: string;
           // The Agent call's effort and the subagent whose own Agent call
           // started this one; read only when this call registers the subagent.
@@ -5371,6 +5372,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
             }
             subagent.childThread = childThread;
+          } else if (subagent.childThread.role === undefined) {
+            // A lifecycle frame after the first may be the one naming the agent type.
+            const role = nativeSubagentRole(input.subagentType);
+            if (role !== undefined) {
+              subagent.childThread = { ...subagent.childThread, role };
+              yield* emitProviderEvent({
+                type: "app_thread.created",
+                driver: CLAUDE_PROVIDER,
+                appThread: subagent.childThread,
+              });
+            }
           }
 
           if (lifecycleChanged) {
@@ -7477,6 +7489,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               // With no model of its own, a nested subagent runs on its
               // owner's (the SDK's default for a subagent's Agent call).
               const model = launch?.model ?? owner?.task.model ?? undefined;
+              const subagentType = message.subagent_type ?? launch?.subagentType;
               // A nested subagent's end goes to its owner, so it never wakes the root.
               if (
                 message.is_backgrounded === true &&
@@ -7506,9 +7519,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
-                ...(message.subagent_type === undefined
-                  ? {}
-                  : { subagentType: message.subagent_type }),
+                ...(subagentType === undefined ? {} : { subagentType }),
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
                 ...(owner === undefined ? {} : { owner }),

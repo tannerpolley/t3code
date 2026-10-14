@@ -9119,6 +9119,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           const child = harness.events.find((event) => event.type === "app_thread.created");
           assert.equal(child?.appThread.modelSelection?.model, initialModel ?? parentModel);
+          // task_started omits subagent_type; the Agent call's input names it.
+          assert.equal(child?.appThread.role, "implementor");
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -9127,49 +9129,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("gives a worker subagent's thread the Implementor role", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-subagent-role"),
-            text: "Spawn a worker.",
-            attachments: [],
-          }),
-        );
-        for (const frame of [
-          claudeSdkFrame({
-            type: "system",
-            subtype: "task_started",
-            task_id: "task-subagent-role",
-            tool_use_id: "toolu-subagent-role",
-            description: "Build the parser",
-            subagent_type: "worker",
-            task_type: "local_agent",
-            uuid: "00000000-0000-4000-8000-000000000391",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000392",
-            result: "Spawned the worker.",
-          }),
-        ]) {
-          yield* Queue.offer(harness.sdkMessages, frame);
-        }
-        yield* Queue.take(harness.terminalReceipts);
+  it.effect.each(["task_started", "task_progress"] as const)(
+    "gives a worker subagent's thread the Implementor role named by %s",
+    (namedBy) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-subagent-role"),
+              text: "Spawn a worker.",
+              attachments: [],
+            }),
+          );
+          for (const frame of [
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "task-subagent-role",
+              tool_use_id: "toolu-subagent-role",
+              description: "Build the parser",
+              ...(namedBy === "task_started" ? { subagent_type: "worker" } : {}),
+              task_type: "local_agent",
+              uuid: "00000000-0000-4000-8000-000000000391",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_progress",
+              task_id: "task-subagent-role",
+              tool_use_id: "toolu-subagent-role",
+              description: "Building the parser",
+              ...(namedBy === "task_progress" ? { subagent_type: "worker" } : {}),
+              usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 },
+              uuid: "00000000-0000-4000-8000-000000000393",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000392",
+              result: "Spawned the worker.",
+            }),
+          ]) {
+            yield* Queue.offer(harness.sdkMessages, frame);
+          }
+          yield* Queue.take(harness.terminalReceipts);
 
-        const child = harness.events.find((event) => event.type === "app_thread.created");
-        assert.equal(child?.appThread.role, "implementor");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          const children = harness.events.flatMap((event) =>
+            event.type === "app_thread.created" ? [event.appThread] : [],
+          );
+          assert.equal(children.at(-1)?.role, "implementor");
+          assert.equal(new Set(children.map((thread) => thread.id)).size, 1);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect.each([
