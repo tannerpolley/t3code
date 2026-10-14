@@ -2,8 +2,10 @@ import { assert, it } from "@effect/vitest";
 import {
   EventId,
   MessageId,
+  NodeId,
   type OrchestrationV2DomainEvent,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnItemId,
@@ -259,4 +261,69 @@ it.effect(
         itemOrder.indexOf(TurnItemId.make("item:first-rollback:b")),
       );
     }).pipe(Effect.provide(services)),
+);
+
+it.effect("compaction keeps the changed-prompt row that later subagent progress references", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSinkV2;
+    const events = yield* EventStoreV2;
+    const maintenance = yield* ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const { threadId, created } = fixture("subagent-prompt", now);
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const subagentItem = (index: number, prompt: string): OrchestrationV2DomainEvent => ({
+      id: EventId.make(`event:subagent-prompt:${index}`),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:subagent-prompt"),
+        type: "subagent",
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running",
+        title: "Audit",
+        subagentId: NodeId.make("node:subagent-prompt"),
+        origin: "provider_native",
+        driver,
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        childThreadId: null,
+        prompt,
+        progress: `step ${index}`,
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      },
+    });
+    yield* sink.write({ events: [created] });
+    // First prompt, unchanged progress, a changed prompt on resume, then progress
+    // rows that point at the changed-prompt row through promptSequence.
+    for (const [index, prompt] of [
+      "Audit.",
+      "Audit.",
+      "Audit again.",
+      "Audit again.",
+      "Audit again.",
+    ].entries()) {
+      yield* sink.write({ events: [subagentItem(index, prompt)] });
+    }
+    yield* maintenance.compactEventStore;
+
+    const replay = yield* events.read({ threadId }).pipe(Stream.runCollect);
+    const latest = replay.at(-1)?.event;
+    assert.isTrue(
+      latest?.type === "turn-item.updated" &&
+        latest.payload.type === "subagent" &&
+        latest.payload.prompt === "Audit again." &&
+        latest.payload.progress === "step 4",
+    );
+    assert.isTrue((yield* maintenance.rebuild).valid);
+  }).pipe(Effect.provide(services)),
 );
