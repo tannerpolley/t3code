@@ -1,5 +1,10 @@
-import { OrchestrationV2ThreadUsageSummary as OrchestrationV2ThreadUsageSummarySchema } from "@t3tools/contracts";
-import { deriveThreadUsageSummary, refreshThreadUsageSummary } from "./ThreadUsageSummary.ts";
+import {
+  DeferThreadUsageSummary,
+  StoredThreadUsageSummary,
+  threadUsageShellFields,
+  deriveThreadUsageSummary,
+  refreshThreadUsageSummary,
+} from "./ThreadUsageSummary.ts";
 import { IssueWorkCancelled, IssueWorkRequested } from "@t3tools/contracts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -1166,7 +1171,7 @@ const decodeProviderThreadPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ProviderThreadJsonSchema),
 );
 const decodeUsageSummaryPayload = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2ThreadUsageSummarySchema),
+  Schema.fromJsonString(StoredThreadUsageSummary),
 );
 const decodeProviderTurnPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ProviderTurnJsonSchema),
@@ -1542,7 +1547,7 @@ export function threadShellFromProjection(
       (right.startedAt === null ? 0 : DateTime.toEpochMillis(right.startedAt)) -
         (left.startedAt === null ? 0 : DateTime.toEpochMillis(left.startedAt)) ||
       right.ordinal - left.ordinal ||
-      right.id.localeCompare(left.id),
+      (right.id > left.id ? 1 : right.id < left.id ? -1 : 0),
   )[0];
   const reportedTurns = usageTurns.filter(
     (turn) =>
@@ -1569,7 +1574,7 @@ export function threadShellFromProjection(
     threadTokens,
   );
   return {
-    ...(usageSummary === undefined ? {} : { usageSummary }),
+    ...threadUsageShellFields(usageSummary),
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
     ...(projection.thread.role === undefined ? {} : { role: projection.thread.role }),
@@ -1718,7 +1723,7 @@ type ShellThreadState = {
   readonly thread: OrchestrationV2ThreadProjection["thread"];
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
-  readonly usageSummary: OrchestrationV2ThreadShell["usageSummary"];
+  readonly usageSummary: StoredThreadUsageSummary | undefined;
   readonly latestRunRequestedAt: DateTime.Utc | null;
   readonly latestRunStartedAt: DateTime.Utc | null;
   readonly latestRunCompletedAt: DateTime.Utc | null;
@@ -1905,7 +1910,7 @@ function shellFromState(input: {
   readonly visibleItemCount: number;
 }): OrchestrationV2ThreadShell {
   return {
-    ...(input.state.usageSummary === undefined ? {} : { usageSummary: input.state.usageSummary }),
+    ...threadUsageShellFields(input.state.usageSummary),
     createdBy: input.state.thread.createdBy,
     creationSource: input.state.thread.creationSource,
     ...(input.state.thread.role === undefined ? {} : { role: input.state.thread.role }),
@@ -2033,6 +2038,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
+        const deferUsageSummary = yield* DeferThreadUsageSummary;
         switch (event.type) {
           case "repository.work.restored":
             // Registering an existing lead has no thread.created to keep its first owner, and
@@ -2625,7 +2631,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 `;
               }
             }
-            if (event.payload.appThreadId !== null)
+            if (!deferUsageSummary && event.payload.appThreadId !== null)
               yield* refreshThreadUsageSummary(event.payload.appThreadId).pipe(
                 Effect.provideService(SqlClient.SqlClient, sql),
               );
@@ -2688,9 +2694,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 completed_at = excluded.completed_at,
                 payload_json = excluded.payload_json
             `;
-            yield* refreshThreadUsageSummary(event.threadId).pipe(
-              Effect.provideService(SqlClient.SqlClient, sql),
-            );
+            if (!deferUsageSummary)
+              yield* refreshThreadUsageSummary(event.threadId).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
             break;
           }
           case "runtime-request.updated": {
@@ -5898,22 +5905,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const rows = yield* sql<SettlementThreadRow>`
             SELECT t.thread_id, t.payload_json,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
-              (
-                SELECT pt.payload_json FROM orchestration_v2_projection_provider_turns pt
-                JOIN orchestration_v2_projection_provider_threads p ON p.provider_thread_id = pt.provider_thread_id
-                WHERE pt.thread_id = t.thread_id
-                  AND (p.owner_node_id IS NULL OR p.provider_thread_id = t.active_provider_thread_id)
-                  AND json_extract(p.payload_json, '$.driver') IN ('codex', 'claudeAgent')
-                ORDER BY pt.started_at DESC, pt.ordinal DESC, pt.provider_turn_id DESC LIMIT 1
-              ) AS latest_usage_turn_payload_json,
-              (
-                SELECT SUM(json_extract(pt.payload_json, '$.turnTokenUsage.inputTokens') + json_extract(pt.payload_json, '$.turnTokenUsage.outputTokens'))
-                FROM orchestration_v2_projection_provider_turns pt
-                JOIN orchestration_v2_projection_provider_threads p ON p.provider_thread_id = pt.provider_thread_id
-                WHERE pt.thread_id = t.thread_id
-                  AND (p.owner_node_id IS NULL OR p.provider_thread_id = t.active_provider_thread_id)
-                  AND json_extract(p.payload_json, '$.driver') IN ('codex', 'claudeAgent')
-              ) AS thread_tokens,
               r.run_id AS latest_run_id,
               r.status AS latest_run_status,
               r.requested_at AS latest_run_requested_at,
@@ -6076,7 +6067,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const usageSummary =
           row.usage_summary_payload_json === null
             ? undefined
-            : yield* decodeUsageSummaryPayload(row.usage_summary_payload_json);
+            : yield* decodeUsageSummaryPayload(row.usage_summary_payload_json).pipe(
+                Effect.catchCause(() =>
+                  Effect.logWarning("Skipping corrupt stored thread usage", {
+                    threadId: row.thread_id,
+                  }).pipe(Effect.as(undefined)),
+                ),
+              );
         const nativeSubagent =
           row.native_subagent_payload_json === null
             ? null

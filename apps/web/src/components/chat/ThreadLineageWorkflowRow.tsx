@@ -23,7 +23,7 @@ import { useState, type ReactNode } from "react";
 import { AgentElapsed } from "./AgentElapsed";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
-import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
+import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { cn } from "../../lib/utils";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
@@ -114,7 +114,14 @@ function WorkflowMemberRow({
             provider={<ThreadRelationshipIcon driver={driver} provider={provider} />}
             model={shortModelName(member.model ?? thread?.modelSelection.model ?? "")}
             effort={shortModelSelectionEffort(member.effort ?? null)}
-            name={member.title}
+            name={
+              <span>
+                {member.title}
+                <span className="sr-only">
+                  Status: {threadRelationshipStatusLabel(member.status)}
+                </span>
+              </span>
+            }
             time={member.startedAt ? <AgentElapsed agent={member} /> : undefined}
             status={<ThreadStatusMark status={lineageStatusMark(member.status)} />}
           />

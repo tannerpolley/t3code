@@ -105,6 +105,13 @@ export function accumulateClaudeTurnTokenUsage(
   hasSubagents: boolean,
 ): TurnTokenUsage {
   messages.set(messageId, usage);
+  return accumulatedClaudeUsage(messages, hasSubagents);
+}
+
+function accumulatedClaudeUsage(
+  messages: Parameters<typeof accumulateClaudeTurnTokenUsage>[0],
+  hasSubagents: boolean,
+): TurnTokenUsage {
   let inputTokens = 0;
   let cachedInputTokens = 0;
   let outputTokens = 0;
@@ -121,4 +128,16 @@ export function accumulateClaudeTurnTokenUsage(
     outputTokens,
     hasSubagents,
   };
+}
+
+/** A missing result cannot discard main-agent counts already observed in this turn. */
+export function finishClaudeTurnTokenUsage(
+  result: Parameters<typeof normalizeClaudeTurnTokenUsage>[0],
+  messages: Parameters<typeof accumulateClaudeTurnTokenUsage>[0],
+  hasSubagents: boolean,
+  status: ProviderRuntimeTurnStatus,
+): TurnTokenUsage {
+  const reported = normalizeClaudeTurnTokenUsage(result, hasSubagents, status);
+  if (reported.usageStatus !== "unavailable" || messages.size === 0) return reported;
+  return accumulatedClaudeUsage(messages, hasSubagents);
 }

@@ -23,6 +23,10 @@ export function lineageStatusMark(status: string | null): ThreadStatusMarkStatus
     case "error":
       return "failed";
     case "completed":
+    case "resolved_native":
+    case "resolved_portable":
+    case "consumed":
+    case "superseded":
       return "done";
     case "input":
     case "approval":

@@ -15,9 +15,14 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import ThreadUsageMigration from "../persistence/ForkMigrations/010_ThreadUsageSummary.ts";
-import { deriveThreadUsageSummary } from "./ThreadUsageSummary.ts";
+import {
+  DeferThreadUsageSummary,
+  refreshAllThreadUsageSummaries,
+  deriveThreadUsageSummary,
+} from "./ThreadUsageSummary.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
@@ -65,7 +70,9 @@ const provider: OrchestrationV2ProviderThread = {
   updatedAt: now,
 };
 const turn: OrchestrationV2ProviderTurn = {
-  id: ProviderTurnId.make("usage-turn"),
+  id: ProviderTurnId.make(
+    `provider-turn:codex:${"abcdef01-2345-6789-abcd-ef0123456789:".repeat(6)}`,
+  ),
   providerThreadId: provider.id,
   nodeId: NodeId.make("usage-node"),
   runAttemptId: null,
@@ -120,6 +127,13 @@ describe("thread usage summary", () => {
     );
     assert.isUndefined(unavailable?.latestTurnTokens);
     assert.equal(unavailable?.contextTokens, 10_000);
+    assert.isUndefined(
+      deriveThreadUsageSummary(
+        { ...turn, tokenUsage: undefined, turnTokenUsage: undefined },
+        provider,
+        undefined,
+      ),
+    );
   });
 });
 
@@ -201,9 +215,10 @@ it.layer(layer)("persisted sidebar usage", (it) => {
             ordinal: 10,
           },
         });
+        // Context-only updates cannot erase whole-turn counts.
         const next = {
           ...turn,
-          id: ProviderTurnId.make("next-turn"),
+          id: ProviderTurnId.make(`next:${turn.id}`),
           ordinal: 2,
           startedAt: DateTime.makeUnsafe("2026-10-13T12:01:00.000Z"),
         };
@@ -280,7 +295,246 @@ it.layer(layer)("persisted sidebar usage", (it) => {
         yield* sql`DROP TABLE orchestration_v2_projection_thread_usage`;
         yield* ThreadUsageMigration;
         assert.deepEqual((yield* store.getThreadShell(threadId))?.usageSummary, shell.usageSummary);
-        assert.isBelow(new TextEncoder().encode(JSON.stringify(shell.usageSummary)).length, 350);
+        const encoded = JSON.stringify(shell.usageSummary);
+        assert.isBelow(new TextEncoder().encode(encoded).length, 220);
+        assert.notInclude(encoded, "turnId");
+        assert.notInclude(encoded, "completed");
+        assert.notInclude(encoded, next.id);
+        assert.isAtLeast(next.id.length, 77);
+        assert.isAtMost(next.id.length, 276);
       }),
+  );
+});
+
+it.layer(layer)("usage recovery and agreement", (it) => {
+  it.effect(
+    "skips bad summaries and refresh failures without losing provider projection writes",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        yield* store.apply({
+          id: EventId.make("safe-thread"),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: thread,
+        });
+        yield* store.apply({
+          id: EventId.make("safe-provider"),
+          type: "provider-thread.updated",
+          driver: provider.driver,
+          threadId,
+          occurredAt: now,
+          payload: provider,
+        });
+        yield* store.apply({
+          id: EventId.make("safe-turn"),
+          type: "provider-turn.updated",
+          driver: provider.driver,
+          threadId,
+          occurredAt: now,
+          payload: turn,
+        });
+        yield* sql`UPDATE orchestration_v2_projection_thread_usage SET payload_json = '{' WHERE thread_id = ${threadId}`;
+        assert.isUndefined((yield* store.getThreadShell(threadId))?.usageSummary);
+        assert.isUndefined((yield* store.getShellSnapshot()).threads[0]?.usageSummary);
+        yield* sql`DROP TABLE orchestration_v2_projection_thread_usage`;
+        yield* store.apply({
+          id: EventId.make("safe-completion"),
+          type: "provider-turn.updated",
+          driver: provider.driver,
+          threadId,
+          occurredAt: now,
+          payload: { ...turn, status: "completed", completedAt: now },
+        });
+        assert.equal(
+          (yield* store.getThreadProjection(threadId)).providerTurns[0]?.status,
+          "completed",
+        );
+        yield* sql`UPDATE orchestration_v2_projection_provider_turns SET payload_json = '{' WHERE provider_turn_id = ${turn.id}`;
+        yield* ThreadUsageMigration;
+        assert.equal(
+          (yield* sql`SELECT * FROM orchestration_v2_projection_thread_usage`).length,
+          0,
+        );
+        yield* sql`DROP TABLE orchestration_v2_projection_thread_usage`;
+        yield* sql`UPDATE orchestration_v2_projection_provider_turns SET payload_json = ${JSON.stringify({ ...turn, turnTokenUsage: { ...turn.turnTokenUsage, inputTokens: -1 } })} WHERE provider_turn_id = ${turn.id}`;
+        yield* ThreadUsageMigration;
+        assert.equal(
+          (yield* sql`SELECT * FROM orchestration_v2_projection_thread_usage`).length,
+          0,
+        );
+      }),
+  );
+
+  it.effect(
+    "matches SQL and memory for handoffs, active native children, ties, unavailable context, and unsupported providers",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        for (const scenario of [
+          "handoff",
+          "native",
+          "tie",
+          "unavailable",
+          "unsupported",
+          "context",
+        ] as const) {
+          const id = ThreadId.make(`agreement-${scenario}`);
+          const firstProvider = {
+            ...provider,
+            id: ProviderThreadId.make(`${scenario}-p1`),
+            appThreadId: id,
+            ...(scenario === "native" ? { ownerNodeId: NodeId.make("native-node") } : {}),
+            contextUsage: { usedTokens: 20_000, maxTokens: 100_000 },
+          };
+          const secondProvider = {
+            ...firstProvider,
+            id: ProviderThreadId.make(`${scenario}-p2`),
+            driver: ProviderDriverKind.make(scenario === "unsupported" ? "cursor" : "claudeAgent"),
+            ownerNodeId: scenario === "native" ? NodeId.make("other-native-node") : null,
+          };
+          yield* store.apply({
+            id: EventId.make(`${scenario}-thread`),
+            type: "thread.created",
+            threadId: id,
+            occurredAt: now,
+            payload: { ...thread, id, lineage: { ...thread.lineage, rootThreadId: id } },
+          });
+          for (const [index, p] of [firstProvider, secondProvider].entries())
+            yield* store.apply({
+              id: EventId.make(`${scenario}-provider-${index}`),
+              type: "provider-thread.updated",
+              threadId: id,
+              driver: p.driver,
+              occurredAt: now,
+              payload: p,
+            });
+          if (scenario === "native")
+            yield* store.apply({
+              id: EventId.make(`${scenario}-active`),
+              type: "provider-thread.updated",
+              threadId: id,
+              driver: firstProvider.driver,
+              occurredAt: now,
+              payload: firstProvider,
+            });
+          const firstTurn = {
+            ...turn,
+            id: ProviderTurnId.make(`${scenario}-turn:a`),
+            providerThreadId: firstProvider.id,
+          };
+          const secondTurn = {
+            ...turn,
+            id: ProviderTurnId.make(`${scenario}-turn:Z`),
+            providerThreadId: secondProvider.id,
+            startedAt: scenario === "tie" ? now : DateTime.makeUnsafe("2026-10-13T12:02:00.000Z"),
+            ...(scenario === "unavailable" || scenario === "context"
+              ? {
+                  turnTokenUsage: undefined,
+                  tokenUsage:
+                    scenario === "context" ? { ...turn.tokenUsage!, maxTokens: null } : undefined,
+                }
+              : {}),
+          };
+          for (const [index, value] of [firstTurn, secondTurn].entries())
+            yield* store.apply({
+              id: EventId.make(`${scenario}-turn-${index}`),
+              type: "provider-turn.updated",
+              threadId: id,
+              driver: index === 0 ? firstProvider.driver : secondProvider.driver,
+              occurredAt: now,
+              payload: value,
+            });
+          const fromSql = (yield* store.getThreadShell(id))?.usageSummary;
+          const fromMemory = ProjectionStore.threadShellFromProjection(
+            yield* store.getThreadProjection(id),
+          ).usageSummary;
+          assert.deepEqual(fromSql, fromMemory, scenario);
+        }
+        const before = (yield* store.getShellSnapshot()).threads;
+        yield* sql`DROP TABLE orchestration_v2_projection_thread_usage`;
+        yield* ThreadUsageMigration;
+        for (const expected of before)
+          assert.deepEqual(
+            (yield* store.getThreadShell(expected.id))?.usageSummary,
+            expected.usageSummary,
+            expected.id,
+          );
+      }),
+  );
+
+  it.effect("defers usage scans during historical replay and materializes once per thread", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const replayThreadId = ThreadId.make("replay-thread");
+      const replayProvider = {
+        ...provider,
+        id: ProviderThreadId.make("replay-provider"),
+        appThreadId: replayThreadId,
+      };
+      const statements: string[] = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (at, exit) => {
+            const query = span.attributes.get("db.query.text");
+            if (typeof query === "string") statements.push(query);
+            end(at, exit);
+          };
+          return span;
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("replay-thread"),
+        type: "thread.created",
+        threadId: replayThreadId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          id: replayThreadId,
+          lineage: { ...thread.lineage, rootThreadId: replayThreadId },
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("replay-provider"),
+        type: "provider-thread.updated",
+        threadId: replayThreadId,
+        driver: provider.driver,
+        occurredAt: now,
+        payload: replayProvider,
+      });
+      statements.length = 0;
+      for (let index = 1; index <= 20; index++)
+        yield* store
+          .apply({
+            id: EventId.make(`replay-${index}`),
+            type: "provider-turn.updated",
+            threadId: replayThreadId,
+            driver: provider.driver,
+            occurredAt: now,
+            payload: {
+              ...turn,
+              providerThreadId: replayProvider.id,
+              id: ProviderTurnId.make(`replay-turn-${index}`),
+              ordinal: index,
+            },
+          })
+          .pipe(Effect.provideService(DeferThreadUsageSummary, true), Effect.withTracer(tracer));
+      assert.equal(statements.filter((query) => query.includes("OVER ()")).length, 0);
+      const threadCount = (yield* sql<{
+        count: number;
+      }>`SELECT COUNT(*) AS count FROM orchestration_v2_projection_threads`)[0]!.count;
+      yield* refreshAllThreadUsageSummaries.pipe(Effect.withTracer(tracer));
+      assert.equal(statements.filter((query) => query.includes("OVER ()")).length, threadCount);
+      assert.equal(
+        (yield* store.getThreadShell(replayThreadId))?.usageSummary?.threadTokens,
+        20 * 48_000,
+      );
+    }),
   );
 });

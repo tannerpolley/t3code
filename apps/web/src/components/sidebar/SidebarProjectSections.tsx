@@ -99,6 +99,7 @@ import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore"
 import { cn } from "~/lib/utils";
 import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import {
+  flattenRunningSubagents,
   resolveSidebarThreadStatus,
   resolveThreadStatusMark,
   withChildNeeds,
@@ -1181,6 +1182,16 @@ function ProjectDropLine() {
   );
 }
 
+const THREAD_STATUS_DOT_CLASS = {
+  approval: "bg-warning",
+  failed: "bg-error",
+  input: "bg-info",
+  ready: "bg-success/70",
+  waiting: "bg-info/60",
+  limited: "bg-warning/60",
+  working: "bg-info",
+} as const;
+
 const SidebarProjectThreadRow = memo(
   function SidebarProjectThreadRow(props: {
     readonly thread: SidebarThreadSummary;
@@ -1210,7 +1221,9 @@ const SidebarProjectThreadRow = memo(
     const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
     const workRows = describeSidebarBackgroundWork(
       props.thread.pendingBackgroundTasks,
-      runningSubagents,
+      props.codexStyle
+        ? runningSubagents
+        : flattenRunningSubagents(runningSubagents, props.runningSubagentsByParentKey),
     );
     // Running work shows by default, even while the thread itself works; a collapse wins for this row.
     const [workOpen, setWorkOpen] = useState(true);
@@ -1253,35 +1266,68 @@ const SidebarProjectThreadRow = memo(
             props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });
           }}
         >
-          <SidebarThreadColumns
-            location={<ThreadLocationIcon thread={props.thread} />}
-            role={<ThreadRoleIcon thread={props.thread.source} />}
-            provider={
-              <ThreadRelationshipIcon
-                driver={provider?.driver}
-                provider={provider}
-                fallbackIcon={CornerDownRightIcon}
+          {props.codexStyle ? (
+            <SidebarThreadColumns
+              location={<ThreadLocationIcon thread={props.thread} />}
+              role={<ThreadRoleIcon thread={props.thread.source} />}
+              provider={
+                <ThreadRelationshipIcon
+                  driver={provider?.driver}
+                  provider={provider}
+                  fallbackIcon={CornerDownRightIcon}
+                />
+              }
+              model={resolveSidebarThreadModelLabel(props.thread, provider, true, false)}
+              effort={shortModelSelectionEffort(
+                formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
+              )}
+              name={props.thread.title}
+              count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
+              time={<SidebarThreadTime thread={props.thread} status={status} />}
+              status={<ThreadStatusMark status={statusMark} />}
+              usage={<SidebarTokenUsage summary={props.thread.source.usageSummary} />}
+            />
+          ) : (
+            <>
+              <span
+                aria-hidden
+                className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
               />
-            }
-            model={resolveSidebarThreadModelLabel(props.thread, provider, true, false)}
-            effort={shortModelSelectionEffort(
-              formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
-            )}
-            name={props.thread.title}
-            time={<SidebarThreadTime thread={props.thread} status={status} />}
-            status={<ThreadStatusMark status={statusMark} />}
-            usage={<SidebarTokenUsage summary={props.thread.source.usageSummary} />}
-          />
+              <ThreadLocationIcon thread={props.thread} />
+              <ThreadRoleIcon thread={props.thread.source} />
+              <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
+              {workRows.length > 0 ? (
+                <span aria-hidden className="w-8 shrink-0" />
+              ) : (
+                <SidebarThreadTime thread={props.thread} status={status} />
+              )}
+            </>
+          )}
         </button>
-        {workRows.length > 0 ? (
+        {workRows.length > 0 && props.codexStyle ? (
           <SidebarCaretToggle
             open={workOpen}
             label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
             onToggle={() => setWorkOpen(!workOpen)}
             className="top-0.5 h-5"
           />
+        ) : workRows.length > 0 ? (
+          <button
+            type="button"
+            aria-expanded={workOpen}
+            aria-label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background tasks`}
+            className="absolute top-0.5 right-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-3xs text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover"
+            onClick={() => setWorkOpen(!workOpen)}
+          >
+            {workRows.length}
+            {workOpen ? (
+              <ChevronDownIcon className="size-3" />
+            ) : (
+              <ChevronRightIcon className="size-3" />
+            )}
+          </button>
         ) : null}
-        {workRows.length > 0 && workOpen ? (
+        {workRows.length > 0 && workOpen && props.codexStyle ? (
           <div>
             <SidebarSubagentTree
               environmentId={props.thread.environmentId}
@@ -1292,6 +1338,17 @@ const SidebarProjectThreadRow = memo(
               onChildClick={props.onClick}
               onChildContextMenu={props.onContextMenu}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+            />
+          </div>
+        ) : workRows.length > 0 && workOpen ? (
+          <div className="ms-3 border-s border-sidebar-border/60 ps-1">
+            <SidebarBackgroundWorkRows
+              compact
+              environmentId={props.thread.environmentId}
+              threadId={props.thread.id}
+              rows={workRows}
+              onChildClick={props.onClick}
+              onChildContextMenu={props.onContextMenu}
             />
           </div>
         ) : null}

@@ -697,7 +697,17 @@ it("shows the matching child agent details and refreshes them when the agent set
   });
   const text = () =>
     renderer.root
-      .findAll((node) => typeof node.type === "string")
+      .findAll((node) => {
+        if (typeof node.type !== "string") return false;
+        for (let ancestor: typeof node | null = node; ancestor; ancestor = ancestor.parent) {
+          if (
+            typeof ancestor.props.className === "string" &&
+            ancestor.props.className.includes("sr-only")
+          )
+            return false;
+        }
+        return true;
+      })
       .flatMap((node) => node.children.filter((child) => typeof child === "string"))
       .join(" ")
       .replace(/\s+/g, " ");

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   accumulateClaudeTurnTokenUsage,
   normalizeClaudeTurnTokenUsage,
+  finishClaudeTurnTokenUsage,
 } from "./ClaudeTurnTokenUsage.ts";
 import {
   accumulateCodexTurnTokenUsage,
@@ -188,3 +189,38 @@ describe("live whole-turn usage", () => {
     });
   });
 });
+
+it.each(["completed", "failed", "interrupted"] as const)(
+  "retains Claude main-agent counts when %s has no result",
+  (status) => {
+    const messages = new Map();
+    accumulateClaudeTurnTokenUsage(
+      messages,
+      "first",
+      { inputTokens: 100, cachedInputTokens: 60, outputTokens: 20 },
+      false,
+    );
+    accumulateClaudeTurnTokenUsage(
+      messages,
+      "second",
+      { inputTokens: 200, cachedInputTokens: 120, outputTokens: 30 },
+      false,
+    );
+    expect(finishClaudeTurnTokenUsage(undefined, messages, true, status)).toEqual({
+      usageScope: "main_agent",
+      usageStatus: "partial",
+      inputTokens: 300,
+      cachedInputTokens: 180,
+      outputTokens: 50,
+      hasSubagents: true,
+    });
+    expect(
+      finishClaudeTurnTokenUsage(
+        { subtype: "success", usage: { input_tokens: 400, output_tokens: 75 } },
+        messages,
+        false,
+        "completed",
+      ),
+    ).toMatchObject({ usageStatus: "complete", inputTokens: 400, outputTokens: 75 });
+  },
+);

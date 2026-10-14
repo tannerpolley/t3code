@@ -110,6 +110,8 @@ export function SidebarThreadColumns(props: {
   readonly model?: ReactNode;
   readonly effort?: ReactNode;
   readonly name: ReactNode;
+  readonly count?: number | undefined;
+  readonly trailingClassName?: string | undefined;
   readonly time?: ReactNode;
   readonly status?: ReactNode;
   readonly usage?: ReactNode;
@@ -126,9 +128,10 @@ export function SidebarThreadColumns(props: {
       <span className="sidebar-thread-model">{props.model}</span>
       <span className="sidebar-thread-effort">{props.effort}</span>
       <span className="sidebar-thread-name">{props.name}</span>
-      <span className="sidebar-thread-time">{props.time}</span>
-      <span className="sidebar-thread-icon">{props.status}</span>
-      <span className="sidebar-thread-usage">{props.usage}</span>
+      <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
+      <span className={cn("sidebar-thread-time", props.trailingClassName)}>{props.time}</span>
+      <span className={cn("sidebar-thread-icon", props.trailingClassName)}>{props.status}</span>
+      <span className={cn("sidebar-thread-usage", props.trailingClassName)}>{props.usage}</span>
     </span>
   );
 }

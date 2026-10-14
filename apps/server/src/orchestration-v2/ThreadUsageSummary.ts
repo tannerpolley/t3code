@@ -2,8 +2,11 @@ import {
   OrchestrationV2ProviderTurnJson,
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2ThreadUsageSummary as UsageSummarySchema,
+  ProviderTurnId,
+  type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -11,15 +14,41 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
-  OrchestrationV2ThreadUsageSummary,
 } from "@t3tools/contracts";
+
+export class DeferThreadUsageSummary extends Context.Reference<boolean>(
+  "t3/sidebar/DeferThreadUsageSummary",
+  { defaultValue: () => false },
+) {}
+
+export const StoredThreadUsageSummary = Schema.Struct({
+  ...UsageSummarySchema.fields,
+  turnId: ProviderTurnId,
+  completed: Schema.Boolean,
+});
+export type StoredThreadUsageSummary = typeof StoredThreadUsageSummary.Type;
+const usageThrottle = Symbol("threadUsageThrottle");
+
+/** Symbols stay inside the server and are ignored by JSON and the shell wire schema. */
+export function threadUsageShellFields(stored: StoredThreadUsageSummary | undefined) {
+  if (stored === undefined) return {};
+  const { turnId, completed, ...usageSummary } = stored;
+  return { usageSummary, [usageThrottle]: { turnId, completed } };
+}
+export function threadUsageThrottleState(shell: OrchestrationV2ThreadShell) {
+  return (
+    shell as OrchestrationV2ThreadShell & {
+      [usageThrottle]?: { readonly turnId: string; readonly completed: boolean };
+    }
+  )[usageThrottle];
+}
 
 /** Derive only numbers from persisted provider records, never transcript items. */
 export function deriveThreadUsageSummary(
   turn: OrchestrationV2ProviderTurn | undefined,
   providerThread: OrchestrationV2ProviderThread | undefined,
   threadTokens: number | undefined,
-): OrchestrationV2ThreadUsageSummary | undefined {
+): StoredThreadUsageSummary | undefined {
   if (!turn || !providerThread || !["codex", "claudeAgent"].includes(providerThread.driver))
     return undefined;
   const usage = turn.turnTokenUsage;
@@ -27,6 +56,13 @@ export function deriveThreadUsageSummary(
   if (!usage && !context) return undefined;
   const inputTokens = usage?.inputTokens;
   const outputTokens = usage?.outputTokens;
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    context?.usedTokens === undefined &&
+    threadTokens === undefined
+  )
+    return undefined;
   return {
     turnId: turn.id,
     completed: turn.completedAt !== null,
@@ -50,10 +86,10 @@ const decodeTurn = Schema.decodeUnknownEffect(
 const decodeThread = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ProviderThreadJson),
 );
-const encodeSummary = Schema.encodeEffect(Schema.fromJsonString(UsageSummarySchema));
+const encodeSummary = Schema.encodeEffect(Schema.fromJsonString(StoredThreadUsageSummary));
 
 /** Materialize on usage events so ordinary text/tool shell refreshes never scan turn history. */
-export const refreshThreadUsageSummary = Effect.fnUntraced(function* (threadId: ThreadId) {
+const refresh = Effect.fnUntraced(function* (threadId: ThreadId) {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql<{
     readonly turn_json: string;
@@ -85,4 +121,19 @@ export const refreshThreadUsageSummary = Effect.fnUntraced(function* (threadId: 
     yield* sql`INSERT INTO orchestration_v2_projection_thread_usage (thread_id, payload_json)
       VALUES (${threadId}, ${payload}) ON CONFLICT(thread_id) DO UPDATE SET payload_json = excluded.payload_json`;
   }
+});
+
+export const refreshThreadUsageSummary = (threadId: ThreadId) =>
+  refresh(threadId).pipe(
+    Effect.catchCause(() =>
+      Effect.logWarning("Skipping unreadable thread usage summary", { threadId }),
+    ),
+  );
+/** Replay batches materialize once per thread, rather than once per historical turn event. */
+export const refreshAllThreadUsageSummaries = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const threads = yield* sql<{
+    readonly thread_id: string;
+  }>`SELECT thread_id FROM orchestration_v2_projection_threads`;
+  for (const thread of threads) yield* refreshThreadUsageSummary(thread.thread_id as ThreadId);
 });

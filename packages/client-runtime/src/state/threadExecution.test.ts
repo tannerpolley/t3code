@@ -721,12 +721,14 @@ describe("presentProviderGoal", () => {
 });
 
 describe("shortModelSelectionEffort", () => {
-  it("shortens standard catalog names while preserving provider extras and absent effort", () => {
-    expect(
-      ["Low", "Medium", "High", "Extra High", "Maximum", "Ultra", null].map(
-        shortModelSelectionEffort,
-      ),
-    ).toEqual(["Low", "Med", "High", "XHigh", "Max", "Ultra", null]);
+  it("shortens catalog labels and preserves provider extras", () => {
+    expect(shortModelSelectionEffort("Low")).toBe("Low");
+    expect(shortModelSelectionEffort("Medium")).toBe("Med");
+    expect(shortModelSelectionEffort("High")).toBe("High");
+    expect(shortModelSelectionEffort("Extra High")).toBe("XHigh");
     expect(shortModelSelectionEffort("xhigh")).toBe("XHigh");
+    expect(shortModelSelectionEffort("Maximum")).toBe("Max");
+    expect(shortModelSelectionEffort("Ultra")).toBe("Ultra");
+    expect(shortModelSelectionEffort(null)).toBeNull();
   });
 });

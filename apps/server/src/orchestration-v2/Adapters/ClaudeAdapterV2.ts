@@ -16,7 +16,7 @@ import {
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import {
   accumulateClaudeTurnTokenUsage,
-  normalizeClaudeTurnTokenUsage,
+  finishClaudeTurnTokenUsage,
 } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
   type CanUseTool,
@@ -6020,8 +6020,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     status: input.status,
                     completedAt: input.completedAt,
                   }),
-                  turnTokenUsage: normalizeClaudeTurnTokenUsage(
+                  turnTokenUsage: finishClaudeTurnTokenUsage(
                     input.result,
+                    input.context.mainAgentUsage,
                     input.context.subagentsByTaskId.size > 0 ||
                       input.context.subagentsByToolUseId.size > 0,
                     input.status,

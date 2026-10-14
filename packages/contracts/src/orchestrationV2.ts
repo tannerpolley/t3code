@@ -2012,8 +2012,6 @@ export type OrchestrationV2LatestVisibleMessageSummary =
 
 /** Compact sidebar usage; cache reads are already included in input tokens. */
 export const OrchestrationV2ThreadUsageSummary = Schema.Struct({
-  turnId: ProviderTurnId,
-  completed: Schema.Boolean,
   partial: Schema.Boolean,
   latestTurnTokens: Schema.optional(NonNegativeInt),
   inputTokens: Schema.optional(NonNegativeInt),

@@ -781,14 +781,30 @@ export function ThreadRelationshipsPanel(props: {
                       role={node?.thread ? <ThreadRoleIcon thread={node.thread} /> : undefined}
                       provider={
                         <ThreadRelationshipIcon
-                          driver={providerDriver}
+                          driver={isSubagent && !isParent ? providerDriver : undefined}
                           provider={provider}
                           fallbackIcon={RelationshipIcon}
                         />
                       }
                       model={model ? shortModelName(metadata.modelLabel) : undefined}
                       effort={shortModelSelectionEffort(effortLabel)}
-                      name={threadTitle}
+                      name={
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className="min-w-0 flex-1 truncate">{threadTitle}</span>
+                          {!elapsedAgent ? (
+                            <span className="shrink-0 text-2xs text-muted-foreground">
+                              {threadRelationshipStatusLabel(rowStatus)}
+                            </span>
+                          ) : null}
+                          <span className="sr-only">
+                            Status: {threadRelationshipStatusLabel(rowStatus)}
+                          </span>
+                          {agent ? null : (
+                            <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                          )}
+                        </span>
+                      }
+                      trailingClassName={trailingVisibilityClass}
                       time={
                         elapsedAgent && !failed ? (
                           <AgentElapsed agent={elapsedAgent} compact />

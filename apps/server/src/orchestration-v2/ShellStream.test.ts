@@ -1,3 +1,4 @@
+import { threadUsageShellFields } from "./ThreadUsageSummary.ts";
 import { describe, expect, it } from "@effect/vitest";
 import type {
   ApplicationStoredEvent,
@@ -627,21 +628,22 @@ describe("skipUnchangedThreadShells", () => {
     "throttles live usage independently of metadata and flushes final usage immediately",
     () =>
       Effect.gen(function* () {
-        const usage = (tokens: number, completed = false) => ({
-          turnId: ProviderTurnId.make("turn-a"),
-          completed,
-          partial: !completed,
-          latestTurnTokens: tokens,
-        });
+        const usage = (tokens: number, completed = false) =>
+          threadUsageShellFields({
+            turnId: ProviderTurnId.make("turn-a"),
+            completed,
+            partial: !completed,
+            latestTurnTokens: tokens,
+          });
         const steps: ReadonlyArray<Step> = [
-          updated(1, shell("a", { usageSummary: usage(10) })),
-          updated(2, shell("a", { usageSummary: usage(20) })),
+          updated(1, shell("a", { ...usage(10) })),
+          updated(2, shell("a", { ...usage(20) })),
           { advanceMs: 4_999 },
-          updated(3, shell("a", { usageSummary: usage(30), title: "Renamed" })),
+          updated(3, shell("a", { ...usage(30), title: "Renamed" })),
           { advanceMs: 1 },
-          updated(4, shell("a", { usageSummary: usage(40), title: "Renamed" })),
-          updated(5, shell("a", { usageSummary: usage(50, true), title: "Renamed" })),
-          updated(6, shell("b", { usageSummary: usage(100) })),
+          updated(4, shell("a", { ...usage(40), title: "Renamed" })),
+          updated(5, shell("a", { ...usage(50, true), title: "Renamed" })),
+          updated(6, shell("b", { ...usage(100) })),
         ];
         const sent = yield* Stream.fromIterable(steps).pipe(
           Stream.mapEffect((step) =>
@@ -667,6 +669,30 @@ describe("skipUnchangedThreadShells", () => {
           [6, 100],
         ]);
       }),
+  );
+
+  it.effect("sends the first whole-turn count immediately after a context-only shell", () =>
+    Effect.gen(function* () {
+      const base = { turnId: ProviderTurnId.make("new-turn"), completed: false, partial: true };
+      const sent = yield* run([
+        updated(1, shell("a", threadUsageShellFields({ ...base, contextTokens: 10_000 }))),
+        updated(
+          2,
+          shell(
+            "a",
+            threadUsageShellFields({ ...base, contextTokens: 10_000, latestTurnTokens: 48_000 }),
+          ),
+        ),
+        updated(
+          3,
+          shell(
+            "a",
+            threadUsageShellFields({ ...base, contextTokens: 11_000, latestTurnTokens: 50_000 }),
+          ),
+        ),
+      ]);
+      expect(sent).toEqual([1, 2]);
+    }),
   );
 
   it.effect("sends the next update after a removal", () =>

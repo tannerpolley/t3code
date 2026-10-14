@@ -14,6 +14,7 @@ import {
   useRef,
   type ComponentProps,
   type MouseEvent as ReactMouseEvent,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 
@@ -207,6 +208,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 {row.kind === "subagent" ? null : usage}
               </span>
             }
+            count={toggle && !toggle.open ? toggle.count : undefined}
             time={time}
             status={<ThreadStatusMark status={row.status ?? "working"} />}
             usage={
@@ -306,7 +308,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               row.kind !== "subagent" && "group/shell",
               index === agents.length && agents.length > 0 && "border-t border-sidebar-border/40",
               "relative",
+              props.columns && "sidebar-tree-row",
             )}
+            style={
+              props.columns
+                ? ({ "--sidebar-thread-depth": props.depth ?? 0 } as CSSProperties)
+                : undefined
+            }
           >
             {props.compact ? (
               <Tooltip>
