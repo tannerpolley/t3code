@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as IssueService from "./IssueService.ts";
+import { milestoneTransitions, stateTransitions, withWriteReceipts } from "./IssueInboxRules.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -425,8 +426,10 @@ const make = Effect.gen(function* () {
             let child = steps[key]?.issue;
             if (child === undefined) {
               yield* startStep(key);
-              const created = yield* issues
-                .createIssue({
+              const created = yield* withWriteReceipts(
+                sql,
+                change,
+                issues.createIssue({
                   host: change.host,
                   repository: change.repository,
                   ...drafts[index]!,
@@ -449,8 +452,12 @@ const make = Effect.gen(function* () {
                           }),
                       ),
                     ),
-                })
-                .pipe(Effect.mapError(githubError));
+                }),
+                (created) => ({
+                  issueNumber: created.issue.number,
+                  transitions: milestoneTransitions(null, drafts[index]!.milestoneNumber),
+                }),
+              ).pipe(Effect.mapError(githubError));
               child = created.issue;
               if (steps[key] === undefined)
                 yield* saveStep(key, child, {
@@ -510,14 +517,27 @@ const make = Effect.gen(function* () {
               yield* issues
                 .updateBody({ ...baseline.issue, body: op.body })
                 .pipe(Effect.mapError(githubError));
+            // Receipts let the issue inbox read the events these writes log as T3's own.
             if (op.type === "state")
-              yield* issues
-                .setState({ ...baseline.issue, state: op.state })
-                .pipe(Effect.mapError(githubError));
+              yield* withWriteReceipts(
+                sql,
+                change,
+                issues.setState({ ...baseline.issue, state: op.state }),
+                () => ({
+                  issueNumber: baseline.issue.number,
+                  transitions: stateTransitions(baseline.state, op.state),
+                }),
+              ).pipe(Effect.mapError(githubError));
             if (op.type === "milestone")
-              yield* issues
-                .setMilestone({ ...baseline.issue, milestoneNumber: op.milestoneNumber })
-                .pipe(Effect.mapError(githubError));
+              yield* withWriteReceipts(
+                sql,
+                change,
+                issues.setMilestone({ ...baseline.issue, milestoneNumber: op.milestoneNumber }),
+                () => ({
+                  issueNumber: baseline.issue.number,
+                  transitions: milestoneTransitions(baseline.milestoneNumber, op.milestoneNumber),
+                }),
+              ).pipe(Effect.mapError(githubError));
           }
           yield* saveStep(
             "write",

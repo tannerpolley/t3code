@@ -57,11 +57,14 @@ export function IssueInboxBadge({ threadRef }: { readonly threadRef: ScopedThrea
 const KIND_LABELS: Record<IssueInboxEvent["kind"], string> = {
   issue_opened: "Opened",
   comment: "Comment",
-  edited: "Edited",
   closed: "Closed",
   reopened: "Reopened",
   labeled: "Labeled",
+  unlabeled: "Unlabeled",
   milestoned: "Milestoned",
+  demilestoned: "Milestone removed",
+  renamed: "Renamed",
+  missed_activity: "Missed activity",
 };
 
 function describe(event: IssueInboxEvent): string {
@@ -126,7 +129,8 @@ function InboxList({
                 rel="noopener noreferrer"
                 target="_blank"
               >
-                #{event.issueNumber} {event.issueTitle}
+                {event.issueNumber > 0 ? `#${event.issueNumber} ` : ""}
+                {event.issueTitle}
               </a>
               <p className="text-muted-foreground">{describe(event)}</p>
               {event.snippet !== "" ? (

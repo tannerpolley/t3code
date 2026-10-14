@@ -3,15 +3,21 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { IssueRef, IssueRepositoryRef } from "./issue.ts";
 
-/** External activity the watcher records for a managed repository. */
+/**
+ * External activity the watcher records for a managed repository. `missed_activity` reports a
+ * catch-up larger than one poll reads, as after a long time offline.
+ */
 export const IssueInboxEventKind = Schema.Literals([
   "issue_opened",
   "comment",
-  "edited",
   "closed",
   "reopened",
   "labeled",
+  "unlabeled",
   "milestoned",
+  "demilestoned",
+  "renamed",
+  "missed_activity",
 ]);
 export type IssueInboxEventKind = typeof IssueInboxEventKind.Type;
 

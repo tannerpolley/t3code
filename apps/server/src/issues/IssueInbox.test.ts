@@ -191,14 +191,17 @@ const seedRepository = Effect.gen(function* () {
     VALUES ('github.com', '42', 'acme/b', ${root}, 'project-b', 'project', 'start', 1, 0, 4, 1, 1, ${at(0)}, ${at(0)})`;
 });
 
-/** A T3 issue change that ran at `minute`, as IssueChangeService records it. */
-const recordChange = (id: string, number: number, operation: string, minute: number) =>
+/** A transition T3 wrote to #`number`, with its request span in minutes after watching began. */
+const recordReceipt = (
+  number: number,
+  kind: string,
+  span: readonly [number, number],
+  milestoneNumber: number | null = null,
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO issue_changes(change_id, requesting_thread_id, client_request_id, host, repository, issue_number, proposal_json, decision, status)
-      VALUES (${id}, ${root}, ${id}, 'github.com', 'acme/b', ${number}, ${`{"operation":${operation}}`}, 'approved', 'succeeded')`;
-    yield* sql`INSERT INTO orchestration_v2_effect_outbox(effect_id, command_id, thread_id, effect_type, payload_json, status, available_at, created_at, updated_at, completed_at)
-      VALUES (${`effect:issue-change:${id}`}, ${`issue-change:${id}`}, ${root}, 'issue.change', '{}', 'succeeded', ${at(minute)}, ${at(minute)}, ${at(minute)}, ${at(minute)})`;
+    yield* sql`INSERT INTO issue_inbox_write_receipts (host, repository, issue_number, kind, milestone_number, started_at, finished_at)
+      VALUES ('github.com', 'acme/b', ${number}, ${kind}, ${milestoneNumber}, ${span[0] * 60_000}, ${span[1] * 60_000})`;
   });
 
 const setup = (github = fakeGitHub(), threads = fakeThreads()) =>
@@ -207,7 +210,7 @@ const setup = (github = fakeGitHub(), threads = fakeThreads()) =>
     const inbox = yield* IssueInbox.make.pipe(
       Effect.provide(Layer.mergeAll(github.service, threads.service, projects)),
     );
-    // The first poll starts watching: cursors and an open-issue snapshot, nothing reported.
+    // The first poll starts watching from now; nothing earlier is reported.
     yield* inbox.pollDue;
     return { inbox, github, threads };
   });
@@ -327,7 +330,7 @@ it.effect("labels each external issue once and never relabels it", () =>
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("attributes an event to T3 only when it matches one recorded write's result", () =>
+it.effect("attributes an event to T3 only inside the request span of a matching receipt", () =>
   Effect.gen(function* () {
     const github = fakeGitHub();
     github.data.milestones = [
@@ -335,65 +338,125 @@ it.effect("attributes an event to T3 only when it matches one recorded write's r
       { number: 2, title: "M2" },
     ];
     const { inbox } = yield* setup(github);
-    yield* recordChange("close-6", 6, `{"type":"state","number":6,"state":"closed"}`, 3);
-    yield* recordChange("move-5", 5, `{"type":"milestone","number":5,"milestoneNumber":1}`, 3);
+    yield* recordReceipt(6, "closed", [3, 3.02]);
+    yield* recordReceipt(5, "milestoned", [3, 3.02], 1);
+    // T3 closed #8 and moved it to M1 too, but GitHub's events for those writes are never read.
+    yield* recordReceipt(8, "closed", [3, 3.02]);
+    yield* recordReceipt(8, "milestoned", [3, 3.02], 1);
     github.data.events = [
-      // The owner reopens #6 a minute before T3's close lands, then reopens and closes it again
-      // by hand five minutes later.
+      // The owner closes #6 by hand two minutes before T3's close, after reopening it.
+      event(10, "closed", 6, { created_at: at(1) }),
       event(11, "reopened", 6, { created_at: at(2) }),
       event(12, "closed", 6),
+      // And reopens and closes it again five minutes after T3's close.
       event(13, "reopened", 6, { created_at: at(8) }),
       event(14, "closed", 6, { created_at: at(9) }),
-      // The owner moves #5 to M2 just before T3's move to M1 lands.
+      // Within the same second as T3's move to M1, the owner moves #5 to M2 and then removes M1.
       event(15, "milestoned", 5, { milestone: { title: "M2" } }),
-      event(16, "milestoned", 5, { milestone: { title: "M1" }, created_at: at(4) }),
+      event(16, "milestoned", 5, { milestone: { title: "M1" } }),
+      event(17, "demilestoned", 5, { milestone: { title: "M1" } }),
+      // The owner's own closes of #8 before and after that write stay external, in either order.
+      event(20, "closed", 8, { created_at: at(1) }),
+      event(21, "reopened", 8, { created_at: at(2) }),
+      event(22, "closed", 8, { created_at: at(9) }),
+      event(23, "milestoned", 8, { milestone: { title: "M2" } }),
     ];
     yield* nextPoll(inbox);
     assert.deepEqual(yield* listed(inbox), [
       "closed #6",
+      "closed #6",
+      "closed #8",
+      "closed #8",
+      "demilestoned #5",
       "milestoned #5",
+      "milestoned #8",
       "reopened #6",
       "reopened #6",
+      "reopened #8",
     ]);
     const events = (yield* inbox.list(repo)).events;
     assert.equal(events.find((entry) => entry.kind === "milestoned")?.snippet, "Milestone: M2");
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("reports a title rename with both titles", () =>
+  Effect.gen(function* () {
+    const { inbox, github } = yield* setup();
+    github.data.events = [event(10, "renamed", 4, { rename: { from: "Old", to: "New" } })];
+    yield* nextPoll(inbox);
+    const [renamed] = (yield* inbox.list(repo)).events;
+    assert.deepEqual([renamed?.kind, renamed?.snippet], ["renamed", 'Renamed from "Old" to "New"']);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect(
-  "reports the first edit of an issue open before watching, each repeated edit, and an issue opened as watching starts",
+  "treats an older issue carrying another project's marker as external once activity arrives",
   () =>
     Effect.gen(function* () {
-      const github = fakeGitHub();
-      const before = { created_at: at(-60), updated_at: at(-60) };
-      github.data.issues = [
-        issue(1, "A", before),
-        issue(3, `Please add Y.\n${amineMarker}`, before),
-        issue(9, "Opened as watching started", { created_at: at(0), updated_at: at(0) }),
-      ];
-      const { inbox } = yield* setup(github);
-      const edit = (body: string, minute: number) =>
-        Effect.gen(function* () {
-          github.data.issues[0] = issue(1, body, { ...before, updated_at: at(minute) });
-          yield* nextPoll(inbox);
-        });
-      yield* edit("B", 1);
-      yield* edit("A", 3);
-      yield* edit("B", 5);
-      github.data.issues[1] = issue(3, `Please add Y and Z.\n${amineMarker}`, {
-        ...before,
-        updated_at: at(7),
+      const { inbox, github } = yield* setup();
+      // Opened by Amine's agent before B's orchestrator was watching; the owner comments now.
+      const marked = issue(3, `Please add Y.\n${amineMarker}`, {
+        created_at: at(-60),
+        updated_at: at(1),
       });
+      github.data.issues = [marked];
+      github.data.comments = [comment(1, 3, "On it.")];
       yield* nextPoll(inbox);
-      assert.deepEqual(yield* listed(inbox), [
-        "edited #1",
-        "edited #1",
-        "edited #1",
-        "edited #3",
-        "issue_opened #9",
-      ]);
-      const marked = (yield* inbox.list(repo)).events.find((entry) => entry.issueNumber === 3)!;
-      assert.deepEqual([marked.tagged, marked.sourceProject], [true, "amine"]);
+      const [entry] = (yield* inbox.list(repo)).events;
+      assert.deepEqual(
+        [entry?.kind, entry?.highPriority, entry?.sourceProject],
+        ["comment", true, "amine"],
+      );
+      const labelWrites = () =>
+        github.requests.filter((request) => request.path === "issues/3/labels");
+      assert.deepEqual(
+        labelWrites().map((request) => request.body),
+        [{ labels: ["external", "priority: high", "from:amine"] }],
+      );
+      // Later activity does not relabel it.
+      github.data.issues = [{ ...marked, updated_at: at(5) }];
+      github.data.events = [event(10, "closed", 3, { created_at: at(5) })];
+      yield* nextPoll(inbox);
+      assert.equal(labelWrites().length, 1);
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "skips ahead once with one tagged missed-activity entry when catch-up passes the page cap",
+  () =>
+    Effect.gen(function* () {
+      const { inbox, github } = yield* setup();
+      github.data.events = Array.from({ length: 120 }, (_, index) =>
+        event(100 + index, "labeled", 7, { label: { name: `topic-${index}` } }),
+      );
+      github.data.issues = [issue(9, "Opened by hand meanwhile")];
+      yield* nextPoll(inbox);
+      const first = (yield* inbox.list(repo)).events;
+      // Fifty pages of two, newest first; the oldest twenty are skipped.
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepEqual(
+        yield* sql`SELECT COUNT(*) AS count, MIN(event_key) AS oldest FROM issue_inbox_events WHERE kind = 'labeled'`,
+        [{ count: 100, oldest: "event:120" }],
+      );
+      assert.include(yield* listed(inbox), "issue_opened #9");
+      assert.deepEqual(
+        first
+          .filter((entry) => entry.kind === "missed_activity")
+          .map((entry) => [entry.tagged, entry.snippet]),
+        [[true, "Missed some issue activity while T3 was offline; check GitHub."]],
+      );
+      // The cursor moved to the newest event: the next poll reads only what is new.
+      github.data.events.push(event(500, "closed", 7, { created_at: at(5) }));
+      const before = github.requests.length;
+      yield* nextPoll(inbox);
+      assert.equal(
+        github.requests.slice(before).filter((request) => request.path.startsWith("issues/events"))
+          .length,
+        1,
+      );
+      const second = (yield* inbox.list(repo)).events;
+      assert.equal(second.filter((entry) => entry.kind === "missed_activity").length, 1);
+      assert.include(yield* listed(inbox), "closed #7");
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
@@ -547,7 +610,7 @@ it.effect("t3_issue_post marks and labels only writes to another project's repos
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a same-project comment receipt covers only the version T3 wrote", () =>
+it.effect("the watcher reads a same-project t3_issue_post comment as the repository's own", () =>
   Effect.gen(function* () {
     const github = fakeGitHub();
     const { inbox } = yield* setup(github);
@@ -556,15 +619,9 @@ it.effect("a same-project comment receipt covers only the version T3 wrote", () 
       issueNumber: 3,
       body: "Own note.",
     });
-    const written = comment(901, 3, "Own note.", { created_at: at(5), updated_at: at(5) });
-    github.data.comments = [written];
+    github.data.comments = [comment(901, 3, "Own note.", { created_at: at(5), updated_at: at(5) })];
     yield* nextPoll(inbox);
     assert.deepEqual(yield* listed(inbox), []);
-    github.data.comments = [
-      { ...written, body: "Own note, corrected by hand.", updated_at: at(7) },
-    ];
-    yield* nextPoll(inbox);
-    assert.deepEqual(yield* listed(inbox), ["edited #3"]);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 

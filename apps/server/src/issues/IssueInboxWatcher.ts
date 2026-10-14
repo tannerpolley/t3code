@@ -1,8 +1,9 @@
 /**
- * Reads one managed repository's GitHub issue activity since its cursors and records the
- * external part in the inbox tables. Conditional page-1 reads keep an unchanged repository free.
+ * Reads one managed repository's new issues, new comments and issue events since its cursors and
+ * records the external part in the inbox tables. Body edits are not tracked. Conditional page-1
+ * reads keep an unchanged repository free.
  */
-import { IssueReadError, type IssueInboxEventKind, type ThreadId } from "@t3tools/contracts";
+import type { IssueInboxEventKind, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -15,24 +16,21 @@ import {
   EXTERNAL_LABEL,
   HIGH_PRIORITY_LABEL,
   classifyWrite,
-  commentVersion,
-  contentHash,
   foreignMarker,
   fromLabel,
   hasLabel,
   isBot,
   isReceiverLabel,
   isTagged,
-  recordedWrites,
   snippet,
-  type RecordedWrite,
+  type WriteTransition,
 } from "./IssueInboxRules.ts";
 
 /** Timestamp cursors re-read this much, so same-second and late-committed writes are not lost. */
 const CURSOR_OVERLAP_MS = 5 * 60_000;
-/** A recorded T3 write explains a GitHub event only this close to when it ran. */
-const OWN_WRITE_WINDOW_MS = 10 * 60_000;
-/** Pages per listing per poll; more fails the poll without moving its cursor. */
+/** Clock slack around a recorded T3 write's request when matching the event GitHub logged. */
+const RECEIPT_SLACK_MS = 5_000;
+/** Pages per listing per poll; a longer catch-up skips ahead and leaves one missed-activity note. */
 const MAX_PAGES = 50;
 const EVENTS_PATH = "issues/events?per_page=100";
 const LABEL_COLORS: Record<string, string> = {
@@ -45,7 +43,6 @@ const Author = Schema.NullOr(
 );
 const Labels = Schema.optional(Schema.NullOr(Schema.Array(Schema.Struct({ name: Schema.String }))));
 const RawIssue = Schema.Struct({
-  id: Schema.Number,
   number: Schema.Number,
   title: Schema.String,
   body: Schema.optional(Schema.NullOr(Schema.String)),
@@ -73,11 +70,13 @@ const RawEvent = Schema.Struct({
   created_at: Schema.String,
   label: Schema.optional(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
   milestone: Schema.optional(Schema.NullOr(Schema.Struct({ title: Schema.String }))),
+  rename: Schema.optional(Schema.NullOr(Schema.Struct({ from: Schema.String, to: Schema.String }))),
   issue: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
         number: Schema.Number,
         title: Schema.String,
+        body: Schema.optional(Schema.NullOr(Schema.String)),
         html_url: Schema.String,
         labels: Labels,
         pull_request: Schema.optional(Schema.Unknown),
@@ -99,7 +98,10 @@ const EVENT_KINDS: Partial<Record<string, IssueInboxEventKind>> = {
   closed: "closed",
   reopened: "reopened",
   labeled: "labeled",
+  unlabeled: "unlabeled",
   milestoned: "milestoned",
+  demilestoned: "demilestoned",
+  renamed: "renamed",
 };
 
 export interface WatchedRepository {
@@ -137,19 +139,23 @@ interface StateRow {
 interface IssueRow {
   readonly issue_number: number;
   readonly title: string;
-  /** Empty when the issue changed while its snapshot was read: its next change reads as an edit. */
-  readonly content_hash: string;
   readonly cross_project: number;
   readonly external_source: string | null;
   readonly labeled: number;
 }
 
+interface ReceiptRow {
+  readonly receipt_id: number;
+  readonly issue_number: number;
+  readonly kind: WriteTransition["kind"];
+  readonly milestone_number: number | null;
+  readonly started_at: number;
+  readonly finished_at: number;
+}
+
 // GitHub's own timestamp shape, so cursors compare as strings with GitHub's.
 export const isoSeconds = (millis: number) =>
   DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\.\d{3}Z$/u, "Z");
-
-const writeKey = (write: Pick<RecordedWrite, "changeId" | "issueNumber" | "kind">) =>
-  `${write.changeId}:${write.issueNumber}:${write.kind}`;
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -169,8 +175,8 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * Every page of a listing. A 304 on page 1 means nothing changed: each listing here puts the
-   * newest change on page 1. `enough` stops early once the pages read reach seen items.
+   * A listing's pages, newest first: a 304 on page 1 means nothing changed. Reading stops once
+   * `enough` sees items already handled, or at MAX_PAGES with `complete: false`.
    */
   const readAll = <A, E>(
     repo: WatchedRepository,
@@ -181,21 +187,16 @@ export const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const first = yield* rest(repo, `${path}&page=1`, { etag });
-      if (first.status === 304) return { items: [] as ReadonlyArray<A>, etag };
+      if (first.status === 304) return { items: [] as ReadonlyArray<A>, etag, complete: true };
       const items = [...(yield* decode(first.body))];
       let next = first.nextPage;
       for (let pages = 1; next !== null && !enough(items); pages++) {
-        if (pages >= MAX_PAGES)
-          return yield* new IssueReadError({
-            code: "invalid-response",
-            operation: "detail",
-            message: `More than ${MAX_PAGES} pages of ${path.split("?")[0]} changed since the last poll.`,
-          });
+        if (pages >= MAX_PAGES) return { items, etag: first.etag, complete: false };
         const page = yield* rest(repo, `${path}&page=${next}`);
         items.push(...(yield* decode(page.body)));
         next = page.nextPage;
       }
-      return { items: items as ReadonlyArray<A>, etag: first.etag };
+      return { items: items as ReadonlyArray<A>, etag: first.etag, complete: true };
     });
 
   /** Creates the labels a repository lacks, with T3's colors. */
@@ -216,72 +217,22 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.catch(() => Effect.void));
     });
 
-  const upsertIssue = (repo: WatchedRepository, row: IssueRow) => sql`
-    INSERT INTO issue_inbox_issues (host, repository_id, issue_number, title, content_hash,
-      cross_project, external_source, labeled)
-    VALUES (${repo.host}, ${repo.repositoryId}, ${row.issue_number}, ${row.title},
-      ${row.content_hash}, ${row.cross_project}, ${row.external_source}, ${row.labeled})
-    ON CONFLICT (host, repository_id, issue_number) DO UPDATE SET
-      title = excluded.title, content_hash = excluded.content_hash,
-      cross_project = excluded.cross_project
-  `;
-
-  /**
-   * Starts watching: the event cursor at the newest event, the timestamp cursors a little before
-   * now, and a snapshot of open issues so their first edit is news. Nothing is reported.
-   */
+  /** Starts watching from now: history from before is not news. */
   const initialize = (repo: WatchedRepository) =>
     Effect.gen(function* () {
       const startedAt = yield* Clock.currentTimeMillis;
-      const watchedSince = isoSeconds(startedAt);
       const events = yield* rest(repo, `${EVENTS_PATH}&page=1`);
       const latest = Math.max(0, ...(yield* decodeEvents(events.body)).map((event) => event.id));
-      // ponytail: one request per 100 open issues, once per repository; MAX_PAGES caps it at 5,000.
-      const open = yield* readAll(repo, "issues?state=open&per_page=100", decodeIssues);
       const cursor = isoSeconds(startedAt - CURSOR_OVERLAP_MS);
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          for (const issue of open.items) {
-            // Opened while initializing: the first poll reports it.
-            if (issue.pull_request !== undefined || issue.created_at >= watchedSince) continue;
-            yield* upsertIssue(repo, {
-              issue_number: issue.number,
-              title: issue.title,
-              content_hash:
-                issue.updated_at >= watchedSince ? "" : contentHash(issue.title, issue.body ?? ""),
-              cross_project: hasLabel(
-                issue.labels?.map((label) => label.name) ?? [],
-                CROSS_PROJECT_LABEL,
-              )
-                ? 1
-                : 0,
-              external_source: null,
-              labeled: 1,
-            });
-          }
-          yield* sql`
-            INSERT INTO issue_inbox_repositories (host, repository_id, watched_since, issues_since,
-              comments_since, events_after, events_etag)
-            VALUES (${repo.host}, ${repo.repositoryId}, ${watchedSince}, ${cursor}, ${cursor},
-              ${latest}, ${events.etag})
-            ON CONFLICT DO NOTHING
-          `;
-        }),
-      );
+      yield* sql`
+        INSERT INTO issue_inbox_repositories (host, repository_id, watched_since, issues_since,
+          comments_since, events_after, events_etag)
+        VALUES (${repo.host}, ${repo.repositoryId}, ${isoSeconds(startedAt)}, ${cursor},
+          ${cursor}, ${latest}, ${events.etag})
+        ON CONFLICT DO NOTHING
+      `;
       return 0;
     });
-
-  /** Recorded T3 issue changes that ran recently enough to explain events at or after `since`. */
-  const recentWrites = (repo: WatchedRepository, since: string) =>
-    sql<{ change_id: string; proposal_json: string; steps_json: string; written_at: string }>`
-      SELECT c.change_id, c.proposal_json, c.steps_json, e.updated_at AS written_at
-      FROM issue_changes c
-      JOIN orchestration_v2_effect_outbox e ON e.effect_id = 'effect:issue-change:' || c.change_id
-      WHERE lower(c.host) = ${repo.host.toLowerCase()}
-        AND lower(c.repository) = ${repo.repository.toLowerCase()}
-        AND c.status IN ('executing', 'succeeded')
-        AND julianday(e.updated_at) >= julianday(${since})
-    `.pipe(Effect.map((rows) => rows.flatMap(recordedWrites)));
 
   /** Polls one repository and returns how many new inbox events it recorded. */
   const poll = (repo: WatchedRepository) =>
@@ -320,17 +271,14 @@ export const make = Effect.gen(function* () {
         const number = Number(/\/issues\/(\d+)$/u.exec(comment.issue_url)?.[1]);
         return Number.isSafeInteger(number) &&
           !comment.html_url.includes("/pull/") &&
-          comment.updated_at >= state.watched_since
+          comment.created_at >= state.watched_since
           ? [{ ...comment, number }]
           : [];
       });
-      // Oldest first, so an earlier event claims a recorded T3 write before a later one.
-      const newEvents = eventsRead.items
-        .filter(
-          (event) =>
-            event.id > eventsAfter && event.issue != null && event.issue.pull_request === undefined,
-        )
-        .toSorted((left, right) => left.id - right.id);
+      const newEvents = eventsRead.items.filter(
+        (event) =>
+          event.id > eventsAfter && event.issue != null && event.issue.pull_request === undefined,
+      );
       const numbers = [
         ...new Set([
           ...listed.keys(),
@@ -342,7 +290,7 @@ export const make = Effect.gen(function* () {
         numbers.length === 0
           ? []
           : (yield* sql<IssueRow>`
-              SELECT issue_number, title, content_hash, cross_project, external_source, labeled
+              SELECT issue_number, title, cross_project, external_source, labeled
               FROM issue_inbox_issues
               WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId}
                 AND issue_number IN ${sql.in(numbers)}
@@ -354,80 +302,72 @@ export const make = Effect.gen(function* () {
           WHERE host = ${repo.host} AND repository = ${repo.repository.toLowerCase()}
         `).map((row) => row.item),
       );
-      // Issues opened externally, including ones first seen in this poll.
-      const externalSources = new Map(
-        [...known.values()].map((row) => [row.issue_number, row.external_source]),
-      );
-      const highPriority = (number: number, labels: ReadonlyArray<string>) =>
-        hasLabel(labels, HIGH_PRIORITY_LABEL) || (externalSources.get(number) ?? null) !== null;
       const inserts: NewEvent[] = [];
-      const issueRows: IssueRow[] = [];
+      const issueRows = new Map<number, IssueRow>();
+      // Classifies an issue as external once, from its opening or a foreign marker in its body,
+      // and makes it due for any missing receiver labels then. Later label removals stay removed.
+      const noteIssue = (
+        issue: {
+          readonly number: number;
+          readonly title: string;
+          readonly body?: string | null | undefined;
+        },
+        labels: ReadonlyArray<string>,
+        openedExternally: { readonly sourceProject: string | null } | null,
+      ) => {
+        const previous = issueRows.get(issue.number) ?? known.get(issue.number);
+        const marker = foreignMarker(issue.body ?? "", repositoryKey);
+        const source =
+          previous?.external_source ??
+          (openedExternally !== null
+            ? (openedExternally.sourceProject ?? "")
+            : (marker?.project ?? null));
+        issueRows.set(issue.number, {
+          issue_number: issue.number,
+          title: issue.title,
+          cross_project: hasLabel(labels, CROSS_PROJECT_LABEL) ? 1 : 0,
+          external_source: source,
+          labeled:
+            previous?.external_source != null
+              ? previous.labeled
+              : source !== null &&
+                  !(hasLabel(labels, EXTERNAL_LABEL) && hasLabel(labels, HIGH_PRIORITY_LABEL))
+                ? 0
+                : 1,
+        });
+      };
+      const externalSource = (number: number) =>
+        (issueRows.get(number) ?? known.get(number))?.external_source ?? null;
+      const highPriority = (number: number, labels: ReadonlyArray<string>) =>
+        hasLabel(labels, HIGH_PRIORITY_LABEL) || externalSource(number) !== null;
 
       for (const issue of issueList) {
         const body = issue.body ?? "";
         const labels = issue.labels?.map((label) => label.name) ?? [];
-        const hash = contentHash(issue.title, body);
-        const previous = known.get(issue.number);
-        let externalSource = previous?.external_source ?? null;
-        let labeled = previous?.labeled ?? 1;
-        const base = {
+        const origin =
+          issue.created_at >= state.watched_since
+            ? classifyWrite({
+                body,
+                author: issue.user,
+                repositoryKey,
+                ownRecord: ownWrites.has(`issue:${issue.number}`),
+              })
+            : null;
+        noteIssue(issue, labels, origin?.origin === "external" ? origin : null);
+        if (origin?.origin !== "external") continue;
+        inserts.push({
+          key: `opened:${issue.number}`,
+          kind: "issue_opened",
           issueNumber: issue.number,
           issueTitle: issue.title,
+          author: issue.user?.login ?? null,
+          sourceProject: origin.sourceProject,
+          tagged: isTagged({ body, labels, marked: origin.marked }),
+          highPriority: true,
+          needsTriage: issue.milestone == null,
           url: issue.html_url,
           snippet: snippet(body),
-        };
-        if (previous === undefined && issue.created_at >= state.watched_since) {
-          const origin = classifyWrite({
-            body,
-            author: issue.user,
-            repositoryKey,
-            ownRecord: ownWrites.has(`issue:${issue.number}`),
-          });
-          if (origin.origin === "external") {
-            externalSource = origin.sourceProject ?? "";
-            labeled =
-              hasLabel(labels, EXTERNAL_LABEL) && hasLabel(labels, HIGH_PRIORITY_LABEL) ? 1 : 0;
-            inserts.push({
-              ...base,
-              key: `opened:${issue.number}`,
-              kind: "issue_opened",
-              author: issue.user?.login ?? null,
-              sourceProject: origin.sourceProject,
-              tagged: isTagged({ body, labels, marked: origin.marked }),
-              highPriority: true,
-              needsTriage: issue.milestone == null,
-              occurredAt: issue.created_at,
-            });
-          }
-        } else if (previous !== undefined && previous.content_hash !== hash) {
-          // The editor is unknown; T3's own body edits match its recorded baseline exactly.
-          const [baseline] = yield* sql<{ body: string }>`
-            SELECT body FROM issue_body_baselines
-            WHERE host = ${repo.host} AND issue_id = ${String(issue.id)}
-          `;
-          if (previous.title !== issue.title || baseline?.body !== body) {
-            const marker = foreignMarker(body, repositoryKey);
-            inserts.push({
-              ...base,
-              key: `edited:${issue.number}:${issue.updated_at}`,
-              kind: "edited",
-              author: null,
-              sourceProject: marker?.project ?? null,
-              tagged: isTagged({ body, labels, marked: marker !== null }),
-              highPriority: highPriority(issue.number, labels),
-              needsTriage: false,
-              occurredAt: issue.updated_at,
-            });
-          }
-        }
-        externalSources.set(issue.number, externalSource);
-        issueRows.push({
-          issue_number: issue.number,
-          title: issue.title,
-          content_hash: hash,
-          cross_project: hasLabel(labels, CROSS_PROJECT_LABEL) ? 1 : 0,
-          external_source: externalSource,
-          labeled,
+          occurredAt: issue.created_at,
         });
       }
 
@@ -437,93 +377,98 @@ export const make = Effect.gen(function* () {
           body,
           author: comment.user,
           repositoryKey,
-          ownRecord: ownWrites.has(commentVersion(comment.id, comment.updated_at, body)),
+          ownRecord: ownWrites.has(`comment:${comment.id}`),
         });
         if (origin.origin !== "external") continue;
         const issue = listed.get(comment.number);
         const labels =
           issue?.labels?.map((label) => label.name) ??
-          (known.get(comment.number)?.cross_project === 1 ? [CROSS_PROJECT_LABEL] : []);
+          ((issueRows.get(comment.number) ?? known.get(comment.number))?.cross_project === 1
+            ? [CROSS_PROJECT_LABEL]
+            : []);
         inserts.push({
-          key: `comment:${comment.id}:${comment.updated_at}`,
-          kind: comment.created_at === comment.updated_at ? "comment" : "edited",
+          key: `comment:${comment.id}`,
+          kind: "comment",
           issueNumber: comment.number,
           issueTitle: issue?.title ?? known.get(comment.number)?.title ?? "",
           author: comment.user?.login ?? null,
-          sourceProject: origin.sourceProject,
+          sourceProject: origin.sourceProject ?? (externalSource(comment.number) || null),
           tagged: isTagged({ body, labels, marked: origin.marked }),
           highPriority: highPriority(comment.number, labels),
           needsTriage: false,
           url: comment.html_url,
           snippet: snippet(body),
-          occurredAt: comment.updated_at,
+          occurredAt: comment.created_at,
         });
       }
 
-      // State and milestone events T3 wrote itself match one recorded write each, by issue, result
-      // and destination, within a short window of when that write ran.
-      const writeEvents = newEvents.filter(
+      // A state or milestone event is T3's own only when it falls inside the request span of an
+      // unused receipt for the same transition on the same issue. Each receipt explains one event.
+      const transitionEvents = newEvents.filter(
         (event) =>
-          event.event === "closed" || event.event === "reopened" || event.event === "milestoned",
+          event.event === "closed" ||
+          event.event === "reopened" ||
+          event.event === "milestoned" ||
+          event.event === "demilestoned",
       );
-      const writes =
-        writeEvents.length === 0
+      const receipts: ReceiptRow[] =
+        transitionEvents.length === 0
           ? []
-          : yield* recentWrites(
-              repo,
-              isoSeconds(Date.parse(writeEvents[0]!.created_at) - OWN_WRITE_WINDOW_MS),
-            );
-      const used = new Set(
-        writes.length === 0
-          ? []
-          : (yield* sql<{ change_id: string; issue_number: number; kind: RecordedWrite["kind"] }>`
-              SELECT change_id, issue_number, kind FROM issue_inbox_matched_writes
-              WHERE change_id IN ${sql.in([...new Set(writes.map((write) => write.changeId))])}
-            `).map((row) =>
-              writeKey({ changeId: row.change_id, issueNumber: row.issue_number, kind: row.kind }),
-            ),
-      );
-      const matched: RecordedWrite[] = [];
+          : [
+              ...(yield* sql<ReceiptRow>`
+                SELECT receipt_id, issue_number, kind, milestone_number, started_at, finished_at
+                FROM issue_inbox_write_receipts
+                WHERE host = ${repo.host.toLowerCase()}
+                  AND repository = ${repo.repository.toLowerCase()}
+                  AND issue_number IN ${sql.in([...new Set(transitionEvents.map((event) => event.issue!.number))])}
+              `),
+            ];
+      const usedReceipts: number[] = [];
       let milestones: ReadonlyMap<string, number> | undefined;
       for (const event of newEvents) {
         const kind = EVENT_KINDS[event.event];
         const issue = event.issue!;
         if (kind === undefined || isBot(event.actor)) continue;
-        if (kind === "labeled" && event.label != null && isReceiverLabel(event.label.name))
+        if (
+          (kind === "labeled" || kind === "unlabeled") &&
+          event.label != null &&
+          isReceiverLabel(event.label.name)
+        )
           continue;
-        const candidates = writes.filter(
-          (write) =>
-            write.issueNumber === issue.number &&
-            write.kind === kind &&
-            !used.has(writeKey(write)) &&
-            Math.abs(Date.parse(write.at) - Date.parse(event.created_at)) <= OWN_WRITE_WINDOW_MS,
+        const labels = issue.labels?.map((label) => label.name) ?? [];
+        noteIssue(issue, labels, null);
+        const at = Date.parse(event.created_at);
+        const candidates = receipts.filter(
+          (receipt) =>
+            receipt.issue_number === issue.number &&
+            receipt.kind === kind &&
+            !usedReceipts.includes(receipt.receipt_id) &&
+            at >= receipt.started_at - RECEIPT_SLACK_MS &&
+            at <= receipt.finished_at + RECEIPT_SLACK_MS,
         );
-        if (kind === "milestoned" && candidates.length > 0 && milestones === undefined)
+        const milestoned = kind === "milestoned" || kind === "demilestoned";
+        if (milestoned && candidates.length > 0 && milestones === undefined)
           milestones = new Map(
             (yield* readAll(repo, "milestones?state=all&per_page=100", decodeMilestones)).items.map(
               (milestone) => [milestone.title, milestone.number],
             ),
           );
-        const destination =
-          kind === "milestoned" && event.milestone != null
-            ? milestones?.get(event.milestone.title)
-            : undefined;
-        const write = candidates.find(
-          (candidate) => kind !== "milestoned" || candidate.milestoneNumber === destination,
+        const milestoneNumber =
+          milestoned && event.milestone != null ? milestones?.get(event.milestone.title) : null;
+        const receipt = candidates.find(
+          (candidate) => !milestoned || candidate.milestone_number === milestoneNumber,
         );
-        if (write !== undefined) {
-          used.add(writeKey(write));
-          matched.push(write);
+        if (receipt !== undefined) {
+          usedReceipts.push(receipt.receipt_id);
           continue;
         }
-        const labels = issue.labels?.map((label) => label.name) ?? [];
         inserts.push({
           key: `event:${event.id}`,
           kind,
           issueNumber: issue.number,
           issueTitle: issue.title,
           author: event.actor?.login ?? null,
-          sourceProject: null,
+          sourceProject: externalSource(issue.number) || null,
           tagged:
             hasLabel(labels, CROSS_PROJECT_LABEL) ||
             event.label?.name.toLowerCase() === CROSS_PROJECT_LABEL,
@@ -531,12 +476,33 @@ export const make = Effect.gen(function* () {
           needsTriage: false,
           url: issue.html_url,
           snippet:
-            kind === "labeled" && event.label != null
+            (kind === "labeled" || kind === "unlabeled") && event.label != null
               ? `Label: ${event.label.name}`
-              : kind === "milestoned" && event.milestone != null
+              : milestoned && event.milestone != null
                 ? `Milestone: ${event.milestone.title}`
-                : "",
+                : kind === "renamed" && event.rename != null
+                  ? `Renamed from "${event.rename.from}" to "${event.rename.to}"`
+                  : "",
           occurredAt: event.created_at,
+        });
+      }
+
+      // Never stall: a catch-up past the page cap skips to the newest activity read and says so.
+      if (!issuesRead.complete || !commentsRead.complete || !eventsRead.complete) {
+        const now = isoSeconds(yield* Clock.currentTimeMillis);
+        inserts.push({
+          key: `missed:${now}`,
+          kind: "missed_activity",
+          issueNumber: 0,
+          issueTitle: "Missed issue activity",
+          author: null,
+          sourceProject: null,
+          tagged: true,
+          highPriority: true,
+          needsTriage: false,
+          url: `https://${repo.host}/${repo.repository}/issues`,
+          snippet: "Missed some issue activity while T3 was offline; check GitHub.",
+          occurredAt: now,
         });
       }
 
@@ -563,12 +529,19 @@ export const make = Effect.gen(function* () {
             `;
             inserted += rows.length;
           }
-          for (const row of issueRows) yield* upsertIssue(repo, row);
-          for (const write of matched)
+          for (const row of issueRows.values())
             yield* sql`
-              INSERT INTO issue_inbox_matched_writes (change_id, issue_number, kind)
-              VALUES (${write.changeId}, ${write.issueNumber}, ${write.kind})
-              ON CONFLICT DO NOTHING
+              INSERT INTO issue_inbox_issues (host, repository_id, issue_number, title,
+                cross_project, external_source, labeled)
+              VALUES (${repo.host}, ${repo.repositoryId}, ${row.issue_number}, ${row.title},
+                ${row.cross_project}, ${row.external_source}, ${row.labeled})
+              ON CONFLICT (host, repository_id, issue_number) DO UPDATE SET
+                title = excluded.title, cross_project = excluded.cross_project,
+                external_source = excluded.external_source, labeled = excluded.labeled
+            `;
+          if (usedReceipts.length > 0)
+            yield* sql`
+              DELETE FROM issue_inbox_write_receipts WHERE receipt_id IN ${sql.in(usedReceipts)}
             `;
           yield* sql`
             UPDATE issue_inbox_repositories SET

@@ -40,7 +40,6 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import {
   EXTERNAL_LABEL,
   HIGH_PRIORITY_LABEL,
-  commentVersion,
   digestText,
   fromLabel,
   noteEvent,
@@ -55,8 +54,6 @@ const RawCreated = Schema.Struct({
   id: Schema.Number,
   number: Schema.optional(Schema.Number),
   html_url: Schema.String,
-  body: Schema.optional(Schema.NullOr(Schema.String)),
-  updated_at: Schema.optional(Schema.String),
 });
 const decodeCreated = Schema.decodeUnknownEffect(Schema.fromJsonString(RawCreated));
 
@@ -423,11 +420,7 @@ export const make = Effect.gen(function* () {
         yield* sql`
           INSERT INTO issue_inbox_own_writes (host, repository, item)
           VALUES (${target.host}, ${target.repository},
-            ${
-              input.issueNumber === undefined
-                ? `issue:${issueNumber}`
-                : commentVersion(created.id, created.updated_at ?? "", created.body ?? body)
-            })
+            ${input.issueNumber === undefined ? `issue:${issueNumber}` : `comment:${created.id}`})
           ON CONFLICT DO NOTHING
         `.pipe(Effect.mapError(storageError));
       return {

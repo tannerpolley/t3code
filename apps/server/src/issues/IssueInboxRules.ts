@@ -3,11 +3,9 @@
  * one-line notes that tell it. Every agent writes with the owner's own `gh` login, so authorship
  * comes from markers and T3's own records, never from the GitHub author.
  */
-import { IssueChangeOperation, type IssueInboxEventKind } from "@t3tools/contracts";
+import type { IssueInboxEventKind } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Hash from "effect/Hash";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 export const CROSS_PROJECT_LABEL = "cross-project";
@@ -109,73 +107,64 @@ export function classifyWrite(input: {
     : { origin: "external", sourceProject: marker.project, marked: true };
 }
 
-// Change detection only: a 32-bit collision hides one edit.
-export const contentHash = (title: string, body: string) =>
-  String(Hash.string(`${title}\u0000${body}`));
-
-/** One version of a comment: a receipt for it does not cover later edits. */
-export const commentVersion = (id: number, updatedAt: string, body: string) =>
-  `comment:${id}:${updatedAt}:${contentHash("", body)}`;
-
-export interface RecordedWrite {
-  readonly changeId: string;
-  readonly issueNumber: number;
-  readonly kind: "closed" | "reopened" | "milestoned";
+/** A state or milestone transition one T3 issue write makes. */
+export interface WriteTransition {
+  readonly kind: "closed" | "reopened" | "milestoned" | "demilestoned";
   readonly milestoneNumber: number | null;
-  /** When the issue change's effect last ran. */
-  readonly at: string;
 }
 
-const decodeChangeOperation = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ operation: IssueChangeOperation })),
-);
-const decodeChangeSteps = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Record(
-      Schema.String,
-      Schema.Struct({ issue: Schema.optional(Schema.Struct({ number: Schema.Number })) }),
-    ),
-  ),
-);
+/** The transitions a state write makes from `from`; none for a no-op. */
+export const stateTransitions = (
+  from: "open" | "closed",
+  to: "open" | "closed",
+): ReadonlyArray<WriteTransition> =>
+  from === to ? [] : [{ kind: to === "closed" ? "closed" : "reopened", milestoneNumber: null }];
 
-/** The state and milestone events one recorded T3 issue change wrote, with their results. */
-export function recordedWrites(row: {
-  readonly change_id: string;
-  readonly proposal_json: string;
-  readonly steps_json: string;
-  readonly written_at: string;
-}): ReadonlyArray<RecordedWrite> {
-  const operation = Option.getOrNull(decodeChangeOperation(row.proposal_json))?.operation;
-  const steps = Option.getOrNull(decodeChangeSteps(row.steps_json)) ?? {};
-  const write = (
-    issueNumber: number | undefined,
-    kind: RecordedWrite["kind"],
-    milestoneNumber: number | null = null,
-  ): ReadonlyArray<RecordedWrite> =>
-    issueNumber === undefined
-      ? []
-      : [{ changeId: row.change_id, issueNumber, kind, milestoneNumber, at: row.written_at }];
-  switch (operation?.type) {
-    case "state":
-      return write(operation.number, operation.state === "closed" ? "closed" : "reopened");
-    case "milestone":
-      return operation.milestoneNumber === null
-        ? []
-        : write(operation.number, "milestoned", operation.milestoneNumber);
-    case "create":
-      return operation.milestoneNumber === null
-        ? []
-        : write(steps["create:0"]?.issue?.number, "milestoned", operation.milestoneNumber);
-    case "split":
-      return operation.issues.flatMap((draft, index) =>
-        draft.milestoneNumber === null
-          ? []
-          : write(steps[`create:${index}`]?.issue?.number, "milestoned", draft.milestoneNumber),
+/** The transitions a milestone write makes from `from`; none for a no-op. */
+export const milestoneTransitions = (
+  from: number | null,
+  to: number | null,
+): ReadonlyArray<WriteTransition> =>
+  from === to
+    ? []
+    : [
+        ...(from === null ? [] : [{ kind: "demilestoned" as const, milestoneNumber: from }]),
+        ...(to === null ? [] : [{ kind: "milestoned" as const, milestoneNumber: to }]),
+      ];
+
+/**
+ * Runs one T3 GitHub issue write and records the transitions it made with the request's time
+ * span, so the inbox watcher reads the events GitHub logs for it as T3's own. `made` names the
+ * issue and transitions from the write's result.
+ */
+export const withWriteReceipts = <A, E, R>(
+  sql: SqlClient.SqlClient,
+  repository: { readonly host: string; readonly repository: string },
+  write: Effect.Effect<A, E, R>,
+  made: (result: A) => {
+    readonly issueNumber: number;
+    readonly transitions: ReadonlyArray<WriteTransition>;
+  },
+) =>
+  Effect.gen(function* () {
+    const startedAt = yield* Clock.currentTimeMillis;
+    const result = yield* write;
+    const finishedAt = yield* Clock.currentTimeMillis;
+    const { issueNumber, transitions } = made(result);
+    for (const transition of transitions)
+      yield* sql`
+        INSERT INTO issue_inbox_write_receipts (host, repository, issue_number, kind,
+          milestone_number, started_at, finished_at)
+        VALUES (${repository.host.toLowerCase()}, ${repository.repository.toLowerCase()},
+          ${issueNumber}, ${transition.kind}, ${transition.milestoneNumber}, ${startedAt},
+          ${finishedAt})
+      `.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not record an issue write for the inbox", { cause }),
+        ),
       );
-    default:
-      return [];
-  }
-}
+    return result;
+  });
 
 const ORCHESTRATOR_MENTION = /(?<![\w@./-])@orchestrator\b/iu;
 
@@ -211,11 +200,14 @@ export interface NoteEvent {
 const KIND_WORDS: Record<IssueInboxEventKind, string> = {
   issue_opened: "opened",
   comment: "comment",
-  edited: "edited",
   closed: "closed",
   reopened: "reopened",
   labeled: "labeled",
+  unlabeled: "unlabeled",
   milestoned: "milestoned",
+  demilestoned: "demilestoned",
+  renamed: "renamed",
+  missed_activity: "missed activity while T3 was offline",
 };
 const MAX_LISTED = 6;
 
@@ -224,7 +216,9 @@ export function listEvents(events: ReadonlyArray<NoteEvent>): string {
   const listed = events.slice(0, MAX_LISTED).map((event, index) => {
     const name = event.repository.slice(event.repository.indexOf("/") + 1);
     const prefix = index === 0 || events[index - 1]!.repository !== event.repository;
-    return `${prefix ? `${name} ` : ""}#${event.issueNumber} ${KIND_WORDS[event.kind]}${
+    // A missed-activity note concerns the repository, not one issue.
+    const issue = event.kind === "missed_activity" ? "" : `#${event.issueNumber} `;
+    return `${prefix ? `${name} ` : ""}${issue}${KIND_WORDS[event.kind]}${
       event.sourceProject === null ? "" : ` from ${event.sourceProject}`
     }${event.needsTriage ? " (needs triage)" : ""}`;
   });

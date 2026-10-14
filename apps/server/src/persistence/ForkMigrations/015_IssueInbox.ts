@@ -3,7 +3,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  // One watcher cursor per managed repository. `watched_since` bounds which new issues count as opened.
+  // One watcher cursor per managed repository. `watched_since` bounds which issues and comments are new.
   yield* sql`CREATE TABLE issue_inbox_repositories (
     host TEXT NOT NULL,
     repository_id TEXT NOT NULL,
@@ -16,17 +16,16 @@ export default Effect.gen(function* () {
     events_etag TEXT,
     PRIMARY KEY (host, repository_id)
   ) WITHOUT ROWID`;
-  // Last seen title and body per issue, for edit detection and once-only receiver labels. Open
-  // issues are snapshotted when watching starts.
+  // Issues the watcher has listed: titles for comment events, and whether the issue is external
+  // (`external_source` set, empty when no project is named) and has had its receiver labels.
   yield* sql`CREATE TABLE issue_inbox_issues (
     host TEXT NOT NULL,
     repository_id TEXT NOT NULL,
     issue_number INTEGER NOT NULL,
     title TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
     cross_project INTEGER NOT NULL,
     external_source TEXT,
-    labeled INTEGER NOT NULL DEFAULT 0,
+    labeled INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (host, repository_id, issue_number)
   ) WITHOUT ROWID`;
   yield* sql`CREATE TABLE issue_inbox_events (
@@ -61,19 +60,25 @@ export default Effect.gen(function* () {
     delivered_at TEXT
   )`;
   yield* sql`CREATE INDEX issue_inbox_digests_repository ON issue_inbox_digests(host, repository_id, created_at)`;
-  // Same-project t3_issue_post writes carry no marker; these receipts mark them as the repository's
-  // own: an opened issue, or one exact comment version.
+  // Same-project t3_issue_post writes carry no marker; these receipts (`issue:<number>`,
+  // `comment:<id>`) mark them as the repository's own.
   yield* sql`CREATE TABLE issue_inbox_own_writes (
     host TEXT NOT NULL,
     repository TEXT NOT NULL,
     item TEXT NOT NULL,
     PRIMARY KEY (host, repository, item)
   ) WITHOUT ROWID`;
-  // Each recorded T3 issue-change write explains at most one GitHub event.
-  yield* sql`CREATE TABLE issue_inbox_matched_writes (
-    change_id TEXT NOT NULL,
+  // A state or milestone transition T3 wrote, with the GitHub request's time span in epoch
+  // milliseconds. The watcher deletes a receipt when one event matches it.
+  yield* sql`CREATE TABLE issue_inbox_write_receipts (
+    receipt_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT NOT NULL,
+    repository TEXT NOT NULL,
     issue_number INTEGER NOT NULL,
     kind TEXT NOT NULL,
-    PRIMARY KEY (change_id, issue_number, kind)
-  ) WITHOUT ROWID`;
+    milestone_number INTEGER,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER NOT NULL
+  )`;
+  yield* sql`CREATE INDEX issue_inbox_write_receipts_issue ON issue_inbox_write_receipts(host, repository, issue_number)`;
 });

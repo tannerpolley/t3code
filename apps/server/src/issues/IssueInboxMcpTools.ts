@@ -34,7 +34,7 @@ export const IssuePostTool = Tool.make("t3_issue_post", {
 
 export const IssueInboxTool = Tool.make("t3_issue_inbox", {
   description:
-    "The repository orchestrator's inbox of external GitHub issue activity: issues, comments, edits, closes, labels and milestones written by other projects or by hand. Available to the repository orchestrator and its delegated children. action=list returns unread events, high priority first, without bodies; action=read with ids returns those events with a snippet and link; action=mark_read marks ids read, or every unread event when ids are omitted. Triage new external issues into a milestone; nothing outside the selected milestones starts automatically.",
+    "The repository orchestrator's inbox of external GitHub issue activity: new issues and comments, closes and reopens, label and milestone changes, and title renames, written by other projects or by hand. Body edits are not tracked. Available to the repository orchestrator and its delegated children. action=list returns unread events, high priority first, without bodies; action=read with ids returns those events with a snippet and link; action=mark_read marks ids read, or every unread event when ids are omitted. Triage new external issues into a milestone; nothing outside the selected milestones starts automatically.",
   parameters: IssueInboxToolInput,
   success: IssueInboxToolResult,
   failure: OrchestratorMcpFailure,
