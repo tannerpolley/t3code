@@ -1034,6 +1034,105 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
   });
 
+  describe("resolveDefaultBranchRef", () => {
+    it.effect.each(["main", "master"])(
+      "resolves local %s without a remote HEAD from a feature branch",
+      (branch) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* git(cwd, ["branch", "-M", branch]);
+          yield* git(cwd, ["remote", "add", "origin", cwd]);
+          yield* git(cwd, ["checkout", "-b", "worker"]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const ref = yield* driver.resolveDefaultBranchRef(cwd);
+
+          assert.equal(ref, branch);
+          assert.equal(
+            yield* git(cwd, ["rev-parse", `${ref}^{commit}`]),
+            yield* git(cwd, ["rev-parse", branch]),
+          );
+        }),
+    );
+
+    it.effect.each([
+      { remote: "origin", branch: "main", remoteHead: false },
+      { remote: "origin", branch: "master", remoteHead: false },
+      { remote: "origin", branch: "trunk", remoteHead: true },
+      { remote: "upstream", branch: "trunk", remoteHead: true },
+    ])("resolves a remote-only default: %j", ({ remote, branch, remoteHead }) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "worker"]);
+        yield* git(cwd, ["remote", "add", remote, cwd]);
+        yield* git(cwd, ["update-ref", `refs/remotes/${remote}/${branch}`, "HEAD"]);
+        if (remoteHead) {
+          yield* git(cwd, [
+            "symbolic-ref",
+            `refs/remotes/${remote}/HEAD`,
+            `refs/remotes/${remote}/${branch}`,
+          ]);
+        }
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const ref = yield* driver.resolveDefaultBranchRef(cwd);
+
+        assert.equal(ref, `${remote}/${branch}`);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `${ref}^{commit}`]),
+          yield* git(cwd, ["rev-parse", "HEAD"]),
+        );
+      }),
+    );
+
+    it.effect("prefers the local default over its remote copy and main/master fallbacks", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(cwd, ["branch", "trunk"]);
+        yield* git(cwd, ["checkout", "-b", "worker"]);
+        yield* git(cwd, ["remote", "add", "origin", cwd]);
+        yield* git(cwd, ["update-ref", "refs/remotes/origin/trunk", "HEAD"]);
+        yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        assert.equal(yield* driver.resolveDefaultBranchRef(cwd), "trunk");
+      }),
+    );
+
+    it.effect("falls back to local master when remote HEAD points to a missing default", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "master"]);
+        yield* git(cwd, ["checkout", "-b", "worker"]);
+        yield* git(cwd, ["remote", "add", "origin", cwd]);
+        yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        assert.equal(yield* driver.resolveDefaultBranchRef(cwd), "master");
+      }),
+    );
+
+    it.effect("fails instead of using the current feature branch or a main tag", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "worker"]);
+        yield* git(cwd, ["tag", "main"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver.resolveDefaultBranchRef(cwd).pipe(Effect.flip);
+
+        assert.equal(error._tag, "GitCommandError");
+        assert.equal(error.operation, "GitVcsDriver.resolveDefaultBranchRef");
+      }),
+    );
+  });
+
   describe("structured errors", () => {
     it.effect("preserves structured spawn context and the platform cause", () =>
       Effect.gen(function* () {

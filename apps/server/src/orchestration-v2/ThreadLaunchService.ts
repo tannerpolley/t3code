@@ -1126,18 +1126,9 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(mapError(input, "resolve-project")));
       if (Option.isNone(project))
         return yield* mapError(input, "resolve-project")("Project no longer exists.");
-      const refs = yield* git
-        .listRefs({ cwd: project.value.workspaceRoot })
+      return yield* git
+        .resolveDefaultBranchRef(project.value.workspaceRoot)
         .pipe(Effect.mapError(mapError(input, "read-branch")));
-      const base = refs.refs.find((ref) => ref.isDefault);
-      if (base === undefined)
-        return yield* mapError(
-          input,
-          "read-branch",
-        )("The repository default branch is unavailable.");
-      return base.isRemote && base.remoteName !== undefined
-        ? base.name.slice(base.remoteName.length + 1)
-        : base.name;
     }),
     retryPreparation,
   });

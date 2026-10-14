@@ -423,6 +423,7 @@ export class GitVcsDriver extends Context.Service<
       input: VcsSwitchRefInput,
     ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
     readonly initRepo: (input: VcsInitInput) => Effect.Effect<void, GitCommandError>;
+    readonly resolveDefaultBranchRef: (cwd: string) => Effect.Effect<string, GitCommandError>;
     readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
   }
 >()("t3/vcs/GitVcsDriver") {}

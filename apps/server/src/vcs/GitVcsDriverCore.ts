@@ -1592,6 +1592,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
+  const resolveDefaultBranchRef: GitVcsDriver.GitVcsDriver["Service"]["resolveDefaultBranchRef"] =
+    Effect.fn("resolveDefaultBranchRef")(function* (cwd) {
+      const remoteName = yield* resolvePrimaryRemoteName(cwd).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      const defaultBranch =
+        remoteName === null ? null : yield* resolveDefaultBranchName(cwd, remoteName);
+
+      for (const branch of [defaultBranch, ...DEFAULT_BASE_BRANCH_CANDIDATES]) {
+        if (!branch) continue;
+        const refs = [
+          { name: branch, fullRef: `refs/heads/${branch}` },
+          ...(remoteName
+            ? [{ name: `${remoteName}/${branch}`, fullRef: `refs/remotes/${remoteName}/${branch}` }]
+            : []),
+        ];
+        for (const ref of refs) {
+          const result = yield* executeGit(
+            "GitVcsDriver.resolveDefaultBranchRef",
+            cwd,
+            ["rev-parse", "--verify", "--quiet", `${ref.fullRef}^{commit}`],
+            { allowNonZeroExit: true },
+          );
+          if (result.exitCode === 0) return ref.name;
+        }
+      }
+
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.resolveDefaultBranchRef",
+          cwd,
+          args: ["rev-parse", "--verify"],
+        }),
+        detail: "No resolvable default branch exists for this repository.",
+      });
+    });
+
   const resolvePushRemoteName = Effect.fn("resolvePushRemoteName")(function* (
     cwd: string,
     refName: string,
@@ -4153,6 +4190,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ensureRemote: (input) => withListRefsInvalidation(input.cwd, ensureRemote(input)),
     resolvePrimaryRemoteName,
     resolveDefaultBranchName,
+    resolveDefaultBranchRef,
     fetchRemote: (input) => withListRefsInvalidation(input.cwd, fetchRemote(input)),
     remoteExists,
     remoteBranchExists,
