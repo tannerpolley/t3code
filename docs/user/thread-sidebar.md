@@ -337,9 +337,10 @@ agents and worker or builder types are Implementors; reviewer types are
 Reviewers; explorer or researcher types are Investigators; and tester or checker
 types are Checkers. Role icons appear in thread rows and the chat header.
 
-Native provider subagents have a bot icon and run on their own. They cannot take
-messages; use **Open parent** to direct them. App-owned child threads accept
-messages like other threads. Questions and approvals from either kind are routed
+Native provider subagents show their role icon like other children and run on
+their own; hover the icon to tell them apart. They cannot take messages; use
+**Open parent** to direct them. App-owned child threads accept messages like
+other threads. Questions and approvals from either kind are routed
 to their parent.
 
 Expand a tool call in the conversation to see its full command and output.
