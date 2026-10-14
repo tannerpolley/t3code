@@ -22,6 +22,13 @@ describe("provider turn token usage projection", () => {
       status: "running",
       startedAt: now,
       completedAt: null,
+      turnTokenUsage: {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        inputTokens: 40_000,
+        outputTokens: 8_000,
+        hasSubagents: false,
+      },
       tokenUsage: {
         usedTokens: 50_000,
         maxTokens: 200_000,
@@ -33,11 +40,13 @@ describe("provider turn token usage projection", () => {
       status: "completed",
       completedAt: now,
       tokenUsage: undefined,
+      turnTokenUsage: undefined,
     } satisfies OrchestrationV2ProviderTurn;
 
     const projected = upsertProviderTurn([running], completed);
 
     assert.deepEqual(projected[0]?.tokenUsage, running.tokenUsage);
+    assert.deepEqual(projected[0]?.turnTokenUsage, running.turnTokenUsage);
     assert.equal(projected[0]?.status, "completed");
   });
 });

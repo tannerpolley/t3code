@@ -309,3 +309,20 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+## Compare threads in Projects
+
+On web and desktop, the Projects view aligns each thread's location, role, provider,
+model, effort, name, time, work status, and token usage. Expand a thread to follow
+its child agents; each level indents while time, status, and usage stay aligned.
+The Activity view keeps its cards.
+
+For Codex and Claude, the number beside the work status shows tokens used by the
+latest turn, such as **48k**. Hover it for input, cached input, output, context
+fill, and the thread's reported total. Cached input is included in input, rather
+than added twice. Partial usage is marked in the tooltip; unavailable usage shows
+**—**. During work the number updates periodically and receives its final count
+when the turn finishes.
+
+Widen the sidebar to compare all columns. As it narrows, token usage disappears
+first, followed by effort and then model. The caret, name, and work status remain.

@@ -1,0 +1,77 @@
+@utility sidebar-columns-container {
+  --sidebar-thread-step: 1rem;
+  container: sidebar-columns / inline-size;
+  min-width: 0;
+}
+@utility sidebar-thread-columns {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  box-sizing: border-box;
+  padding-inline-start: calc(var(--sidebar-thread-depth) * var(--sidebar-thread-step, 1rem));
+  column-gap: 0.25rem;
+  grid-template-columns: 1rem 1rem 1rem 1rem 10ch 5ch minmax(0, 1fr) 6ch 1rem 5ch;
+  font-size: 0.6875rem;
+  font-weight: normal;
+}
+@utility sidebar-caret-toggle {
+  inset-inline-start: calc(
+    0.125rem + var(--sidebar-thread-depth, 0) * var(--sidebar-thread-step, 1rem)
+  );
+}
+@utility sidebar-thread-caret {
+  display: flex;
+  justify-content: end;
+}
+@utility sidebar-thread-icon {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+@utility sidebar-thread-model {
+  @apply min-w-0 truncate;
+}
+@utility sidebar-thread-effort {
+  @apply min-w-0 truncate;
+}
+@utility sidebar-thread-name {
+  @apply min-w-0 truncate;
+  font-size: 0.75rem;
+}
+@utility sidebar-thread-time {
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+@utility sidebar-thread-usage {
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+@container sidebar-columns (width < 22rem) {
+  .sidebar-thread-columns {
+    grid-template-columns: 1rem 1rem 1rem 1rem 10ch 5ch minmax(0, 1fr) 6ch 1rem;
+  }
+  .sidebar-thread-usage {
+    display: none;
+  }
+}
+@container sidebar-columns (width < 20rem) {
+  .sidebar-thread-columns {
+    grid-template-columns: 1rem 1rem 1rem 1rem 10ch minmax(0, 1fr) 6ch 1rem;
+  }
+  .sidebar-thread-effort {
+    display: none;
+  }
+}
+@container sidebar-columns (width < 18rem) {
+  .sidebar-thread-columns {
+    grid-template-columns: 1rem 1rem 1rem 1rem minmax(0, 1fr) 6ch 1rem;
+  }
+  .sidebar-thread-model {
+    display: none;
+  }
+}

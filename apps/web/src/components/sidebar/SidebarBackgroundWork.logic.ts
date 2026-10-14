@@ -1,3 +1,4 @@
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { fileBasename } from "@t3tools/shared/path";
@@ -67,6 +68,7 @@ export function resolveSidebarThreadModelLabel(
   thread: Pick<SidebarThreadSummary, "modelSelection">,
   provider: Pick<ServerProvider, "driver" | "models"> | undefined,
   short = false,
+  includeEffort = true,
 ): string {
   const model = thread.modelSelection.model.trim();
   const modelSlug = provider
@@ -78,7 +80,7 @@ export function resolveSidebarThreadModelLabel(
     { ...thread.modelSelection, model: modelSlug ?? model },
     provider?.models,
   );
-  return effort === null ? modelLabel : `${modelLabel} · ${effort}`;
+  return !includeEffort || effort === null ? modelLabel : `${modelLabel} · ${effort}`;
 }
 
 /** Separates subagent threads from other pending work without changing either group's order. */
@@ -169,4 +171,28 @@ export function describeSidebarBackgroundWork(
 export const POSSIBLY_STUCK_SHELL_MS = 2 * 60 * 60 * 1000;
 export function msUntilPossiblyStuck(startedAt: string, nowMs: number): number {
   return Math.max(0, Date.parse(startedAt) + POSSIBLY_STUCK_SHELL_MS - nowMs);
+}
+
+/** Only descendants of this row can invalidate its work tree. */
+export function sameSidebarSubagentTree(
+  parentKey: string,
+  previous: ReadonlyMap<string, readonly SidebarThreadSummary[]>,
+  next: ReadonlyMap<string, readonly SidebarThreadSummary[]>,
+): boolean {
+  const pending = [parentKey];
+  const seen = new Set<string>();
+  while (pending.length > 0) {
+    const key = pending.pop()!;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const before = previous.get(key) ?? [];
+    const after = next.get(key) ?? [];
+    if (before.length !== after.length) return false;
+    for (let index = 0; index < before.length; index++) {
+      const child = before[index]!;
+      if (child !== after[index]) return false;
+      pending.push(scopedThreadKey(scopeThreadRef(child.environmentId, child.id)));
+    }
+  }
+  return true;
 }

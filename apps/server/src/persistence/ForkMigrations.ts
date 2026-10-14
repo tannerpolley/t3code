@@ -14,6 +14,7 @@ import RepositoryOrchestration from "./ForkMigrations/004_RepositoryOrchestratio
 import RepositoryScheduledWork from "./ForkMigrations/005_RepositoryScheduledWork.ts";
 import IssueChanges from "./ForkMigrations/006_IssueChanges.ts";
 import InlineShellRuns from "./ForkMigrations/010_InlineShellRuns.ts";
+import ThreadUsageSummary from "./ForkMigrations/010_ThreadUsageSummary.ts";
 import PendingRoutedRequests from "./ForkMigrations/007_PendingRoutedRequests.ts";
 
 import IssueThreadLinks from "../issues/IssueLinksMigration.ts";
@@ -32,6 +33,7 @@ export const forkMigrationEntries = [
   [8, "IssueThreadLinks", IssueThreadLinks],
   [9, "IssueRoadmapIndexes", IssueRoadmapIndexes],
   [10, "InlineShellRuns", InlineShellRuns],
+  [11, "ThreadUsageSummary", ThreadUsageSummary],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.

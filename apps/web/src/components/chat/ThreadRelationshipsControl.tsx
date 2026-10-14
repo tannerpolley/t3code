@@ -1,3 +1,9 @@
+import {
+  SidebarCaretToggle,
+  SidebarThreadColumns,
+  SidebarTokenUsage,
+} from "../sidebar/SidebarColumns";
+import { shortModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { useAtomValue } from "@effect/atom-react";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
@@ -55,7 +61,6 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   CornerDownRightIcon,
-  ChevronDownIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
   CornerLeftUpIcon,
@@ -623,7 +628,7 @@ export function ThreadRelationshipsPanel(props: {
           {groups.map((group) => (
             <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
               {(visibleRows) =>
-                visibleRows.map(({ threadId, edge }) => {
+                visibleRows.map(({ threadId, edge, depth }) => {
                   const node = graph.nodes.get(threadId);
                   const isSubagent = edge.kind === "subagent";
                   const isMergeTarget = threadId === mergeTargetThreadId;
@@ -759,7 +764,40 @@ export function ThreadRelationshipsPanel(props: {
                   ) : (
                     relationshipHint
                   );
-                  const relationshipContent = (
+                  const relationshipContent = redesign ? (
+                    <SidebarThreadColumns
+                      depth={Math.max(0, depth - 1)}
+                      location={
+                        node?.thread ? (
+                          <ThreadLocationIcon
+                            thread={{
+                              ...node.thread,
+                              source: node.thread,
+                              environmentId: props.environmentId,
+                            }}
+                          />
+                        ) : undefined
+                      }
+                      role={node?.thread ? <ThreadRoleIcon thread={node.thread} /> : undefined}
+                      provider={
+                        <ThreadRelationshipIcon
+                          driver={providerDriver}
+                          provider={provider}
+                          fallbackIcon={RelationshipIcon}
+                        />
+                      }
+                      model={model ? shortModelName(metadata.modelLabel) : undefined}
+                      effort={shortModelSelectionEffort(effortLabel)}
+                      name={threadTitle}
+                      time={
+                        elapsedAgent && !failed ? (
+                          <AgentElapsed agent={elapsedAgent} compact />
+                        ) : undefined
+                      }
+                      status={<ThreadStatusMark status={lineageStatusMark(rowStatus)} />}
+                      usage={<SidebarTokenUsage summary={node?.thread?.usageSummary} />}
+                    />
+                  ) : (
                     <>
                       {node?.thread ? (
                         <ThreadLocationIcon
@@ -777,12 +815,6 @@ export function ThreadRelationshipsPanel(props: {
                         fallbackIcon={RelationshipIcon}
                         {...(redesign ? {} : { status: rowStatus })}
                       />
-                      {redesign && model ? (
-                        <span className="max-w-32 shrink-0 truncate text-2xs font-normal text-foreground/75">
-                          {shownModelLabel}
-                          {effortLabel ? ` · ${effortLabel}` : ""}
-                        </span>
-                      ) : null}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
                           {threadTitle}
@@ -808,12 +840,6 @@ export function ThreadRelationshipsPanel(props: {
                           }
                         >
                           {threadRelationshipStatusLabel(rowStatus)}
-                        </span>
-                      ) : null}
-                      {redesign ? (
-                        // Fades with the timer so the hover Stop button replaces it.
-                        <span className={`flex shrink-0 ${trailingVisibilityClass}`}>
-                          <ThreadStatusMark status={lineageStatusMark(rowStatus)} />
                         </span>
                       ) : null}
                     </>
@@ -845,6 +871,7 @@ export function ThreadRelationshipsPanel(props: {
                       <ThreadLineageWorkflowRow
                         key={threadId}
                         group={workflowGroup}
+                        environmentId={props.environmentId}
                         providerInstanceId={agent.providerInstanceId}
                         provider={provider}
                         providers={providers}
@@ -863,24 +890,19 @@ export function ThreadRelationshipsPanel(props: {
                   const rowExpanded = !node?.missing && detailsExpanded(threadId);
                   const detailsToggle =
                     node?.missing || !redesign ? null : (
-                      <ThreadDetailsControl
-                        size="icon-xs"
-                        variant="ghost"
-                        part="icon"
-                        aria-expanded={rowExpanded}
-                        aria-label={`${rowExpanded ? "Hide" : "Show"} details for ${threadTitle}`}
-                        onClick={() =>
+                      <SidebarCaretToggle
+                        open={rowExpanded}
+                        label={`${rowExpanded ? "Hide" : "Show"} details for ${threadTitle}`}
+                        onToggle={() =>
                           setLineageDetailsExpanded([detailsKey(threadId)], !rowExpanded)
                         }
-                      >
-                        <ChevronDownIcon
-                          className={`size-3.5 transition-transform ${rowExpanded ? "" : "-rotate-90"}`}
-                        />
-                      </ThreadDetailsControl>
+                        depth={Math.max(0, depth - 1)}
+                        className="top-1 h-6 ms-0.5"
+                      />
                     );
                   return (
-                    <li key={threadId} className="group rounded-lg">
-                      <div className="flex h-8 items-center">
+                    <li key={threadId} className="sidebar-columns-container group rounded-lg">
+                      <div className="relative flex h-8 items-center">
                         <div className="relative flex min-w-0 flex-1 items-center">
                           {isMergeTarget ? (
                             <div className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>

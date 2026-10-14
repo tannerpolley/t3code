@@ -117,6 +117,13 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
       status: "running" as const,
       startedAt: now,
       completedAt: null,
+      turnTokenUsage: {
+        usageScope: "main_agent" as const,
+        usageStatus: "partial" as const,
+        inputTokens: 40_000,
+        outputTokens: 8_000,
+        hasSubagents: false,
+      },
       tokenUsage: {
         usedTokens: 50_000,
         maxTokens: 200_000,
@@ -135,6 +142,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
         status: "completed",
         completedAt: now,
         tokenUsage: undefined,
+        turnTokenUsage: undefined,
       },
     } as OrchestrationV2DomainEvent;
 
@@ -142,6 +150,7 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
 
     expect(next?.providerTurns[0]?.status).toBe("completed");
     expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
+    expect(next?.providerTurns[0]?.turnTokenUsage).toEqual(running.turnTokenUsage);
   });
 
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {

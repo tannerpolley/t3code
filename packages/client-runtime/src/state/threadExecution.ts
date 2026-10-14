@@ -185,6 +185,28 @@ export function formatModelSelectionEffort(
   return null;
 }
 
+/** Compact catalog effort labels for fixed-width thread columns. */
+export function shortModelSelectionEffort(label: string | null): string | null {
+  if (label === null) return null;
+  switch (label.toLowerCase().replace(/[ _-]/g, "")) {
+    case "low":
+      return "Low";
+    case "medium":
+    case "med":
+      return "Med";
+    case "high":
+      return "High";
+    case "extrahigh":
+    case "xhigh":
+      return "XHigh";
+    case "maximum":
+    case "max":
+      return "Max";
+    default:
+      return label;
+  }
+}
+
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {
   idle: "Idle",
   pending: "Working",

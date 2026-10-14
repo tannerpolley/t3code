@@ -1,8 +1,22 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useThreadShell } from "../../state/entities";
+import { ThreadLocationIcon } from "../ThreadLocationIcon";
+import { ThreadRoleIcon } from "../ThreadRoleIcon";
+import { SidebarThreadColumns, SidebarTokenUsage } from "../sidebar/SidebarColumns";
+import { shortModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
+import { shortModelName } from "./providerIconUtils";
+import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
 import type {
   SubagentWorkflowGroup,
   RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ThreadId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { ChevronDownIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -56,6 +70,7 @@ function phaseStatusLabel(phase: SubagentWorkflowGroup["phases"][number]) {
 /** Members run under the coordinator's provider, so they share its glyph. */
 function WorkflowMemberRow({
   member,
+  environmentId,
   providerInstanceId,
   provider,
   providers,
@@ -64,6 +79,7 @@ function WorkflowMemberRow({
   isThreadAvailable,
 }: {
   member: RuntimeSubagent;
+  environmentId: EnvironmentId;
   providerInstanceId: ProviderInstanceId;
   provider: ServerProvider | undefined;
   providers: ReadonlyArray<ServerProvider> | undefined;
@@ -72,6 +88,9 @@ function WorkflowMemberRow({
   isThreadAvailable: (threadId: string) => boolean;
 }) {
   const threadId = member.childThreadId;
+  const thread = useThreadShell(
+    threadId === null ? null : scopeThreadRef(environmentId, threadId as ThreadId),
+  );
   const canOpen = threadId !== null && isThreadAvailable(threadId);
   return (
     <li>
@@ -87,14 +106,18 @@ function WorkflowMemberRow({
             />
           }
         >
-          <ThreadRelationshipIcon driver={driver} provider={provider} status={member.status} />
-          <span className="min-w-0 flex-1 truncate">{member.title}</span>
-          <span className="sr-only">{member.status}</span>
-          {member.startedAt ? (
-            <span className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground">
-              <AgentElapsed agent={member} />
-            </span>
-          ) : null}
+          <SidebarThreadColumns
+            depth={1}
+            location={thread ? <ThreadLocationIcon thread={thread} /> : undefined}
+            role={thread ? <ThreadRoleIcon thread={thread.source} /> : undefined}
+            usage={<SidebarTokenUsage summary={thread?.source.usageSummary} />}
+            provider={<ThreadRelationshipIcon driver={driver} provider={provider} />}
+            model={shortModelName(member.model ?? thread?.modelSelection.model ?? "")}
+            effort={shortModelSelectionEffort(member.effort ?? null)}
+            name={member.title}
+            time={member.startedAt ? <AgentElapsed agent={member} /> : undefined}
+            status={<ThreadStatusMark status={lineageStatusMark(member.status)} />}
+          />
         </TooltipTrigger>
         <ThreadHoverCardPopup side="left">
           <SubagentTooltipContent
@@ -118,6 +141,7 @@ function WorkflowMemberRow({
 
 export function ThreadLineageWorkflowRow({
   group,
+  environmentId,
   header,
   providerInstanceId,
   provider,
@@ -130,6 +154,7 @@ export function ThreadLineageWorkflowRow({
   stopDisabled,
 }: {
   readonly group: SubagentWorkflowGroup;
+  readonly environmentId: EnvironmentId;
   readonly header: ReactNode;
   readonly providerInstanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
@@ -148,7 +173,10 @@ export function ThreadLineageWorkflowRow({
   const phases = group.phases.filter((phase) => phase.members.length > 0);
   return (
     // The flag lets the lineage list trade its compact height for the open tree.
-    <li className="group" data-workflow-expanded={expanded ? "" : undefined}>
+    <li
+      className="sidebar-columns-container group"
+      data-workflow-expanded={expanded ? "" : undefined}
+    >
       <div className={cn("relative", THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS)}>
         {header}
         {onStop ? (
@@ -196,7 +224,7 @@ export function ThreadLineageWorkflowRow({
         </ThreadDetailsControl>
       </div>
       {expanded ? (
-        <ul className="m-0 list-none p-0 ps-6.5">
+        <ul className="m-0 list-none p-0">
           {phases.map((phase) => {
             const open = phaseOpen.get(phase.index) ?? phase.state === "running";
             const status = phaseStatusLabel(phase);
@@ -231,6 +259,7 @@ export function ThreadLineageWorkflowRow({
                       <WorkflowMemberRow
                         key={member.id}
                         member={member}
+                        environmentId={environmentId}
                         providerInstanceId={providerInstanceId}
                         provider={provider}
                         providers={providers}
@@ -248,6 +277,7 @@ export function ThreadLineageWorkflowRow({
             <WorkflowMemberRow
               key={member.id}
               member={member}
+              environmentId={environmentId}
               providerInstanceId={providerInstanceId}
               provider={provider}
               providers={providers}

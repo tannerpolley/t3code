@@ -1,3 +1,9 @@
+import { SidebarThreadColumns, SidebarTokenUsage } from "./sidebar/SidebarColumns";
+import { ThreadRelationshipIcon } from "./chat/ThreadRelationshipIcon";
+import {
+  formatModelSelectionEffort,
+  shortModelSelectionEffort,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { ThreadLocationIcon } from "./ThreadLocationIcon";
 import { ThreadRoleIcon } from "./ThreadRoleIcon";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
@@ -2306,7 +2312,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     return () => window.removeEventListener("dragend", clearFileDrag);
   }, [isFileDragOver]);
   return (
-    <li role="presentation" className="list-none" {...fileDropHandlers}>
+    <li role="presentation" className="sidebar-columns-container list-none" {...fileDropHandlers}>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -2335,45 +2341,32 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             />
           }
         >
-          {props.project ? (
-            <ProjectFavicon
-              project={props.project}
-              className={cn(
-                "size-4 shrink-0 transition-opacity",
-                props.isSettled &&
-                  !props.isRouteActive &&
-                  !props.isHighlighted &&
-                  "opacity-40 grayscale group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
-              )}
-            />
-          ) : null}
-          <ThreadLocationIcon thread={thread} />
-          <ThreadRoleIcon thread={thread.source} />
-          <span className="flex min-w-0 flex-1 flex-col">
-            <span className="flex min-w-0 items-center gap-2.5">
-              <span
-                className={cn(
-                  "min-w-0 flex-1 truncate",
-                  props.isSettled
-                    ? "font-normal text-secondary-label/70 group-hover/sidebar-row:text-foreground"
-                    : "font-medium text-foreground",
-                  (props.isHighlighted || props.isRouteActive) && "text-foreground",
-                  thread.titleRegeneration != null && "opacity-55",
-                )}
-              >
-                {thread.title}
-              </span>
-              <span id={`${props.resultId}-pr`} className="contents">
-                <ThreadSearchPullRequestNumber
-                  thread={thread}
-                  query={props.searchQuery}
-                  enabled={leaseLiveStatus}
-                  settled={props.isSettled}
+          <span className="flex min-w-0 w-full flex-col">
+            <SidebarThreadColumns
+              location={<ThreadLocationIcon thread={thread} />}
+              role={<ThreadRoleIcon thread={thread.source} />}
+              provider={
+                <ThreadRelationshipIcon
+                  driver={providerEntry?.driverKind}
+                  provider={providerEntry?.snapshot}
                 />
-              </span>
-              <span className="min-w-8 shrink-0 text-right text-xs text-muted-foreground/55 tabular-nums">
-                <SidebarThreadTime thread={thread} />
-              </span>
+              }
+              model={shortModelName(modelLabel)}
+              effort={shortModelSelectionEffort(
+                formatModelSelectionEffort(thread.modelSelection, providerEntry?.models),
+              )}
+              name={thread.title}
+              time={<SidebarThreadTime thread={thread} />}
+              status={<ThreadStatusMark status={resolveSidebarThreadStatus(thread)} />}
+              usage={<SidebarTokenUsage summary={thread.source.usageSummary} />}
+            />
+            <span id={`${props.resultId}-pr`}>
+              <ThreadSearchPullRequestNumber
+                thread={thread}
+                query={props.searchQuery}
+                enabled={leaseLiveStatus}
+                settled={props.isSettled}
+              />
             </span>
             {props.searchMatch ? (
               <ThreadSearchMatchExcerpt

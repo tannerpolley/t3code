@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
-import { normalizeClaudeTurnTokenUsage } from "./ClaudeTurnTokenUsage.ts";
+import {
+  accumulateClaudeTurnTokenUsage,
+  normalizeClaudeTurnTokenUsage,
+} from "./ClaudeTurnTokenUsage.ts";
 import {
   accumulateCodexTurnTokenUsage,
   completeCodexTurnTokenUsage,
+  readCodexTurnTokenUsage,
   getCodexTurnAccumulator,
   makeCodexTurnTokenUsageState,
 } from "./CodexTurnTokenUsage.ts";
@@ -129,5 +133,58 @@ describe("billable native turn usage", () => {
         "interrupted",
       ),
     ).toMatchObject({ usageStatus: "partial", inputTokens: 4, outputTokens: 2 });
+  });
+});
+
+describe("live whole-turn usage", () => {
+  it("does not consume Codex totals when the sidebar reads a live snapshot", () => {
+    const state = makeCodexTurnTokenUsageState();
+    state.activeTurnId = "turn";
+    accumulateCodexTurnTokenUsage(state, "turn", update(breakdown(100, 60, 20)));
+    expect(readCodexTurnTokenUsage(state, "turn", false)).toMatchObject({
+      inputTokens: 100,
+      outputTokens: 20,
+      usageStatus: "partial",
+    });
+    expect(readCodexTurnTokenUsage(state, "turn", false)).toMatchObject({
+      inputTokens: 100,
+      outputTokens: 20,
+    });
+    accumulateCodexTurnTokenUsage(state, "turn", update(breakdown(300, 180, 50)));
+    expect(completeCodexTurnTokenUsage(state, "turn", true)).toMatchObject({
+      inputTokens: 300,
+      outputTokens: 50,
+      usageStatus: "complete",
+    });
+    expect(state.byTurnId.size).toBe(0);
+  });
+  it("sums Claude model calls and replaces repeated snapshots instead of counting them twice", () => {
+    const messages = new Map();
+    accumulateClaudeTurnTokenUsage(
+      messages,
+      "a",
+      { inputTokens: 100, cachedInputTokens: 60, outputTokens: 2 },
+      false,
+    );
+    accumulateClaudeTurnTokenUsage(
+      messages,
+      "a",
+      { inputTokens: 100, cachedInputTokens: 60, outputTokens: 20 },
+      false,
+    );
+    const result = accumulateClaudeTurnTokenUsage(
+      messages,
+      "b",
+      { inputTokens: 200, cachedInputTokens: 100, outputTokens: 30 },
+      true,
+    );
+    expect(result).toEqual({
+      usageScope: "main_agent",
+      usageStatus: "partial",
+      inputTokens: 300,
+      cachedInputTokens: 160,
+      outputTokens: 50,
+      hasSubagents: true,
+    });
   });
 });

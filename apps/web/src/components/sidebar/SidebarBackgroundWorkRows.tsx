@@ -1,3 +1,7 @@
+import {
+  formatModelSelectionEffort,
+  shortModelSelectionEffort,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   isProviderNativeSubagentThread,
@@ -6,7 +10,12 @@ import {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CornerDownRightIcon } from "lucide-react";
-import { useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  useRef,
+  type ComponentProps,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import {
@@ -31,9 +40,9 @@ import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { cn } from "../../lib/utils";
 import {
-  SidebarCaretSlot,
   SidebarCaretToggle,
-  SidebarTrailingColumns,
+  SidebarThreadColumns,
+  SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { ThreadStatusMark } from "../ThreadStatusMark";
@@ -64,7 +73,7 @@ export type SidebarBackgroundWorkRowsProps = {
   readonly compact?: boolean;
   readonly columns?: boolean;
   /** Rows nested below another columns row, whose caret sits lower in the shorter row. */
-  readonly nested?: boolean;
+  readonly depth?: number;
   readonly renderNested?: (row: BackgroundWorkTaskRow) => ReactNode;
   readonly nestedToggle?: (row: BackgroundWorkTaskRow) => NestedWorkToggle | null;
   readonly onChildClick?: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
@@ -77,7 +86,6 @@ export type SidebarBackgroundWorkRowsProps = {
 /** Subagent and background task rows in the sidebar's shared thread columns. */
 export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps) {
   const navigate = useNavigate();
-  const selectedThreadKeys = useThreadSelectionStore((store) => store.selectedThreadKeys);
   const providers = useServerConfigs().get(props.environmentId)?.providers;
   const owner = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
   const ownerProvider = providers?.find((entry) => entry.instanceId === owner?.providerInstanceId);
@@ -176,25 +184,37 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             )
           ) : null;
         const content = props.columns ? (
-          <>
-            <SidebarCaretSlot />
-            {locationIcon}
-            {roleIcon}
-            {icon}
-            {modelLabel ? (
-              // Gives way before the label, as in the thread row above it.
-              <span className="hidden min-w-0 max-w-[6.5rem] shrink-[100] truncate text-foreground/85 @min-[16rem]/work-row:block">
-                {modelLabel}
+          <SidebarThreadColumns
+            depth={props.depth ?? 0}
+            location={locationIcon}
+            role={roleIcon}
+            provider={icon}
+            model={
+              row.kind === "subagent" && row.child
+                ? resolveSidebarThreadModelLabel(row.child, provider, true, false)
+                : undefined
+            }
+            effort={
+              row.kind === "subagent" && row.child
+                ? shortModelSelectionEffort(
+                    formatModelSelectionEffort(row.child.modelSelection, provider?.models),
+                  )
+                : undefined
+            }
+            name={
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 flex-1 truncate">{row.label}</span>
+                {row.kind === "subagent" ? null : usage}
               </span>
-            ) : null}
-            <span className="min-w-0 flex-[1_1_5rem] truncate text-foreground/85">{row.label}</span>
-            {usage}
-            <SidebarTrailingColumns
-              count={toggle && !toggle.open ? toggle.count : undefined}
-              time={time}
-              status={<ThreadStatusMark status={row.status ?? "working"} />}
-            />
-          </>
+            }
+            time={time}
+            status={<ThreadStatusMark status={row.status ?? "working"} />}
+            usage={
+              row.kind === "subagent" && row.child ? (
+                <SidebarTokenUsage summary={row.child.source.usageSummary} />
+              ) : undefined
+            }
+          />
         ) : (
           <>
             {locationIcon}
@@ -218,15 +238,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
         );
         const element =
           row.kind === "subagent" && childThreadId ? (
-            <button
-              type="button"
+            <SidebarChildWorkButton
+              environmentId={props.environmentId}
+              threadId={childThreadId}
               className={cn(
                 "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left hover:bg-accent",
                 PROJECTS_WORK_ROW_HEIGHT,
                 padding,
-                selectedThreadKeys.has(
-                  scopedThreadKey(scopeThreadRef(props.environmentId, childThreadId)),
-                ) && "bg-sidebar-row-selected",
               )}
               onClick={(event) => {
                 if (row.child && props.onChildClick) {
@@ -253,7 +271,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               }}
             >
               {content}
-            </button>
+            </SidebarChildWorkButton>
           ) : row.kind !== "subagent" && processOutput ? (
             <BackgroundProcessOutputButton
               environmentId={props.environmentId}
@@ -287,14 +305,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             className={cn(
               row.kind !== "subagent" && "group/shell",
               index === agents.length && agents.length > 0 && "border-t border-sidebar-border/40",
-              props.columns
-                ? cn(
-                    "@container/work-row relative ms-1.5 before:absolute before:-start-1.5 before:bottom-0 before:border-s before:border-sidebar-border after:absolute after:-start-1.5 after:top-3 after:w-3 after:border-t after:border-sidebar-border last:before:bottom-auto",
-                    props.nested
-                      ? "before:-top-1 last:before:h-4"
-                      : "before:-top-2 last:before:h-5",
-                  )
-                : "relative",
+              "relative",
             )}
           >
             {props.compact ? (
@@ -334,6 +345,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 label={`${toggle.open ? "Hide" : "Show"} ${toggle.count} running ${toggle.count === 1 ? "task" : "tasks"} under ${row.label}`}
                 onToggle={toggle.onToggle}
                 className="top-0.5 h-5"
+                depth={props.depth ?? 0}
               />
             ) : null}
             {toggle === null || toggle.open ? props.renderNested?.(row) : null}
@@ -346,4 +358,24 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
 
 function elapsed(startedAt: string) {
   return <AgentElapsed agent={{ status: "running", startedAt, completedAt: null }} />;
+}
+
+function SidebarChildWorkButton({
+  environmentId,
+  threadId,
+  className,
+  ...props
+}: ComponentProps<"button"> & {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const key = scopedThreadKey(scopeThreadRef(environmentId, threadId));
+  const selected = useThreadSelectionStore((store) => store.selectedThreadKeys.has(key));
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(className, selected && "bg-sidebar-row-selected")}
+    />
+  );
 }

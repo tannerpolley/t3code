@@ -1,5 +1,8 @@
 import { ChevronRightIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { formatSidebarTokens } from "./SidebarTokenUsage.logic";
 
 import { cn } from "~/lib/utils";
 
@@ -50,14 +53,20 @@ export function SidebarCaretToggle(props: {
   readonly label: string;
   readonly onToggle: () => void;
   readonly className: string;
+  readonly depth?: number;
 }) {
   return (
     <button
       type="button"
+      style={
+        props.depth === undefined
+          ? undefined
+          : ({ "--sidebar-thread-depth": props.depth } as CSSProperties)
+      }
       aria-expanded={props.open}
       aria-label={props.label}
       className={cn(
-        "absolute start-0.5 flex cursor-pointer items-center rounded px-1.5 text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        "sidebar-caret-toggle absolute flex cursor-pointer items-center rounded px-1.5 text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         props.className,
       )}
       onClick={props.onToggle}
@@ -88,5 +97,70 @@ export function SidebarTrailingColumns(props: {
       {props.time ? <span className="text-muted-foreground">{props.time}</span> : null}
       {props.status ? <span className="flex w-3.5 justify-center">{props.status}</span> : null}
     </span>
+  );
+}
+
+/** All thread surfaces share these fixed tracks; only the name gets spare width. */
+export function SidebarThreadColumns(props: {
+  readonly depth?: number | undefined;
+  readonly caret?: ReactNode;
+  readonly location?: ReactNode;
+  readonly role?: ReactNode;
+  readonly provider?: ReactNode;
+  readonly model?: ReactNode;
+  readonly effort?: ReactNode;
+  readonly name: ReactNode;
+  readonly time?: ReactNode;
+  readonly status?: ReactNode;
+  readonly usage?: ReactNode;
+}) {
+  return (
+    <span
+      className="sidebar-thread-columns"
+      style={{ "--sidebar-thread-depth": props.depth ?? 0 } as CSSProperties}
+    >
+      <span className="sidebar-thread-caret">{props.caret ?? <SidebarCaretSlot />}</span>
+      <span className="sidebar-thread-icon">{props.location}</span>
+      <span className="sidebar-thread-icon">{props.role}</span>
+      <span className="sidebar-thread-icon">{props.provider}</span>
+      <span className="sidebar-thread-model">{props.model}</span>
+      <span className="sidebar-thread-effort">{props.effort}</span>
+      <span className="sidebar-thread-name">{props.name}</span>
+      <span className="sidebar-thread-time">{props.time}</span>
+      <span className="sidebar-thread-icon">{props.status}</span>
+      <span className="sidebar-thread-usage">{props.usage}</span>
+    </span>
+  );
+}
+
+export function SidebarTokenUsage(props: {
+  readonly summary: OrchestrationV2ThreadShell["usageSummary"];
+}) {
+  const usage = props.summary;
+  if (!usage) return null;
+  const number = (value: number | undefined) =>
+    value === undefined ? "Unavailable" : value.toLocaleString();
+  const contextPercent =
+    usage.contextTokens !== undefined && usage.contextWindow
+      ? `${Math.round((usage.contextTokens / usage.contextWindow) * 100)}%`
+      : "Unavailable";
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span />}>
+        {formatSidebarTokens(usage.latestTurnTokens)}
+      </TooltipTrigger>
+      <TooltipPopup side="right">
+        <div>
+          Latest turn: {number(usage.latestTurnTokens)} tokens{usage.partial ? " (partial)" : ""}
+        </div>
+        <div>Input: {number(usage.inputTokens)}</div>
+        <div>Cached input: {number(usage.cachedInputTokens)}</div>
+        <div>Output: {number(usage.outputTokens)}</div>
+        <div>
+          Context: {contextPercent} · {number(usage.contextTokens)} / {number(usage.contextWindow)}
+        </div>
+        <div>Thread total (reported): {number(usage.threadTokens)} tokens</div>
+      </TooltipPopup>
+    </Tooltip>
   );
 }

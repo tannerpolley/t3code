@@ -140,14 +140,12 @@ export function accumulateCodexTurnTokenUsage(
   }
 }
 
-export function completeCodexTurnTokenUsage(
+export function readCodexTurnTokenUsage(
   state: CodexTurnTokenUsageState,
   turnId: string,
   completed: boolean,
 ): TurnTokenUsage {
   const usage = state.byTurnId.get(turnId);
-  state.byTurnId.delete(turnId);
-  if (state.activeTurnId === turnId) state.activeTurnId = undefined;
   if (!usage) {
     return {
       usageStatus: "unavailable",
@@ -179,4 +177,15 @@ export function completeCodexTurnTokenUsage(
     reasoningTokens: Math.min(usage.outputTokens, usage.reasoningTokens),
     hasSubagents: usage.hasSubagents,
   };
+}
+
+export function completeCodexTurnTokenUsage(
+  state: CodexTurnTokenUsageState,
+  turnId: string,
+  completed: boolean,
+): TurnTokenUsage {
+  const usage = readCodexTurnTokenUsage(state, turnId, completed);
+  state.byTurnId.delete(turnId);
+  if (state.activeTurnId === turnId) state.activeTurnId = undefined;
+  return usage;
 }

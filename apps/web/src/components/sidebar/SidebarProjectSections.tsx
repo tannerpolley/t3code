@@ -1,3 +1,7 @@
+import {
+  formatModelSelectionEffort,
+  shortModelSelectionEffort,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
 import {
@@ -51,6 +55,8 @@ import {
   SidebarCaretSlot,
   SidebarCaretToggle,
   SidebarTrailingColumns,
+  SidebarThreadColumns,
+  SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { useServerConfigs } from "../../state/entities";
@@ -61,6 +67,7 @@ import {
   describeSidebarBackgroundWork,
   type BackgroundWorkTaskRow,
   resolveSidebarThreadModelLabel,
+  sameSidebarSubagentTree,
 } from "./SidebarBackgroundWork.logic";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
@@ -72,7 +79,6 @@ import {
   useState,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
-  type ReactNode,
 } from "react";
 
 import type { EnvironmentId, ProjectIconColor, ThreadId } from "@t3tools/contracts";
@@ -93,11 +99,9 @@ import { type SidebarProjectSection, useUiStateStore } from "../../uiStateStore"
 import { cn } from "~/lib/utils";
 import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import {
-  flattenRunningSubagents,
   resolveSidebarThreadStatus,
   resolveThreadStatusMark,
   withChildNeeds,
-  type SidebarThreadStatus,
 } from "../Sidebar.logic";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { Button } from "../ui/button";
@@ -1132,7 +1136,12 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
         </div>
       </div>
       {props.isProjectExpanded ? (
-        <ul className={codexStyle ? "ps-6" : "ms-5 border-sidebar-border/60 border-s ps-2"}>
+        <ul
+          className={cn(
+            "sidebar-columns-container",
+            codexStyle ? "ps-6" : "ms-5 border-sidebar-border/60 border-s ps-2",
+          )}
+        >
           {props.threads.map((thread) => (
             <SidebarProjectThreadRow
               key={`${thread.environmentId}:${thread.id}`}
@@ -1163,16 +1172,6 @@ function ProjectDragPreview(props: { readonly project: SidebarProjectSnapshot | 
   );
 }
 
-const THREAD_STATUS_DOT_CLASS: Record<SidebarThreadStatus, string> = {
-  approval: "bg-warning",
-  failed: "bg-error",
-  input: "bg-info",
-  ready: "bg-success/70",
-  waiting: "bg-info/60",
-  limited: "bg-warning/60",
-  working: "bg-info",
-};
-
 /** A zero-height marker, so showing it never shifts the rows around it. */
 function ProjectDropLine() {
   return (
@@ -1182,189 +1181,139 @@ function ProjectDropLine() {
   );
 }
 
-function SidebarProjectThreadRow(props: {
-  readonly thread: SidebarThreadSummary;
-  /** Codex style marks status on the right; otherwise a dot leads the row. */
-  readonly codexStyle: boolean;
-  readonly activeThreadKey: string | null;
-  readonly onClick: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
-  readonly onContextMenu: (
-    thread: SidebarThreadSummary,
-    position: { x: number; y: number },
-  ) => void;
-  readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-}): ReactNode {
-  const activeThreadKey = scopedThreadKey(
-    scopeThreadRef(props.thread.environmentId, props.thread.id),
-  );
-  const runningSubagents = props.runningSubagentsByParentKey.get(activeThreadKey) ?? NO_THREADS;
-  const status = withChildNeeds(resolveSidebarThreadStatus(props.thread), runningSubagents);
-  const active = props.activeThreadKey === activeThreadKey;
-  const selected = useThreadSelectionStore((store) =>
-    store.selectedThreadKeys.has(activeThreadKey),
-  );
-  const localLastVisitedAt = useUiStateStore(
-    (state) => state.threadLastVisitedAtById[activeThreadKey],
-  );
-  // Finished while you were away and not opened since: a green dot where the spinner was.
-  const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
-  const workRows = describeSidebarBackgroundWork(
-    props.thread.pendingBackgroundTasks,
-    // Only the Codex-style tree nests subagents; the flat list shows every descendant in order.
-    props.codexStyle
-      ? runningSubagents
-      : flattenRunningSubagents(runningSubagents, props.runningSubagentsByParentKey),
-  );
-  // Running work shows by default, even while the thread itself works; a collapse wins for this row.
-  const [workOpen, setWorkOpen] = useState(true);
-  const contextDrag = useThreadContextPointerDrag(() => ({
-    threads: [scopeThreadRef(props.thread.environmentId, props.thread.id)],
-    title: props.thread.title,
-  }));
-  const provider = useServerConfigs()
-    .get(props.thread.environmentId)
-    ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
-  const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
-  return (
-    <li
-      className="relative list-none"
-      data-thread-item={activeThreadKey}
-      data-sidebar-thread-key={activeThreadKey}
-    >
-      <button
-        type="button"
-        aria-current={active ? "page" : undefined}
-        aria-label={`${props.thread.title}, ${status}`}
-        className={cn(
-          "group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors",
-          PROJECTS_WORK_ROW_HEIGHT,
-          active
-            ? "bg-sidebar-row-active text-sidebar-foreground"
-            : selected
-              ? "bg-sidebar-row-selected text-sidebar-foreground"
-              : cn(
-                  // Codex style: the same white as subagent and shell rows, not only when selected.
-                  props.codexStyle ? "text-foreground/85" : "text-sidebar-muted-foreground/80",
-                  "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-                ),
-        )}
-        onClick={(event) => props.onClick(event, props.thread)}
-        // Drag the row onto a chat composer to add the thread as context.
-        onPointerDown={contextDrag.onPointerDown}
-        onClickCapture={contextDrag.onClickCapture}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });
-        }}
+const SidebarProjectThreadRow = memo(
+  function SidebarProjectThreadRow(props: {
+    readonly thread: SidebarThreadSummary;
+    /** Codex style marks status on the right; otherwise a dot leads the row. */
+    readonly codexStyle: boolean;
+    readonly activeThreadKey: string | null;
+    readonly onClick: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
+    readonly onContextMenu: (
+      thread: SidebarThreadSummary,
+      position: { x: number; y: number },
+    ) => void;
+    readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  }) {
+    const activeThreadKey = scopedThreadKey(
+      scopeThreadRef(props.thread.environmentId, props.thread.id),
+    );
+    const runningSubagents = props.runningSubagentsByParentKey.get(activeThreadKey) ?? NO_THREADS;
+    const status = withChildNeeds(resolveSidebarThreadStatus(props.thread), runningSubagents);
+    const active = props.activeThreadKey === activeThreadKey;
+    const selected = useThreadSelectionStore((store) =>
+      store.selectedThreadKeys.has(activeThreadKey),
+    );
+    const localLastVisitedAt = useUiStateStore(
+      (state) => state.threadLastVisitedAtById[activeThreadKey],
+    );
+    // Finished while you were away and not opened since: a green dot where the spinner was.
+    const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
+    const workRows = describeSidebarBackgroundWork(
+      props.thread.pendingBackgroundTasks,
+      runningSubagents,
+    );
+    // Running work shows by default, even while the thread itself works; a collapse wins for this row.
+    const [workOpen, setWorkOpen] = useState(true);
+    const contextDrag = useThreadContextPointerDrag(() => ({
+      threads: [scopeThreadRef(props.thread.environmentId, props.thread.id)],
+      title: props.thread.title,
+    }));
+    const provider = useServerConfigs()
+      .get(props.thread.environmentId)
+      ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
+    return (
+      <li
+        className="relative list-none"
+        data-thread-item={activeThreadKey}
+        data-sidebar-thread-key={activeThreadKey}
       >
-        {props.codexStyle ? (
-          <>
-            {/* The work toggle sits over this slot because buttons cannot nest. */}
-            <SidebarCaretSlot />
-            <ThreadLocationIcon thread={props.thread} />
-            <ThreadRoleIcon thread={props.thread.source} />
-            <ThreadRelationshipIcon
-              driver={provider?.driver}
-              provider={provider}
-              fallbackIcon={CornerDownRightIcon}
-            />
-          </>
-        ) : (
-          <span
-            aria-hidden
-            className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
-          />
-        )}
-        {!props.codexStyle ? (
-          <>
-            <ThreadLocationIcon thread={props.thread} />
-            <ThreadRoleIcon thread={props.thread.source} />
-          </>
-        ) : null}
-        {props.codexStyle ? (
-          // The model sits right after the provider icon, as in Lineage. It gives way first: hidden
-          // in a narrow row, and in a wider one it shrinks before the title's 5rem basis does.
-          <span className="hidden min-w-0 max-w-[6.5rem] shrink-[100] truncate text-2xs text-foreground/85 @min-[16rem]/thread-row:block">
-            {resolveSidebarThreadModelLabel(props.thread, provider, shortModelNames)}
-          </span>
-        ) : null}
-        <span
-          className={cn(
-            "min-w-0 truncate",
-            props.codexStyle ? "flex-[1_1_5rem] text-xs" : "flex-1",
-          )}
-        >
-          {props.thread.title}
-        </span>
-        {props.codexStyle ? (
-          <SidebarTrailingColumns
-            count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
-            time={<SidebarThreadTime thread={props.thread} status={status} />}
-            // Every thread fills the status slot (idle is a gray dot), so times share one column.
-            status={<ThreadStatusMark status={statusMark} />}
-          />
-        ) : workRows.length > 0 ? (
-          // Room for the work toggle, which sits over this spot because buttons cannot nest.
-          <span aria-hidden className="w-8 shrink-0" />
-        ) : (
-          <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
-            <SidebarThreadTime thread={props.thread} status={status} />
-          </span>
-        )}
-      </button>
-      {workRows.length > 0 && props.codexStyle ? (
-        <SidebarCaretToggle
-          open={workOpen}
-          label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
-          onToggle={() => setWorkOpen(!workOpen)}
-          className="top-0.5 h-5"
-        />
-      ) : workRows.length > 0 ? (
         <button
           type="button"
-          aria-expanded={workOpen}
-          aria-label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
-          className="absolute top-0.5 right-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-3xs text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-          onClick={() => setWorkOpen(!workOpen)}
-        >
-          {workRows.length}
-          {workOpen ? (
-            <ChevronDownIcon aria-hidden className="size-3" />
-          ) : (
-            <ChevronRightIcon aria-hidden className="size-3" />
+          aria-current={active ? "page" : undefined}
+          aria-label={`${props.thread.title}, ${status}`}
+          className={cn(
+            "group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm outline-none transition-colors",
+            PROJECTS_WORK_ROW_HEIGHT,
+            active
+              ? "bg-sidebar-row-active text-sidebar-foreground"
+              : selected
+                ? "bg-sidebar-row-selected text-sidebar-foreground"
+                : cn(
+                    // Codex style: the same white as subagent and shell rows, not only when selected.
+                    props.codexStyle ? "text-foreground/85" : "text-sidebar-muted-foreground/80",
+                    "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                  ),
           )}
+          onClick={(event) => props.onClick(event, props.thread)}
+          // Drag the row onto a chat composer to add the thread as context.
+          onPointerDown={contextDrag.onPointerDown}
+          onClickCapture={contextDrag.onClickCapture}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });
+          }}
+        >
+          <SidebarThreadColumns
+            location={<ThreadLocationIcon thread={props.thread} />}
+            role={<ThreadRoleIcon thread={props.thread.source} />}
+            provider={
+              <ThreadRelationshipIcon
+                driver={provider?.driver}
+                provider={provider}
+                fallbackIcon={CornerDownRightIcon}
+              />
+            }
+            model={resolveSidebarThreadModelLabel(props.thread, provider, true, false)}
+            effort={shortModelSelectionEffort(
+              formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
+            )}
+            name={props.thread.title}
+            time={<SidebarThreadTime thread={props.thread} status={status} />}
+            status={<ThreadStatusMark status={statusMark} />}
+            usage={<SidebarTokenUsage summary={props.thread.source.usageSummary} />}
+          />
         </button>
-      ) : null}
-      {workRows.length > 0 && workOpen && props.codexStyle ? (
-        // Under the row's caret, where the tree lines begin: past its 8px padding and half the slot.
-        <div className="ms-4">
-          <SidebarSubagentTree
-            environmentId={props.thread.environmentId}
-            threadId={props.thread.id}
-            rows={workRows}
-            parentTasks={props.thread.pendingBackgroundTasks}
-            runningChildren={runningSubagents}
-            onChildClick={props.onClick}
-            onChildContextMenu={props.onContextMenu}
-            runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+        {workRows.length > 0 ? (
+          <SidebarCaretToggle
+            open={workOpen}
+            label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
+            onToggle={() => setWorkOpen(!workOpen)}
+            className="top-0.5 h-5"
           />
-        </div>
-      ) : workRows.length > 0 && workOpen ? (
-        <div className="ms-3 border-s border-sidebar-border/60 ps-1">
-          <SidebarBackgroundWorkRows
-            compact
-            columns={props.codexStyle}
-            environmentId={props.thread.environmentId}
-            threadId={props.thread.id}
-            onChildClick={props.onClick}
-            onChildContextMenu={props.onContextMenu}
-            rows={workRows}
-          />
-        </div>
-      ) : null}
-    </li>
-  );
-}
+        ) : null}
+        {workRows.length > 0 && workOpen ? (
+          <div>
+            <SidebarSubagentTree
+              environmentId={props.thread.environmentId}
+              threadId={props.thread.id}
+              rows={workRows}
+              parentTasks={props.thread.pendingBackgroundTasks}
+              runningChildren={runningSubagents}
+              onChildClick={props.onClick}
+              onChildContextMenu={props.onContextMenu}
+              runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+            />
+          </div>
+        ) : null}
+      </li>
+    );
+  },
+  (previous, next) => {
+    const key = scopedThreadKey(scopeThreadRef(previous.thread.environmentId, previous.thread.id));
+    return (
+      previous.thread === next.thread &&
+      previous.codexStyle === next.codexStyle &&
+      (previous.activeThreadKey === key) === (next.activeThreadKey === key) &&
+      previous.onClick === next.onClick &&
+      previous.onContextMenu === next.onContextMenu &&
+      sameSidebarSubagentTree(
+        key,
+        previous.runningSubagentsByParentKey,
+        next.runningSubagentsByParentKey,
+      )
+    );
+  },
+);
 
 /** A thread's work rows, each running subagent followed by its own subagents and processes. */
 function SidebarSubagentTree(props: {
@@ -1380,7 +1329,7 @@ function SidebarSubagentTree(props: {
     position: { x: number; y: number },
   ) => void;
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-  readonly nested?: boolean;
+  readonly depth?: number;
 }) {
   // Children open by default, like a thread's own work; a collapse is remembered for this view.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -1404,7 +1353,7 @@ function SidebarSubagentTree(props: {
     <SidebarBackgroundWorkRows
       compact
       columns
-      nested={props.nested ?? false}
+      depth={props.depth ?? 1}
       environmentId={props.environmentId}
       threadId={props.threadId}
       onChildClick={props.onChildClick}
@@ -1431,10 +1380,9 @@ function SidebarSubagentTree(props: {
         if (work === null) return null;
         const { child, grandchildren, rows } = work;
         return (
-          // Under the row's caret: past the row's 8px padding and half its 16px caret slot.
-          <div className="ms-4">
+          <div>
             <SidebarSubagentTree
-              nested
+              depth={(props.depth ?? 1) + 1}
               environmentId={props.environmentId}
               threadId={child.id}
               rows={rows}

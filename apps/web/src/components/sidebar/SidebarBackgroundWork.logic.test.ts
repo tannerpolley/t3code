@@ -12,6 +12,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { makeThreadFixture } from "../../test-fixtures";
 import {
   childWorktreeLabel,
+  sameSidebarSubagentTree,
   describeSidebarBackgroundWork,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
@@ -311,5 +312,20 @@ describe("childWorktreeLabel", () => {
     expect(childWorktreeLabel(worktree, { worktreePath: worktree.worktreePath })).toBeNull();
     expect(childWorktreeLabel({ worktreePath: null }, root)).toBeNull();
     expect(childWorktreeLabel({ worktreePath: null }, undefined)).toBeNull();
+  });
+});
+
+describe("sidebar subtree invalidation", () => {
+  it("ignores unrelated updates but notices a changed grandchild", () => {
+    const childKey = `${runningChild.environmentId}:${runningChild.id}`;
+    const grandchild = makeThreadFixture({ id: ThreadId.make("grandchild") });
+    const before = new Map([
+      ["root", [runningChild]],
+      [childKey, [grandchild]],
+    ]);
+    const after = new Map([...before, ["unrelated", [makeThreadFixture()]]]);
+    expect(sameSidebarSubagentTree("root", before, after)).toBe(true);
+    after.set(childKey, [{ ...grandchild, title: "New work" }]);
+    expect(sameSidebarSubagentTree("root", before, after)).toBe(false);
   });
 });

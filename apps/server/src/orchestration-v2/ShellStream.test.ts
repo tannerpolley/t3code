@@ -6,7 +6,7 @@ import type {
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { ProjectId, ProviderInstanceId, ProviderTurnId, ThreadId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -621,6 +621,52 @@ describe("skipUnchangedThreadShells", () => {
       ]);
       expect(sent).toEqual([1, 3, 5, 6]);
     }),
+  );
+
+  it.effect(
+    "throttles live usage independently of metadata and flushes final usage immediately",
+    () =>
+      Effect.gen(function* () {
+        const usage = (tokens: number, completed = false) => ({
+          turnId: ProviderTurnId.make("turn-a"),
+          completed,
+          partial: !completed,
+          latestTurnTokens: tokens,
+        });
+        const steps: ReadonlyArray<Step> = [
+          updated(1, shell("a", { usageSummary: usage(10) })),
+          updated(2, shell("a", { usageSummary: usage(20) })),
+          { advanceMs: 4_999 },
+          updated(3, shell("a", { usageSummary: usage(30), title: "Renamed" })),
+          { advanceMs: 1 },
+          updated(4, shell("a", { usageSummary: usage(40), title: "Renamed" })),
+          updated(5, shell("a", { usageSummary: usage(50, true), title: "Renamed" })),
+          updated(6, shell("b", { usageSummary: usage(100) })),
+        ];
+        const sent = yield* Stream.fromIterable(steps).pipe(
+          Stream.mapEffect((step) =>
+            "advanceMs" in step
+              ? TestClock.adjust(Duration.millis(step.advanceMs)).pipe(Effect.as(null))
+              : Effect.succeed(step),
+          ),
+          Stream.filter((item) => item !== null),
+          skipUnchangedThreadShells,
+          Stream.runCollect,
+        );
+        expect(
+          Array.from(sent, (item) =>
+            item.kind === "thread.updated"
+              ? [item.sequence, item.thread.usageSummary?.latestTurnTokens]
+              : null,
+          ),
+        ).toEqual([
+          [1, 10],
+          [3, 10],
+          [4, 40],
+          [5, 50],
+          [6, 100],
+        ]);
+      }),
   );
 
   it.effect("sends the next update after a removal", () =>

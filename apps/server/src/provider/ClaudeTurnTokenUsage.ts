@@ -85,3 +85,40 @@ export function normalizeClaudeTurnTokenUsage(
     ...(rawOutputTokens !== undefined ? { outputTokens: rawOutputTokens } : {}),
   };
 }
+
+/** Assistant frames report per-message usage; repeated frames replace their snapshot. */
+export function accumulateClaudeTurnTokenUsage(
+  messages: Map<
+    string,
+    {
+      readonly inputTokens: number;
+      readonly cachedInputTokens: number;
+      readonly outputTokens: number;
+    }
+  >,
+  messageId: string,
+  usage: {
+    readonly inputTokens: number;
+    readonly cachedInputTokens: number;
+    readonly outputTokens: number;
+  },
+  hasSubagents: boolean,
+): TurnTokenUsage {
+  messages.set(messageId, usage);
+  let inputTokens = 0;
+  let cachedInputTokens = 0;
+  let outputTokens = 0;
+  for (const message of messages.values()) {
+    inputTokens += message.inputTokens;
+    cachedInputTokens += message.cachedInputTokens;
+    outputTokens += message.outputTokens;
+  }
+  return {
+    usageScope: "main_agent",
+    usageStatus: "partial",
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    hasSubagents,
+  };
+}

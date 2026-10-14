@@ -23,6 +23,7 @@ import {
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
   formatModelSelectionEffort,
+  shortModelSelectionEffort,
   formatProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
@@ -716,5 +717,16 @@ describe("presentProviderGoal", () => {
     expect(
       presentProviderGoal({ objective: "All tests pass", status: "active" }, false).title,
     ).toBe("Goal set");
+  });
+});
+
+describe("shortModelSelectionEffort", () => {
+  it("shortens standard catalog names while preserving provider extras and absent effort", () => {
+    expect(
+      ["Low", "Medium", "High", "Extra High", "Maximum", "Ultra", null].map(
+        shortModelSelectionEffort,
+      ),
+    ).toEqual(["Low", "Med", "High", "XHigh", "Max", "Ultra", null]);
+    expect(shortModelSelectionEffort("xhigh")).toBe("XHigh");
   });
 });

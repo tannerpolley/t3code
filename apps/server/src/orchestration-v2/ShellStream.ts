@@ -261,29 +261,44 @@ export function skipUnchangedThreadShells<A extends OrchestrationV2ShellStreamIt
       OrchestrationV2ThreadShell["id"],
       { readonly thread: OrchestrationV2ThreadShell; readonly sentAt: number }
     >();
+    const lastUsageSent = new Map<
+      OrchestrationV2ThreadShell["id"],
+      { readonly summary: OrchestrationV2ThreadShell["usageSummary"]; readonly sentAt: number }
+    >();
     return stream.pipe(
-      Stream.filterEffect((item) =>
-        Effect.map(Clock.currentTimeMillis, (now) => {
+      Stream.mapEffect((item) =>
+        Effect.map(Clock.currentTimeMillis, (now): A | null => {
           if (item.kind === "thread.removed") {
             lastSent.delete(item.threadId);
-            return true;
+            lastUsageSent.delete(item.threadId);
+            return item;
           }
-          if (item.kind !== "thread.updated") return true;
+          if (item.kind !== "thread.updated") return item;
           const previous = lastSent.get(item.thread.id);
+          const usagePrevious = lastUsageSent.get(item.thread.id);
+          const usage = item.thread.usageSummary;
+          // Completion and a different turn flush immediately; streaming usage waits five seconds.
+          const holdUsage =
+            usagePrevious !== undefined &&
+            usage !== undefined &&
+            usage.turnId === usagePrevious.summary?.turnId &&
+            !(usage.completed && !usagePrevious.summary.completed) &&
+            now - usagePrevious.sentAt < UNCHANGED_THREAD_SHELL_RESEND_MS;
+          const thread = holdUsage
+            ? { ...item.thread, usageSummary: usagePrevious.summary }
+            : item.thread;
           if (
             previous !== undefined &&
             now - previous.sentAt < UNCHANGED_THREAD_SHELL_RESEND_MS &&
-            sameThreadShell(
-              { ...item.thread, updatedAt: previous.thread.updatedAt },
-              previous.thread,
-            )
-          ) {
-            return false;
-          }
-          lastSent.set(item.thread.id, { thread: item.thread, sentAt: now });
-          return true;
+            sameThreadShell({ ...thread, updatedAt: previous.thread.updatedAt }, previous.thread)
+          )
+            return null;
+          if (!holdUsage) lastUsageSent.set(thread.id, { summary: usage, sentAt: now });
+          lastSent.set(thread.id, { thread, sentAt: now });
+          return thread === item.thread ? item : ({ ...item, thread } as A);
         }),
       ),
+      Stream.filter((item): item is A => item !== null),
     );
   });
 }

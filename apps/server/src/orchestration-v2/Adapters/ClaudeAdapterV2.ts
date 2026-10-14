@@ -14,7 +14,10 @@ import {
 } from "./claudeWorkflowProgress.ts";
 
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
+import {
+  accumulateClaudeTurnTokenUsage,
+  normalizeClaudeTurnTokenUsage,
+} from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
   type CanUseTool,
   forkSession as forkClaudeSession,
@@ -2961,6 +2964,14 @@ interface ActiveClaudeTurnContext {
   readonly rateLimitResetTimes: Map<string, string | null>;
   latestAssistantRateLimited: boolean;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
+  readonly mainAgentUsage: Map<
+    string,
+    {
+      readonly inputTokens: number;
+      readonly cachedInputTokens: number;
+      readonly outputTokens: number;
+    }
+  >;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
   // Set on turns that offered a prompt. Claude runs a wake turn it queued
@@ -7191,6 +7202,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   status: "running",
                   startedAt: context.startedAt,
                   completedAt: null,
+                  turnTokenUsage: accumulateClaudeTurnTokenUsage(
+                    context.mainAgentUsage,
+                    message.message.id,
+                    claudeProviderTurnTokenUsage(
+                      message.message.usage,
+                      context.input.modelSelection,
+                      DateTime.formatIso(now),
+                      modelCatalog,
+                    ),
+                    context.subagentsByTaskId.size > 0 || context.subagentsByToolUseId.size > 0,
+                  ),
                   tokenUsage: claudeProviderTurnTokenUsage(
                     message.message.usage,
                     context.input.modelSelection,
@@ -8783,6 +8805,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               rateLimitResetTimes: new Map(),
               latestAssistantRateLimited: false,
               subagentsByTaskId: new Map(),
+              mainAgentUsage: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
               promptUuid,
