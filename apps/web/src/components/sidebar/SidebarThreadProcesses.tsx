@@ -1,5 +1,6 @@
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import type { ThreadProcessGroup } from "@t3tools/contracts";
+import { shellProgramName } from "@t3tools/shared/shellCommand";
 import { CpuIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 
@@ -43,7 +44,7 @@ export function useSidebarThreadProcesses(thread: SidebarThreadSummary, working:
     commandRows:
       data?.commands.map((command): BackgroundWorkTaskRow => ({
         taskId: command.taskId,
-        label: commandDisplayText(command.command),
+        label: shellProgramName(command.command) ?? commandDisplayText(command.command),
         kind: "command",
         startedAt: command.startedAt,
         commandKind: command.commandKind,
@@ -87,7 +88,9 @@ export function SidebarProcessGroupRows(props: {
                 {group.label}
               </TooltipTrigger>
               <TooltipPopup side="right">
-                {group.count > 1 ? `${group.count} processes: ${group.label}` : group.label}
+                {group.count > 1
+                  ? `${group.count} processes, such as ${group.commandLine}`
+                  : group.commandLine}
               </TooltipPopup>
             </Tooltip>
             {group.count > 1 ? <span className="shrink-0">×{group.count}</span> : null}

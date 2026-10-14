@@ -331,9 +331,9 @@ Turn off **Settings → Customizations → Background process output** to disabl
 
 With the experimental **Show running commands and processes** setting on, a working
 thread in Projects also lists the commands its agent is running now, and the processes
-those commands and background tasks started, such as `python worker.py ×10`, with
+those commands and background tasks started, such as `python ×10`, with
 their combined CPU and memory, after the thread's own background tasks and ahead of its
-subagents. Same-shaped processes share one row, and each thread shows up to five such
+subagents. Processes of the same program share one row, named by the program (`python`, `node`, `npm`), with hover showing the full command, and each thread shows up to five such
 rows. Claude shows a foreground command's output only when it
 finishes, and cannot stop it on its own; Codex streams it and can.
 

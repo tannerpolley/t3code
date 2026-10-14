@@ -1,6 +1,11 @@
 import { assert, describe, it } from "vite-plus/test";
 
-import { classifyShellCommand, shellCommandWaitPids, shellCommandWords } from "./shellCommand.ts";
+import {
+  classifyShellCommand,
+  shellCommandWaitPids,
+  shellCommandWords,
+  shellProgramName,
+} from "./shellCommand.ts";
 
 describe("classifyShellCommand", () => {
   // Real background commands agents ran (Claude Bash and Monitor, Codex), trimmed.
@@ -151,5 +156,19 @@ describe("shellCommandWords", () => {
     );
     assert.isNull(shellCommandWaitPids("while kill -0 $PID; do sleep 5; done"));
     assert.isNull(shellCommandWaitPids("wait $CHILD"));
+  });
+});
+
+describe("shellProgramName", () => {
+  it("names the program a command mainly runs", () => {
+    const cases: ReadonlyArray<readonly [string, string | null]> = [
+      ["/usr/bin/python3.12 x.py", "python"],
+      ["pnpm run dev", "pnpm"],
+      ["/bin/bash -lc 'cd /app && FOO=1 sudo nice -n 5 cargo test'", "cargo"],
+      ["/bin/bash -c cd /app && node server.js", "node"],
+      ["eval 'cd /app && npm run build'", "npm"],
+      ["", null],
+    ];
+    for (const [command, expected] of cases) assert.equal(shellProgramName(command), expected);
   });
 });

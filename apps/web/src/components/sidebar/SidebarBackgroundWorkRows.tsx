@@ -223,7 +223,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             }
             name={
               <span className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 flex-1 truncate">
+                <span
+                  className="min-w-0 flex-1 truncate"
+                  title={row.kind === "command" ? row.command : undefined}
+                >
                   {row.kind === "subagent"
                     ? sidebarThreadName(
                         row.label,

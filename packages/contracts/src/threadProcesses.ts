@@ -22,8 +22,10 @@ export type ThreadRunningCommand = typeof ThreadRunningCommand.Type;
 
 /** Processes a thread's commands and tasks spawned that share one command shape. */
 export const ThreadProcessGroup = Schema.Struct({
-  /** The shared command; arguments whose numbers differ between the processes show `#`. */
+  /** The kind of program the processes run, such as `python` or `node`. */
   label: Schema.String,
+  /** One member's full command line, for hover. */
+  commandLine: Schema.String,
   count: PositiveInt,
   cpuPercent: Schema.Number,
   residentBytes: NonNegativeInt,

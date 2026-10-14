@@ -19,6 +19,7 @@ import {
   classifyShellCommand,
   shellCommandWaitPids,
   shellCommandWords,
+  shellProgramName,
 } from "@t3tools/shared/shellCommand";
 import * as DateTime from "effect/DateTime";
 
@@ -189,15 +190,10 @@ export const VISIBLE_PROCESS_GROUPS = 5;
 // Wait loops start one of these every few seconds; listing them would only add churn.
 const UNLISTED_PROGRAMS = new Set(["sleep"]);
 
-/** An absolute path cut to its file name, for display. */
-const fileName = (word: string) =>
-  word.startsWith("/") ? word.slice(word.lastIndexOf("/") + 1) || word : word;
-
 /**
- * The processes the given commands spawned, beyond the command lines themselves, grouped by shape:
- * the same words once every number is ignored, so ten `python worker.py --shard N` are one group.
- * Paths stay whole in the shape and are cut to file names only in the label.
- * Largest groups first, `limit` of them.
+ * The processes the given commands spawned, beyond the command lines themselves, grouped by the
+ * kind of program they run (`shellProgramName`): ten `python worker.py --shard N` are one
+ * `python ×10` row. Largest groups first, `limit` of them.
  */
 export function groupSpawnedProcesses(input: {
   readonly processes: ReadonlyArray<SampledProcess>;
@@ -224,34 +220,25 @@ export function groupSpawnedProcesses(input: {
   const byPid = new Map(input.processes.map((process) => [process.identity.pid, process]));
   const groups = new Map<
     string,
-    { members: Array<Array<string>>; cpuPercent: number; residentBytes: number }
+    { count: number; cpuPercent: number; residentBytes: number; commandLine: string }
   >();
   for (const pid of spawned) {
     const process = byPid.get(pid);
     if (process === undefined || commandPids.has(pid)) continue;
-    const words = process.command.trim().split(/\s+/);
-    if (words[0] === "" || UNLISTED_PROGRAMS.has(fileName(words[0]!))) continue;
-    const key = words.map((word) => word.replace(/\d+/g, "#")).join(" ");
-    const group = groups.get(key) ?? { members: [], cpuPercent: 0, residentBytes: 0 };
-    group.members.push(words);
+    const label = shellProgramName(process.command);
+    if (label === null || UNLISTED_PROGRAMS.has(label)) continue;
+    const group = groups.get(label) ?? {
+      count: 0,
+      cpuPercent: 0,
+      residentBytes: 0,
+      commandLine: process.command.trim(),
+    };
+    group.count += 1;
     group.cpuPercent += process.cpuPercent;
     group.residentBytes += process.residentBytes;
-    groups.set(key, group);
+    groups.set(label, group);
   }
-  const listed = [...groups].map(([key, group]) => {
-    const shape = key.split(" ");
-    const first = group.members[0]!;
-    return {
-      label: first
-        .map((word, index) =>
-          fileName(group.members.every((member) => member[index] === word) ? word : shape[index]!),
-        )
-        .join(" "),
-      count: group.members.length,
-      cpuPercent: group.cpuPercent,
-      residentBytes: group.residentBytes,
-    };
-  });
+  const listed = [...groups].map(([label, group]) => ({ label, ...group }));
   listed.sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
   const limit = input.limit ?? VISIBLE_PROCESS_GROUPS;
   return { groups: listed.slice(0, limit), hiddenCount: Math.max(0, listed.length - limit) };

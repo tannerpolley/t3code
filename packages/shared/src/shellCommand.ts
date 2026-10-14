@@ -401,11 +401,11 @@ function skipOptions(words: Array<string>, withValue: string | ReadonlySet<strin
 
 const basename = (word: string) => word.slice(word.lastIndexOf("/") + 1);
 
-/** The kind of program one simple command runs, or null when it is not one this knows. */
-function programKind(
-  input: Array<string>,
-  nested: (script: string) => ShellCommandKind | null,
-): ShellCommandKind | null {
+/** A program's base name with the interpreter version dropped: `/usr/bin/python3.12` is `python`. */
+const programName = (word: string) => basename(word).replace(/^(python|pip)[\d.]*$/, "$1");
+
+/** One simple command's words without leading keywords, assignments and wrappers like `sudo`. */
+function unwrapCommand(input: Array<string>): Array<string> {
   let words = input;
   while (words.length > 0 && KEYWORDS.has(words[0]!)) words = words.slice(1);
   for (;;) {
@@ -414,8 +414,45 @@ function programKind(
     if (wrapper === undefined) break;
     words = skipOptions(words.slice(1), wrapper.withValue).slice(wrapper.operands ?? 0);
   }
+  return words;
+}
+
+/**
+ * The program a command line mainly runs, by base name (`python`, `node`, `npm`, `cargo`): the
+ * first command that is not `cd`, looking through wrappers, assignments, `<shell> -c '<script>'`
+ * (also a sampled line, whose script's quoting is gone) and Claude's `eval '<command>'`.
+ * Null when there is none.
+ */
+export function shellProgramName(command: string): string | null {
+  // A sampled `bash -c cd x && node y` has lost its quotes, so the script is the rest of the line.
+  const wrapped = /^\s*\S*\/?(?:ba|z|da|k)?sh\s+-[a-z]*c[a-z]*\s+(.+)$/s.exec(command);
+  if (wrapped !== null) {
+    const scripts = shellCommandWords(wrapped[1]!);
+    const quoted = scripts.length === 1 && scripts[0]!.length === 1;
+    const script = quoted ? scripts[0]![0]! : wrapped[1]!;
+    return shellProgramName(script);
+  }
+  for (const simple of shellCommandWords(command)) {
+    let words = unwrapCommand(simple);
+    // Claude's `eval '<command>'`; an unquoted sampled line just continues after `eval`.
+    if (words[0] === "eval") {
+      if (words.length === 2) return shellProgramName(words[1]!);
+      words = words.slice(1);
+    }
+    const name = programName(words[0] ?? "");
+    if (name !== "" && name !== "cd") return name;
+  }
+  return null;
+}
+
+/** The kind of program one simple command runs, or null when it is not one this knows. */
+function programKind(
+  input: Array<string>,
+  nested: (script: string) => ShellCommandKind | null,
+): ShellCommandKind | null {
+  const words = unwrapCommand(input);
   if (words.length === 0) return null;
-  const name = basename(words[0]!).replace(/^(python|pip)[\d.]*$/, "$1");
+  const name = programName(words[0]!);
   const args = words.slice(1);
   if (/^(ba|z|da|k)?sh$/.test(name)) {
     // `bash -lc '<script>'`, the way Codex runs every command.

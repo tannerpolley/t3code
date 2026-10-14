@@ -143,7 +143,13 @@ describe("groupSpawnedProcesses", () => {
     });
     // The command's own processes are its row; waits and other trees are not its processes.
     assert.deepEqual(groups, [
-      { label: "python3 worker.py --shard #", count: 3, cpuPercent: 30, residentBytes: 300 },
+      {
+        label: "python",
+        commandLine: groups[0]!.commandLine,
+        count: 3,
+        cpuPercent: 30,
+        residentBytes: 300,
+      },
     ]);
     assert.equal(hiddenCount, 0);
   });
@@ -169,12 +175,14 @@ describe("groupSpawnedProcesses", () => {
     assert.equal(hiddenCount, 3);
   });
 
-  it("keeps same-named workers from different paths apart", () => {
+  it("groups by program kind through interpreter paths, versions and shell wrappers", () => {
     const { groups } = groupSpawnedProcesses({
       processes: [
         process(20, 1, "make all"),
-        process(21, 20, "/usr/bin/python3 /one/worker.py --config /one/config.json"),
-        process(22, 20, "/usr/bin/python3 /two/worker.py --config /two/config.json"),
+        process(21, 20, "/usr/bin/python3.12 /one/worker.py --config /one/config.json"),
+        process(22, 20, "python /two/other.py"),
+        process(23, 20, "/bin/bash -c cd /app && FOO=1 sudo nice -n 5 node server.js"),
+        process(24, 20, "eval cd /app && npm run build"),
       ],
       serverPid: 1,
       commands: [{ command: "make all" }],
@@ -182,8 +190,9 @@ describe("groupSpawnedProcesses", () => {
     assert.deepEqual(
       groups.map((group) => [group.label, group.count]),
       [
-        ["python3 worker.py --config config.json", 1],
-        ["python3 worker.py --config config.json", 1],
+        ["python", 2],
+        ["node", 1],
+        ["npm", 1],
       ],
     );
   });
