@@ -559,8 +559,9 @@ it.effect.each([undefined, "reviewer"] as const)(
         modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
+        // In the project root: a thread created in a worktree is already an Implementor.
         branch: "feature/parent-pr",
-        worktreePath: "/repo-worktree",
+        worktreePath: null,
         createdBy: "user",
         creationSource: "web",
       });
@@ -650,4 +651,65 @@ it.effect.each([undefined, "reviewer"] as const)(
       assert.deepEqual(parentAfterChildLink.thread.linkedPullRequest, parentPullRequest);
       assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("makes a role-less thread an Implementor once it is in a worktree", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const threadId = (name: string) => ThreadId.make(`thread:worktree-role-${name}`);
+    const create = (name: string, branch: string | null, worktreePath: string | null) =>
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create-worktree-role-${name}`),
+        threadId: threadId(name),
+        projectId: ProjectId.make("project:worktree-role"),
+        title: name,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch,
+        worktreePath,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    const moveIntoWorktree = (name: string) =>
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`move-worktree-role-${name}`),
+        threadId: threadId(name),
+        branch: `t3/${name}`,
+        worktreePath: `/repo-worktrees/${name}`,
+      });
+    const role = (name: string) =>
+      projections.getThreadShell(threadId(name)).pipe(Effect.map((shell) => shell?.role));
+
+    yield* create("started", "t3/started", "/repo-worktrees/started");
+    // A Scratch thread's own folder has no branch and is not a worktree.
+    yield* create("scratch", null, "/scratch/2026-10-14-notes");
+    yield* create("moved", null, null);
+    yield* create("orchestrator", null, null);
+    const orchestratorThread = (yield* projections.getThreadProjection(threadId("orchestrator")))
+      .thread;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:worktree-role-orchestrator"),
+          type: "thread.metadata-updated",
+          threadId: orchestratorThread.id,
+          occurredAt: yield* DateTime.now,
+          payload: { ...orchestratorThread, role: "orchestrator" },
+        },
+      ],
+    });
+    assert.equal(yield* role("started"), "implementor");
+    assert.isUndefined(yield* role("scratch"));
+    assert.isUndefined(yield* role("moved"));
+
+    yield* moveIntoWorktree("moved");
+    yield* moveIntoWorktree("orchestrator");
+    assert.equal(yield* role("moved"), "implementor");
+    assert.equal(yield* role("orchestrator"), "orchestrator");
+  }).pipe(Effect.provide(layerTest)),
 );

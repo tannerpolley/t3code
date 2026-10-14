@@ -66,6 +66,21 @@ export function nativeSubagentRole(agentType: string | null | undefined): Thread
   return NATIVE_SUBAGENT_ROLE_PATTERNS.find(([pattern]) => pattern.test(type))?.[1];
 }
 
+/**
+ * Only Implementors work in worktrees, so a role-less thread that starts in a
+ * worktree or moves into one becomes an Implementor. A Scratch thread's own
+ * folder has no branch and is not a worktree.
+ */
+export function worktreeRole(thread: {
+  readonly role?: ThreadRole | undefined;
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+}): { readonly role?: ThreadRole } {
+  return thread.role === undefined && thread.branch !== null && thread.worktreePath !== null
+    ? { role: "implementor" }
+    : {};
+}
+
 export const ThreadRoleInput = Schema.Literals([
   ...THREAD_ROLES,
   ...(Object.keys(LEGACY_THREAD_ROLES) as Array<keyof typeof LEGACY_THREAD_ROLES>),

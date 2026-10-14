@@ -8,7 +8,7 @@ import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { supportsManagedIssueWork, managedIssueProviderError } from "../issues/IssueEligibility.ts";
 import { deriveIssueWorkStatus } from "../issues/IssueWorkStatus.ts";
 import { issueCloseoutEffect } from "../issues/IssueCommentEffects.ts";
-import { issueThreadTitle } from "@t3tools/contracts";
+import { issueThreadTitle, worktreeRole } from "@t3tools/contracts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -2409,6 +2409,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      ...worktreeRole(command),
       activeProviderThreadId: null,
       lineage: {
         parentThreadId: null,
@@ -3272,6 +3273,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : { autoProviderSwitch: command.autoProviderSwitch }),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.worktreePath == null
+              ? {}
+              : worktreeRole({
+                  role: thread.role,
+                  branch: command.branch === undefined ? thread.branch : command.branch,
+                  worktreePath: command.worktreePath,
+                })),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {

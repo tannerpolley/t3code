@@ -329,8 +329,12 @@ are marked. Codex agents see changes on their next turn and
 Claude agents in their next session. Reset model roles to get the latest
 defaults; this replaces your customizations.
 
-Threads you create have no role until they delegate work, when they become
-Orchestrators. Role icons appear in thread rows and the chat header.
+Threads that start in a worktree, or move into one, are Implementors. Other
+threads you create have no role until they delegate work, when they become
+Orchestrators. Forks keep their source's role. A native provider subagent takes
+its role from its agent type: worker or builder types are Implementors, reviewer
+types Reviewers, explorer or researcher types Investigators, and tester or
+checker types Checkers. Role icons appear in thread rows and the chat header.
 
 Native provider subagents have a bot icon and run on their own. They cannot take
 messages; use **Open parent** to direct them. App-owned child threads accept
