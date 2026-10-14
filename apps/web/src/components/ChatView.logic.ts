@@ -1346,13 +1346,3 @@ export function restorePlanFollowUpComposer(input: {
     detectTrigger: true,
   });
 }
-
-/** Issue upkeep belongs only to repository roots and linked issue workers. */
-export function shouldLoadIssueChanges(
-  thread:
-    | Pick<OrchestrationV2ThreadProjection["thread"], "linkedIssue" | "repositoryOrchestration">
-    | null
-    | undefined,
-) {
-  return thread != null && (thread.linkedIssue != null || thread.repositoryOrchestration != null);
-}

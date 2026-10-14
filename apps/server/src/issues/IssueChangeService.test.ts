@@ -53,7 +53,7 @@ const setup = Effect.gen(function* () {
   yield* runMigrations();
   const rootJson = yield* encodeJson({ repositoryOrchestration: repository });
   yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
-    VALUES ('root', 'project', 'Root', 'codex', 'full-access', 'default', '2026-01-01', '2026-01-01', ${rootJson})`;
+    VALUES ('root', 'project', 'Root', 'codex', 'auto', 'default', '2026-01-01', '2026-01-01', ${rootJson})`;
   yield* sql`INSERT INTO orchestration_v2_projection_repository_orchestration(host, repository_id, repository, root_thread_id, project_id, workspace, launch_command_id, revision, paused, worker_limit, publish_status_comments, publish_closeout_comments, created_at, updated_at)
     VALUES ('github.com', '1', 'acme/repo', 'root', 'project', 'project', 'start', 1, 0, 4, 1, 1, '2026-01-01', '2026-01-01')`;
   const snapshots = new Map<number, IssueChangeBaseline>([
@@ -283,6 +283,21 @@ it.effect("auto-approved create and milestone moves run once through the outbox"
       assert.deepStrictEqual(h.calls, { create: 1, body: 0, milestone: 1, state: 0, link: 0 });
       const rows = yield* service.list({ threadId });
       assert.isTrue(rows.every((row) => row.status === "succeeded"));
+    }).pipe(Effect.provide(h.runtime)),
+  ),
+);
+
+it.effect("a full-access thread's body edits and closes run without waiting for approval", () =>
+  inDatabase((h) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_threads SET runtime_mode = 'full-access' WHERE thread_id = 'root'`;
+      const body = yield* propose({ type: "body", number: 10, body: "Updated\n" });
+      assert.equal(body.decision, "auto_approved");
+      assert.equal(yield* drain, 1);
+      assert.equal(h.calls.body, 1);
+      const close = yield* propose({ type: "state", number: 10, state: "closed" }, "close");
+      assert.equal(close.decision, "auto_approved");
     }).pipe(Effect.provide(h.runtime)),
   ),
 );

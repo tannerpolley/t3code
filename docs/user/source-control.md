@@ -297,9 +297,10 @@ Issue agents can create issues, split work into sub-issues, and move issues betw
 To require approval for these too, turn on **Ask before agents create, split or move issues** in
 **Settings → Customizations → Version control & issues** for the server. This applies to new
 proposals; existing proposals keep their approval decision. Body edits, closing or reopening issues,
-and other parent changes always wait for your approval. Review
-the exact change in the requesting thread or issue detail, then approve or reject it. Results stay
-visible there, and failed changes can retry their remaining steps. If the issue changed since the
+and other parent changes follow the agent thread's permission mode: in **Full access** they apply
+right away, and in other modes they wait for you. Review a waiting change in the issue's detail on
+the Issues page, then approve or reject it. Results stay visible there, and failed changes can retry
+their remaining steps. If the issue changed since the
 preview, the agent must propose a new change. If GitHub may have created an issue but T3 cannot
 recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
 its remaining writes. Propose another create only when you intend to create another issue.
