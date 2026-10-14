@@ -187,6 +187,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
         "Managed issue workers always get a new issue worktree cut from the default branch; this argument applies only to other tasks. For other tasks, defaults to worktree for Implementor and shared for Orchestrator, Reviewer, Investigator and Checker; legacy general also shares. shared keeps the child in this thread's checkout. worktree gives the child its own new git worktree on a new branch cut from this thread's current local commit (uncommitted edits are not copied), with the project's setup script run before the child starts. Explicit isolation always overrides the role default.",
     }),
   ),
+  workspace: Schema.optional(
+    Schema.Literals(["inherit", "worktree"]).annotate({
+      description:
+        "Deprecated alias of isolation; inherit means shared. Ignored when isolation is set.",
+    }),
+  ),
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:

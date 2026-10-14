@@ -10,7 +10,6 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
-  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesResult,
@@ -56,9 +55,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import { WORKTREE_BRANCH_PREFIX, sanitizeBranchFragment } from "@t3tools/shared/git";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
-import * as Hex from "effect/encoding/Hex";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -99,6 +96,7 @@ import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { resolveDelegatedWorkspace } from "./delegateTaskWorkspace.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -643,14 +641,6 @@ function stableCommandId(input: {
       ...(input.index === undefined ? [] : [String(input.index)]),
     ].join(":"),
   );
-}
-
-/**
- * Branch for a delegated child's own worktree: readable from the task, and
- * fixed by the delegate command id so a retry never cuts a second branch.
- */
-function delegatedWorktreeBranch(input: OrchestratorMcpDelegateTaskInput, suffix: string) {
-  return `${WORKTREE_BRANCH_PREFIX}/${sanitizeBranchFragment((input.title ?? input.task).slice(0, 40))}-${suffix}`;
 }
 
 function stableThreadId(input: {
@@ -1315,62 +1305,6 @@ const make = Effect.gen(function* () {
               ? { instanceId, model }
               : { instanceId, model, options: requestedOptions },
         supportedRuntimeModes: provider?.supportedRuntimeModes,
-      };
-    });
-
-  /**
-   * Where a delegated child works. Implementors default to their own worktree;
-   * other roles share this thread's checkout. A worktree child gets a branch
-   * named for its task, cut from this checkout's current local commit. Outside
-   * git, a default falls back to this checkout with a note; an explicit
-   * request fails.
-   */
-  const resolveDelegatedWorkspace = (input: {
-    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
-    readonly input: OrchestratorMcpDelegateTaskInput;
-    readonly commandId: CommandId;
-    readonly isRetry: boolean;
-  }): Effect.Effect<
-    {
-      readonly workspaceStrategy?: OrchestrationV2ThreadLaunchWorkspaceStrategy;
-      readonly note?: string;
-    },
-    OrchestratorMcpFailure
-  > =>
-    Effect.gen(function* () {
-      const requested =
-        input.input.isolation ??
-        (input.input.role !== "general" &&
-        resolveThreadRole(input.input.role ?? "") === "implementor"
-          ? "worktree"
-          : "shared");
-      // A retry replays the accepted command, whose decision stands.
-      if (requested === "shared" || input.isRetry) return {};
-      const project = yield* requireProject(input.parent.thread.projectId);
-      const base = yield* gitDriver
-        .resolveCommit({
-          cwd: input.parent.thread.worktreePath ?? project.workspaceRoot,
-          revision: "HEAD",
-        })
-        .pipe(Effect.option);
-      if (Option.isSome(base)) {
-        const digest = yield* crypto
-          .digest("SHA-256", new TextEncoder().encode(input.commandId))
-          .pipe(Effect.orDie);
-        return {
-          workspaceStrategy: {
-            type: "worktree",
-            baseRef: base.value.commitSha,
-            branch: delegatedWorktreeBranch(input.input, Hex.encode(digest).slice(0, 8)),
-            startFromOrigin: false,
-          },
-        };
-      }
-      if (input.input.isolation === "worktree") {
-        return yield* failure("invalid_request", "Unable to resolve the parent checkout commit.");
-      }
-      return {
-        note: "This thread's checkout has no git commit to branch from, so the child shares this checkout instead of getting its own worktree.",
       };
     });
 
@@ -2257,10 +2191,14 @@ const make = Effect.gen(function* () {
         const workspace =
           linkedIssue === undefined
             ? yield* resolveDelegatedWorkspace({
-                parent,
-                input,
+                task: input,
                 commandId,
                 isRetry: isRetryOfAcceptedDelegation,
+                checkout: requireProject(parent.thread.projectId).pipe(
+                  Effect.map((project) => parent.thread.worktreePath ?? project.workspaceRoot),
+                ),
+                gitDriver,
+                crypto,
               })
             : {};
         const withNote = (result: OrchestratorMcpDelegateTaskResult) =>

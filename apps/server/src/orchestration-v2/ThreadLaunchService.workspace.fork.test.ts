@@ -146,6 +146,8 @@ describe("delegate_task isolation", () => {
     { role: "implementation" },
     { role: "implementor" },
     { role: "checker", isolation: "worktree" },
+    // Deprecated alias from older tool schemas.
+    { role: "checker", workspace: "worktree" },
   ] as const)("prepares an isolated child before its first turn (%j)", (workspaceChoice) =>
     Effect.gen(function* () {
       const setupEntered = yield* Deferred.make<string>();
@@ -215,6 +217,8 @@ describe("delegate_task isolation", () => {
     { role: "orchestrator" },
     { role: "implementation", isolation: "shared" },
     { role: "test", isolation: "shared" },
+    { role: "implementor", workspace: "inherit" },
+    { role: "implementor", isolation: "shared", workspace: "worktree" },
   ] as const)("keeps a child in the parent's checkout (%j)", (workspaceChoice) => {
     const harness = makeHarness({ providers: [codexProvider] });
     return withDelegatingParent(harness, (service) =>
