@@ -12,7 +12,8 @@ export const sidebarColumnLayout = {
     model: { ch: 8 },
     effort: 2.5,
     name: 0,
-    usage: 2,
+    // A thread's share of its weekly limit, up to "100%".
+    usage: 2.125,
     count: 1,
     time: 4.4375,
     work: 0.875,

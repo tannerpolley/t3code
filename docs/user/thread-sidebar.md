@@ -376,7 +376,7 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 ## Compare threads in Projects
 
 With **Codex-style sidebar** enabled on web and desktop, the Projects view aligns each thread's location,
-role, provider, model, effort, name, token usage, time, and work status. Model names show up to six
+role, provider, model, effort, name, weekly usage, time, and work status. Model names show up to six
 characters, with versions such as 5.5 and 6.1 lined up; hover the model for its full
 name. Expand a thread to follow
 its child agents. Child rows keep the same columns as their parent. A thread with
@@ -391,12 +391,14 @@ on an issue shows the issue, such as **#42 Fix login**; a thread with a role sho
 show **Main** and other child agents **Subagent**. Hover a title to see the thread's
 name.
 
-For Codex and Claude, the number between the title and the time shows tokens used by the
-latest turn, such as **48k**. Hover it for input, cached input, output, context
-fill, and the thread's reported total. Cached input is included in input, rather
-than added twice. Partial usage is marked in the tooltip; unavailable usage shows
-**—**. During work the number updates periodically and receives its final count
-when the turn finishes.
+For Codex and Claude, the percent between the title and the time estimates how much
+of your weekly limit the thread has used, such as **4%**. It appears once a thread
+reaches 1%. The estimate prices the thread's tokens like the **Usage** page does,
+then scales them by how much of the weekly limit the week's priced usage has spent,
+so other devices and apps on the same account count too. Hover it for the cost
+estimate, the latest turn's tokens, and the thread's total. Threads on other
+providers, or on models without known prices, show nothing. During work the
+percent updates periodically and settles when the turn finishes.
 
-Widen the sidebar to compare all columns. As it narrows, token usage disappears
+Widen the sidebar to compare all columns. As it narrows, usage disappears
 first, followed by effort and then model. The caret, name, and work status remain.

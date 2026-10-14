@@ -114,7 +114,7 @@ function WorkflowMemberRow({
           <SidebarThreadColumns
             location={thread ? <ThreadLocationIcon thread={thread} /> : undefined}
             role={thread ? <ThreadRoleIcon thread={thread.source} /> : undefined}
-            usage={<SidebarTokenUsage summary={thread?.source.usageSummary} />}
+            usage={<SidebarTokenUsage summary={thread?.source.usageSummary} driver={driver} />}
             provider={<ThreadRelationshipIcon driver={driver} provider={provider} />}
             model={shortModelName(member.model ?? thread?.modelSelection.model ?? "")}
             effort={shortModelSelectionEffort(member.effort ?? null)}

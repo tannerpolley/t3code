@@ -815,7 +815,12 @@ export function ThreadRelationshipsPanel(props: {
                         elapsedAgent && !failed ? <AgentElapsed agent={elapsedAgent} /> : undefined
                       }
                       status={<ThreadStatusMark status={lineageStatusMark(rowStatus)} />}
-                      usage={<SidebarTokenUsage summary={node?.thread?.usageSummary} />}
+                      usage={
+                        <SidebarTokenUsage
+                          summary={node?.thread?.usageSummary}
+                          driver={providerDriver}
+                        />
+                      }
                     />
                   ) : (
                     <>

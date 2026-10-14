@@ -6,7 +6,7 @@
   --sidebar-provider-width: 1rem;
   --sidebar-model-width: 8ch;
   --sidebar-effort-width: 2.5rem;
-  --sidebar-usage-width: 2rem;
+  --sidebar-usage-width: 2.125rem;
   --sidebar-count-width: 1rem;
   --sidebar-time-width: 4.4375rem;
   --sidebar-work-width: 0.875rem;
@@ -26,7 +26,7 @@
     ) var(--sidebar-work-width);
   column-gap: 3px;
 }
-@container sidebar-columns (width < calc(15.0625rem + 30px + 18ch)) {
+@container sidebar-columns (width < calc(15.1875rem + 30px + 18ch)) {
   .sidebar-thread-columns {
     grid-template-columns: calc(var(--sidebar-caret-width) + var(--sidebar-thread-inset, 0px)) var(
         --sidebar-location-width

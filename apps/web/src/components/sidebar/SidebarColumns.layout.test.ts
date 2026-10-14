@@ -44,6 +44,7 @@ it("keeps the committed CSS equal to generated CSS apart from formatter whitespa
 const ADVANCES = new Map(
   Object.entries({
     " ": 801,
+    "%": 2020,
     ".": 603,
     A: 1710,
     G: 1614,
@@ -96,4 +97,8 @@ it("fits six-character model names, their versions and every effort label", () =
   fits(["Opus", "Sonnet", "Haiku", "Sol", "Luna", "Astra", "GPT"], 11, modelPartsCh.name * ch);
   fits(["5.5", "6.1", "8.8"], 11, modelPartsCh.version * ch);
   fits(["Low", "Med", "High", "XHigh", "Max"], 11, tracks.effort * 16);
+});
+
+it("fits a whole weekly-limit percent inside the usage track", () => {
+  fits(["1%", "99%", "100%"], 11, tracks.usage * 16);
 });

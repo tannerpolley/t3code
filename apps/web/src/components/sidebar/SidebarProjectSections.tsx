@@ -1335,7 +1335,12 @@ const SidebarProjectThreadRow = memo(
               count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
               time={<SidebarThreadTime thread={props.thread} status={status} />}
               status={<ThreadStatusMark status={statusMark} />}
-              usage={<SidebarTokenUsage summary={props.thread.source.usageSummary} />}
+              usage={
+                <SidebarTokenUsage
+                  summary={props.thread.source.usageSummary}
+                  driver={provider?.driver}
+                />
+              }
             />
           ) : (
             <>

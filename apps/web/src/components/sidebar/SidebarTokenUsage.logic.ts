@@ -1,7 +1,4 @@
-/** Keep the usage column within five characters, including rounded unit boundaries. */
-export function formatSidebarTokens(tokens: number | undefined): string {
-  if (tokens === undefined) return "—";
-  if (tokens < 1_000) return String(tokens);
-  if (tokens < 999_500) return `${Math.round(tokens / 1_000)}k`;
-  return `${Number((tokens / 1_000_000).toFixed(tokens < 10_000_000 ? 1 : 0))}M`;
+/** The usage cell: a thread's whole-percent share of its weekly limit, shown from 1%. */
+export function formatWeeklyLimitPercent(percent: number | undefined): string | null {
+  return percent !== undefined && percent >= 1 ? `${Math.floor(percent)}%` : null;
 }

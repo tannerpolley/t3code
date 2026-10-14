@@ -234,7 +234,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             status={<ThreadStatusMark status={row.status ?? "working"} />}
             usage={
               row.kind === "subagent" && row.child ? (
-                <SidebarTokenUsage summary={row.child.source.usageSummary} />
+                <SidebarTokenUsage
+                  summary={row.child.source.usageSummary}
+                  driver={provider?.driver}
+                />
               ) : undefined
             }
           />

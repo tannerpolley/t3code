@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
-import { formatSidebarTokens } from "./SidebarTokenUsage.logic";
+import { formatWeeklyLimitPercent } from "./SidebarTokenUsage.logic";
 
 import { cn } from "~/lib/utils";
 
@@ -169,33 +169,38 @@ function SidebarThreadModel(props: { readonly label: string | undefined }) {
   );
 }
 
+const WEEKLY_LIMIT_PROVIDER_LABELS: Partial<Record<string, string>> = {
+  codex: "Codex",
+  claudeAgent: "Claude",
+};
+
+/**
+ * The usage cell: the thread's estimated share of its provider's weekly limit, from 1%, with the
+ * exact tokens and cost on hover. Empty while there is no estimate.
+ */
 export function SidebarTokenUsage(props: {
   readonly summary: OrchestrationV2ThreadShell["usageSummary"];
+  readonly driver: string | undefined;
 }) {
   const usage = props.summary;
-  if (!usage) return null;
-  const number = (value: number | undefined) =>
-    value === undefined ? "Unavailable" : value.toLocaleString();
-  const contextPercent =
-    usage.contextTokens !== undefined && usage.contextWindow
-      ? `${Math.round((usage.contextTokens / usage.contextWindow) * 100)}%`
-      : "Unavailable";
+  const percent = formatWeeklyLimitPercent(usage?.weeklyLimitPercent);
+  if (!usage || percent === null) return null;
+  const tokens = (value: number | undefined) =>
+    value === undefined ? "Unavailable" : `${value.toLocaleString()} tokens`;
+  const provider = WEEKLY_LIMIT_PROVIDER_LABELS[props.driver ?? ""] ?? "provider";
   return (
     <Tooltip>
-      <TooltipTrigger render={<span />}>
-        {formatSidebarTokens(usage.latestTurnTokens)}
-      </TooltipTrigger>
+      <TooltipTrigger render={<span />}>{percent}</TooltipTrigger>
       <TooltipPopup side="right">
+        <div>Estimate of your weekly {provider} limit</div>
+        {usage.costUsd === undefined ? null : (
+          <div>Cost estimate: ${usage.costUsd.toFixed(2)} at API prices</div>
+        )}
         <div>
-          Latest turn: {number(usage.latestTurnTokens)} tokens{usage.partial ? " (partial)" : ""}
+          Latest turn: {tokens(usage.latestTurnTokens)}
+          {usage.partial ? " (partial)" : ""}
         </div>
-        <div>Input: {number(usage.inputTokens)}</div>
-        <div>Cached input: {number(usage.cachedInputTokens)}</div>
-        <div>Output: {number(usage.outputTokens)}</div>
-        <div>
-          Context: {contextPercent} · {number(usage.contextTokens)} / {number(usage.contextWindow)}
-        </div>
-        <div>Thread total (reported): {number(usage.threadTokens)} tokens</div>
+        <div>Thread total: {tokens(usage.threadTokens)}</div>
       </TooltipPopup>
     </Tooltip>
   );
