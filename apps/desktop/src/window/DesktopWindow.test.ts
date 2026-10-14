@@ -827,30 +827,6 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it("maps Ctrl zoom keys to a direction and ignores Alt and Meta combinations", () => {
-    const key = (
-      k: string,
-      extra: Partial<Parameters<typeof DesktopWindow.zoomShortcutDirection>[0]> = {},
-    ) =>
-      DesktopWindow.zoomShortcutDirection({
-        type: "keyDown",
-        key: k,
-        control: true,
-        alt: false,
-        meta: false,
-        ...extra,
-      });
-    assert.equal(key("="), "in");
-    assert.equal(key("+"), "in");
-    assert.equal(key("-"), "out");
-    assert.equal(key("0"), "reset");
-    assert.isNull(key("a"));
-    assert.isNull(key("=", { alt: true }));
-    assert.isNull(key("-", { meta: true }));
-    assert.isNull(key("0", { control: false }));
-    assert.isNull(key("=", { type: "keyUp" }));
-  });
-
   it.effect("reloads and inspects the main window even when a popup has focus", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();

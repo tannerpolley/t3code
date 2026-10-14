@@ -211,6 +211,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   interfaceZoom: {
     get: () => ipcRenderer.invoke(IpcChannels.INTERFACE_ZOOM_GET_CHANNEL, undefined),
     set: (factor) => ipcRenderer.invoke(IpcChannels.INTERFACE_ZOOM_SET_CHANNEL, factor),
+    step: (direction) => ipcRenderer.invoke(IpcChannels.INTERFACE_ZOOM_STEP_CHANNEL, direction),
   },
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {

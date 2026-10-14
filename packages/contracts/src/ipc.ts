@@ -1237,6 +1237,8 @@ export interface DesktopBridge {
   interfaceZoom?: {
     get: () => Promise<number>;
     set: (factor: number) => Promise<void>;
+    /** One step along the shared zoom list, or back to 100%. */
+    step: (direction: "in" | "out" | "reset") => Promise<void>;
   };
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;

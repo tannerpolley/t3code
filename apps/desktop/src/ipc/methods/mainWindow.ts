@@ -30,3 +30,12 @@ export const setInterfaceZoom = DesktopIpc.makeIpcMethod({
     yield* (yield* DesktopWindow.DesktopWindow).setMainZoomFactor(factor);
   }),
 });
+
+export const stepInterfaceZoom = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.INTERFACE_ZOOM_STEP_CHANNEL,
+  payload: Schema.Literals(["in", "out", "reset"]),
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.interfaceZoom.step")(function* (direction) {
+    yield* (yield* DesktopWindow.DesktopWindow).zoomMain(direction);
+  }),
+});

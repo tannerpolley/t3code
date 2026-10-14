@@ -1,3 +1,4 @@
+import { runInterfaceZoomCommand } from "../lib/interfaceZoomCommand";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -213,6 +214,11 @@ function NavigationHistoryShortcuts() {
           modelPickerOpen: isModelPickerOpen(),
         },
       });
+      if (runInterfaceZoomCommand(command)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       if (command !== "navigation.back" && command !== "navigation.forward") return;
 
       event.preventDefault();
