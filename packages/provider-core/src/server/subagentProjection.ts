@@ -22,7 +22,7 @@ import type {
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive, nativeSubagentRole } from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
   const result = value?.trim();
@@ -54,10 +54,12 @@ export function makeSubagentChildThread(input: {
   readonly now: DateTime.Utc;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** The provider's agent type for a native subagent; it decides the child's role. */
+  readonly agentType?: string | undefined;
 }): OrchestrationV2AppThread {
   return {
     ...input.parentThread,
-    role: undefined,
+    role: nativeSubagentRole(input.agentType),
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,

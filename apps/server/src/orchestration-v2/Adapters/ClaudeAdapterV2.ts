@@ -5075,6 +5075,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly prompt?: string;
           readonly title?: string;
           readonly model?: string;
+          /** The SDK's subagent_type; read only when this call creates the child thread. */
+          readonly subagentType?: string;
           // The Agent call's effort and the subagent whose own Agent call
           // started this one; read only when this call registers the subagent.
           readonly effort?: string;
@@ -5359,6 +5361,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               now,
               createdBy: "agent",
               creationSource: "provider",
+              agentType: input.subagentType,
             });
             if (existingSubagent === undefined) {
               yield* emitProviderEvent({
@@ -7503,6 +7506,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
+                ...(message.subagent_type === undefined
+                  ? {}
+                  : { subagentType: message.subagent_type }),
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
                 ...(owner === undefined ? {} : { owner }),
@@ -7562,6 +7568,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(progress.length === 0 ? {} : { progress }),
+                ...(message.subagent_type === undefined
+                  ? {}
+                  : { subagentType: message.subagent_type }),
                 workflowFrame: message,
                 status: "running",
               });

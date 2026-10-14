@@ -9127,6 +9127,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("gives a worker subagent's thread the Implementor role", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-subagent-role"),
+            text: "Spawn a worker.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-subagent-role",
+            tool_use_id: "toolu-subagent-role",
+            description: "Build the parser",
+            subagent_type: "worker",
+            task_type: "local_agent",
+            uuid: "00000000-0000-4000-8000-000000000391",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000392",
+            result: "Spawned the worker.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const child = harness.events.find((event) => event.type === "app_thread.created");
+        assert.equal(child?.appThread.role, "implementor");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     { agentModel: "opus", slug: "claude-opus-5-5", requested: undefined, expected: "max" },
     { agentModel: "opus", slug: "claude-opus-5-5", requested: "low", expected: "low" },

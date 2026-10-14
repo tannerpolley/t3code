@@ -29,6 +29,7 @@ import {
   CodexSettings,
   defaultInstanceIdForDriver,
   isOrchestrationV2WorkActive,
+  nativeSubagentRole,
   OrchestrationV2ProviderGoal,
   ProviderDriverKind,
   type ProviderSetupError,
@@ -1419,6 +1420,7 @@ const decodeCodexChildThread = Schema.decodeUnknownEffect(
       id: Schema.String,
       model: Schema.optional(Schema.NullOr(Schema.String)),
       reasoningEffort: Schema.optional(Schema.NullOr(Schema.String)),
+      agentRole: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   }),
 );
@@ -3104,47 +3106,51 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             for (const pendingTurn of pendingTurns) {
               yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
             }
-            if (task.model === null) {
-              yield* client.raw
+            // Only the child thread records its agent role (the spawn's agent
+            // type), and its model when the spawn named none.
+            yield* Effect.gen(function* () {
+              const thread = yield* client.raw
                 .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
                 .pipe(
                   Effect.flatMap(decodeCodexChildThread),
-                  Effect.map((response): typeof CodexChildSelection.Type | null =>
-                    response.thread.id === input.nativeThreadId && response.thread.model?.trim()
-                      ? {
-                          thread: response.thread,
-                          model: response.thread.model,
-                          reasoningEffort: response.thread.reasoningEffort,
-                        }
-                      : null,
+                  Effect.map((response) =>
+                    response.thread.id === input.nativeThreadId ? response.thread : null,
                   ),
                   Effect.catch(() => Effect.succeed(null)),
-                  Effect.flatMap((response) =>
-                    response === null
-                      ? client.raw
-                          .request("thread/resume", {
-                            threadId: input.nativeThreadId,
-                            excludeTurns: true,
-                          })
-                          .pipe(Effect.flatMap(decodeCodexChildModel))
-                      : Effect.succeed(response),
-                  ),
-                  Effect.timeout("5 seconds"),
-                  Effect.flatMap((response) =>
-                    response.thread.id === input.nativeThreadId &&
-                    !subagentSelections.has(input.nativeThreadId)
-                      ? updateSubagentSelection(
-                          input.nativeThreadId,
-                          response.model,
-                          response.reasoningEffort,
-                          response.serviceTier,
-                        )
-                      : Effect.void,
-                  ),
-                  Effect.catch(() => Effect.void),
-                  Effect.forkIn(scope),
                 );
-            }
+              const role = nativeSubagentRole(thread?.agentRole);
+              if (role !== undefined) {
+                yield* emitProviderEvent({
+                  type: "app_thread.created",
+                  driver: CODEX_PROVIDER,
+                  appThread: { ...childThread, role },
+                });
+              }
+              if (task.model !== null) return;
+              const selection: typeof CodexChildSelection.Type = thread?.model?.trim()
+                ? { thread, model: thread.model, reasoningEffort: thread.reasoningEffort }
+                : yield* client.raw
+                    .request("thread/resume", {
+                      threadId: input.nativeThreadId,
+                      excludeTurns: true,
+                    })
+                    .pipe(Effect.flatMap(decodeCodexChildModel));
+              if (
+                selection.thread.id === input.nativeThreadId &&
+                !subagentSelections.has(input.nativeThreadId)
+              ) {
+                yield* updateSubagentSelection(
+                  input.nativeThreadId,
+                  selection.model,
+                  selection.reasoningEffort,
+                  selection.serviceTier,
+                );
+              }
+            }).pipe(
+              Effect.timeout("5 seconds"),
+              Effect.catch(() => Effect.void),
+              Effect.forkIn(scope),
+            );
           });
 
         const registerSubagentThreads = (input: {

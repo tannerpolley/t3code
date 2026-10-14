@@ -6771,6 +6771,48 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("gives a worker subagent's thread the Implementor role its child thread reports", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const roleReported = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          resumeSubagentTranscript,
+          (event) =>
+            event.type === "app_thread.created" && event.appThread.role !== undefined
+              ? Deferred.succeed(roleReported, undefined)
+              : Effect.void,
+          undefined,
+          (threadId) =>
+            Effect.succeed({ thread: { id: threadId, model: "gpt-6-sol", agentRole: "worker" } }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-role"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* Deferred.await(roleReported);
+        yield* TestClock.adjust("100 millis");
+        yield* harness.firstTerminal;
+        const childThreads = harness.events.flatMap((event) =>
+          event.type === "app_thread.created" ? [event.appThread] : [],
+        );
+        assert.deepEqual(
+          childThreads.map((thread) => thread.role),
+          [undefined, "implementor"],
+        );
+        assert.equal(childThreads[1]?.id, childThreads[0]?.id);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["failed", "malformed", "wrong child", "blank model"] as const)(
     "resumes child metadata after a %s read",
     (readResult) =>

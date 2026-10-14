@@ -545,10 +545,14 @@ export const layer: Layer.Layer<
                 ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
               }),
             );
+            // A provider may learn a native subagent's role after creating its
+            // thread. It fills a missing role and never replaces one.
+            const role = existing?.role ?? offered.role;
             if (
               existing !== null &&
               existing.title === offered.title &&
-              modelSelectionsEqual(existing.modelSelection, offered.modelSelection)
+              modelSelectionsEqual(existing.modelSelection, offered.modelSelection) &&
+              existing.role === role
             )
               return [];
             const now = yield* DateTime.now;
@@ -563,6 +567,7 @@ export const layer: Layer.Layer<
                         ...existing,
                         title: offered.title,
                         modelSelection: offered.modelSelection,
+                        ...(role === undefined ? {} : { role }),
                         updatedAt: now,
                       },
                 occurredAt: now,

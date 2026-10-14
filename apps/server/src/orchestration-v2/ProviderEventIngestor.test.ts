@@ -1944,14 +1944,19 @@ layer("ProviderEventIngestorV2", (it) => {
           const thread = yield* projectionStore.getThread(childThreadId);
           assert.deepEqual(thread, { ...saved, ...metadata, updatedAt: thread.updatedAt });
         }
+        const latest = {
+          ...offered,
+          title: "Review checkout",
+          modelSelection: { ...modelSelection, model: "gpt-6.1-sol" },
+        };
+        assert.deepEqual(yield* ingest(latest), []);
+        // A role the provider reports later fills the missing role and never replaces it.
         assert.deepEqual(
-          yield* ingest({
-            ...offered,
-            title: "Review checkout",
-            modelSelection: { ...modelSelection, model: "gpt-6.1-sol" },
-          }),
-          [],
+          (yield* ingest({ ...latest, role: "implementor" })).map((stored) => stored.event.type),
+          ["thread.metadata-updated"],
         );
+        assert.deepEqual(yield* ingest({ ...latest, role: "reviewer" }), []);
+        assert.equal((yield* projectionStore.getThread(childThreadId)).role, "implementor");
       }),
   );
 

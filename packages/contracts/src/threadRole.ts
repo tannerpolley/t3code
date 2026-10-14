@@ -46,6 +46,26 @@ export function resolveThreadRole(value: string): ThreadRole | undefined {
     : undefined;
 }
 
+// The first match wins, so the generic "doer" words come last: "code-reviewer"
+// is a Reviewer and "implementation-checker" a Checker.
+const NATIVE_SUBAGENT_ROLE_PATTERNS: ReadonlyArray<readonly [RegExp, ThreadRole]> = [
+  [/review/, "reviewer"],
+  [/test|check|verif/, "checker"],
+  [/explor|research|investigat|search/, "investigator"],
+  [/worker|implement|builder|coder/, "implementor"],
+];
+
+/**
+ * The role a provider-native subagent gets from its provider's agent type
+ * (Claude's `subagent_type`, Codex's agent role). Other types, such as
+ * "general-purpose" or "default", stay role-less.
+ */
+export function nativeSubagentRole(agentType: string | null | undefined): ThreadRole | undefined {
+  const type = agentType?.toLowerCase();
+  if (!type) return undefined;
+  return NATIVE_SUBAGENT_ROLE_PATTERNS.find(([pattern]) => pattern.test(type))?.[1];
+}
+
 export const ThreadRoleInput = Schema.Literals([
   ...THREAD_ROLES,
   ...(Object.keys(LEGACY_THREAD_ROLES) as Array<keyof typeof LEGACY_THREAD_ROLES>),
