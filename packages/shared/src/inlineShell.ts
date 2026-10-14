@@ -120,7 +120,7 @@ export function selectInlineShellContext(
     remaining -= byteLength(part) + 2;
   }
   const omitted = totalCount - ids.length;
-  if (omitted > 0) parts.push(`${omitted} earlier runs omitted.`);
+  if (omitted > 0) parts.push(`${omitted} older runs did not fit and will be shared on a later turn.`);
   return { text: parts.join("\n\n"), ids };
 }
 

@@ -130,7 +130,7 @@ it.effect(
       expect(Buffer.byteLength(context)).toBeLessThanOrEqual(INLINE_SHELL_OUTPUT_BYTES);
       expect(context).toContain("run 79");
       expect(context).not.toContain("User ran shell command (bash): run 0 ");
-      expect(context).toMatch(/\d+ earlier runs omitted\./);
+      expect(context).toMatch(/\d+ older runs did not fit and will be shared on a later turn\./);
       expect(context).not.toContain("�");
       const sql = yield* SqlClient.SqlClient;
       const pending = yield* sql<{
