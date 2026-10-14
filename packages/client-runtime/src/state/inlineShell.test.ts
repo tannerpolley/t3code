@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
-import { INLINE_SHELL_OUTPUT_BYTES } from "@t3tools/contracts";
+import { INLINE_SHELL_OUTPUT_BYTES, ThreadId, type InlineShellRunRecord } from "@t3tools/contracts";
 import {
   inlineShellOutputTail,
   inlineShellCanWrite,
   inlineShellDisplayOutput,
   inlineShellIsPasswordPrompt,
 } from "@t3tools/shared/inlineShell";
-import { applyInlineShellOutput, emptyInlineShellOutput } from "./inlineShell.ts";
+import { latestInlineShellRecord } from "@t3tools/shared/inlineShell";
+import {
+  applyInlineShellOutputBatch,
+  resolveInlineShellRun,
+  inlineTerminalBelongsInDrawer,
+  applyInlineShellOutput,
+  emptyInlineShellOutput,
+} from "./inlineShell.ts";
 
 const base = { threadId: "thread", terminalId: "inline-test" };
 describe("inline shell output", () => {
@@ -85,4 +92,52 @@ it("recognizes inexpensive password prompts and leaves ordinary input visible", 
   expect(inlineShellIsPasswordPrompt("Enter passphrase for key: ")).toBe(true);
   expect(inlineShellIsPasswordPrompt("\x1b[31mPassword:\x1b[0m ")).toBe(true);
   expect(inlineShellIsPasswordPrompt("Password: done\nName: ")).toBe(false);
+});
+
+it("ends a visible block from batched PTY events while its durable record is outside the loaded history window", () => {
+  const record: InlineShellRunRecord = {
+    threadId: ThreadId.make("paged"),
+    runId: "old-block",
+    blockId: "old-message:0",
+    terminalId: "inline-old-block",
+    command: "exit 7",
+    language: "sh",
+    sequence: 1,
+    error: null,
+    status: "running",
+    startedAt: "2026-10-13T00:00:00.000Z",
+    completedAt: null,
+    exitCode: null,
+    durationMs: 0,
+    output: "",
+  };
+  const live = applyInlineShellOutputBatch(
+    emptyInlineShellOutput,
+    [
+      { ...base, type: "output", data: "result", sequence: 1 },
+      { ...base, type: "output", data: " tail", sequence: 2 },
+      { ...base, type: "exited", exitCode: 7, exitSignal: null, sequence: 3 },
+      { ...base, type: "closed", sequence: 4 },
+    ],
+    Date.parse("2026-10-13T00:00:02.000Z"),
+  );
+  expect(resolveInlineShellRun(record, live)).toMatchObject({
+    status: "completed",
+    output: "result tail",
+    exitCode: 7,
+    durationMs: 2000,
+  });
+  const done = { ...record, status: "completed" as const };
+  expect(latestInlineShellRecord(done, record)).toBe(done);
+  expect(latestInlineShellRecord(done, { ...record, sequence: 2 })).toMatchObject({
+    sequence: 2,
+    status: "running",
+  });
+});
+
+it("keeps inline sessions out of normal drawer tabs until explicitly attached", () => {
+  expect(inlineTerminalBelongsInDrawer(true, "inline-1", ["default"])).toBe(false);
+  expect(inlineTerminalBelongsInDrawer(true, "inline-1", ["default", "inline-1"])).toBe(true);
+  expect(inlineTerminalBelongsInDrawer(undefined, "default", [])).toBe(true);
+  expect(inlineTerminalBelongsInDrawer(false, "task", [])).toBe(true);
 });

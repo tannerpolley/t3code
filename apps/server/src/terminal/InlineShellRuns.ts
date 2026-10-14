@@ -1,32 +1,28 @@
 import * as NodeUtil from "node:util";
 import {
-  OrchestrationV2TurnItemJson as TurnItemSchema,
-  type InlineShellRunLookupInput,
-  EventId,
+  INLINE_SHELL_OUTPUT_BYTES,
+  INLINE_SHELL_OUTPUT_LINES,
   InlineShellRunError,
+  type InlineShellRunLookupInput,
   type InlineShellRunInput,
   type InlineShellRunRecord,
-  type OrchestrationV2TurnItem,
-  TurnItemId,
 } from "@t3tools/contracts";
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { inlineShellOutputTail } from "@t3tools/shared/inlineShell";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Semaphore from "effect/Semaphore";
-import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/sql/SqlClient";
-import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import { TerminalManager } from "./Manager.ts";
-
-const decodeStoredItem = Schema.decodeEffect(Schema.fromJsonString(TurnItemSchema));
-const runItemId = (threadId: InlineShellRunInput["threadId"], runId: string) =>
-  TurnItemId.make(`inline-shell:${threadId.length}:${threadId}:${runId}`);
+import { TerminalManager, BoundedTerminalHistory } from "./Manager.ts";
+import { InlineShellStore } from "./InlineShellStore.ts";
 
 export class InlineShellRuns extends Context.Service<
   InlineShellRuns,
@@ -34,118 +30,102 @@ export class InlineShellRuns extends Context.Service<
     readonly latest: (
       input: InlineShellRunLookupInput,
     ) => Effect.Effect<InlineShellRunRecord | null, InlineShellRunError>;
+    readonly observe: (
+      input: InlineShellRunLookupInput,
+    ) => Stream.Stream<InlineShellRunRecord | null, InlineShellRunError>;
     readonly run: (
       input: InlineShellRunInput,
     ) => Effect.Effect<InlineShellRunRecord, InlineShellRunError>;
+    readonly recovered: Effect.Effect<void>;
   }
 >()("t3/terminal/InlineShellRuns") {}
 
 export const layer = Layer.effect(
   InlineShellRuns,
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     const terminal = yield* TerminalManager;
     const projection = yield* ProjectionStore.ProjectionStoreV2;
     const projects = yield* ProjectStore.ProjectStoreV2;
-    const sink = yield* EventSink.EventSinkV2;
-    const lock = yield* Semaphore.make(1);
-    const active = new Map<string, InlineShellRunRecord>();
-
-    const persist = Effect.fn("InlineShellRuns.persist")(function* (record: InlineShellRunRecord) {
-      const now = yield* DateTime.now;
-      const item: OrchestrationV2TurnItem = {
-        id: runItemId(record.threadId, record.runId),
-        threadId: record.threadId,
-        runId: null,
-        nodeId: null,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: 0,
-        status:
-          record.status === "running"
-            ? "running"
-            : record.status === "error"
-              ? "failed"
-              : record.status === "interrupted"
-                ? "interrupted"
-                : "completed",
-        title: "Inline shell run",
-        startedAt: DateTime.makeUnsafe(record.startedAt),
-        completedAt: record.completedAt === null ? null : DateTime.makeUnsafe(record.completedAt),
-        updatedAt: now,
-        type: "system_notice",
-        message: "Inline shell run",
-        inlineShellRun: record,
-      };
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make(
-              `inline-shell:${record.threadId.length}:${record.threadId}:${record.runId}:${record.status}`,
+    const store = yield* InlineShellStore;
+    const launches = yield* KeyedLock.make<string>();
+    const changes = yield* PubSub.unbounded<InlineShellRunRecord>();
+    const active = new Map<
+      string,
+      { record: InlineShellRunRecord; history: BoundedTerminalHistory; dirty: boolean }
+    >();
+    const recovered = yield* Deferred.make<void>();
+    // Recover in bounded indexed batches outside the layer's startup critical path.
+    yield* Effect.gen(function* () {
+      while ((yield* store.recover()) === 100) yield* Effect.yieldNow;
+    }).pipe(Effect.ensuring(Deferred.succeed(recovered, undefined)), Effect.forkScoped);
+    const keyOf = (threadId: string, terminalId: string) =>
+      `${threadId.length}:${threadId}:${terminalId}`;
+    const releases = yield* makeKeyedCoalescingWorker({
+      merge: (_: InlineShellRunRecord, next: InlineShellRunRecord) => next,
+      // Launch errors are emitted while Manager holds its thread lock. Release only
+      // after the listener returns, from this scoped worker, to avoid reentering it.
+      process: (_: string, record: InlineShellRunRecord) =>
+        terminal
+          .close({ threadId: record.threadId, terminalId: record.terminalId })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not release inline terminal", cause),
             ),
-            type: "turn-item.updated",
-            threadId: record.threadId,
-            occurredAt: now,
-            payload: item,
-          },
-        ],
-      });
+          ),
     });
-
-    const abandoned = yield* sql<{
-      payload_json: string;
-    }>`SELECT payload_json FROM orchestration_v2_projection_turn_items WHERE type = 'system_notice' AND status = 'running' AND json_extract(payload_json, '$.inlineShellRun') IS NOT NULL`.pipe(
-      Effect.orDie,
-    );
-    for (const row of abandoned) {
-      const item = yield* decodeStoredItem(row.payload_json).pipe(Effect.orDie);
-      if (item.type !== "system_notice" || item.inlineShellRun === undefined) continue;
+    const tail = (entry: { history: BoundedTerminalHistory }) =>
+      inlineShellOutputTail(NodeUtil.stripVTControlCharacters(entry.history.value()));
+    const finish = Effect.fn("InlineShellRuns.finish")(function* (
+      key: string,
+      result: {
+        status: InlineShellRunRecord["status"];
+        exitCode: number | null;
+        error: string | null;
+      },
+    ) {
+      const entry = active.get(key);
+      if (!entry) return;
+      // One owner removes the active run before any I/O. Synchronous launch errors
+      // and openCommand's fallback cannot both persist the same completion.
+      active.delete(key);
       const now = yield* DateTime.now;
-      yield* persist({
-        ...item.inlineShellRun,
-        status: "interrupted",
+      const record: InlineShellRunRecord = {
+        ...entry.record,
+        ...result,
+        output: tail(entry),
         completedAt: DateTime.formatIso(now),
-        durationMs: Math.max(
-          0,
-          DateTime.toEpochMillis(now) - Date.parse(item.inlineShellRun.startedAt),
-        ),
-        output: inlineShellOutputTail(
-          NodeUtil.stripVTControlCharacters(item.inlineShellRun.output),
-        ),
-      }).pipe(Effect.orDie);
-    }
-
+        durationMs: Math.max(0, DateTime.toEpochMillis(now) - Date.parse(entry.record.startedAt)),
+      };
+      yield* store.update(record).pipe(
+        Effect.tap((saved) => (saved ? PubSub.publish(changes, record) : Effect.void)),
+        Effect.ensuring(releases.enqueue(key, record)),
+      );
+    });
     const unsubscribe = yield* terminal.subscribe((event) =>
       Effect.gen(function* () {
-        const key = `${event.threadId.length}:${event.threadId}${event.terminalId}`;
-        const record = active.get(key);
-        if (record === undefined) return;
+        const key = keyOf(event.threadId, event.terminalId);
+        const entry = active.get(key);
+        if (!entry) return;
         if (event.type === "output") {
-          active.set(key, { ...record, output: inlineShellOutputTail(record.output + event.data) });
+          entry.history.append(event.data);
+          entry.dirty = true;
           return;
         }
-        if (event.type !== "exited" && event.type !== "closed" && event.type !== "error") return;
-        const endedAt = yield* DateTime.now;
-        const finished: InlineShellRunRecord = {
-          ...record,
-          status:
-            event.type === "error"
-              ? "error"
-              : event.type === "closed" ||
-                  (event.type === "exited" &&
-                    ((event.exitSignal !== null && event.exitSignal !== 0) ||
-                      event.exitCode === 130))
-                ? "interrupted"
-                : "completed",
-          exitCode: event.type === "exited" ? event.exitCode : null,
-          completedAt: DateTime.formatIso(endedAt),
-          durationMs: Math.max(0, DateTime.toEpochMillis(endedAt) - Date.parse(record.startedAt)),
-          output: inlineShellOutputTail(NodeUtil.stripVTControlCharacters(record.output)),
-        };
-        yield* persist(finished);
-        active.delete(key);
+        if (event.type === "exited" || event.type === "closed" || event.type === "error") {
+          yield* finish(key, {
+            status:
+              event.type === "error"
+                ? "error"
+                : event.type === "closed" ||
+                    (event.type === "exited" &&
+                      ((event.exitSignal !== null && event.exitSignal !== 0) ||
+                        event.exitCode === 130))
+                  ? "interrupted"
+                  : "completed",
+            exitCode: event.type === "exited" ? event.exitCode : null,
+            error: event.type === "error" ? event.message.slice(0, 1024) : null,
+          });
+        }
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logError("Could not persist inline shell completion", cause),
@@ -153,33 +133,58 @@ export const layer = Layer.effect(
       ),
     );
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+    // Persist at most once per second per active run; never broadcast progress
+    // records. The existing PTY stream owns live output.
+    yield* Effect.gen(function* () {
+      yield* Effect.sleep("1 second");
+      for (const entry of active.values()) {
+        if (!entry.dirty) continue;
+        entry.dirty = false;
+        yield* store
+          .update({ ...entry.record, output: tail(entry) })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not save inline shell tail", cause),
+            ),
+          );
+      }
+    }).pipe(Effect.forever, Effect.forkScoped);
 
     const run = Effect.fn("InlineShellRuns.run")(function* (input: InlineShellRunInput) {
-      const itemId = runItemId(input.threadId, input.runId);
-      const existing = yield* projection.getTurnItem({ threadId: input.threadId, itemId });
-      if (existing?.type === "system_notice" && existing.inlineShellRun !== undefined)
-        return existing.inlineShellRun;
+      yield* Deferred.await(recovered);
+      const existing = yield* store.get(input.threadId, input.runId);
+      if (existing) return existing;
       const thread = yield* projection.getThread(input.threadId);
-      if (thread.projectId === null)
+      if (thread.projectId === null || thread.archivedAt !== null || thread.deletedAt !== null)
         return yield* new InlineShellRunError({ threadId: input.threadId });
       const project = yield* projects.getShell(thread.projectId);
       if (Option.isNone(project))
         return yield* new InlineShellRunError({ threadId: input.threadId });
       const now = yield* DateTime.now;
-      const record: InlineShellRunRecord = {
+      const record = yield* store.insert({
         ...input,
         terminalId: `inline-${input.runId}`,
+        sequence: 0,
+        error: null,
         status: "running",
         startedAt: DateTime.formatIso(now),
         completedAt: null,
         exitCode: null,
         durationMs: 0,
         output: "",
-      };
-      // Commit before launch; the subscriber is server-owned and survives client disconnects.
-      yield* persist(record);
-      const key = `${input.threadId.length}:${input.threadId}${record.terminalId}`;
-      active.set(key, record);
+      });
+      if (!record) return yield* new InlineShellRunError({ threadId: input.threadId });
+      const key = keyOf(input.threadId, record.terminalId);
+      active.set(key, {
+        record,
+        history: new BoundedTerminalHistory(
+          INLINE_SHELL_OUTPUT_LINES,
+          "",
+          INLINE_SHELL_OUTPUT_BYTES,
+        ),
+        dirty: false,
+      });
+      yield* PubSub.publish(changes, record);
       const opened = yield* Effect.result(
         terminal.openCommand({
           threadId: input.threadId,
@@ -196,41 +201,41 @@ export const layer = Layer.effect(
         }),
       );
       if (opened._tag === "Failure" || opened.success.status === "error") {
-        const endedAt = yield* DateTime.now;
-        const failed: InlineShellRunRecord = {
-          ...record,
+        yield* finish(key, {
           status: "error",
-          completedAt: DateTime.formatIso(endedAt),
-          durationMs: Math.max(0, DateTime.toEpochMillis(endedAt) - DateTime.toEpochMillis(now)),
-        };
-        yield* persist(failed);
-        active.delete(key);
-        return failed;
+          exitCode: null,
+          error:
+            opened._tag === "Failure"
+              ? String(opened.failure).slice(0, 1024)
+              : "The shell could not start.",
+        });
       }
-      const latest = yield* projection.getTurnItem({ threadId: input.threadId, itemId });
-      return latest?.type === "system_notice" ? (latest.inlineShellRun ?? record) : record;
-    });
-    const latest = Effect.fn("InlineShellRuns.latest")(function* (
-      input: InlineShellRunLookupInput,
-    ) {
-      yield* projection.getThread(input.threadId);
-      const rows = yield* sql<{
-        payload_json: string;
-      }>`SELECT payload_json FROM orchestration_v2_projection_turn_items WHERE thread_id = ${input.threadId} AND type = 'system_notice' AND json_extract(payload_json, '$.inlineShellRun.blockId') = ${input.blockId} ORDER BY json_extract(payload_json, '$.inlineShellRun.startedAt') DESC, rowid DESC LIMIT 1`;
-      if (rows[0] === undefined) return null;
-      const item = yield* decodeStoredItem(rows[0].payload_json);
-      return item.type === "system_notice" ? (item.inlineShellRun ?? null) : null;
+      return (yield* store.get(input.threadId, input.runId)) ?? record;
     });
     return InlineShellRuns.of({
-      latest: (input) =>
-        latest(input).pipe(
-          Effect.mapError((cause) => new InlineShellRunError({ threadId: input.threadId, cause })),
+      latest: (input) => Deferred.await(recovered).pipe(Effect.andThen(store.latest(input))),
+      recovered: Deferred.await(recovered),
+      observe: (input) =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            yield* Deferred.await(recovered);
+            const subscription = yield* PubSub.subscribe(changes);
+            const snapshot = yield* store.latest(input);
+            return Stream.concat(
+              Stream.make(snapshot),
+              Stream.fromSubscription(subscription).pipe(
+                Stream.filter(
+                  (record) =>
+                    record.threadId === input.threadId && record.blockId === input.blockId,
+                ),
+              ),
+            );
+          }),
         ),
       run: (input) =>
-        lock
-          .withPermits(1)(run(input))
+        launches
+          .withLock(input.threadId, run(input))
           .pipe(
-            Effect.uninterruptible,
             Effect.mapError(
               (cause) => new InlineShellRunError({ threadId: input.threadId, cause }),
             ),

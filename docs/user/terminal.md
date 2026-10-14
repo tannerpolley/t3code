@@ -23,9 +23,13 @@ In a project thread, select **Run** on a completed shell code block to run it on
 thread's environment. Output appears under the block. Enter a response and select **Send**
 when the command asks for input. Recognized password prompts hide your typing; choose
 **Hide input** for other secret prompts. **Stop** or Ctrl+C
-interrupts the command. **Open in terminal** opens the same session in the terminal drawer.
+interrupts the command when no text is selected. **Open in terminal** opens the running
+session in the terminal drawer, or opens a shell with its saved output after it ends.
 
 After the command ends, its exit code and elapsed time appear beside the output. The thread
 keeps the command and the last 200 lines of output, up to 16 KiB, so the result is available
 after reloading and on your other devices. Each completed run is automatically included in
-the agent's context on its next turn.
+the agent's context once, on its next normal turn or when you steer an active turn.
+Compacting a conversation leaves results for the next normal turn. When several results
+are waiting, the newest are shared first within a 16 KiB limit; earlier results wait for
+a later turn.

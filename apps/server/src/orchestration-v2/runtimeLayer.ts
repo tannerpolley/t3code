@@ -1,3 +1,4 @@
+import * as InlineShellStore from "../terminal/InlineShellStore.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
@@ -159,6 +160,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
 );
 
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
+  Layer.provide(InlineShellStore.layer),
   Layer.provide(
     Layer.mergeAll(
       layerContextHandoffServiceProvided,
@@ -174,6 +176,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
 );
 
 const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
+  Layer.provide(InlineShellStore.layer),
   Layer.provide(Layer.merge(ProjectionStore.layer, layerProviderSessionManagerProvided)),
 );
 const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(

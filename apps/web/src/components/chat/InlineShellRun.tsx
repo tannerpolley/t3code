@@ -4,7 +4,6 @@ import {
   type ThreadId,
   type InlineShellLanguage,
   type InlineShellRunRecord,
-  type OrchestrationV2TurnItem,
   InlineShellLanguage as InlineShellLanguageSchema,
 } from "@t3tools/contracts";
 import {
@@ -23,6 +22,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { latestInlineShellRecord } from "@t3tools/shared/inlineShell";
+import { resolveInlineShellRun } from "@t3tools/client-runtime/state/inlineShell";
 import { randomUUID } from "../../lib/utils";
 import { terminalEnvironment } from "../../state/terminal";
 import { useEnvironmentQuery } from "../../state/query";
@@ -35,33 +36,20 @@ const isShellLanguage = Schema.is(InlineShellLanguageSchema);
 const InlineShellContext = createContext<{
   environmentId: EnvironmentId;
   threadId: ThreadId;
-  records: ReadonlyMap<string, InlineShellRunRecord>;
 } | null>(null);
 
 export function InlineShellRunProvider({
   environmentId,
   threadId,
-  items,
   children,
   className,
 }: {
   className?: string;
   environmentId: EnvironmentId;
   threadId: ThreadId;
-  items: readonly OrchestrationV2TurnItem[];
   children: ReactNode;
 }) {
-  const value = useMemo(() => {
-    const records = new Map<string, InlineShellRunRecord>();
-    for (const item of items) {
-      if (item.type !== "system_notice" || item.inlineShellRun === undefined) continue;
-      const record = item.inlineShellRun;
-      const previous = records.get(record.blockId);
-      if (previous === undefined || previous.startedAt <= record.startedAt)
-        records.set(record.blockId, record);
-    }
-    return { environmentId, threadId, records };
-  }, [environmentId, threadId, items]);
+  const value = useMemo(() => ({ environmentId, threadId }), [environmentId, threadId]);
   return (
     <InlineShellContext value={value}>
       <div className={className}>{children}</div>
@@ -121,31 +109,28 @@ function InlineShellControls({
   const [localRecord, setLocalRecord] = useState<InlineShellRunRecord | null>(null);
   const [input, setInput] = useState("");
   const [secret, setSecret] = useState<boolean | null>(null);
-  const projectedRecord = context.records.get(blockId);
   const retained = useEnvironmentQuery(
-    projectedRecord === undefined
-      ? terminalEnvironment.inlineRun({
-          environmentId: context.environmentId,
-          input: { threadId: context.threadId, blockId },
-        })
-      : null,
+    terminalEnvironment.watchInlineRun({
+      environmentId: context.environmentId,
+      input: { threadId: context.threadId, blockId },
+    }),
   );
-  const saved = projectedRecord ?? retained.data;
-  const record =
-    saved && (!localRecord || saved.startedAt >= localRecord.startedAt) ? saved : localRecord;
-  const running = record !== null && inlineShellCanWrite(record.status);
+  const saved = latestInlineShellRecord(localRecord, retained.data ?? null);
   const output = useEnvironmentQuery(
-    running
+    saved?.status === "running"
       ? terminalEnvironment.observeInline({
           environmentId: context.environmentId,
-          input: { threadId: context.threadId, terminalId: record.terminalId },
+          input: { threadId: context.threadId, terminalId: saved.terminalId },
         })
       : null,
   );
+  const record = resolveInlineShellRun(saved, output.data, output.error);
+  const running = record !== null && inlineShellCanWrite(record.status);
   const scrollRef = useRef<HTMLPreElement>(null);
   const pinned = useRef(true);
   const text = running ? (output.data?.output ?? record.output) : (record?.output ?? "");
-  const hideInput = secret ?? inlineShellIsPasswordPrompt(text);
+  const displayText = useMemo(() => inlineShellDisplayOutput(text), [text]);
+  const hideInput = secret ?? inlineShellIsPasswordPrompt(displayText);
   useLayoutEffect(() => {
     if (scrollRef.current && pinned.current && text.length > 0)
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -188,7 +173,16 @@ function InlineShellControls({
       <div
         className="border-t border-border p-2 text-xs"
         onKeyDown={(event) => {
-          if (event.ctrlKey && event.key.toLowerCase() === "c" && running) {
+          const target = event.target;
+          const selectedInput =
+            target instanceof HTMLInputElement && target.selectionStart !== target.selectionEnd;
+          if (
+            event.ctrlKey &&
+            event.key.toLowerCase() === "c" &&
+            running &&
+            !selectedInput &&
+            !window.getSelection()?.toString()
+          ) {
             event.preventDefault();
             event.stopPropagation();
             void send("\u0003");
@@ -205,9 +199,9 @@ function InlineShellControls({
             pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 16;
           }}
         >
-          {inlineShellDisplayOutput(text) || "No output yet."}
+          {displayText || "No output yet."}
         </pre>
-        {output.error ? <p role="alert">{output.error}</p> : null}
+        {record.error ? <p role="alert">{record.error}</p> : null}
         <div className="mt-2 flex items-center gap-2">
           <span>
             {running
@@ -235,13 +229,7 @@ function InlineShellControls({
           </Button>
         </div>
         {running ? (
-          <form
-            className="mt-2 flex items-center gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void send(`${input}\r`);
-            }}
-          >
+          <div className="mt-2 flex items-center gap-2">
             <div className="min-w-0 flex-1">
               <Input
                 size="compact"
@@ -250,7 +238,14 @@ function InlineShellControls({
                 aria-label="Process input"
                 value={input}
                 disabled={!canWrite}
-                autoComplete="off"
+                autoComplete={hideInput ? "new-password" : "off"}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void send(`${input}\r`);
+                  }
+                }}
                 onChange={(event) => setInput(event.target.value)}
               />
             </div>
@@ -263,10 +258,16 @@ function InlineShellControls({
             >
               {hideInput ? "Show input" : "Hide input"}
             </Button>
-            <Button type="submit" size="xs" variant="outline" disabled={!canWrite}>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={!canWrite}
+              onClick={() => void send(`${input}\r`)}
+            >
               Send
             </Button>
-          </form>
+          </div>
         ) : null}
       </div>
     );

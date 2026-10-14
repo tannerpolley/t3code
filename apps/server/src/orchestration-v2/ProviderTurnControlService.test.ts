@@ -1,6 +1,15 @@
+import {
+  persistence as inlinePersistence,
+  seed as seedInlineThread,
+  record as inlineRecord,
+} from "../terminal/InlineShellRuns.testkit.ts";
+import * as InlineShellStore from "../terminal/InlineShellStore.ts";
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
+  MessageId,
+  type OrchestrationV2Run,
+  type OrchestrationV2ConversationMessage,
   NodeId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
@@ -282,6 +291,7 @@ it.effect(
         }),
       );
       const layerControl = ProviderTurnControlService.layer.pipe(
+        Layer.provide(InlineShellStore.layerEmpty),
         Layer.provide(Layer.merge(layerProjection, layerSessionManager)),
       );
 
@@ -330,4 +340,138 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+it.effect(
+  "delivers pending inline records with steering once and leaves compact steering pending",
+  () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("inline-steering");
+      yield* seedInlineThread(threadId);
+      const store = yield* InlineShellStore.InlineShellStore;
+      const running = yield* store.insert(inlineRecord(threadId, "steered"));
+      yield* store.update({
+        ...running!,
+        status: "completed",
+        completedAt: "2026-10-13T00:00:01.000Z",
+        exitCode: 7,
+        durationMs: 1000,
+        output: "steering-output",
+      });
+      const providerSessionId = ProviderSessionId.make("inline-session");
+      const providerThreadId = ProviderThreadId.make("inline-provider-thread");
+      const providerTurnId = ProviderTurnId.make("inline-provider-turn");
+      const providerThread: OrchestrationV2ProviderThread = {
+        id: providerThreadId,
+        driver,
+        providerInstanceId,
+        providerSessionId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "active",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const projection = makeProjection({
+        now,
+        threadId,
+        providerThread,
+        providerTurnId,
+        attemptId: RunAttemptId.make("inline-attempt"),
+      });
+      const run = { id: RunId.make("inline-run") } as OrchestrationV2Run;
+      let message: OrchestrationV2ConversationMessage = {
+        id: MessageId.make("inline-compact"),
+        threadId,
+        runId: run.id,
+        nodeId: null,
+        role: "user",
+        text: "/compact",
+        attachments: [],
+        streaming: false,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const prompts: string[] = [];
+      const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
+        instanceId: providerInstanceId,
+        driver,
+        providerSessionId,
+        providerSession: {
+          id: providerSessionId,
+          driver,
+          providerInstanceId,
+          status: "running",
+          cwd: "/workspace",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+        events: Stream.empty,
+        ensureThread: () => Effect.die("unused"),
+        resumeThread: () => Effect.die("unused"),
+        startTurn: () => Effect.die("unused"),
+        interruptTurn: () => Effect.die("unused"),
+        respondToRuntimeRequest: () => Effect.die("unused"),
+        readThreadSnapshot: () => Effect.die("unused"),
+        rollbackThread: () => Effect.die("unused"),
+        forkThread: () => Effect.die("unused"),
+        steerTurn: (input: ProviderAdapter.ProviderAdapterV2SteerInput) =>
+          Effect.sync(() => {
+            prompts.push(input.message.text);
+          }),
+      };
+      const layer = ProviderTurnControlService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(InlineShellStore.InlineShellStore, store),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({
+              getProviderControlContext: () =>
+                Effect.sync(() => ({
+                  thread: projection.thread,
+                  providerThread,
+                  providerTurn: projection.providerTurns[0],
+                  attempt: projection.attempts[0],
+                  run,
+                  message,
+                })),
+            }),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+              get: () => Effect.succeed(Option.some(runtime)),
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+        const steer = () =>
+          service.steer({
+            threadId,
+            providerSessionId,
+            providerThreadId,
+            providerTurnId,
+            messageId: message.id,
+          });
+        yield* steer();
+        assert.deepEqual(prompts, ["/compact"]);
+        message = { ...message, id: MessageId.make("inline-normal-steer"), text: "Explain" };
+        yield* steer();
+        assert.include(prompts[1]!, "steering-output");
+        assert.include(prompts[1]!, "Explain");
+        message = { ...message, id: MessageId.make("inline-another-steer"), text: "Continue" };
+        yield* steer();
+        assert.equal(prompts[2], "Continue");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(inlinePersistence)),
 );

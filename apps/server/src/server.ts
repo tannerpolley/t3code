@@ -63,6 +63,7 @@ import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as InlineShellStore from "./terminal/InlineShellStore.ts";
 import * as InlineShellRuns from "./terminal/InlineShellRuns.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as PreviewFileUrls from "./mcp/toolkits/preview/previewFileUrl.ts";
@@ -602,7 +603,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(
     InlineShellRuns.layer.pipe(
       Layer.provide(layerTerminal),
-      Layer.provide(RuntimeLayer.layerEventSink),
+      Layer.provide(InlineShellStore.layer),
       Layer.provide(ProjectionStoreV2.layer),
       Layer.provide(ProjectStore.layer),
     ),

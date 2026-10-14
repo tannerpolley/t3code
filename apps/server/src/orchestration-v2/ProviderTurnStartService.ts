@@ -1,4 +1,4 @@
-import { pendingInlineShellContext } from "./InlineShellContext.ts";
+import { InlineShellStore } from "../terminal/InlineShellStore.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -87,6 +87,7 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | InlineShellStore
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -101,6 +102,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const inlineShell = yield* InlineShellStore;
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -948,21 +950,10 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = [
-        pendingInlineShellContext(
-          projection.turnItems,
-          projection.providerTurns,
-          attempt.id,
-          providerThread.id,
-          !sameNativeThread,
-        ),
-        projectComposerContextForProvider({
-          text: message.text,
-          records: message.context?.records ?? [],
-        }),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+      const userText = projectComposerContextForProvider({
+        text: message.text,
+        records: message.context?.records ?? [],
+      });
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
       const noteContinuation = isRestartNoteContinuation(
@@ -1101,6 +1092,38 @@ export const layer: Layer.Layer<
                 !coveredItemIds.has(item.id) &&
                 historicalMessage(item) !== null,
             );
+      const inlineSession = {
+        ...session,
+        startTurn: (turnInput: Parameters<typeof session.startTurn>[0]) =>
+          inlineShell
+            .deliver(
+              {
+                threadId: projection.thread.id,
+                deliveryId: `start:${attempt.id}:${message.id}`,
+                runId: run.id,
+                attemptId: attempt.id,
+                providerTurnId: null,
+                messageId: message.id,
+                text: turnInput.message.text,
+                compact: message.text.trim().toLowerCase() === "/compact",
+              },
+              (text) =>
+                session.startTurn({ ...turnInput, message: { ...turnInput.message, text } }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                cause._tag === "ProviderAdapterTurnStartError"
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: session.driver,
+                      threadId: projection.thread.id,
+                      providerThreadId: providerThread.id,
+                      runId: run.id,
+                      cause,
+                    }),
+              ),
+            ),
+      };
       const startWithHandoffs = (
         turnInput: Parameters<typeof session.startTurn>[0],
         compact = false,
@@ -1179,7 +1202,7 @@ export const layer: Layer.Layer<
               }),
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
-          const start = compact ? session.compactThread! : session.startTurn;
+          const start = compact ? session.compactThread! : inlineSession.startTurn;
           const context = [delivery.context, restartNote]
             .filter((part) => part !== "")
             .join("\n\n");
@@ -1234,8 +1257,8 @@ export const layer: Layer.Layer<
         missedItems.length === 0 &&
         restartNote === "" &&
         !noteContinuation
-          ? session
-          : makeDeliverySession(session, startWithHandoffs);
+          ? inlineSession
+          : makeDeliverySession(inlineSession, startWithHandoffs);
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,

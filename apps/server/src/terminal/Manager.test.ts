@@ -2980,6 +2980,13 @@ it.effect(
         }),
       );
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const metadata: TerminalMetadataStreamEvent[] = [];
+      const unsubscribeMetadata = yield* manager.subscribeMetadata((event) =>
+        Effect.sync(() => {
+          metadata.push(event);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribeMetadata));
       yield* manager.openCommand({
         ...openInput(),
         terminalId: "inline-run",
@@ -2989,6 +2996,23 @@ it.effect(
         shell: "bash",
         args: ["-c", "read answer; printf '%s' \"$answer\"; exit 7"],
       });
+      expect(
+        metadata.some(
+          (event) =>
+            event.type === "upsert" &&
+            event.terminal.terminalId === "inline-run" &&
+            event.terminal.inline === true,
+        ),
+      ).toBe(true);
+      yield* manager.open({ ...openInput(), terminalId: "normal-drawer" });
+      expect(
+        metadata.some(
+          (event) =>
+            event.type === "upsert" &&
+            event.terminal.terminalId === "normal-drawer" &&
+            event.terminal.inline === undefined,
+        ),
+      ).toBe(true);
       const process = ptyAdapter.processes[0]!;
       yield* manager.closeIdle({ threadId: "thread-1" });
       expect(process.killed).toBe(false);

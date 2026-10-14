@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import { ThreadId, EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
 import { createRoot } from "react-dom/client";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
@@ -19,7 +19,42 @@ import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 import { normalizeProviderMathDelimiters } from "../markdown-math";
 
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => null }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+const inlineMocks = vi.hoisted(() => ({
+  run: vi.fn(),
+  write: vi.fn(),
+  listeners: new Set<() => void>(),
+  output: null as
+    | typeof import("@t3tools/client-runtime/state/inlineShell").emptyInlineShellOutput
+    | null,
+}));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (atom: unknown) => (atom === "inline-permission" ? true : null),
+}));
+vi.mock("../state/terminal", () => ({
+  terminalEnvironment: {
+    runInline: { permissionAtom: () => "inline-permission" },
+    write: { permissionAtom: () => "inline-permission" },
+    watchInlineRun: () => "inline-record",
+    observeInline: () => "inline-output",
+  },
+}));
+vi.mock("../state/query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useEnvironmentQuery: (atom: unknown) => {
+      const data = useSyncExternalStore(
+        (notify) => {
+          inlineMocks.listeners.add(notify);
+          return () => {
+            inlineMocks.listeners.delete(notify);
+          };
+        },
+        () => (atom === "inline-output" ? inlineMocks.output : null),
+      );
+      return { data, error: null };
+    },
+  };
+});
 vi.mock("./chat/MermaidDiagram", () => ({
   // Real Mermaid needs layout APIs jsdom lacks; a rendered diagram is an SVG.
   MermaidDiagram: () => <svg aria-label="Diagram" />,
@@ -49,7 +84,10 @@ vi.mock("./ui/tooltip", async () => {
   };
 });
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
-vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../state/use-atom-command", () => ({
+  useAtomCommand: (_: unknown, label: string) =>
+    label === "inline shell run" ? inlineMocks.run : inlineMocks.write,
+}));
 vi.mock("../state/session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../state/session")>();
   const { AuthStandardClientScopes } = await import("@t3tools/contracts");
@@ -81,6 +119,9 @@ vi.mock("~/lib/openPullRequestLink", () => ({
   resolvePullRequestPreviewTarget: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
+
+import { InlineShellRunProvider } from "./chat/InlineShellRun";
+import { emptyInlineShellOutput } from "@t3tools/client-runtime/state/inlineShell";
 
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
@@ -348,53 +389,101 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
-  it("runs only a complete single-line shell block after a click", async () => {
+  it("runs closed shell fences inline, including multiline commands, and completes from PTY exit outside the history window", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const onRunShellCommand = vi.fn();
+    const environmentId = EnvironmentId.make("inline-environment");
+    const threadId = ThreadId.make("inline-thread");
+    inlineMocks.run.mockReset();
+    inlineMocks.run.mockImplementation(async ({ input }) => ({
+      _tag: "Success",
+      value: {
+        ...input,
+        terminalId: `inline-${input.runId}`,
+        sequence: inlineMocks.run.mock.calls.length,
+        status: "running",
+        startedAt: "2026-10-13T00:00:00.000Z",
+        completedAt: null,
+        durationMs: 0,
+        output: "",
+        exitCode: null,
+        error: null,
+      },
+    }));
     let renderer: ReactTestRenderer | undefined;
     const message = (text: string, isStreaming = false) => (
-      <ChatMarkdown
-        cwd="/tmp/project"
-        text={text}
-        isStreaming={isStreaming}
-        onRunShellCommand={onRunShellCommand}
-      />
+      <InlineShellRunProvider key={text} environmentId={environmentId} threadId={threadId}>
+        <ChatMarkdown
+          cwd="/tmp/project"
+          text={text}
+          isStreaming={isStreaming}
+          shellMessageId="visible-message"
+          onRunShellCommand={onRunShellCommand}
+        />
+      </InlineShellRunProvider>
     );
+    const hasRun = () =>
+      renderer!.root
+        .findAllByType(Button)
+        .some((button) => button.props["aria-label"] === "Run inline");
     try {
       await act(async () => {
         renderer = create(message("```bash\necho hello\n```", true));
       });
-      const mounted = renderer!;
-      expect(
-        mounted.root
-          .findAllByType(Button)
-          .some((button) => button.props["aria-label"] === "Run in terminal"),
-      ).toBe(false);
-
-      await act(async () => {
-        mounted.update(message("```bash\necho hello\n```"));
-      });
-      await act(async () => {
-        codeButton(mounted, "Run in terminal").onClick?.({} as never);
-      });
-      expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello");
-
-      for (const text of [
-        "~~~bash\necho tilde\n~~~",
-        "> ```bash\n> echo quote\n> ```",
-        "````bash\necho four\n````",
+      expect(hasRun()).toBe(false);
+      for (const [fence, command] of [
+        ["```bash\necho hello\n```", "echo hello"],
+        ["~~~bash\necho tilde\n~~~", "echo tilde"],
+        ["> ```bash\n> echo quote\n> ```", "echo quote"],
+        ["````bash\necho four\n````", "echo four"],
+        ["```bash\necho one\necho two\n```", "echo one\necho two"],
+        ["```bash\necho trailing\n\n```", "echo trailing"],
       ]) {
+        inlineMocks.output = { ...emptyInlineShellOutput, status: "running" };
         await act(async () => {
-          mounted.update(message(text));
+          renderer!.update(message(fence!));
         });
-        expect(codeButton(mounted, "Run in terminal")).toBeDefined();
+        await act(async () => {
+          codeButton(renderer!, "Run inline").onClick?.({} as never);
+        });
+        expect(inlineMocks.run.mock.calls.at(-1)?.[0]).toMatchObject({
+          environmentId,
+          input: {
+            threadId,
+            blockId: expect.stringContaining("visible-message:"),
+            command,
+            language: "bash",
+          },
+        });
+        // No history record is returned. The exit stream alone must remove input/Stop.
+        inlineMocks.output = {
+          ...emptyInlineShellOutput,
+          status: "exited",
+          output: "done",
+          exitCode: 7,
+          endedAt: Date.parse("2026-10-13T00:00:02Z"),
+        };
+        await act(async () => {
+          inlineMocks.listeners.forEach((notify) => notify());
+        });
+        expect(
+          renderer!.root.findAllByType(Button).some((button) => button.props.children === "Stop"),
+        ).toBe(false);
+        expect(
+          renderer!.root.findAllByType("pre").some((pre) => pre.props.children === "done"),
+        ).toBe(true);
       }
-
+      const open = renderer!.root
+        .findAllByType(Button)
+        .find((button) => button.props.children === "Open in terminal");
+      await act(async () => {
+        open!.props.onClick();
+      });
+      expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^inline-/));
+      expect(inlineMocks.run).toHaveBeenCalledTimes(6);
       for (const text of [
-        "```bash\necho one\necho two\n```",
         "```typescript\necho hello\n```",
         "```bash\n\n```",
-        "```bash\necho hello\n\n```",
         "```bash\necho hello\\\n```",
         "```bash\necho safe \u202e#\n```",
         "```bash\necho incomplete",
@@ -403,15 +492,12 @@ describe("ChatMarkdown streaming", () => {
         '<pre><code class="language-bash">echo html</code></pre>',
       ]) {
         await act(async () => {
-          mounted.update(message(text));
+          renderer!.update(message(text));
         });
-        expect(
-          mounted.root
-            .findAllByType(Button)
-            .some((button) => button.props["aria-label"] === "Run in terminal"),
-        ).toBe(false);
+        expect(hasRun()).toBe(false);
       }
     } finally {
+      inlineMocks.output = null;
       await act(async () => renderer?.unmount());
       vi.unstubAllGlobals();
     }

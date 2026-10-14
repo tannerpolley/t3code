@@ -31,6 +31,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       return {
         [WS_METHODS.terminalRunInline]: (input) => inlineShell.run(input),
         [WS_METHODS.terminalGetInlineRun]: (input) => inlineShell.latest(input),
+        [WS_METHODS.terminalWatchInlineRun]: (input) => inlineShell.observe(input),
         [WS_METHODS.worktreeReturnToRoot]: (input) =>
           workspace.returnToRoot(input.threadId, input, {
             createdBy: "user",

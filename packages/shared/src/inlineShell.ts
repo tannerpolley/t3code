@@ -30,6 +30,7 @@ export function inlineShellContext(records: readonly InlineShellRunRecord[]): st
       const text = [
         `User ran shell command (${record.language}): ${record.command}`,
         `Exit code: ${record.exitCode ?? "unknown"}; status: ${record.status}; duration: ${record.durationMs} ms`,
+        ...(record.error === null ? [] : [`Error: ${record.error}`]),
         "Output tail:",
         record.output,
       ].join("\n");
@@ -73,4 +74,66 @@ export function inlineShellIsPasswordPrompt(output: string): boolean {
 
 export function inlineShellCanWrite(status: InlineShellRunRecord["status"]): boolean {
   return status === "running";
+}
+
+const byteLength = (text: string) => new TextEncoder().encode(text).length;
+const headBytes = (text: string, limit: number) => {
+  const bytes = new TextEncoder().encode(text);
+  let end = Math.min(limit, bytes.length);
+  while (end > 0 && end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--;
+  return new TextDecoder().decode(bytes.subarray(0, end));
+};
+const tailBytes = (text: string, limit: number) => {
+  const bytes = new TextEncoder().encode(text);
+  let start = Math.max(0, bytes.length - limit);
+  while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start++;
+  return new TextDecoder().decode(bytes.subarray(start));
+};
+
+/** Newest first; omitted records stay pending for a later turn. The cap includes formatting. */
+export function selectInlineShellContext(
+  records: readonly InlineShellRunRecord[],
+  totalCount = records.length,
+) {
+  const ids: string[] = [];
+  const parts: string[] = [];
+  let remaining = INLINE_SHELL_OUTPUT_BYTES - 128;
+  for (const record of records) {
+    if (record.status === "running" || remaining < 512) break;
+    const command = headBytes(record.command, Math.min(2_048, Math.floor(remaining / 3)));
+    const bounded = {
+      ...record,
+      command: command === record.command ? command : `${command} [command truncated]`,
+      output: "",
+    };
+    const overhead = byteLength(inlineShellContext([bounded]));
+    if (overhead >= remaining) break;
+    bounded.output = tailBytes(record.output, Math.max(0, Math.floor((remaining - overhead) / 2)));
+    let part = inlineShellContext([bounded]);
+    while (byteLength(part) > remaining && bounded.output.length > 0) {
+      bounded.output = tailBytes(bounded.output, Math.floor(byteLength(bounded.output) / 2));
+      part = inlineShellContext([bounded]);
+    }
+    if (byteLength(part) > remaining) break;
+    parts.push(part);
+    ids.push(record.runId);
+    remaining -= byteLength(part) + 2;
+  }
+  const omitted = totalCount - ids.length;
+  if (omitted > 0) parts.push(`${omitted} earlier runs omitted.`);
+  return { text: parts.join("\n\n"), ids };
+}
+
+export function latestInlineShellRecord(
+  current: InlineShellRunRecord | null,
+  next: InlineShellRunRecord | null,
+) {
+  if (next === null) return current;
+  if (current === null || next.sequence > current.sequence) return next;
+  if (
+    next.sequence < current.sequence ||
+    (current.status !== "running" && next.status === "running")
+  )
+    return current;
+  return next;
 }

@@ -1,3 +1,4 @@
+import { InlineShellStore } from "../terminal/InlineShellStore.ts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   MessageId,
@@ -84,10 +85,13 @@ export class ProviderTurnControlServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
-  ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
+  | InlineShellStore
+  | ProjectionStore.ProjectionStoreV2
+  | ProviderSessionManager.ProviderSessionManagerV2
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
+    const inlineShell = yield* InlineShellStore;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
 
@@ -354,29 +358,43 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-          yield* loaded.session.value
-            .steerTurn({
-              threadId: input.threadId,
-              runId: run.id,
-              providerThread: loaded.providerThread,
-              providerTurnId: loaded.providerTurn.id,
-              message: {
+          const session = loaded.session.value;
+          yield* inlineShell
+            .deliver(
+              {
+                threadId: input.threadId,
+                deliveryId: `steer:${message.id}`,
+                runId: run.id,
+                attemptId: null,
+                providerTurnId: loaded.providerTurn.id,
                 messageId: message.id,
                 text: projectComposerContextForProvider({
                   text: message.text,
                   records: message.context?.records ?? [],
                 }),
-                attachments: message.attachments,
-                createdBy: message.createdBy,
-                creationSource: message.creationSource,
-                ...(message.scheduledTaskId === undefined
-                  ? {}
-                  : { scheduledTaskId: message.scheduledTaskId }),
-                ...(message.senderThreadId === undefined
-                  ? {}
-                  : { senderThreadId: message.senderThreadId }),
+                compact: message.text.trim().toLowerCase() === "/compact",
               },
-            })
+              (text) =>
+                session.steerTurn({
+                  threadId: input.threadId,
+                  runId: run.id,
+                  providerThread: loaded.providerThread,
+                  providerTurnId: loaded.providerTurn.id,
+                  message: {
+                    messageId: message.id,
+                    text,
+                    attachments: message.attachments,
+                    createdBy: message.createdBy,
+                    creationSource: message.creationSource,
+                    ...(message.scheduledTaskId === undefined
+                      ? {}
+                      : { scheduledTaskId: message.scheduledTaskId }),
+                    ...(message.senderThreadId === undefined
+                      ? {}
+                      : { senderThreadId: message.senderThreadId }),
+                  },
+                }),
+            )
             .pipe(
               Effect.catch((cause) =>
                 Effect.gen(function* () {

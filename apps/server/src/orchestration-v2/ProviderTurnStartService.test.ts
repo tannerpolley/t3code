@@ -1,3 +1,9 @@
+import * as InlineShellStore from "../terminal/InlineShellStore.ts";
+import {
+  persistence as inlinePersistence,
+  seed as seedInlineThread,
+  record as inlineRecord,
+} from "../terminal/InlineShellRuns.testkit.ts";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
@@ -13,7 +19,6 @@ import {
   RunId,
   ThreadId,
   ProjectId,
-  TurnItemId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -91,6 +96,7 @@ it("does not commit running state when inherited background routing cannot be re
   const pruneWorktrees = vi.fn(() => Effect.void);
   const createWorktree = vi.fn(() => Effect.succeed({} as never));
   const layer = ProviderTurnStart.layer.pipe(
+    Layer.provide(InlineShellStore.layerEmpty),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
@@ -158,7 +164,8 @@ function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
-  readonly inlineItems?: readonly import("@t3tools/contracts").OrchestrationV2TurnItem[];
+  readonly inlineLayer?: Layer.Layer<InlineShellStore.InlineShellStore>;
+  readonly startNative?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
   /** Opens the session, then fails loading its provider thread. */
@@ -336,7 +343,7 @@ function makeLocalCommandHarness(input: {
     providerTurns: [],
     contextHandoffs: [],
     contextTransfers: [],
-    turnItems: input.inlineItems ?? [],
+    turnItems: [],
     visibleTurnItems: [],
     runtimeRequests: [],
     subagents: [],
@@ -431,15 +438,32 @@ function makeLocalCommandHarness(input: {
                     updatedAt: now,
                     lastError: null,
                   },
+                  ...(input.startNative ? { startTurn: input.startNative } : {}),
                   ensureThread: () => Effect.succeed(providerThread),
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
-  >(() =>
+  >((args) =>
     input.failReadsAfterRunning === true
-      ? Effect.void
+      ? input.startNative
+        ? args.session
+            .startTurn({
+              appThread: args.appThread,
+              threadId: args.appThread.id,
+              runId: args.run.id,
+              runOrdinal: args.run.ordinal,
+              providerTurnOrdinal: args.providerTurnOrdinal,
+              attemptId: args.attemptId,
+              rootNodeId: args.rootNode.id,
+              providerThread: args.providerThread,
+              message: args.message,
+              modelSelection: args.modelSelection,
+              runtimePolicy: args.runtimePolicy,
+            })
+            .pipe(Effect.orDie)
+        : Effect.void
       : Effect.die("A local command must not start a native turn."),
   );
   const failReadIfRunning = Effect.suspend(() =>
@@ -486,6 +510,7 @@ function makeLocalCommandHarness(input: {
         }),
   );
   const layer = ProviderTurnStart.layer.pipe(
+    Layer.provide(input.inlineLayer ?? InlineShellStore.layerEmpty),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
@@ -858,58 +883,56 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
   );
 }
 
-effectIt.effect("injects completed inline shell runs into the next provider prompt", () =>
-  Effect.gen(function* () {
-    const now = yield* DateTime.now;
-    const threadId = ThreadId.make("thread-native-account-command");
-    const harness = makeLocalCommandHarness({
-      text: "Explain that result",
-      failReadsAfterRunning: true,
-      inlineItems: [
-        {
-          id: TurnItemId.make("inline-shell:context"),
-          threadId,
-          runId: null,
-          nodeId: null,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: 1,
-          status: "completed",
-          title: null,
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-          type: "system_notice",
-          message: "Inline shell run",
-          inlineShellRun: {
+effectIt.effect(
+  "injects block records at the adapter boundary without rereading paged history",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-native-account-command");
+      yield* seedInlineThread(threadId);
+      const store = yield* InlineShellStore.InlineShellStore;
+      const running = yield* store.insert(inlineRecord(threadId, "context"));
+      yield* store.update({
+        ...running!,
+        status: "completed",
+        completedAt: "2026-10-13T00:00:01.000Z",
+        durationMs: 1234,
+        exitCode: 7,
+        output: "shared-output",
+      });
+      const startNative = vi.fn<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>(
+        () => Effect.void,
+      );
+      const harness = makeLocalCommandHarness({
+        text: "Explain that result",
+        failReadsAfterRunning: true,
+        inlineLayer: Layer.succeed(InlineShellStore.InlineShellStore, store),
+        startNative,
+      });
+      yield* harness.start;
+      const prompt = startNative.mock.calls[0]![0].message.text;
+      for (const value of [
+        "printf result; exit 7",
+        "Exit code: 7",
+        "1234 ms",
+        "shared-output",
+        "Explain that result",
+      ])
+        expect(prompt).toContain(value);
+      expect(harness.projection().turnItems).toEqual([]);
+      expect(
+        yield* store.deliver(
+          {
             threadId,
-            runId: "context",
-            blockId: "message:0",
-            command: "printf shared; exit 7",
-            language: "bash",
-            terminalId: "inline-context",
-            status: "completed",
-            startedAt: DateTime.formatIso(now),
-            completedAt: DateTime.formatIso(now),
-            durationMs: 1234,
-            exitCode: 7,
-            output: "shared-output",
+            deliveryId: "next-native",
+            runId: RunId.make("next"),
+            attemptId: null,
+            providerTurnId: null,
+            messageId: MessageId.make("next"),
+            text: "Next",
+            compact: false,
           },
-        },
-      ],
-    });
-    yield* harness.start;
-    expect(harness.startRootRun).toHaveBeenCalledOnce();
-    const prompt = harness.startRootRun.mock.calls[0]![0].message.text;
-    for (const value of [
-      "printf shared; exit 7",
-      "Exit code: 7",
-      "1234 ms",
-      "shared-output",
-      "Explain that result",
-    ])
-      expect(prompt).toContain(value);
-  }),
+          Effect.succeed,
+        ),
+      ).toBe("Next");
+    }).pipe(Effect.provide(inlinePersistence)),
 );

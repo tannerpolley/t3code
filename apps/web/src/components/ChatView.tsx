@@ -1,3 +1,4 @@
+import { inlineTerminalBelongsInDrawer } from "@t3tools/client-runtime/state/inlineShell";
 import { InlineShellRunProvider } from "./chat/InlineShellRun";
 import { BackgroundWorkTaskList } from "./chat/BackgroundWorkTaskList";
 import { describeSidebarBackgroundWork } from "./sidebar/SidebarBackgroundWork.logic";
@@ -1043,9 +1044,15 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const drawerTerminalSessions = useMemo(
     () =>
       knownTerminalSessions?.filter(
-        (session) => !panelTerminalIds.has(session.target.terminalId),
+        (session) =>
+          !panelTerminalIds.has(session.target.terminalId) &&
+          inlineTerminalBelongsInDrawer(
+            session.state.summary?.inline,
+            session.target.terminalId,
+            terminalUiState.terminalIds,
+          ),
       ) ?? [],
-    [knownTerminalSessions, panelTerminalIds],
+    [knownTerminalSessions, panelTerminalIds, terminalUiState.terminalIds],
   );
   const terminalLabelsById = useMemo(() => {
     const next = new Map<string, string>();
@@ -11646,7 +11653,6 @@ export default function ChatView(props: ChatViewProps) {
             <InlineShellRunProvider
               environmentId={environmentId}
               threadId={activeThread.id}
-              items={serverProjection?.turnItems ?? []}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
               {/* Messages — LegendList handles virtualization and scrolling internally */}

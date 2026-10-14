@@ -1,3 +1,6 @@
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
+import { latestInlineShellRecord } from "@t3tools/shared/inlineShell";
 import { type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
@@ -9,7 +12,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
-import { applyInlineShellOutput, emptyInlineShellOutput } from "./inlineShell.ts";
+import { applyInlineShellOutputBatch, emptyInlineShellOutput } from "./inlineShell.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
 import {
@@ -43,11 +46,29 @@ export function createTerminalEnvironmentAtoms<R, E>(
       label: "environment-data:terminal:inline-run",
       tag: WS_METHODS.terminalGetInlineRun,
     }),
+    watchInlineRun: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:terminal:watch-inline-run",
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalWatchInlineRun>) =>
+        subscribe(WS_METHODS.terminalWatchInlineRun, input).pipe(
+          Stream.scan(
+            () => null as import("@t3tools/contracts").InlineShellRunRecord | null,
+            latestInlineShellRecord,
+          ),
+        ),
+    }),
     observeInline: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:observe-inline",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>) =>
         subscribe(WS_METHODS.terminalObserve, input).pipe(
-          Stream.scan(() => emptyInlineShellOutput, applyInlineShellOutput),
+          Stream.groupedWithin(32, "40 millis"),
+          Stream.mapEffect((events) =>
+            Effect.map(Clock.currentTimeMillis, (receivedAt) => ({ events, receivedAt })),
+          ),
+          Stream.scan(
+            () => emptyInlineShellOutput,
+            (state, { events, receivedAt }) =>
+              applyInlineShellOutputBatch(state, events, receivedAt),
+          ),
         ),
     }),
     observe: createEnvironmentSubscriptionAtomFamily(runtime, {

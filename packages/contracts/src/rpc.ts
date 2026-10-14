@@ -488,6 +488,7 @@ export const WS_METHODS = {
   terminalOpen: "terminal.open",
   terminalRunInline: "terminal.runInline",
   terminalGetInlineRun: "terminal.getInlineRun",
+  terminalWatchInlineRun: "terminal.watchInlineRun",
   terminalAttach: "terminal.attach",
   terminalObserve: "terminal.observe",
   terminalWrite: "terminal.write",
@@ -2085,7 +2086,15 @@ const WsTerminalGetInlineRunRpc = Rpc.make(WS_METHODS.terminalGetInlineRun, {
   error: Schema.Union([InlineShellRunError, EnvironmentAuthorizationError]),
 });
 
+const WsTerminalWatchInlineRunRpc = Rpc.make(WS_METHODS.terminalWatchInlineRun, {
+  payload: InlineShellRunLookupInput,
+  success: Schema.NullOr(InlineShellRunRecord),
+  error: Schema.Union([InlineShellRunError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 const forkWsRpcs = [
+  WsTerminalWatchInlineRunRpc,
   WsTerminalRunInlineRpc,
   WsTerminalGetInlineRunRpc,
   WsWorktreeReturnToRootRpc,
@@ -2307,6 +2316,7 @@ export const WsRpcGroup = RpcGroup.make(
 ).middleware(RpcScopeAuthorization);
 export const ForkWsRpcGroup = RpcGroup.make(...forkWsRpcs).middleware(RpcScopeAuthorization);
 export const UpstreamWsRpcGroup = WsRpcGroup.omit(
+  WS_METHODS.terminalWatchInlineRun,
   WS_METHODS.terminalRunInline,
   WS_METHODS.terminalGetInlineRun,
   WS_METHODS.worktreeReturnToRoot,

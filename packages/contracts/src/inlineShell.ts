@@ -32,6 +32,8 @@ export type InlineShellRunLookupInput = typeof InlineShellRunLookupInput.Type;
 export const InlineShellRunRecord = Schema.Struct({
   ...InlineShellRunInput.fields,
   terminalId: TrimmedNonEmptyString,
+  sequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1_024))),
   status: Schema.Literals(["running", "completed", "interrupted", "error"]),
   startedAt: IsoDateTime,
   completedAt: Schema.NullOr(IsoDateTime),

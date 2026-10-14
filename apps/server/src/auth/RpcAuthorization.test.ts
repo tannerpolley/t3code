@@ -176,6 +176,7 @@ describe("RPC authorization scopes", () => {
     for (const method of [
       WS_METHODS.terminalObserve,
       WS_METHODS.terminalGetInlineRun,
+      WS_METHODS.terminalWatchInlineRun,
       WS_METHODS.subscribeTerminalEvents,
       WS_METHODS.subscribeTerminalMetadata,
     ]) {

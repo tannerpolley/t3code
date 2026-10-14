@@ -410,6 +410,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
 
 function summary(session: TerminalSessionState): TerminalSummary {
   return {
+    ...(session.isCommand ? { inline: true } : {}),
     threadId: session.threadId,
     terminalId: session.terminalId,
     cwd: session.cwd,

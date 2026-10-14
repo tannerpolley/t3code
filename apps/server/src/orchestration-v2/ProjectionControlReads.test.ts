@@ -1,3 +1,4 @@
+import * as InlineShellStore from "../terminal/InlineShellStore.ts";
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
@@ -345,9 +346,10 @@ it.effect.each(storageCases)(
         assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
       }).pipe(
         Effect.provide(
-          Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(layerSessions),
-          ),
+          Layer.merge(
+            ProviderTurnControlService.layer.pipe(Layer.provide(InlineShellStore.layerEmpty)),
+            RuntimeRequestService.layer,
+          ).pipe(Layer.provide(layerSessions)),
         ),
       );
     }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistence.layerMemory))),
