@@ -375,8 +375,8 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 
 ## Compare threads in Projects
 
-With **Codex-style sidebar** enabled on web and desktop, the Projects view aligns each thread's token usage, location,
-role, provider, model, effort, name, time, and work status. Model names show up to six
+With **Codex-style sidebar** enabled on web and desktop, the Projects view aligns each thread's location,
+role, provider, model, effort, name, token usage, time, and work status. Model names show up to six
 characters, with versions such as 5.5 and 6.1 lined up; hover the model for its full
 name. Expand a thread to follow
 its child agents. Child rows keep the same columns as their parent. A thread with
@@ -391,7 +391,7 @@ on an issue shows the issue, such as **#42 Fix login**; a thread with a role sho
 show **Main** and other child agents **Subagent**. Hover a title to see the thread's
 name.
 
-For Codex and Claude, the number at the sidebar's left edge shows tokens used by the
+For Codex and Claude, the number between the title and the time shows tokens used by the
 latest turn, such as **48k**. Hover it for input, cached input, output, context
 fill, and the thread's reported total. Cached input is included in input, rather
 than added twice. Partial usage is marked in the tooltip; unavailable usage shows

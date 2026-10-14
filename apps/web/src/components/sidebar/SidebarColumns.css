@@ -9,9 +9,7 @@
   font-weight: normal;
 }
 @utility sidebar-caret-toggle {
-  inset-inline-start: calc(
-    0.125rem + max(var(--sidebar-thread-lead, 0px), var(--sidebar-thread-inset, 0px))
-  );
+  inset-inline-start: calc(0.125rem + var(--sidebar-thread-inset, 0px));
 }
 /*
  * Projects thread rows reach back over their section and project indents (the outdent) to the

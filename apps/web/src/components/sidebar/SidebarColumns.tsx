@@ -116,7 +116,6 @@ export function SidebarThreadColumns(props: {
 }) {
   return (
     <span className="sidebar-thread-columns">
-      <span className="sidebar-thread-usage">{props.usage}</span>
       <span className="sidebar-thread-caret">{props.caret ?? <SidebarCaretSlot />}</span>
       <span className="sidebar-thread-icon">{props.location}</span>
       <span className="sidebar-thread-icon">{props.role}</span>
@@ -124,6 +123,7 @@ export function SidebarThreadColumns(props: {
       <SidebarThreadModel label={props.model} />
       <span className="sidebar-thread-effort">{props.effort}</span>
       <span className="sidebar-thread-name">{props.name}</span>
+      <span className="sidebar-thread-usage">{props.usage}</span>
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       <span className={cn("sidebar-thread-time", props.trailingClassName)}>{props.time}</span>
       <span className={cn("sidebar-thread-icon", props.trailingClassName)}>{props.status}</span>
