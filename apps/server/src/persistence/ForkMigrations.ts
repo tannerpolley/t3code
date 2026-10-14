@@ -18,6 +18,7 @@ import UsageLimitSwitchRecovery from "./ForkMigrations/012_UsageLimitSwitchRecov
 import InlineShellRuns from "./ForkMigrations/010_InlineShellRuns.ts";
 import ThreadUsageSummary from "./ForkMigrations/011_ThreadUsageSummary.ts";
 import PendingRoutedRequests from "./ForkMigrations/007_PendingRoutedRequests.ts";
+import EndedRunOpenTurnItems from "./ForkMigrations/014_EndedRunOpenTurnItems.ts";
 
 import IssueThreadLinks from "../issues/IssueLinksMigration.ts";
 import IssueRoadmapIndexes from "../issues/IssueRoadmapIndexesMigration.ts";
@@ -38,6 +39,7 @@ export const forkMigrationEntries = [
   [11, "ThreadUsageSummary", ThreadUsageSummary],
   [12, "UsageLimitSwitchRecovery", UsageLimitSwitchRecovery],
   [13, "SidebarLayout", SidebarLayout],
+  [14, "EndedRunOpenTurnItems", EndedRunOpenTurnItems],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.

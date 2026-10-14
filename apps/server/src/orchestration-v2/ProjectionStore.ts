@@ -4275,6 +4275,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND type IN ('command_execution', 'dynamic_tool', 'subagent')
                   AND status IN ('pending', 'running', 'waiting')
                 UNION
+                -- Turn-bound items a run left running when it ended (EndedRunTurnItems.ts).
+                SELECT item.thread_id FROM orchestration_v2_projection_turn_items AS item
+                WHERE item.status = 'running'
+                  AND item.type NOT IN ('command_execution', 'dynamic_tool', 'subagent')
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs AS run
+                    WHERE run.run_id = item.run_id
+                      AND run.status IN ('completed', 'failed', 'interrupted', 'cancelled')
+                  )
+                UNION
                 SELECT thread_id FROM orchestration_v2_effect_outbox
                 WHERE status IN ('pending', 'running')
               `;
@@ -4633,6 +4643,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND item.status IN ('pending', 'running', 'waiting')
                       AND item.run_id IS NOT NULL
                   )
+                  OR run.run_id IN (
+                    SELECT item.run_id FROM orchestration_v2_projection_turn_items AS item
+                    WHERE item.thread_id = ${threadId}
+                      AND item.status = 'running'
+                      AND item.type NOT IN ('command_execution', 'dynamic_tool', 'subagent')
+                  )
                 )
               ORDER BY run.ordinal ASC
             `,
@@ -4810,6 +4826,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
                   )
                   OR item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+                  OR (
+                    item.status = 'running'
+                    AND item.type NOT IN ('command_execution', 'dynamic_tool', 'subagent')
+                  )
                   OR (
                     item.run_id IS NULL
                     AND item.node_id IN (

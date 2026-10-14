@@ -52,6 +52,11 @@ void TERMINAL_RUN_STATUSES;
 
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
 
+/** Whether an item of this type can keep running after the turn that started it. */
+export function isBackgroundTurnItemType(type: OrchestrationV2TurnItem["type"]): boolean {
+  return BACKGROUND_TURN_ITEM_TYPES.has(type);
+}
+
 /**
  * Whether a turn-item update can end background work that a settled run is
  * still waiting on: an item of a background type that is no longer active.

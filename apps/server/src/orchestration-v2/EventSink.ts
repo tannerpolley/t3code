@@ -36,6 +36,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { routeDelegatedRequests } from "./DelegatedRequestRouting.ts";
+import { endTurnItemsOfEndedRuns } from "./EndedRunTurnItems.ts";
 
 /**
  * ERRORS
@@ -366,7 +367,10 @@ const layerBase: Layer.Layer<
       );
     };
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
-      routeDelegatedRequests(projectionStore, events).pipe(Effect.flatMap(normalizeTurnItems));
+      routeDelegatedRequests(projectionStore, events).pipe(
+        Effect.flatMap((routed) => endTurnItemsOfEndedRuns(projectionStore, routed)),
+        Effect.flatMap(normalizeTurnItems),
+      );
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>
       Effect.gen(function* () {
