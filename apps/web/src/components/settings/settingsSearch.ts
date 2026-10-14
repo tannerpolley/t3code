@@ -350,6 +350,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sort projects sidebar manual created recent"],
   },
   {
+    id: "thread-order",
+    title: "Thread order",
+    to: "/settings/general",
+    searchTerms: ["sort threads sidebar projects last user message created recent"],
+  },
+  {
     id: "usage-limit-recovery",
     title: "Usage limit recovery",
     to: "/settings/general",

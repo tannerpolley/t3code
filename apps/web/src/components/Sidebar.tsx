@@ -149,6 +149,7 @@ import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { sortThreads } from "../lib/threadSort";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -2413,6 +2414,7 @@ export default function Sidebar() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
+  const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -2990,9 +2992,13 @@ export default function Sidebar() {
       ),
     [projectGroups],
   );
+  // Projects follow the Thread order setting; Activity keeps its own arranged order.
   const sidebarProjectThreadsByKey = useMemo(() => {
     const grouped = new Map<string, EnvironmentThreadShell[]>();
-    for (const thread of sortThreadsForSidebar(filterSidebarV2VisibleThreads(threads, null))) {
+    for (const thread of sortThreads(
+      filterSidebarV2VisibleThreads(threads, null),
+      sidebarThreadSortOrder,
+    )) {
       const projectKey = logicalProjectKeyByScopedProjectRef.get(
         `${thread.environmentId}:${thread.projectId}`,
       );
@@ -3002,7 +3008,7 @@ export default function Sidebar() {
       grouped.set(projectKey, projectThreads);
     }
     return grouped;
-  }, [logicalProjectKeyByScopedProjectRef, threads]);
+  }, [logicalProjectKeyByScopedProjectRef, sidebarThreadSortOrder, threads]);
   const searchEnvironmentIds = useConnectedEnvironmentIds();
   // useThreadSearch owns the debounce and the two-character floor.
   const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);

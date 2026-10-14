@@ -54,7 +54,9 @@ On web and desktop, use the folder button beside search to switch between
 **Projects** and **Activity**. Projects keeps sections, projects, and their
 threads together. Expanding a project leaves other projects available. Activity
 keeps the pinned, active, Working, snoozed, and settled lists; its project menu
-explicitly filters the list, with **All projects** as the default.
+explicitly filters the list, with **All projects** as the default. In Projects, each
+project's threads follow **Settings → General → Thread order**: last user message
+or creation time.
 
 Choose **New section** to group projects. A section's menu can add a subsection,
 choose its color or folder icons, add an existing project, or create a new project

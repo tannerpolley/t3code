@@ -48,6 +48,7 @@ import {
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -194,6 +195,7 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: "Manual",
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+const isSidebarThreadSortOrder = Schema.is(SidebarThreadSortOrder);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -575,6 +577,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
         ? ["Project order"]
         : []),
+      ...(settings.sidebarThreadSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder
+        ? ["Thread order"]
+        : []),
       ...(settings.sidebarWorkingShelfEnabled !==
       DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
         ? ["Working section"]
@@ -730,6 +735,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.usageLimitFallbackModels,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
+      settings.sidebarThreadSortOrder,
       settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -830,6 +836,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarThreadSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
@@ -2362,6 +2369,46 @@ export function GeneralSettingsPanel() {
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {SidebarProjectSortOrder.literals.map((sortOrder) => (
+                  <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
+                    {SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("thread-order")}
+          description="Order of threads under each project in the sidebar's Projects view. Activity keeps its own order."
+          resetAction={
+            settings.sidebarThreadSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder ? (
+              <SettingResetButton
+                label="thread order"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarThreadSortOrder}
+              onValueChange={(value) => {
+                if (isSidebarThreadSortOrder(value)) {
+                  updateSettings({ sidebarThreadSortOrder: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Thread order">
+                <SelectValue>
+                  {SIDEBAR_PROJECT_SORT_ORDER_LABELS[settings.sidebarThreadSortOrder]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SidebarThreadSortOrder.literals.map((sortOrder) => (
                   <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
                     {SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder]}
                   </SelectItem>
