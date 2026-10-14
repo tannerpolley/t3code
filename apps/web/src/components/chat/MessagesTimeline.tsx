@@ -338,7 +338,7 @@ interface TimelineRowSharedState {
    * virtualized away while the reader is using it.
    */
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
-  onRunShellCommand: ((command: string) => void) | undefined;
+  onRunShellCommand: ((terminalId: string) => void) | undefined;
   findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
