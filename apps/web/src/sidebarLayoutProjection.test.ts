@@ -87,7 +87,7 @@ describe("shared sidebar projection", () => {
     );
     const send = vi.fn();
     const client = createSidebarLayoutClient(send, vi.fn());
-    client.configure(remote, false, EMPTY_SIDEBAR_LAYOUT, false);
+    client.configure(remote, false, EMPTY_SIDEBAR_LAYOUT, { fallbackReady: false });
     expect(storage.has("t3code:sidebar-local:" + remote)).toBe(false);
     client.configure(remote, false, candidate);
     retire(remote, [local, remote]);

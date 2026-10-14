@@ -108,20 +108,17 @@ describe("sidebar client writes", () => {
     await vi.runAllTimersAsync();
     client.dispose();
   });
-  it("missing capability or settings permission uses local expansion with no RPC or import", async () => {
+  it("missing capability uses local expansion with no RPC or import", async () => {
     vi.useFakeTimers();
     const storage = new Map<string, string>();
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => storage.set(key, value),
     });
-    for (const [capability, grant] of [
-      [undefined, true],
-      [true, false],
-    ] as const) {
+    for (const capability of [undefined, false] as const) {
       const send = vi.fn();
       const client = createSidebarLayoutClient(send, vi.fn());
-      client.configure(local, usesServerSidebar(capability, grant), record.layout);
+      client.configure(local, usesServerSidebar(capability), record.layout);
       client.enqueue(local, { type: "sectionExpanded", sectionId: "work", expanded: false });
       expect(client.layouts([local]).get(local)?.sidebarProjectSections[0]?.collapsed).toBe(true);
       client.enqueue(local, {

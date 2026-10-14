@@ -74,12 +74,13 @@ import, and sections created since the upgrade are kept. Only sections containin
 this environment's projects, including their parent sections, are imported. If two
 windows have different saved layouts, the first accepted layout wins; the other
 window adopts it. Later windows cannot overwrite it, even after every section is
-removed. After a successful import, that window clears its old saved copy.
+removed. Your old saved copy is kept while any of your environments still needs it.
 
 Your Projects/Activity choice, project filter, grouping preferences, and other
-thread view preferences stay local to each window. Older servers and connections
-without permission to save settings keep a local layout, including expansion
-choices.
+thread view preferences stay local to each window. Older servers keep a local
+layout, including expansion choices. Read-only connections to environments with
+shared sections show the shared layout and receive updates. Saving changes requires
+permission to save settings.
 
 Agents can read section IDs from the environment and place a project when creating
 or updating it. Ask an agent to put a new project in a named section and expand it;

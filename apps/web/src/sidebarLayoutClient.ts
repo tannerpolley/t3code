@@ -11,11 +11,12 @@ import * as Option from "effect/Option";
 import { applySidebarLayoutMutation } from "@t3tools/shared/sidebarLayout";
 
 export const SIDEBAR_WRITE_DELAY = 250;
-export function usesServerSidebar(capability: boolean | undefined, canWrite: boolean) {
-  return capability === true && canWrite;
+export function usesServerSidebar(capability: boolean | undefined) {
+  return capability === true;
 }
 interface ClientEnvironment {
   server: boolean;
+  canWrite: boolean;
   base: SidebarLayoutRecord | null;
   local: SidebarLayout;
   pending: SidebarLayoutMutation[];
@@ -48,9 +49,9 @@ export function createSidebarLayoutClient(
 ) {
   const environments = new Map<EnvironmentId, ClientEnvironment>();
   const listeners = new Set<() => void>();
-  let version = 0;
+  let snapshot = new Map<EnvironmentId, SidebarLayout>();
   const notify = () => {
-    version++;
+    snapshot = new Map([...environments].map(([id, entry]) => [id, layout(entry)]));
     for (const listener of listeners) listener();
   };
   const apply = (layout: SidebarLayout, operations: readonly SidebarLayoutMutation[]) =>
@@ -123,10 +124,22 @@ export function createSidebarLayoutClient(
         listeners.delete(listener);
       };
     },
-    getSnapshot: () => version,
-    configure(id: EnvironmentId, server: boolean, fallback: SidebarLayout, fallbackReady = true) {
+    getSnapshot: () => snapshot,
+    configure(
+      id: EnvironmentId,
+      server: boolean,
+      fallback: SidebarLayout,
+      options: { fallbackReady?: boolean; canWrite?: boolean } = {},
+    ) {
+      const fallbackReady = options.fallbackReady ?? true;
+      const canWrite = options.canWrite ?? true;
       const previous = environments.get(id);
       if (previous && previous.server === server) {
+        if (previous.canWrite !== canWrite) {
+          previous.canWrite = canWrite;
+          if (!canWrite) previous.pending = [];
+          notify();
+        }
         if (!server) {
           const local = readLocalSidebarLayout(id, fallback);
           if (fallbackReady) saveLocal(id, local);
@@ -142,6 +155,7 @@ export function createSidebarLayoutClient(
       if (!server && fallbackReady) saveLocal(id, local);
       environments.set(id, {
         server,
+        canWrite,
         base: null,
         local,
         pending: [],
@@ -168,6 +182,7 @@ export function createSidebarLayoutClient(
       const entry = environments.get(id);
       if (!entry) return false;
       if (entry.server) {
+        if (!entry.canWrite) return false;
         entry.pending.push(operation);
         schedule(id, entry);
       } else {

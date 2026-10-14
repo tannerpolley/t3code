@@ -81,9 +81,12 @@ export function SidebarLayoutSync() {
       ),
     [update],
   );
-  useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   useEffect(() => () => controller.dispose(), [controller]);
-  const layouts = controller.layouts(configs.keys());
+  const layouts = useMemo(
+    () => new Map([...configs.keys()].map((id) => [id, snapshot.get(id)])),
+    [configs, snapshot],
+  );
   const sectionTargets = useMemo(
     () =>
       new Map(
@@ -290,7 +293,7 @@ function SidebarLayoutEnvironment(props: {
   const canWrite = useAtomValue(
     serverEnvironment.updateSidebarLayout.permissionAtom(props.environmentId),
   );
-  const server = usesServerSidebar(props.capable, canWrite);
+  const server = usesServerSidebar(props.capable);
   const shellReady =
     useAtomValue(environmentShell.stateValueAtom(props.environmentId)).status === "live";
   const pendingImport = useMemo(
@@ -315,8 +318,10 @@ function SidebarLayoutEnvironment(props: {
       .every((project) => project.repositoryIdentityResolved !== false);
   const { controller, environmentId, onLegacyStored } = props;
   useEffect(() => {
-    controller.configure(environmentId, server, candidate, fallbackReady);
-    if (!server && fallbackReady) onLegacyStored();
+    if (!server) {
+      controller.configure(environmentId, false, candidate, { fallbackReady });
+      if (fallbackReady) onLegacyStored();
+    }
   }, [controller, environmentId, server, candidate, fallbackReady, onLegacyStored]);
   return server ? (
     <SidebarLayoutSubscription
@@ -325,6 +330,7 @@ function SidebarLayoutEnvironment(props: {
       pendingImport={pendingImport}
       candidate={candidate}
       shellReady={shellReady}
+      canWrite={canWrite}
     />
   ) : null;
 }
@@ -337,6 +343,7 @@ function SidebarLayoutSubscription(props: {
   legacy: SidebarLayout;
   pendingImport: PendingSidebarImport | null;
   shellReady: boolean;
+  canWrite: boolean;
   allowImport: boolean;
   onLegacyStored: () => void;
 }) {
@@ -350,11 +357,20 @@ function SidebarLayoutSubscription(props: {
   const committedProjects = useRef(new Set(props.pendingImport?.memberships ?? []));
   const cleared = useRef(false);
   useEffect(() => {
+    // Configure before applying a snapshot; child effects run before parent effects.
+    props.controller.configure(props.environmentId, true, props.candidate, {
+      canWrite: props.canWrite,
+    });
     if (record) props.controller.receive(props.environmentId, record);
-  }, [record, props.controller, props.environmentId]);
+  }, [record, props.controller, props.environmentId, props.candidate, props.canWrite]);
   const current = props.controller.record(props.environmentId);
   useEffect(() => {
-    if (!current || !props.shellReady || (!props.allowImport && props.pendingImport === null))
+    if (
+      !current ||
+      !props.canWrite ||
+      !props.shellReady ||
+      (!props.allowImport && props.pendingImport === null)
+    )
       return;
     const candidate = props.candidate;
     const ids = new Set([

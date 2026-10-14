@@ -19,9 +19,10 @@ export function sectionTarget(sectionId: string | null) {
   return sectionId === null ? null : Option.getOrNull(decodeSectionTarget(sectionId));
 }
 function serverPlacement(environmentId: EnvironmentId) {
-  return usesServerSidebar(
-    appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.sidebarLayoutSync,
-    appAtomRegistry.get(serverEnvironment.updateSidebarLayout.permissionAtom(environmentId)),
+  return (
+    usesServerSidebar(
+      appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.sidebarLayoutSync,
+    ) && appAtomRegistry.get(serverEnvironment.updateSidebarLayout.permissionAtom(environmentId))
   );
 }
 let place: (ref: ScopedProjectRef, sectionId: string) => void = () => {};
