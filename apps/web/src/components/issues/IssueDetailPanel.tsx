@@ -13,13 +13,13 @@ import {
   IssueReadError as IssueReadErrorClass,
 } from "@t3tools/contracts";
 import {
+  ArrowLeftIcon,
   ExternalLinkIcon,
   GitBranchPlusIcon,
-  MessageSquareIcon,
   PanelRightIcon,
   RefreshCwIcon,
 } from "lucide-react";
-import { IssueStateIcon } from "./IssueStateIcon";
+import { issueStatePresentation } from "./IssueStateIcon";
 import { useEffect, useRef, useState } from "react";
 
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -30,13 +30,22 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
 import { toastManager } from "../ui/toast";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { sanitizeNewRefName } from "../BranchToolbar.logic";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { findIssueProject } from "./issueWorktree.logic";
 import { agentWorktreeName } from "@t3tools/shared/git";
-import { PULL_REQUEST_STATE_PRESENTATION } from "../pullRequest/pullRequestIcons";
+import {
+  PullRequestActorLabel,
+  PullRequestLabelChip,
+  PullRequestMetaLine,
+  PullRequestStateGlyph,
+} from "../pullRequest/pullRequestPresentation";
+import { issueSurface } from "~/rightPanelStore";
+import { rememberIssueOrigin } from "./issuePullRequestOrigin";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -51,7 +60,11 @@ export interface IssueDetailPanelProps {
   readonly threadRef?: ScopedThreadRef | null;
   readonly refreshToken?: number;
   readonly onOpenBesideThread?: () => void;
+  /** Back to the issue list this detail was opened from, where it is not already beside it. */
+  readonly onBack?: () => void;
 }
+
+type IssueDetailTab = "summary" | "timeline";
 
 type IssuePanelError = {
   readonly title: string;
@@ -123,14 +136,16 @@ function retryDeadline(retryAt: number): string {
 
 function LinkedPullRequests({
   pullRequests,
-  issueRepository,
+  issue,
   threadRef,
 }: {
   readonly pullRequests: ReadonlyArray<IssueLinkedPullRequest>;
-  readonly issueRepository: string;
+  /** The issue showing them, which back on an opened pull request returns to. */
+  readonly issue: Parameters<typeof issueSurface>[0];
   readonly threadRef: ScopedThreadRef | null;
 }) {
-  // Without a thread this opens the pull requests page, or the link itself when no project matches.
+  // Beside a thread this opens a pull request tab; without one it opens the pull requests page,
+  // or the link itself when no project matches.
   const openPrLink = useOpenPrLink(threadRef ?? undefined);
   return (
     <section className="mb-5">
@@ -138,23 +153,26 @@ function LinkedPullRequests({
       <ul className="flex flex-col gap-0.5">
         {pullRequests.map((pr) => {
           const url = safeExternalUrl(pr.url);
-          const presentation =
-            PULL_REQUEST_STATE_PRESENTATION[pr.state === "open" && pr.isDraft ? "draft" : pr.state];
           return (
             <li key={`${pr.repository}#${pr.number}`}>
               <a
                 className="flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-accent"
                 href={url ?? undefined}
-                onClick={url ? (event) => openPrLink(event, url) : undefined}
+                onClick={
+                  url
+                    ? (event) => {
+                        if (threadRef !== null)
+                          rememberIssueOrigin(threadRef, pr, issueSurface(issue));
+                        openPrLink(event, url);
+                      }
+                    : undefined
+                }
                 rel="noopener noreferrer"
                 target="_blank"
               >
-                <presentation.Icon
-                  aria-label={presentation.label}
-                  className={cn("size-3.5 shrink-0", presentation.toneClassName)}
-                />
+                <PullRequestStateGlyph state={pr.state} isDraft={pr.isDraft} className="size-3.5" />
                 <span className="min-w-0 flex-1 truncate text-foreground">
-                  {pr.repository.toLowerCase() === issueRepository.toLowerCase() ? null : (
+                  {pr.repository.toLowerCase() === issue.repository.toLowerCase() ? null : (
                     <span className="font-mono text-muted-foreground">{pr.repository} </span>
                   )}
                   <span className="text-muted-foreground">#{pr.number}</span> {pr.title}
@@ -188,7 +206,7 @@ function IssueComments({
 }) {
   const hidden = totalCount - comments.length;
   return (
-    <section className="mt-5 flex flex-col gap-4 border-t border-border/50 pt-4">
+    <section className="flex flex-col gap-4">
       {hidden > 0 ? (
         <p className="text-xs text-muted-foreground">
           {hidden} earlier {hidden === 1 ? "comment" : "comments"} not shown
@@ -321,8 +339,13 @@ export function IssueDetailPanel({
   threadRef = null,
   refreshToken,
   onOpenBesideThread,
+  onBack,
 }: IssueDetailPanelProps) {
   const atom = issueEnvironment.detail({ environmentId, input: reference });
+  // The tab belongs to one issue; the panel is reused as another opens, which starts on Summary.
+  const issueKey = `${reference.host}/${reference.repository}#${reference.number}`;
+  const [tabChoice, setTabChoice] = useState<{ key: string; tab: IssueDetailTab } | null>(null);
+  const tab = tabChoice?.key === issueKey ? tabChoice.tab : "summary";
   const result = useAtomValue(atom);
   const query = useEnvironmentQuery(atom);
   const lastRefreshToken = useRef(refreshToken);
@@ -376,79 +399,124 @@ export function IssueDetailPanel({
   const { issue, body, repository, comments, linkedPullRequests } = query.data;
   const issueUrl = safeExternalUrl(issue.url);
   const canOpenBesideThread = threadRef !== null && onOpenBesideThread !== undefined;
+  const state = issueStatePresentation(issue);
+  const tabs: ReadonlyArray<{ value: IssueDetailTab; label: string }> = [
+    { value: "summary", label: "Summary" },
+    {
+      value: "timeline",
+      label: issue.commentCount > 0 ? `Timeline · ${issue.commentCount}` : "Timeline",
+    },
+  ];
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <header className="shrink-0 border-b border-border/60 px-4 py-3">
-        <div className="flex items-start gap-3">
-          <IssueStateIcon issue={issue} className="mt-1 size-4" />
-          <div className="min-w-0 flex-1">
-            <p className="font-mono text-xs text-muted-foreground">
-              {repository.repository} #{issue.number}
-            </p>
-            <h1 className="mt-1 text-base font-semibold leading-snug text-foreground">
-              {issue.title || "Untitled issue"}
-            </h1>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <Badge size="sm" variant={issue.state === "open" ? "success" : "secondary"}>
-                {issue.state}
-              </Badge>
-              {issue.stateReason ? (
-                <span className="text-xs text-muted-foreground">{issue.stateReason}</span>
-              ) : null}
-              <Button
-                aria-label="Refresh issue"
-                className="ml-auto"
-                disabled={query.isPending}
-                onClick={query.refresh}
-                size="icon-xs"
-                variant="ghost"
-              >
-                <RefreshCwIcon aria-hidden />
-              </Button>
-              {issueUrl ? (
-                <a
-                  className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                  href={issueUrl}
-                  rel="noopener noreferrer"
-                  target="_blank"
-                >
-                  Open on GitHub
-                  <ExternalLinkIcon aria-hidden className="size-3" />
-                </a>
-              ) : null}
-            </div>
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span>Opened by {actorLabel(issue.author)}</span>
-          <span>updated {formatRelativeTimeLabel(issue.updatedAt)}</span>
-          <span className="inline-flex items-center gap-1">
-            <MessageSquareIcon aria-hidden className="size-3" />
-            {issue.commentCount} {issue.commentCount === 1 ? "comment" : "comments"}
-          </span>
-          <div className="ml-auto flex flex-wrap items-start gap-1.5">
+      {/* The pull request detail's header: back, `repository #n ↗` in the state's tone, title,
+          then the state, author and update time. */}
+      <header className="shrink-0 border-b border-border/60">
+        <div className="flex h-7 min-w-0 items-center gap-1 px-4 pt-1 text-xs text-muted-foreground">
+          {onBack ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label="Back to issues"
+                    className="-ml-1.5"
+                    onClick={onBack}
+                    size="icon-micro"
+                    variant="ghost-muted"
+                  >
+                    <ArrowLeftIcon aria-hidden className="size-3.5" />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">Back to issues</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          <span className="min-w-0 truncate font-medium">{repository.repository}</span>
+          {issueUrl ? (
+            <a
+              aria-label={`Open issue #${issue.number} on GitHub`}
+              className={cn(
+                "inline-flex shrink-0 items-center gap-0.5 font-medium underline-offset-2 hover:underline",
+                state.toneClassName,
+              )}
+              href={issueUrl}
+              rel="noopener noreferrer"
+              target="_blank"
+            >
+              #{issue.number}
+              <ExternalLinkIcon aria-hidden className="size-2.5" />
+            </a>
+          ) : (
+            <span className={cn("shrink-0 font-medium", state.toneClassName)}>#{issue.number}</span>
+          )}
+          <span className="ml-auto flex shrink-0 items-center gap-1">
             {canOpenBesideThread ? (
               <Button onClick={onOpenBesideThread} size="xs" variant="outline">
                 <PanelRightIcon aria-hidden />
                 Open beside thread
               </Button>
             ) : null}
-            <IssueStartAction
-              key={`${environmentId}:${repository.host}:${repository.repository}:${issue.number}`}
-              environmentId={environmentId}
-              reference={{ ...repository, number: issue.number }}
-              threadRef={threadRef}
-              closed={issue.state === "closed"}
-            />
-            <StartInWorktree
-              environmentId={environmentId}
-              host={repository.host}
-              repository={repository.repository}
-              issue={issue}
-              threadRef={threadRef}
-            />
+            <Button
+              aria-label="Refresh issue"
+              disabled={query.isPending}
+              onClick={query.refresh}
+              size="icon-xs"
+              variant="ghost"
+            >
+              <RefreshCwIcon aria-hidden />
+            </Button>
+          </span>
+        </div>
+        <div className="min-w-0 px-4 pb-3">
+          <h1 className="mt-1 text-base font-semibold leading-snug text-foreground">
+            {issue.title || "Untitled issue"}
+          </h1>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge size="sm" variant={state.badgeVariant}>
+              <state.Icon aria-hidden className={state.toneClassName} />
+              {state.label}
+            </Badge>
+            <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
+              <PullRequestActorLabel
+                actor={issue.author === null ? null : { ...issue.author, name: null }}
+              />
+              <span>updated {formatRelativeTimeLabel(issue.updatedAt)}</span>
+            </PullRequestMetaLine>
+            <div className="ml-auto flex flex-wrap items-start gap-1.5">
+              <IssueStartAction
+                key={`${environmentId}:${repository.host}:${repository.repository}:${issue.number}`}
+                environmentId={environmentId}
+                reference={{ ...repository, number: issue.number }}
+                threadRef={threadRef}
+                closed={issue.state === "closed"}
+              />
+              <StartInWorktree
+                environmentId={environmentId}
+                host={repository.host}
+                repository={repository.repository}
+                issue={issue}
+                threadRef={threadRef}
+              />
+            </div>
           </div>
         </div>
+        <nav aria-label="Issue tabs" className="border-t border-border/60 px-4 py-2">
+          <ToggleGroup
+            size="segmented"
+            variant="segmented"
+            value={[tab]}
+            onValueChange={(next) => {
+              const chosen = tabs.find((item) => item.value === next[0])?.value;
+              if (chosen) setTabChoice({ key: issueKey, tab: chosen });
+            }}
+          >
+            {tabs.map((item) => (
+              <Toggle key={item.value} value={item.value}>
+                {item.label}
+              </Toggle>
+            ))}
+          </ToggleGroup>
+        </nav>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -474,61 +542,66 @@ export function IssueDetailPanel({
             </Button>
           </div>
         ) : null}
-        <dl className="mb-5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
-          <dt className="text-muted-foreground">Assignees</dt>
-          <dd className="truncate text-foreground">
-            {issue.assignees.length > 0
-              ? issue.assignees.map((assignee) => `@${assignee.login}`).join(", ")
-              : "Unassigned"}
-          </dd>
-          <dt className="text-muted-foreground">Milestone</dt>
-          <dd className="truncate text-foreground">{issue.milestone?.title ?? "No Milestone"}</dd>
-          <dt className="text-muted-foreground">Labels</dt>
-          <dd className="flex min-w-0 flex-wrap gap-1">
-            {issue.labels.length > 0
-              ? issue.labels.map((label) => (
-                  <Badge key={label.name} size="sm" variant="outline">
-                    {label.color ? (
-                      <span
-                        aria-hidden
-                        className="size-1.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: `#${label.color}` }}
-                      />
-                    ) : null}
-                    {label.name}
-                  </Badge>
-                ))
-              : "None"}
-          </dd>
-        </dl>
-        {linkedPullRequests.length > 0 ? (
-          <LinkedPullRequests
-            issueRepository={repository.repository}
-            pullRequests={linkedPullRequests}
-            threadRef={threadRef}
-          />
-        ) : null}
-        <div className="border-t border-border/50 pt-4">
-          {body.trim().length > 0 ? (
-            <ChatMarkdown
-              cwd={undefined}
+        {tab === "timeline" ? (
+          issue.commentCount > 0 ? (
+            <IssueComments
+              comments={comments}
               environmentId={environmentId}
-              threadRef={threadRef ?? undefined}
-              text={body}
+              issueUrl={issueUrl}
+              threadRef={threadRef}
+              totalCount={issue.commentCount}
             />
           ) : (
-            <p className="text-sm italic text-muted-foreground">No description.</p>
-          )}
-        </div>
-        {issue.commentCount > 0 ? (
-          <IssueComments
-            comments={comments}
-            environmentId={environmentId}
-            issueUrl={issueUrl}
-            threadRef={threadRef}
-            totalCount={issue.commentCount}
-          />
-        ) : null}
+            <p className="text-sm italic text-muted-foreground">No comments yet.</p>
+          )
+        ) : (
+          <>
+            <dl className="mb-5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+              <dt className="text-muted-foreground">Assignees</dt>
+              <dd className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-foreground">
+                {issue.assignees.length > 0
+                  ? issue.assignees.map((assignee) => (
+                      <PullRequestActorLabel
+                        key={assignee.login}
+                        actor={{ ...assignee, name: null }}
+                      />
+                    ))
+                  : "Unassigned"}
+              </dd>
+              <dt className="text-muted-foreground">Milestone</dt>
+              <dd className="truncate text-foreground">
+                {issue.milestone?.title ?? "No Milestone"}
+              </dd>
+              <dt className="text-muted-foreground">Labels</dt>
+              <dd className="flex min-w-0 flex-wrap gap-1">
+                {issue.labels.length > 0
+                  ? issue.labels.map((label) => (
+                      <PullRequestLabelChip key={label.name} label={label} />
+                    ))
+                  : "None"}
+              </dd>
+            </dl>
+            {linkedPullRequests.length > 0 ? (
+              <LinkedPullRequests
+                issue={{ environmentId, ...repository, number: issue.number }}
+                pullRequests={linkedPullRequests}
+                threadRef={threadRef}
+              />
+            ) : null}
+            <div className="border-t border-border/50 pt-4">
+              {body.trim().length > 0 ? (
+                <ChatMarkdown
+                  cwd={undefined}
+                  environmentId={environmentId}
+                  threadRef={threadRef ?? undefined}
+                  text={body}
+                />
+              ) : (
+                <p className="text-sm italic text-muted-foreground">No description.</p>
+              )}
+            </div>
+          </>
+        )}
         {query.isPending ? (
           <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
             Refreshing issue…

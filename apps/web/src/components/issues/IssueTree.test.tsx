@@ -6,6 +6,9 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { IssueTree } from "./IssueTree";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 
+// The rows' tooltips need a DOM; this covers the tree's disclosure state, not the rows.
+vi.mock("./IssueRow", () => ({ IssueRow: () => null }));
+
 const milestone: IssueMilestone = {
   number: 1,
   title: "Release",

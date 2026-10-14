@@ -1,12 +1,9 @@
 import type { IssueMilestone, IssueSummary } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
-import { IssueStateIcon } from "./IssueStateIcon";
 import { type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
-import { Badge } from "~/components/ui/badge";
-import { issueProjectChips } from "./issueProjects.logic";
+import { IssueRow } from "./IssueRow";
 import type { IssueGroup } from "./issueTree.logic";
 
 /** Indentation for repository, milestone and issue rows; the tree has no boxes. */
@@ -118,49 +115,16 @@ export function IssueTree({
               </p>
             ) : isExpanded ? (
               <ul id={panelId} className="pb-1">
-                {group.issues.map((issue) => {
-                  const selected = selectedIssueNumber === issue.number;
-                  const projectChips = issueProjectChips(issue.projects);
-                  return (
-                    <li key={issue.number}>
-                      <button
-                        type="button"
-                        aria-current={selected ? "page" : undefined}
-                        className={cn(
-                          "flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-md py-1 pe-2 text-left text-sm hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                          LEVEL_PADDING[2],
-                          selected && "bg-accent text-accent-foreground hover:bg-accent",
-                        )}
-                        onClick={() => onSelect(issue)}
-                      >
-                        <IssueStateIcon issue={issue} className="size-3.5" />
-                        <span className="min-w-0 flex-1 break-words">
-                          <span className="me-1 font-mono text-xs text-muted-foreground">
-                            #{issue.number}
-                          </span>
-                          {issue.title || "Untitled issue"}
-                          {projectChips.length > 0 ? (
-                            <span className="mt-1 flex flex-wrap gap-1">
-                              {projectChips.map((chip) => (
-                                <Badge key={chip.key} variant="secondary" size="sm">
-                                  {chip.label}
-                                </Badge>
-                              ))}
-                            </span>
-                          ) : null}
-                        </span>
-                        {issue.labels.length > 0 ? (
-                          <span className="hidden max-w-32 shrink-0 truncate text-2xs text-muted-foreground sm:block">
-                            {issue.labels[0]?.name}
-                          </span>
-                        ) : null}
-                        <span className="hidden shrink-0 text-2xs text-muted-foreground lg:block">
-                          updated {formatRelativeTimeLabel(issue.updatedAt)}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
+                {group.issues.map((issue) => (
+                  <li key={issue.number}>
+                    <IssueRow
+                      issue={issue}
+                      selected={selectedIssueNumber === issue.number}
+                      onSelect={() => onSelect(issue)}
+                      className={LEVEL_PADDING[2]}
+                    />
+                  </li>
+                ))}
               </ul>
             ) : null}
           </section>

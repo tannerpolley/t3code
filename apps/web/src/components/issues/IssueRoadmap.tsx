@@ -7,12 +7,11 @@ import type {
   IssueSummary,
 } from "@t3tools/contracts";
 import { CirclePauseIcon, LinkIcon, RadioIcon } from "lucide-react";
-import { IssueStateIcon } from "./IssueStateIcon";
+import { IssueRow } from "./IssueRow";
 import { Badge } from "~/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { issueRoadmap, issueLiveStatus, openIssueBlockers } from "./issueRoadmap.logic";
-import { issueProjectChips } from "./issueProjects.logic";
 
 function IssueLiveWork({
   issue,
@@ -134,23 +133,12 @@ export function IssueRoadmap({
               {rows.map(({ issue, cycle }) => (
                 <li key={issue.number} className="px-2 py-1">
                   <div className="flex items-start gap-1">
-                    <button
-                      type="button"
-                      aria-current={selectedIssueNumber === issue.number ? "page" : undefined}
-                      className={cn(
-                        "flex min-w-0 flex-1 items-start gap-2 rounded-md px-1 py-1 text-left text-sm hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                        selectedIssueNumber === issue.number && "bg-accent text-accent-foreground",
-                      )}
-                      onClick={() => onSelect(issue)}
-                    >
-                      <IssueStateIcon issue={issue} className="mt-0.5 size-3.5" />
-                      <span className="min-w-0 break-words">
-                        <span className="me-1 font-mono text-xs text-muted-foreground">
-                          #{issue.number}
-                        </span>
-                        {issue.title || "Untitled issue"}
-                      </span>
-                    </button>
+                    <IssueRow
+                      issue={issue}
+                      selected={selectedIssueNumber === issue.number}
+                      onSelect={() => onSelect(issue)}
+                      className="flex-1 px-1"
+                    />
                     <IssueLiveWork issue={issue} environmentId={environmentId} />
                   </div>
                   <div className="flex flex-wrap items-center gap-1 ps-6 text-xs text-muted-foreground">
@@ -186,11 +174,6 @@ export function IssueRoadmap({
                     ) : issue.relationshipsComplete !== false && issue.blockedBy !== undefined ? (
                       <span>Ready</span>
                     ) : null}
-                    {issueProjectChips(issue.projects).map((chip) => (
-                      <Badge key={chip.key} variant="secondary" size="sm">
-                        {chip.label}
-                      </Badge>
-                    ))}
                   </div>
                 </li>
               ))}

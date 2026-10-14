@@ -2,14 +2,12 @@ import { useAtomValue } from "@effect/atom-react";
 import { type EnvironmentId, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { IssueBrowser, useIssueRepositoryTargets } from "../components/issues/IssueBrowser";
 import { IssueDetailPanel } from "../components/issues/IssueDetailPanel";
 import { sameRepository } from "../components/issues/issueWorkspace.logic";
 import { RightPanelTabs } from "../components/RightPanelTabs";
-import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
 import { isElectron } from "../env";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -447,14 +445,9 @@ function IssuesRouteView() {
         tabIndex={-1}
         className="flex min-h-0 flex-1 flex-col outline-none md:hidden"
       >
-        <div className="flex h-11 shrink-0 items-center border-b border-border/60 px-2">
-          <Button aria-label="Back to issues" onClick={closeNarrowDetail} size="sm" variant="ghost">
-            <ArrowLeftIcon aria-hidden />
-            Issues
-          </Button>
-        </div>
         <IssueDetailPanel
           environmentId={panelEnvironmentId}
+          onBack={closeNarrowDetail}
           {...(originThreadForSurface === null ? {} : { onOpenBesideThread: openBesideThread })}
           refreshToken={detailRefreshToken}
           reference={{
