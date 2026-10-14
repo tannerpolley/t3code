@@ -247,14 +247,22 @@ and their marks follow the same rules as on web and desktop.
 When a connected environment has GitHub Issues support, open **Issues** from the sidebar. It lists
 issues from every repository your GitHub account owns and every organization repository you
 administer, whether or not the repository is a T3 Code project. Repositories you only collaborate
-on, including the upstream of a fork, are left out. Issues are grouped by owner, then repository,
-then milestone; your own account comes first.
+on, including the upstream of a fork, are left out. The Milestones view groups issues by owner,
+then repository and milestone; your own account comes first.
 
 Use **Filter** to choose what is shown: open and closed issues; archived, forked, empty, public,
 private, personal, and organization repositories; milestone and assignment; and how issues are
 sorted. Open issues are shown by default, with archived, forked, and empty repositories hidden.
 Filter choices are remembered in that browser. The search box matches repository names and issue
 details.
+
+Switch a repository to **Roadmap** for its open issues in dependency order, with **In progress**,
+**Ready**, and **Blocked** sections. Within a section, open blockers and sub-issues come before
+the issues that depend on them; closed blockers no longer hold work back. The view choice is
+remembered per repository.
+Select a work indicator to open its linked thread; hover to see the thread's branch, worktree and
+pull requests. To include work started outside **Start agent**, ask the agent to link the issue it
+is working on. Ordinary threads and delegated workers can both link issues.
 
 To keep one repository visible while its kind is hidden, such as a single fork, show it once, then
 use the pin button on its row. A pinned repository ignores the repository filters but still follows
