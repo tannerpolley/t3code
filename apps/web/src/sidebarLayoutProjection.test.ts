@@ -113,7 +113,7 @@ describe("shared sidebar projection", () => {
     ).toEqual(candidate);
     reloaded.dispose();
   });
-  it("imports only each environment's projects and necessary section ancestors", () => {
+  it("imports only each environment's projects and necessary section ancestors, with empty sections in the primary", () => {
     const snapshot = groups([project("clone"), project("remote-project", remote)]);
     const legacy = {
       ...EMPTY_SIDEBAR_LAYOUT,
@@ -124,8 +124,8 @@ describe("shared sidebar projection", () => {
       ],
     };
     expect(
-      migrateSidebarLayout(legacy, snapshot, local).sidebarProjectSections.map((s) => s.id),
-    ).toEqual(["local-only"]);
+      migrateSidebarLayout(legacy, snapshot, local, true).sidebarProjectSections.map((s) => s.id),
+    ).toEqual(["local-only", "empty"]);
     expect(
       migrateSidebarLayout(legacy, snapshot, remote).sidebarProjectSections.map((s) => s.id),
     ).toEqual(["remote-only"]);

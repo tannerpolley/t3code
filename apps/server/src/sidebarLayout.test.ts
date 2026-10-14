@@ -108,6 +108,7 @@ it.effect(
               projectKeys: ["other-environment"],
               collapsed: false,
             },
+            { id: "empty", name: "Empty", projectKeys: [], collapsed: false },
           ],
         });
         yield* Effect.all(
@@ -123,7 +124,7 @@ it.effect(
         assert.isNotNull(winner.legacyImportedAt);
         assert.deepEqual(
           winner.layout.sidebarProjectSections.map((s) => s.id),
-          [winner.legacyImportId],
+          [winner.legacyImportId, "empty"],
         );
         yield* service.update({
           revision: 0,

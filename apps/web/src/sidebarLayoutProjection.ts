@@ -85,11 +85,16 @@ export function projectSidebarLayout(input: {
   };
 }
 
-/** Resolve the old logical/path keys once; new storage never needs repository re-keying. */
+/**
+ * Resolve the old logical/path keys once; new storage never needs repository re-keying.
+ * Sections the owner left empty go only to the primary environment, so they aren't copied
+ * into every environment.
+ */
 export function migrateSidebarLayout(
   legacy: SidebarLayout,
   groups: readonly SidebarProjectSnapshot[],
   environmentId: EnvironmentId,
+  keepEmptySections = false,
 ): SidebarLayout {
   const aliases = new Map<string, string[]>();
   for (const group of groups)
@@ -125,7 +130,13 @@ export function migrateSidebarLayout(
     }),
   }));
   const included = new Set(
-    sections.filter((section) => section.projectKeys.length > 0).map((section) => section.id),
+    sections
+      .filter(
+        (section, index) =>
+          section.projectKeys.length > 0 ||
+          (keepEmptySections && legacy.sidebarProjectSections[index]!.projectKeys.length === 0),
+      )
+      .map((section) => section.id),
   );
   for (const section of sections)
     if (included.has(section.id) && section.parentId) included.add(section.parentId);

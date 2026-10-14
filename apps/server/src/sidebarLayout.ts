@@ -92,7 +92,13 @@ export const make = Effect.gen(function* () {
     JSON.stringify(a.layout) === JSON.stringify(b.layout);
   const projectRows = projects.list().pipe(Effect.mapError(error));
   // Imports can contain stale projects or a broken entry; keep the valid environment-owned part.
+  // A section sent empty is the owner's own empty section; one emptied by stale projects is not.
   const ownLayout = (layout: SidebarLayout, ids: Set<string>): SidebarLayout => {
+    const sentEmpty = new Set(
+      layout.sidebarProjectSections
+        .filter((section) => section.projectKeys.length === 0)
+        .map((section) => section.id),
+    );
     const seen = new Set<string>();
     const sectionIds = new Set<string>();
     const sections = layout.sidebarProjectSections
@@ -110,7 +116,9 @@ export const make = Effect.gen(function* () {
         }),
       }));
     const included = new Set(
-      sections.filter((section) => section.projectKeys.length > 0).map((section) => section.id),
+      sections
+        .filter((section) => section.projectKeys.length > 0 || sentEmpty.has(section.id))
+        .map((section) => section.id),
     );
     for (const section of sections)
       if (included.has(section.id) && section.parentId) included.add(section.parentId);

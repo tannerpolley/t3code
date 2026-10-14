@@ -270,6 +270,7 @@ export function SidebarLayoutSync() {
           groups={groups}
           controller={controller}
           legacy={source}
+          primary={environmentId === primaryEnvironmentId}
           allowImport={importEnvironments === null || importEnvironments.has(environmentId)}
           onLegacyStored={() => {
             setImportEnvironments((current) => current ?? new Set(environmentIds));
@@ -287,6 +288,7 @@ function SidebarLayoutEnvironment(props: {
   groups: readonly SidebarProjectSnapshot[];
   controller: ReturnType<typeof createSidebarLayoutClient>;
   legacy: SidebarLayout;
+  primary: boolean;
   allowImport: boolean;
   onLegacyStored: () => void;
 }) {
@@ -307,8 +309,8 @@ function SidebarLayoutEnvironment(props: {
     [pendingImport, server, props.environmentId, props.legacy],
   );
   const candidate = useMemo(
-    () => migrateSidebarLayout(legacy, props.groups, props.environmentId),
-    [legacy, props.groups, props.environmentId],
+    () => migrateSidebarLayout(legacy, props.groups, props.environmentId, props.primary),
+    [legacy, props.groups, props.environmentId, props.primary],
   );
   const fallbackReady =
     shellReady &&
@@ -363,7 +365,11 @@ function SidebarLayoutSubscription(props: {
     });
     if (record) props.controller.receive(props.environmentId, record);
   }, [record, props.controller, props.environmentId, props.candidate, props.canWrite]);
-  const current = props.controller.record(props.environmentId);
+  // Subscribed rather than read in render: the React Compiler memoizes a plain call on
+  // its arguments, which would keep the pre-snapshot null forever.
+  const current = useSyncExternalStore(props.controller.subscribe, () =>
+    props.controller.record(props.environmentId),
+  );
   useEffect(() => {
     if (
       !current ||
@@ -380,7 +386,7 @@ function SidebarLayoutSubscription(props: {
     ]);
     if (current.legacyImportedAt === null) {
       if (sent.current) return;
-      if (ids.size === 0) {
+      if (ids.size === 0 && candidate.sidebarProjectSections.length === 0) {
         if (
           props.groups
             .flatMap((group) => group.memberProjects)
