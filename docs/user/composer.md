@@ -235,6 +235,10 @@ Provider commands must start the message to run. T3 Code commands such as
 
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
+Codex and Claude offer to compact before resuming a context of at least 100,000
+tokens after a long idle period. Turn off the Compact chip to send with full
+history instead. Without a reported cache lifetime, the offer starts after
+70 minutes of inactivity.
 
 ## Goals
 

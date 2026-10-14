@@ -143,10 +143,10 @@ describe("formatContextWindowCompactionMessage", () => {
 describe("shouldOfferResumeCompaction", () => {
   const now = "2026-08-24T12:00:00.000Z";
 
-  it("matches Claude's old-session age and context thresholds", () => {
+  it.each(["claudeAgent", "codex"])("offers compaction for a large idle %s session", (provider) => {
     expect(
       shouldOfferResumeCompaction({
-        provider: "claudeAgent",
+        provider,
         usedTokens: 100_000,
         updatedAt: "2026-08-24T10:50:00.000Z",
         now,
@@ -186,10 +186,10 @@ describe("shouldOfferResumeCompaction", () => {
     expect(offer("2026-08-24T11:56:00.000Z")).toBe(false);
   });
 
-  it("does not show Claude's resume prompt for another provider", () => {
+  it("does not offer resume compaction for a provider outside this flow", () => {
     expect(
       shouldOfferResumeCompaction({
-        provider: "codex",
+        provider: "cursor",
         usedTokens: 300_000,
         updatedAt: "2026-08-24T09:00:00.000Z",
         now,

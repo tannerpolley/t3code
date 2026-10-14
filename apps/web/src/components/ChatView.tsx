@@ -7848,7 +7848,7 @@ export default function ChatView(props: ChatViewProps) {
           ? "Compaction is unavailable for this provider"
           : "Compacting is unavailable right now"
     : null;
-  // Tokens a stale Claude session would re-read on its next turn. While set,
+  // Tokens in a large idle session that can be compacted before its next turn. While set,
   // the composer shows a Compact chip and Enter compacts first; turning the
   // chip off sends the next message with full history. Held queues and
   // multi-model sends never compact first, so the offer hides for them.
