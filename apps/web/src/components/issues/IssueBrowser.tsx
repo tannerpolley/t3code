@@ -824,12 +824,15 @@ export function IssueBrowser({
     </Empty>
   ) : (
     <>
-      <div className="flex items-baseline justify-between px-4 pb-1.5 text-2xs text-muted-foreground">
-        <span className="font-semibold uppercase tracking-wide">Repositories</span>
-        <span className="tabular-nums">
-          {repositoryEntries.length} of {repositoryTargets.length} shown
-        </span>
-      </div>
+      {/* A repository scope already names its one repository in the header. */}
+      {explicitScope && urlRepository !== null ? null : (
+        <div className="flex items-baseline justify-between px-4 pb-1.5 text-2xs text-muted-foreground">
+          <span className="font-semibold uppercase tracking-wide">Repositories</span>
+          <span className="tabular-nums">
+            {repositoryEntries.length} of {repositoryTargets.length} shown
+          </span>
+        </div>
+      )}
       {listedRepositories.length > 0 ? (
         <div className="px-2 pb-2">{repositoryTree}</div>
       ) : (
