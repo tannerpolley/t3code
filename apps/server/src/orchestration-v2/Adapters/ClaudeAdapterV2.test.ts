@@ -4256,6 +4256,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const proposedItems = [...items.values()].filter((item) => item.type === "proposed_plan");
         assert.lengthOf(todoItems, 2);
         assert.lengthOf(proposedItems, 1);
+        assert.equal(proposedItems[0]?.status, "completed");
+        assert.isFalse(proposedItems[0]?.type === "proposed_plan" && proposedItems[0].streaming);
         assert.equal(
           proposedItems[0]?.type === "proposed_plan" && proposedItems[0].markdown,
           planMarkdown,

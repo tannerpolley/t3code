@@ -1915,6 +1915,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         // Streamed plan text per plan item, dropped when the item completes.
         const planDeltas = new Map<string, string>();
+        const latestProposedPlans = new Map<ThreadId, OrchestrationV2PlanArtifact>();
         const stoppedCommandItemsByTurn = new Map<string, Set<string>>();
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
         const pendingRuntimeRequests = yield* Ref.make(
@@ -3999,6 +4000,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly status: OrchestrationV2PlanArtifact["status"];
           readonly markdown: string;
           readonly completed?: boolean;
+          readonly terminalStatus?: "interrupted" | "failed";
         }) =>
           Effect.gen(function* () {
             const updatedAt = yield* DateTime.now;
@@ -4032,7 +4034,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               parentNodeId: input.context.itemParentNodeId,
               rootNodeId: input.context.rootNodeId,
               kind: "plan",
-              status: input.completed === true ? "completed" : "running",
+              status: input.terminalStatus ?? (input.completed === true ? "completed" : "running"),
               countsForRun: false,
               providerThreadId: input.context.providerThread.id,
               providerTurnId: input.context.providerTurnId,
@@ -4052,7 +4054,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeItemRef: codexNativeItemRef(input.nativeItemId),
               parentItemId: null,
               ordinal,
-              status: input.completed === true ? "completed" : "running",
+              status: input.terminalStatus ?? (input.completed === true ? "completed" : "running"),
               title: null,
               startedAt,
               completedAt,
@@ -4062,6 +4064,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               markdown: input.markdown,
               streaming: input.completed !== true,
             };
+            if (input.completed && input.status === "active") {
+              const previous = latestProposedPlans.get(plan.threadId);
+              if (
+                previous !== undefined &&
+                previous.id !== plan.id &&
+                previous.status !== "completed"
+              ) {
+                yield* emitProviderEvent({
+                  type: "plan.updated",
+                  driver: CODEX_PROVIDER,
+                  plan: { ...previous, status: "superseded" },
+                });
+              }
+              latestProposedPlans.set(plan.threadId, plan);
+            }
             return { node, plan, turnItem };
           });
 
@@ -4358,7 +4375,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const artifacts = yield* buildProposedPlanArtifacts({
               context,
               nativeItemId: payload.itemId,
-              status: "active",
+              status: "draft",
               markdown,
             });
             yield* emitProviderEvent({
@@ -4804,6 +4821,32 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   return updated;
                 });
               }
+              return;
+            }
+
+            if (payload.item.type === "plan") {
+              planDeltas.set(payload.item.id, payload.item.text);
+              const artifacts = yield* buildProposedPlanArtifacts({
+                context,
+                nativeItemId: payload.item.id,
+                status: "draft",
+                markdown: payload.item.text,
+              });
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "plan.updated",
+                driver: CODEX_PROVIDER,
+                plan: artifacts.plan,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
               return;
             }
 
@@ -5879,6 +5922,33 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const current = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
               if (current !== input.context) {
                 return false;
+              }
+              for (const [nativeItemId, markdown] of planDeltas) {
+                if (!input.context.itemPositions.has(nativeItemId)) continue;
+                planDeltas.delete(nativeItemId);
+                const artifacts = yield* buildProposedPlanArtifacts({
+                  context: input.context,
+                  nativeItemId,
+                  markdown,
+                  status: "superseded",
+                  completed: true,
+                  terminalStatus: input.status === "failed" ? "failed" : "interrupted",
+                }).pipe(Effect.orDie);
+                yield* emitProviderEvent({
+                  type: "node.updated",
+                  driver: CODEX_PROVIDER,
+                  node: artifacts.node,
+                });
+                yield* emitProviderEvent({
+                  type: "plan.updated",
+                  driver: CODEX_PROVIDER,
+                  plan: artifacts.plan,
+                });
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: CODEX_PROVIDER,
+                  turnItem: artifacts.turnItem,
+                });
               }
               input.context.fileChangesByItem.clear();
               const providerRetry = yield* Ref.modify(providerRetries, (current) => {

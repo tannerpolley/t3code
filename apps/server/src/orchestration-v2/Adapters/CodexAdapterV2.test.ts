@@ -2703,6 +2703,95 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         : [],
     );
 
+  it.effect("keeps partial proposals non-actionable and supersedes the prior finished plan", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "parity-plan-thread";
+        const nativeTurnId = "parity-plan-turn";
+        const item = (method: "item/started" | "item/completed", id: string, text: string) => ({
+          type: "emit_inbound" as const,
+          frame: {
+            method,
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              startedAtMs: 1782622441000,
+              completedAtMs: 1782622442000,
+              item: { type: "plan", id, text },
+            },
+          },
+        });
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "proposal-parity",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Make a plan." }),
+              item("item/started", "first-plan", ""),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "item/plan/delta",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    itemId: "first-plan",
+                    delta: "# First",
+                  },
+                },
+              },
+              item("item/completed", "first-plan", ""),
+              item("item/completed", "second-plan", "# Revised"),
+              item("item/started", "unfinished-plan", "# Incomplete"),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+                  },
+                },
+              },
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("proposal-parity"),
+            text: "Make a plan.",
+          }),
+        );
+        yield* harness.firstTerminal;
+        const plans = harness.events.flatMap((event) =>
+          event.type === "plan.updated" ? [event.plan] : [],
+        );
+        assert.deepEqual(
+          plans.map((plan) => plan.status),
+          ["draft", "draft", "active", "superseded", "active", "draft", "superseded"],
+        );
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "proposed_plan"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.equal(
+          items.find((item) => item.markdown === "# First" && !item.streaming)?.status,
+          "completed",
+        );
+        assert.equal(items.at(-1)?.streaming, false);
+        assert.equal(items.at(-1)?.status, "interrupted");
+        assert.equal(items.at(-1)?.markdown, "# Incomplete");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
       Effect.gen(function* () {
