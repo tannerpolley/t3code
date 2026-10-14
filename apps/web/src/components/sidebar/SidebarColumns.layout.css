@@ -6,7 +6,8 @@
   --sidebar-location-width: 0.75rem;
   --sidebar-role-width: 0.75rem;
   --sidebar-provider-width: 1rem;
-  --sidebar-model-width: 3rem;
+  --sidebar-model-width: 2.75rem;
+  --sidebar-version-width: 1.1875rem;
   --sidebar-effort-width: 2.5rem;
   --sidebar-count-width: 1rem;
   --sidebar-time-width: 4.875rem;
@@ -21,21 +22,21 @@
         max(0px, var(--sidebar-thread-inset, 0px) - var(--sidebar-thread-lead))
     ) var(--sidebar-location-width) var(--sidebar-role-width) var(--sidebar-provider-width) var(
       --sidebar-model-width
-    ) var(--sidebar-effort-width) minmax(0, 1fr) var(--sidebar-count-width) var(
-      --sidebar-time-width
-    ) var(--sidebar-work-width);
+    ) var(--sidebar-version-width) var(--sidebar-effort-width) minmax(0, 1fr) var(
+      --sidebar-count-width
+    ) var(--sidebar-time-width) var(--sidebar-work-width);
   column-gap: 3px;
 }
-@container sidebar-columns (width < calc(18.5rem + 30px + 10ch)) {
+@container sidebar-columns (width < calc(19.4375rem + 33px + 10ch)) {
   .sidebar-thread-columns {
     grid-template-columns: calc(
         var(--sidebar-caret-width) +
           max(0px, var(--sidebar-thread-inset, 0px) - var(--sidebar-thread-lead))
       ) var(--sidebar-location-width) var(--sidebar-role-width) var(--sidebar-provider-width) var(
         --sidebar-model-width
-      ) var(--sidebar-effort-width) minmax(0, 1fr) var(--sidebar-count-width) var(
-        --sidebar-time-width
-      ) var(--sidebar-work-width);
+      ) var(--sidebar-version-width) var(--sidebar-effort-width) minmax(0, 1fr) var(
+        --sidebar-count-width
+      ) var(--sidebar-time-width) var(--sidebar-work-width);
   }
   .sidebar-thread-usage {
     display: none;
@@ -45,22 +46,22 @@
     --sidebar-thread-lead: 0px;
   }
 }
-@container sidebar-columns (width < calc(16.5rem + 27px + 10ch)) {
+@container sidebar-columns (width < calc(17.4375rem + 30px + 10ch)) {
   .sidebar-thread-columns {
     grid-template-columns: calc(
         var(--sidebar-caret-width) +
           max(0px, var(--sidebar-thread-inset, 0px) - var(--sidebar-thread-lead))
       ) var(--sidebar-location-width) var(--sidebar-role-width) var(--sidebar-provider-width) var(
         --sidebar-model-width
-      ) minmax(0, 1fr) var(--sidebar-count-width) var(--sidebar-time-width) var(
-        --sidebar-work-width
-      );
+      ) var(--sidebar-version-width) minmax(0, 1fr) var(--sidebar-count-width) var(
+        --sidebar-time-width
+      ) var(--sidebar-work-width);
   }
   .sidebar-thread-effort {
     display: none;
   }
 }
-@container sidebar-columns (width < calc(14rem + 24px + 10ch)) {
+@container sidebar-columns (width < calc(14.9375rem + 27px + 10ch)) {
   .sidebar-thread-columns {
     grid-template-columns: calc(
         var(--sidebar-caret-width) +

@@ -371,7 +371,9 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 ## Compare threads in Projects
 
 With **Codex-style sidebar** enabled on web and desktop, the Projects view aligns each thread's token usage, location,
-role, provider, model, effort, name, time, and work status. Expand a thread to follow
+role, provider, model, effort, name, time, and work status. Model names show up to six
+characters, with versions such as 5.5 and 6.1 lined up; hover the model for its full
+name. Expand a thread to follow
 its child agents. Child rows keep the same columns as their parent. A thread with
 child agents and everything under it share one tint color, so each group stands out;
 deeper rows take a slightly stronger shade. A thread without children has no tint.

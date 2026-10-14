@@ -6,7 +6,9 @@ export const sidebarColumnLayout = {
     location: 0.75,
     role: 0.75,
     provider: 1,
-    model: 3,
+    // The model splits into a name of up to six characters and a version, so versions align.
+    model: 2.75,
+    version: 1.1875,
     effort: 2.5,
     name: 0,
     count: 1,
@@ -14,13 +16,15 @@ export const sidebarColumnLayout = {
     work: 0.875,
   },
   gapPx: 3,
+  /** Optional columns in the order a narrowing sidebar drops them; the model drops as one. */
+  dropOrder: [["usage"], ["effort"], ["model", "version"]],
   rowPaddingRem: 1,
   titleCh: 10,
   titleFontRem: 0.75,
 } as const;
 
 export function generateSidebarColumnLayoutCss() {
-  const { tracks, gapPx, titleFontRem } = sidebarColumnLayout;
+  const { tracks, gapPx, titleFontRem, dropOrder } = sidebarColumnLayout;
   const entries = Object.entries(tracks);
   const visible = (hidden: ReadonlySet<string>) => entries.filter(([name]) => !hidden.has(name));
   const template = (hidden: ReadonlySet<string>) =>
@@ -57,9 +61,10 @@ export function generateSidebarColumnLayoutCss() {
       "\n",
     )}\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template(full)};\n  column-gap: ${gapPx}px;\n}\n`;
   const hidden = new Set<string>();
-  for (const column of ["usage", "effort", "model"]) {
+  for (const columns of dropOrder) {
     const boundary = threshold(hidden);
-    hidden.add(column);
+    for (const column of columns) hidden.add(column);
+    const column = columns[0];
     const leadRule = leadingTracks.some(([name]) => name === column)
       ? `  .sidebar-thread-columns, .sidebar-caret-toggle { --sidebar-thread-lead: ${lead(hidden)}; }\n`
       : "";

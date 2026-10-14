@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { useClientSettings } from "../../hooks/useSettings";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
 import { formatSidebarTokens } from "./SidebarTokenUsage.logic";
 
 import { cn } from "~/lib/utils";
@@ -109,7 +110,8 @@ export function SidebarThreadColumns(props: {
   readonly location?: ReactNode;
   readonly role?: ReactNode;
   readonly provider?: ReactNode;
-  readonly model?: ReactNode;
+  /** The short model label; its name and version fill two aligned tracks. */
+  readonly model?: string | undefined;
   readonly effort?: ReactNode;
   readonly name: ReactNode;
   readonly count?: number | undefined;
@@ -125,7 +127,7 @@ export function SidebarThreadColumns(props: {
       <span className="sidebar-thread-icon">{props.location}</span>
       <span className="sidebar-thread-icon">{props.role}</span>
       <span className="sidebar-thread-icon">{props.provider}</span>
-      <span className="sidebar-thread-model">{props.model}</span>
+      <SidebarThreadModel label={props.model} />
       <span className="sidebar-thread-effort">{props.effort}</span>
       <span className="sidebar-thread-name">{props.name}</span>
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
@@ -167,6 +169,21 @@ export function sidebarThreadName(
         {THREAD_ROLE_LABELS[role]}
       </TooltipTrigger>
       <TooltipPopup side="top">{title}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** The model's name and version cells, with the whole label on hover. */
+function SidebarThreadModel(props: { readonly label: string | undefined }) {
+  if (!props.label) return <span className="sidebar-thread-model" />;
+  const { name, version } = splitSidebarModelLabel(props.label);
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="sidebar-thread-model" />}>
+        <span className="sidebar-thread-model-part">{name}</span>
+        <span className="sidebar-thread-model-part">{version}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
     </Tooltip>
   );
 }

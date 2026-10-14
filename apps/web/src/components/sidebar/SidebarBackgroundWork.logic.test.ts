@@ -13,6 +13,7 @@ import { makeThreadFixture } from "../../test-fixtures";
 import {
   childWorktreeLabel,
   sharesParentLocation,
+  splitSidebarModelLabel,
   sameSidebarSubagentTree,
   describeSidebarBackgroundWork,
   groupBackgroundWorkTaskRows,
@@ -309,6 +310,18 @@ describe("background task metadata", () => {
     );
     expect(msUntilPossiblyStuck(start, Date.parse("2026-09-23T12:00:00.000Z"))).toBe(0);
     expect(msUntilPossiblyStuck(start, Date.parse("2026-09-24T12:00:00.000Z"))).toBe(0);
+  });
+});
+
+describe("splitSidebarModelLabel", () => {
+  it("splits short labels into a name of up to six characters and a version", () => {
+    const split = (label: string) => Object.values(splitSidebarModelLabel(label));
+    expect(split("Opus 5.5")).toEqual(["Opus", "5.5"]);
+    expect(split("Sonnet 5")).toEqual(["Sonnet", "5"]);
+    expect(split("GPT-5.3 Codex")).toEqual(["GPT", "5.3"]);
+    expect(split("Flash 3.8 (High)")).toEqual(["Flash", "3.8"]);
+    expect(split("Codestral 25")).toEqual(["Codest", "25"]);
+    expect(split("Default")).toEqual(["Defaul", ""]);
   });
 });
 

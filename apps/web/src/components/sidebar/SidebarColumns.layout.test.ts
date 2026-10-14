@@ -13,9 +13,11 @@ const ch = (1337 / 2048) * sidebarColumnLayout.titleFontRem * 16;
 const optionalColumns = (sidebarRem: number) => {
   const container = sidebarRem * 16 - 40;
   const hidden = new Set<string>();
-  for (const column of ["usage", "effort", "model"]) {
+  for (const columns of sidebarColumnLayout.dropOrder) {
     const budget = sidebarColumnBudget(hidden);
-    if (container < budget.rem * 16 + budget.px + budget.ch * ch) hidden.add(column);
+    if (container < budget.rem * 16 + budget.px + budget.ch * ch) {
+      for (const column of columns) hidden.add(column);
+    }
   }
   return ["model", "effort", "usage"].filter((column) => !hidden.has(column));
 };
@@ -23,9 +25,9 @@ const optionalColumns = (sidebarRem: number) => {
 describe("sidebar width budget", () => {
   it("protects ten title characters before admitting optional columns", () => {
     expect(optionalColumns(16)).toEqual([]);
-    expect(optionalColumns(24)).toEqual(["model"]);
-    expect(optionalColumns(27)).toEqual(["model", "effort"]);
-    expect(optionalColumns(29)).toEqual(["model", "effort", "usage"]);
+    expect(optionalColumns(25)).toEqual(["model"]);
+    expect(optionalColumns(27.5)).toEqual(["model", "effort"]);
+    expect(optionalColumns(30)).toEqual(["model", "effort", "usage"]);
   });
 });
 
@@ -38,20 +40,62 @@ it("keeps the committed CSS equal to generated CSS apart from formatter whitespa
   expect(tokens(committedCss)).toBe(tokens(generateSidebarColumnLayoutCss()));
 });
 
+// Widest OpenDyslexic advances, in 2048ths of the font size, across the installed Regular and Bold
+// OTF and WOFF builds; this machine renders the sans font as OpenDyslexic Bold. The widest digit
+// (1391) bounds every digit, as tabular numerals.
+const ADVANCES = new Map(
+  Object.entries({
+    " ": 801,
+    ".": 603,
+    A: 1710,
+    G: 1614,
+    H: 1477,
+    L: 1270,
+    M: 1772,
+    O: 1688,
+    P: 1340,
+    S: 1373,
+    T: 1575,
+    X: 1663,
+    a: 1258,
+    d: 1327,
+    e: 1334,
+    g: 1328,
+    h: 1290,
+    i: 551,
+    k: 1387,
+    l: 700,
+    m: 1985,
+    n: 1319,
+    o: 1334,
+    p: 1360,
+    r: 979,
+    s: 1174,
+    t: 1027,
+    u: 1260,
+    w: 1803,
+    x: 1512,
+  }),
+);
+/** A label's width at the 11px size of the model, effort and time columns. */
+const widthPx = (label: string) =>
+  ([...label].reduce((total, char) => total + (/\d/.test(char) ? 1391 : ADVANCES.get(char)!), 0) /
+    2048) *
+  11;
+const fits = (labels: readonly string[], track: keyof typeof sidebarColumnLayout.tracks) => {
+  for (const label of labels) {
+    expect(widthPx(label), label).toBeLessThanOrEqual(sidebarColumnLayout.tracks[track] * 16);
+  }
+};
+
 it("fits every elapsed label up to 99h 59m 59s inside the time track", () => {
-  // Widest OpenDyslexic advances, in 2048ths of the 11px time size, across the installed OTF and
-  // WOFF builds. The widest digit (1390) bounds every digit, as tabular numerals.
-  const advances = new Map(Object.entries({ " ": 801, h: 1290, m: 1985, s: 1174 }));
   // Hours past 99 grow a digit and may spill; that is over four days on one turn.
   const samples = [0, 9, 59, 60, 309, 59 * 60 + 59, 3600, 3909, 10 * 3600, 99 * 3600 + 3599];
-  for (const label of samples.map(formatElapsedSeconds)) {
-    const width =
-      ([...label].reduce(
-        (total, char) => total + (/\d/.test(char) ? 1390 : advances.get(char)!),
-        0,
-      ) /
-        2048) *
-      11;
-    expect(width, label).toBeLessThanOrEqual(sidebarColumnLayout.tracks.time * 16);
-  }
+  fits(samples.map(formatElapsedSeconds), "time");
+});
+
+it("fits six-character model names, their versions and every effort label", () => {
+  fits(["Opus", "Sonnet", "Haiku", "Sol", "Luna", "Astra", "GPT"], "model");
+  fits(["5.5", "6.1", "8.8"], "version");
+  fits(["Low", "Med", "High", "XHigh", "Max"], "effort");
 });
