@@ -65,6 +65,8 @@ export function SidebarProcessGroupRows(props: {
   readonly hiddenGroupCount: number;
   /** The Projects tree's aligned columns; otherwise the compact list. */
   readonly columns: boolean;
+  /** Nesting level below the top-level thread, for the columns' tint. */
+  readonly depth?: number | undefined;
 }) {
   if (props.groups.length === 0) return null;
   const rowClass = cn(
@@ -72,7 +74,9 @@ export function SidebarProcessGroupRows(props: {
     PROJECTS_WORK_ROW_HEIGHT,
     props.columns ? "rounded-md px-2 sidebar-thread-tint" : "px-1.5",
   );
-  const depth = props.columns ? ({ "--sidebar-thread-depth": 1 } as CSSProperties) : undefined;
+  const depth = props.columns
+    ? ({ "--sidebar-thread-depth": props.depth ?? 1 } as CSSProperties)
+    : undefined;
   return (
     <>
       {props.groups.map((group) => {

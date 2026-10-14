@@ -82,6 +82,7 @@ import {
   useCallback,
   useMemo,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
@@ -1512,7 +1513,7 @@ function SidebarSubagentTree(props: {
       child.id,
       props.relocatedThreadKeys,
     );
-    return rows.length === 0 ? null : { child, grandchildren, rows };
+    return { child, grandchildren, rows };
   };
   return (
     <SidebarBackgroundWorkRows
@@ -1528,7 +1529,7 @@ function SidebarSubagentTree(props: {
       rows={props.rows}
       nestedToggle={(row) => {
         const work = childWork(row);
-        if (work === null) return null;
+        if (work === null || work.rows.length === 0) return null;
         const id = work.child.id;
         return {
           count: work.rows.length,
@@ -1547,24 +1548,58 @@ function SidebarSubagentTree(props: {
         if (work === null) return null;
         const { child, grandchildren, rows } = work;
         return (
-          <div>
-            <SidebarSubagentTree
-              depth={(props.depth ?? 1) + 1}
-              environmentId={props.environmentId}
-              threadId={child.id}
-              rows={rows}
-              parentTasks={child.pendingBackgroundTasks}
-              runningChildren={grandchildren}
-              onChildClick={props.onChildClick}
-              onChildContextMenu={props.onChildContextMenu}
-              runningSubagentsByParentKey={props.runningSubagentsByParentKey}
-              relocatedThreadKeys={props.relocatedThreadKeys}
-              locationLeadKeys={props.locationLeadKeys}
-            />
-          </div>
+          <SidebarSubagentWork
+            thread={child}
+            depth={(props.depth ?? 1) + 1}
+            environmentId={props.environmentId}
+            threadId={child.id}
+            rows={rows}
+            parentTasks={child.pendingBackgroundTasks}
+            runningChildren={grandchildren}
+            onChildClick={props.onChildClick}
+            onChildContextMenu={props.onChildContextMenu}
+            runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+            relocatedThreadKeys={props.relocatedThreadKeys}
+            locationLeadKeys={props.locationLeadKeys}
+          />
         );
       }}
     />
+  );
+}
+
+/**
+ * A subagent's work under its row: its tasks, the commands it is running and the processes they
+ * spawned (see `useSidebarThreadProcesses`), and its own subagents.
+ */
+function SidebarSubagentWork(
+  props: Omit<ComponentProps<typeof SidebarSubagentTree>, "afterTasks"> & {
+    readonly thread: SidebarThreadSummary;
+  },
+) {
+  const { thread, rows, ...tree } = props;
+  const { watchRow, commandRows, processGroups, hiddenProcessGroups } = useSidebarThreadProcesses(
+    thread,
+    resolveSidebarThreadStatus(thread) === "working" || thread.pendingBackgroundTasks.length > 0,
+  );
+  const workRows = withRunningCommandRows(rows, commandRows);
+  return (
+    <div ref={watchRow}>
+      {workRows.length > 0 || processGroups.length > 0 ? (
+        <SidebarSubagentTree
+          {...tree}
+          rows={workRows}
+          afterTasks={
+            <SidebarProcessGroupRows
+              columns
+              depth={tree.depth}
+              groups={processGroups}
+              hiddenGroupCount={hiddenProcessGroups}
+            />
+          }
+        />
+      ) : null}
+    </div>
   );
 }
 
