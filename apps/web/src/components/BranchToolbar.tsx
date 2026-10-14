@@ -198,8 +198,9 @@ const RunContextSelector = memo(function RunContextSelector({
     () => availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null,
     [availableEnvironments, environmentId],
   );
+  // An existing worktree outranks the mode; FolderGit2 is only a worktree not made yet.
   const WorkspaceIcon =
-    effectiveEnvMode === "worktree"
+    forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? FolderGit2Icon
       : activeWorktreePath
         ? FolderGitIcon

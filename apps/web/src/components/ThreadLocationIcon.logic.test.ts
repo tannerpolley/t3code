@@ -70,5 +70,31 @@ describe("threadLocation", () => {
         branch: "t3/feature",
       }),
     ).toMatchObject({ kind: "preparing", checkout: "Preparing worktree", branch: "t3/feature" });
+    expect(
+      threadLocation({
+        remote: true,
+        environmentName: "Laptop",
+        preparingWorktree: true,
+        worktreePath: null,
+        branch: "t3/feature",
+      }),
+    ).toMatchObject({
+      kind: "preparing",
+      environment: "Laptop",
+      label: "Laptop · Preparing worktree",
+    });
+    expect(
+      threadLocation({
+        remote: false,
+        machine: "cloud",
+        environmentName: "Cloud",
+        preparingWorktree: true,
+        worktreePath: null,
+      }),
+    ).toMatchObject({
+      kind: "preparing",
+      environment: "Cloud",
+      label: "Cloud · Preparing worktree",
+    });
   });
 });

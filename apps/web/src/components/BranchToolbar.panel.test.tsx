@@ -96,12 +96,13 @@ it("keeps machine choices usable when the combined row's workspace is locked", a
 });
 
 it.each([
-  ["local", null, "/tmp/project"],
-  ["worktree", null, null],
-  ["worktree", "/tmp/worktree", "/tmp/worktree"],
+  ["local", null, "/tmp/project", "lucide-folder-root"],
+  ["worktree", null, null, "lucide-folder-git-2"],
+  // A started thread in an existing worktree shows the worktree, not a new one.
+  ["worktree", "/tmp/worktree", "/tmp/worktree", "lucide-folder-git"],
 ] as const)(
   "copies only an existing workspace path with mode %s and worktree %s",
-  async (envMode, worktreePath, copiedPath) => {
+  async (envMode, worktreePath, copiedPath, workspaceIcon) => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     state.worktreePath = worktreePath;
     state.showContextMenu.mockClear();
@@ -126,9 +127,11 @@ it.each([
           />,
         );
       });
+      const control = container.querySelector('[aria-label="Run context"]')!;
+      expect(control.querySelector("svg")!.classList).toContain(workspaceIcon);
       const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
       await act(async () => {
-        container.querySelector('[aria-label="Run context"]')!.dispatchEvent(event);
+        control.dispatchEvent(event);
       });
       expect(event.defaultPrevented).toBe(copiedPath !== null);
       if (copiedPath === null) {

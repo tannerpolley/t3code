@@ -19,13 +19,13 @@ export function threadLocation(input: {
   const environment = remote ? input.environmentName : null;
   const worktree = input.worktreePath?.trim() ? fileBasename(input.worktreePath.trim()) : null;
   const branch = input.branch || null;
-  if (!remote && !worktree && input.preparingWorktree) {
+  if (!worktree && input.preparingWorktree) {
     return {
       kind: "preparing",
       environment,
       checkout: "Preparing worktree",
       branch,
-      label: "Preparing worktree",
+      label: [...(environment ? [environment] : []), "Preparing worktree"].join(" · "),
     } as const;
   }
   const label = [
