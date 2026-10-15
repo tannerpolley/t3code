@@ -735,6 +735,27 @@ describe("managed issue work", () => {
         child.thread.lineage,
       );
       assert.equal((yield* threads.getThreadProjection(root.thread.id)).subagents.length, 2);
+      // A follow-up to the former worker could never be admitted; it names the successor instead.
+      const runsBefore = (yield* threads.getThreadRecords(child.thread.id, ["runs"])).runs.length;
+      const refused = yield* threads
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("issue-worker:former-followup"),
+          threadId: child.thread.id,
+          messageId: MessageId.make("issue-worker:former-followup"),
+          text: "Revise the fix",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(Effect.flip);
+      assert.include(refused.message, successorTask.event.payload.childThreadId);
+      assert.equal(
+        (yield* threads.getThreadRecords(child.thread.id, ["runs"])).runs.length,
+        runsBefore,
+      );
     }).pipe(Effect.provide(testLayer));
   };
 

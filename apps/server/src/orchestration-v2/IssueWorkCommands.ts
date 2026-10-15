@@ -102,6 +102,44 @@ export function makeIssueWorkCommands({
           : yield* store.issueOwner(read.parent);
       return parent === thread.lineage.parentThreadId;
     }).pipe(Effect.catch(() => Effect.succeed(false)));
+  // An issue has one current worker, and only it is admitted to run. A message
+  // from a person or agent to a former worker would queue for an admission that
+  // never comes, so it is refused with the current worker's name instead.
+  const guardFormerWorkerMessage = (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
+    thread: OrchestrationV2AppThread,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) =>
+    Effect.gen(function* () {
+      const issue = thread.linkedIssue;
+      if (
+        issue === undefined ||
+        Option.isNone(issueWorkStore) ||
+        command.delegatedCompletion !== undefined ||
+        (command.createdBy !== "user" && command.creationSource !== "mcp")
+      )
+        return;
+      // A worker created earlier in this command owns its issue before the store records it.
+      const createdOwner = (yield* Ref.get(events)).findLast(
+        (event) =>
+          event.type === "thread.created" &&
+          event.payload.linkedIssue !== undefined &&
+          sameIssueRepository(event.payload.linkedIssue, issue) &&
+          event.payload.linkedIssue.id === issue.id,
+      )?.threadId;
+      const owner =
+        createdOwner ??
+        (yield* issueWorkStore.value.issueOwner(issue).pipe(mapDispatchError(command)));
+      if (owner === null || owner === thread.id) return;
+      const ownerShell = yield* projectionStore
+        .getThreadShell(owner)
+        .pipe(mapDispatchError(command));
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        detail: `Issue #${issue.number} is now worked by another thread${ownerShell ? ` ("${ownerShell.title}")` : ""}, ${owner}. Send this follow-up there, or delegate a new task for the issue.`,
+      });
+    });
   const start = Effect.fn("orchestrationV2.dispatch.issueWorkStart")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "issue.work.start" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -386,6 +424,7 @@ export function makeIssueWorkCommands({
 
   return {
     canStartRun: canStartIssueRun,
+    guardFormerWorkerMessage,
     start,
     reuseManagedChild,
     childIssueFields,
