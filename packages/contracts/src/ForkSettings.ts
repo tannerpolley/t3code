@@ -258,8 +258,11 @@ export const ForkClientSettingsFields = {
   lineageDetailsExpanded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   revealOpenThreadInSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   lineageAutoClearMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** Show the Issues page in the sidebar. */
   issuesPage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** List the thread repository's issues in thread details. */
   versionControlIssues: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Offer Claude Code plugin skills in the composer menus, labeled Plugin. */
   pluginSkills: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Usage page Limits laid out like Cost and Tokens (one window kind at a time,
@@ -267,28 +270,40 @@ export const ForkClientSettingsFields = {
    * per-provider window cards.
    */
   usageLimitModelBreakdown: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** The sidebar footer's Usage icon shows each provider's five-hour quota left. */
   sidebarFiveHourUsage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
    * The sidebar footer's Usage icon shows today's pace budget left, pacing each
    * Monday–Friday at 20% of each provider's weekly limit.
    */
   dailyUsageMeter: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** The sidebar footer's Usage icon shows each provider's weekly quota left instead. */
   sidebarWeeklyUsage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Customizations: this fork's UI changes, each switchable back to the original behavior.
   branchPickerGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Show a browser tab an agent uses in the right panel instead of the floating mini player. */
   agentBrowserInPanel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Show a new question from any thread in a floating panel, to answer without opening it. */
   openQuestionsAutomatically: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /** Offer to apply supported Codex project settings when onboarding imports projects. */
   onboardingCodexSettings: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Clicking a background command or monitor shows its live output in a popup. */
   backgroundProcessOutput: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Experimental: a working thread's running commands and the processes they spawned. */
   runningCommandsAndProcesses: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
   shortModelNames: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** The thread details pane lists the thread's Lineage; off hides the section. */
   lineageInDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Lineage rows led by model and effort, with status marks, details and clearing. */
   threadDetailsRedesign: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** The quicker running-activity shimmer. */
   fastShimmer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Render $…$, $$…$$, \( \) and \[ \] math in chat messages with KaTeX. */
   chatMath: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 };
 
@@ -297,12 +312,14 @@ export const ForkServerSettingsFields = {
   issueUpkeepRequiresApproval: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /** User-only: the server answers every pending agent question and approval while on. */
   dontAskMode: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
    * Ordered defaults for delegated work, shown to orchestrating agents in
    * new sessions and turns. Server-side because the prompt is built here.
    */
   modelRoles: ModelRoles.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_MODEL_ROLES))),
+  /** Disconnect agent sessions after this many idle minutes; 0 keeps sessions open. */
   idleAgentSessionMinutes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   usageLimitRecovery: UsageLimitRecoveryMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off")),
@@ -318,7 +335,7 @@ export const ForkServerSettingsFields = {
   agentBrowserTabLimits: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Local servers the browser panel leaves out. The port scanner skips matching listeners before
-   * probing, so they are never sent a request. Restorable in Settings → Customizations.
+   * probing, so they are never sent a request. Restorable in Settings → Integrations.
    */
   localServerHideRules: Schema.Array(LocalServerHideRule).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -365,7 +382,6 @@ export const ForkServerSettingsPatchFields = {
   dontAskMode: Schema.optionalKey(Schema.Boolean),
   // Whole-list replacement: roles are ordered and edited as one list.
   modelRoles: Schema.optionalKey(ModelRoles),
-  // Server settings
   idleAgentSessionMinutes: Schema.optionalKey(NonNegativeInt),
   usageLimitRecovery: Schema.optionalKey(UsageLimitRecoveryMode),
   usageLimitFallbackModels: Schema.optionalKey(Schema.Array(ModelSelection)),

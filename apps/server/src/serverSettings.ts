@@ -1,3 +1,7 @@
+import {
+  ForkPersistedServerSettingsFields,
+  migrateForkPersistedServerSettings,
+} from "./ForkServerSettings.ts";
 /**
  * ServerSettings - Server-authoritative settings service.
  *
@@ -318,7 +322,7 @@ const PersistedResponseStreamingMode = Schema.Union([
 const ServerSettingsJson = fromLenientJson(
   Schema.Struct({
     ...ServerSettings.fields,
-    usageLimitRecovery: Schema.optionalKey(Schema.Unknown),
+    ...ForkPersistedServerSettingsFields,
     responseStreamingMode: PersistedResponseStreamingMode.pipe(
       Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
     ),
@@ -333,17 +337,7 @@ const ServerSettingsJson = fromLenientJson(
     Schema.decodeTo(
       Schema.toType(ServerSettings),
       SchemaTransformation.transform({
-        decode: (saved): ServerSettings => ({
-          ...saved,
-          usageLimitRecovery:
-            saved.usageLimitRecovery === "off" ||
-            saved.usageLimitRecovery === "wait" ||
-            saved.usageLimitRecovery === "switch"
-              ? saved.usageLimitRecovery
-              : saved.autoResumeLimitedThreads || saved.snoozeLimitedThreads
-                ? "wait"
-                : "off",
-        }),
+        decode: (saved) => migrateForkPersistedServerSettings(saved),
         encode: (settings) => settings,
       }),
     ),

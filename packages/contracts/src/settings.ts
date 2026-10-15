@@ -499,21 +499,6 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
-  // Fork customizations, each switchable back to the original behavior in Settings → Customizations.
-  /** Show the Issues page in the sidebar. */
-  /** List the thread repository's issues in thread details. */
-  /** Offer Claude Code plugin skills in the composer menus, labeled Plugin. */
-  /** The sidebar footer's Usage icon shows each provider's five-hour quota left. */
-  /** The sidebar footer's Usage icon shows each provider's weekly quota left instead. */
-  /** Show a browser tab an agent uses in the right panel instead of the floating mini player. */
-  /** Show a new question from any thread in a floating panel, to answer without opening it. */
-  /** Offer to apply supported Codex project settings when onboarding imports projects. */
-  /** Clicking a background command or monitor shows its live output in a popup. */
-  /** Experimental: a working thread's running commands and the processes they spawned. */
-  /** Model labels drop the company name the provider icon already shows: "Opus 5.5", "Sol 6". */
-  /** The thread details pane lists the thread's Lineage; off hides the section. */
-  /** Lineage rows led by model and effort, with status marks, details and clearing. */
-  /** The quicker running-activity shimmer. */
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -528,7 +513,6 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotFlash: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** Render $…$, $$…$$, \( \) and \[ \] math in chat messages with KaTeX. */
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1125,7 +1109,6 @@ export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const ServerSettings = Schema.Struct({
   ...ForkServerSettingsFields,
-  /** User-only: the server answers every pending agent question and approval while on. */
   // Null means no client has migrated this preference yet; an empty value is
   // authoritative so another device cannot resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1158,7 +1141,6 @@ export const ServerSettings = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
-  /** Disconnect agent sessions after this many idle minutes; 0 keeps sessions open. */
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `t3-code` server (and with it every
@@ -1569,6 +1551,7 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
+  // Server settings
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),

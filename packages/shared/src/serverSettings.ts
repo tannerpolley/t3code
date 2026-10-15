@@ -1,3 +1,5 @@
+import { normalizeUsageLimitRecoveryPatch } from "./ForkServerSettings.ts";
+export { normalizeUsageLimitRecoveryPatch } from "./ForkServerSettings.ts";
 import type { ModelPreferences } from "@t3tools/contracts/settings";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
@@ -394,31 +396,6 @@ function translateLegacyProjectOverridePatch(
     ...rest,
     projectSettingsOverrides: Object.fromEntries(entries),
   } as ServerSettingsPatch;
-}
-
-/** Retired switches remain accepted from older clients; the mode owns the preference. */
-export function normalizeUsageLimitRecoveryPatch(
-  current: Pick<ServerSettings, "autoResumeLimitedThreads" | "snoozeLimitedThreads">,
-  patch: ServerSettingsPatch,
-): ServerSettingsPatch {
-  if (patch.usageLimitRecovery !== undefined)
-    return {
-      ...patch,
-      autoResumeLimitedThreads:
-        patch.usageLimitRecovery === "wait" && (patch.autoResumeLimitedThreads ?? true),
-      snoozeLimitedThreads:
-        patch.usageLimitRecovery === "wait" && (patch.snoozeLimitedThreads ?? true),
-    };
-  if (patch.autoResumeLimitedThreads === undefined && patch.snoozeLimitedThreads === undefined)
-    return patch;
-  const autoResume = patch.autoResumeLimitedThreads ?? current.autoResumeLimitedThreads;
-  const snooze = patch.snoozeLimitedThreads ?? current.snoozeLimitedThreads;
-  return {
-    ...patch,
-    usageLimitRecovery: autoResume || snooze ? "wait" : "off",
-    autoResumeLimitedThreads: autoResume,
-    snoozeLimitedThreads: snooze,
-  };
 }
 
 export function applyServerSettingsPatch(
