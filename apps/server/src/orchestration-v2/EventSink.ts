@@ -1,6 +1,5 @@
 import {
   CommandId,
-  type SidebarLayoutError,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
@@ -184,7 +183,7 @@ export interface EventSinkV2Shape {
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
     readonly event: UnsequencedProjectEvent;
-    readonly beforeCommit?: Effect.Effect<void, SidebarLayoutError>;
+    readonly beforeCommit?: Effect.Effect<void, unknown>;
   }) => Effect.Effect<
     { readonly receipt: CommandReceiptStore.ProjectCommandReceiptV2; readonly committed: boolean },
     EventSinkV2Error

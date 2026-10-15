@@ -10,6 +10,7 @@ import {
   type ProjectSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -197,7 +198,16 @@ export const make = Effect.gen(function* () {
       row.deletedAt === null
         ? yield* projectEnrichment.getAvailable(row.workspaceRoot)
         : yield* projectEnrichment.peek(row.workspaceRoot);
-    return toProject(row, enrichment);
+    const project = toProject(row, enrichment);
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectOperationError({ operation: "read-project", projectId: row.projectId, cause }),
+      ),
+    );
+    return settings.projectSettingsFolded
+      ? { ...project, scripts: resolveProjectScripts(settings, project) }
+      : project;
   });
 
   const readRow = (projectId: ProjectId, options?: { readonly includeDeleted?: boolean }) =>
@@ -252,24 +262,65 @@ export const make = Effect.gen(function* () {
                 .findActiveByWorkspaceRoot(workspaceRoot)
                 .pipe(Effect.mapError(dispatchError)),
             );
+      const settings = yield* serverSettings.getSettings;
+      const scripts = command.type === "project.delete" ? undefined : command.scripts;
+      const foldedScripts = settings.projectSettingsFolded && scripts !== undefined;
       const now = yield* DateTime.now;
       const eventId = yield* idAllocator.allocate
         .event({ commandId: command.commandId })
         .pipe(Effect.mapError(dispatchError));
       const planned = planProjectCommand({
         command,
-        state: { project, workspaceOwner },
+        state: {
+          project:
+            project && settings.projectSettingsFolded
+              ? {
+                  ...project,
+                  scripts: resolveProjectScripts(settings, {
+                    id: projectId,
+                    scripts: project.scripts,
+                  }),
+                }
+              : project,
+          workspaceOwner,
+        },
         eventId,
         now,
       });
       if (Result.isSuccess(planned)) {
+        const event = planned.success;
+        // Folded actions belong only to settings; the planner still validates the input.
+        const storedEvent = (() => {
+          if (!foldedScripts) return event;
+          if (event.type === "project.created") {
+            return { ...event, payload: { ...event.payload, scripts: [] } };
+          }
+          if (event.type === "project.meta-updated") {
+            const { scripts: _scripts, ...payload } = event.payload;
+            return { ...event, payload };
+          }
+          return event;
+        })();
+        const persist = Effect.gen(function* () {
+          if (beforeCommit !== undefined) yield* beforeCommit;
+          if (foldedScripts) {
+            yield* serverSettings.updateSettingsWith((current) => ({
+              projectSettingsOverrides: {
+                [projectId]: {
+                  ...current.projectSettingsOverrides[projectId],
+                  defaultProjectScripts: scripts,
+                },
+              },
+            }));
+          }
+        });
         const { receipt } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
           acceptedAt: now,
-          event: planned.success,
-          ...(beforeCommit === undefined ? {} : { beforeCommit }),
+          event: storedEvent,
+          beforeCommit: persist,
         });
         return receipt;
       }

@@ -19,6 +19,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -73,13 +74,15 @@ const layerTestFor = (
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
+  projectSettingsFolded = false,
 ) =>
   RuntimeLayer.layerProjectService.pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
     Layer.provideMerge(layerWorkspacePaths),
     Layer.provideMerge(projectMetadataLayer),
+    Layer.provideMerge(ProjectStore.layer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest({ projectSettingsFolded })),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
     Layer.provide(NodeServices.layer),
   );
@@ -120,11 +123,27 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
 
 it.layer(layerTest)("ProjectService", (it) => {
   it.effect(
-    "MCP create-with-section and placement-only update persist through the real service",
+    "MCP project scripts use folded settings for create, update, reads, and clearing while preserving sidebar placement",
     () =>
       Effect.gen(function* () {
         const service = yield* ProjectService.ProjectService;
         const sidebar = yield* SidebarLayout.SidebarLayoutService;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const store = yield* ProjectStore.ProjectStoreV2;
+        const scripts = [
+          {
+            id: "check-status",
+            name: "Check status",
+            command: "echo status",
+            icon: "play" as const,
+            runOnWorktreeCreate: true,
+            runOnSettle: true,
+            async: true,
+            autoOpenPreview: true,
+          },
+        ];
+        const defaults = [{ ...scripts[0]!, id: "environment-default" }];
+        yield* settings.updateSettings({ defaultProjectScripts: defaults });
         yield* sidebar.update({
           revision: 0,
           operations: [{ type: "add", section: { id: "mcp", name: "MCP" } }],
@@ -190,6 +209,92 @@ it.layer(layerTest)("ProjectService", (it) => {
             sidebarExpanded: false,
           })
           .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        assert.isUndefined((yield* settings.getSettings).projectSettingsOverrides[project.id]);
+
+        const write = (input: { scripts?: typeof scripts; title?: string }) =>
+          toolkit
+            .handle("t3_project_update", { projectId: project.id, ...input })
+            .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        // No action override exists yet, as in the reported reproduction.
+        yield* write({ scripts });
+        const configured = yield* settings.getSettings;
+        assert.deepEqual(configured.projectSettingsOverrides[project.id], {
+          defaultProjectScripts: scripts,
+        });
+        yield* settings.updateSettings({
+          projectSettingsOverrides: {
+            [project.id]: {
+              ...configured.projectSettingsOverrides[project.id],
+              defaultAutoPull: true,
+            },
+          },
+        });
+        assert.deepEqual(configured.defaultProjectScripts, defaults);
+        assert.deepEqual(Option.getOrThrow(yield* store.get(project.id)).scripts, []);
+        const read = yield* toolkit
+          .handle("t3_project_read", { projectId: project.id })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        const readProject = read.at(-1)?.result;
+        assert.ok(readProject && "scripts" in readProject);
+        if (!readProject || !("scripts" in readProject)) return;
+        assert.deepEqual(readProject.scripts, scripts);
+        const effective = Option.getOrThrow(yield* service.getById(project.id));
+        assert.deepEqual(effective.scripts, scripts);
+        assert.deepEqual(resolveProjectScripts(configured, effective), scripts);
+        yield* write({ title: "Renamed" });
+        assert.deepEqual(
+          Option.getOrThrow(yield* service.getByWorkspaceRoot(project.workspaceRoot)).scripts,
+          scripts,
+        );
+        yield* write({ scripts: [] });
+        assert.deepEqual(Option.getOrThrow(yield* service.getById(project.id)).scripts, []);
+        assert.deepEqual((yield* settings.getSettings).defaultProjectScripts, defaults);
+        assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides[project.id], {
+          defaultAutoPull: true,
+          defaultProjectScripts: [],
+        });
+        assert.deepEqual(
+          (yield* service.snapshot).projects.find((row) => row.id === project.id)?.scripts,
+          [],
+        );
+        const replayInput = {
+          projectId: project.id,
+          commandId: CommandId.make("folded-script-replay"),
+          scripts,
+        };
+        yield* service.update(replayInput);
+        yield* write({ scripts: [] });
+        yield* service.update(replayInput);
+        assert.deepEqual(Option.getOrThrow(yield* service.getById(project.id)).scripts, []);
+        const invalid = yield* service
+          .update({
+            ...replayInput,
+            commandId: CommandId.make("folded-invalid-script"),
+            scripts: [{ ...scripts[0]!, id: "Not.Valid" }],
+          })
+          .pipe(Effect.flip);
+        assert.equal(invalid._tag, "ProjectOperationError");
+        assert.deepEqual(
+          (yield* settings.getSettings).projectSettingsOverrides[project.id]?.defaultProjectScripts,
+          [],
+        );
+        const createdWithScripts = yield* toolkit
+          .handle("t3_project_create", {
+            title: "With actions",
+            workspaceRoot: "/work/with-actions",
+            scripts,
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+        const second = createdWithScripts.at(-1)?.result;
+        assert.ok(second && "id" in second);
+        if (!second || !("id" in second)) return;
+        assert.deepEqual(second.scripts, scripts);
+        assert.deepEqual(
+          (yield* settings.getSettings).projectSettingsOverrides[second.id]?.defaultProjectScripts,
+          scripts,
+        );
+        assert.deepEqual(Option.getOrThrow(yield* store.get(second.id)).scripts, []);
+
         assert.deepEqual((yield* sidebar.get).layout.sidebarProjectSections[0]?.projectKeys, []);
         const rejected = yield* toolkit
           .handle("t3_project_create", {
@@ -203,7 +308,7 @@ it.layer(layerTest)("ProjectService", (it) => {
         if (rejection && "message" in rejection)
           assert.equal(rejection.message, "Section not found.");
         assert.isTrue(Option.isNone(yield* service.getByWorkspaceRoot("/work/invalid-mcp")));
-      }).pipe(Effect.provide(Layer.fresh(layerTest))),
+      }).pipe(Effect.provide(Layer.fresh(layerTestFor(layerMetadata, true)))),
   );
   it.effect(
     "organizes only lifecycle changes, skips empty metadata events, and deletes sidebar references",
