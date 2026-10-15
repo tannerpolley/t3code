@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 
@@ -267,6 +268,13 @@ it.effect(
       yield* service.reconcile(rootId);
       assert.equal((yield* store.configuration(rootId))!.milestones[0]!.status, "blocked");
       eligible = true;
+      // Inside the retry wait the rejected attempt is replayed, so no new receipt appears.
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* store.issueOwner(issue));
+      assert.isTrue(
+        Option.isNone(yield* receipts.getByCommandId(CommandId.make(`${first}:retry:2`))),
+      );
+      yield* TestClock.adjust("2 minutes");
       yield* service.reconcile(rootId);
       const childId = yield* store.issueOwner(issue);
       assert.isNotNull(childId);

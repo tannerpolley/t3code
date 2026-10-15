@@ -974,12 +974,17 @@ export const layer = Layer.effect(
             }
             const firstCommandId = `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`;
             let clientRequestId = CommandId.make(firstCommandId);
-            // Rejected commands are immutable; only a rejected attempt gets a new identity.
+            // Rejected commands are immutable; only a rejected attempt gets a new identity. Retries
+            // wait 1 minute after a rejection, doubling up to a day, so a lasting rejection (a
+            // deleted model role, an unavailable provider) adds a few receipts, not one per pass.
+            const now = yield* Clock.currentTimeMillis;
             for (let retry = 1; ; retry++) {
               const receipt = yield* commandReceipts
                 .getByCommandId(clientRequestId)
                 .pipe(Effect.mapError(mapError));
-              if (!Option.exists(receipt, (value) => value.status === "rejected")) break;
+              if (Option.isNone(receipt) || receipt.value.status !== "rejected") break;
+              const waitMs = Math.min(2 ** (retry - 1), 1440) * 60_000;
+              if (now < receipt.value.acceptedAt.epochMilliseconds + waitMs) break;
               clientRequestId = CommandId.make(`${firstCommandId}:retry:${retry}`);
             }
             const started = yield* start({
