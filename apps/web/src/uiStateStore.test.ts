@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -477,16 +477,20 @@ describe("uiStateStore persistence", () => {
     });
   });
 
-  it("persists issue sections independently by host, repository and section", () => {
-    const scope = { host: "github.com", repository: "owner/repo" };
+  it("persists issue sections independently by environment, host, repository and section", () => {
+    const scope = {
+      environmentId: EnvironmentId.make("local"),
+      host: "github.com",
+      repository: "owner/repo",
+    };
     const ready = issueSectionKey(scope, "roadmap:ready");
     const review = issueSectionKey(scope, "roadmap:in-review");
     const milestone = issueSectionKey(scope, "milestone:1");
     const otherRepo = issueSectionKey({ ...scope, repository: "owner/other" }, "roadmap:ready");
     const otherHost = issueSectionKey({ ...scope, host: "github.example.com" }, "roadmap:ready");
-    expect(issueSectionKey({ host: "GitHub.COM", repository: "Owner/Repo" }, "roadmap:ready")).toBe(
-      ready,
-    );
+    expect(
+      issueSectionKey({ ...scope, host: "GitHub.COM", repository: "Owner/Repo" }, "roadmap:ready"),
+    ).toBe(ready);
     let state = setIssueMilestoneCollapsed(makeUiState(), ready, true);
     state = setIssueMilestoneCollapsed(state, milestone, true);
     expect(setIssueMilestoneCollapsed(state, ready, true)).toBe(state);

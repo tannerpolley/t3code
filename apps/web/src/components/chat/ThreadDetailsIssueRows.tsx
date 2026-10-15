@@ -109,7 +109,7 @@ function IssueRows({
   const [preferences, setPreferences] = useIssueFilterPreferences();
   const [issueView, setIssueView] = useIssueView(host, repository);
   const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
-    { host, repository },
+    { environmentId, host, repository },
     issueView === "roadmap" ? "roadmap" : `list:${issueStateFilter(preferences) ?? "open"}`,
   );
   const open = !collapsed;
@@ -317,7 +317,10 @@ function IssueMilestoneGroup({
   host: string;
   repository: string;
 }) {
-  const [collapsed, toggleCollapsed] = useIssueSectionCollapsed({ host, repository }, group.id);
+  const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
+    { environmentId, host, repository },
+    group.id,
+  );
   return (
     <div className="flex flex-col">
       <CollapsibleSectionHeader expanded={!collapsed} onClick={toggleCollapsed}>

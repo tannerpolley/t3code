@@ -104,7 +104,10 @@ function InboxList({
   const { data } = useEnvironmentQuery(issueEnvironment.inbox({ environmentId, input: reference }));
   const markRead = useAtomCommand(issueEnvironment.markInboxRead);
   const canMark = useAtomValue(issueEnvironment.markInboxRead.permissionAtom(environmentId));
-  const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(reference, "inbox");
+  const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
+    { ...reference, environmentId },
+    "inbox",
+  );
   const events = data?.events ?? [];
   const issuesByNumber = new Map(issues?.map((issue) => [issue.number, issue]));
   if (events.length === 0) return null;

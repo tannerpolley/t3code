@@ -1,4 +1,4 @@
-import type { IssueMilestone, IssueSummary } from "@t3tools/contracts";
+import { EnvironmentId, type IssueMilestone, type IssueSummary } from "@t3tools/contracts";
 import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -47,6 +47,7 @@ it("defaults milestones open and preserves a user's collapse across refreshes an
   const render = (issues: readonly IssueSummary[], complete: boolean) => (
     <StrictMode>
       <IssueTree
+        environmentId={EnvironmentId.make("local")}
         scope={{ host: "github.com", repository: "owner/repo" }}
         groups={groupIssuesByMilestone([milestone], issues)}
         issuesComplete={complete}

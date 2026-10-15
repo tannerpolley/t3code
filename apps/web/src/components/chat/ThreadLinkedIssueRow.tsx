@@ -7,7 +7,6 @@ import { AsyncResult } from "effect/reactivity";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useThreadShell } from "~/state/entities";
 import { issueEnvironment, useLiveIssueSummary } from "~/state/issues";
-import { IssueStateIcon } from "../issues/IssueStateIcon";
 import { IssueRow } from "../issues/IssueRow";
 import {
   PULL_REQUEST_ROW_CLASS,
@@ -40,7 +39,7 @@ export function ThreadLinkedIssueRow({
   );
 }
 
-/** The issue's state the way the Issues pane shows it; open until its detail has loaded. */
+/** Show issue state only when its summary is available. */
 function LinkedIssueContent({
   environmentId,
   issue,
@@ -73,7 +72,7 @@ function LinkedIssueContent({
     />
   ) : (
     <button type="button" className={`${PULL_REQUEST_ROW_CLASS} px-2.5`} onClick={onSelect}>
-      <IssueStateIcon issue={{ state: "open" }} />
+      <span aria-hidden className="size-4 shrink-0" />
       <PullRequestRowLines
         number={null}
         title={issue.title || "Untitled issue"}

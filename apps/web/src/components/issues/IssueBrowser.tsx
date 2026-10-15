@@ -13,7 +13,6 @@ import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useUiStateStore } from "~/uiStateStore";
 import { cn } from "~/lib/utils";
 import {
   selectThreadRightPanelState,
@@ -38,7 +37,7 @@ import { Switch } from "../ui/switch";
 import { IssueFilterMenu, useIssueFilterPreferences, useIssueViews } from "./IssueFilterMenu";
 import { acceptIssueListPage, type IssueListSnapshot } from "./issuePaging.logic";
 import { IssueTree, IssueTreeRow, IssueTreeTag } from "./IssueTree";
-import { issueSectionKey } from "./useIssueSectionCollapsed";
+import { IssueSection } from "./IssueSection";
 import { IssueRoadmap } from "./IssueRoadmap";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 import {
@@ -486,9 +485,6 @@ export function IssueBrowser({
     null,
   );
 
-  const collapsedById = useUiStateStore((state) => state.issueMilestoneCollapsedById);
-  const setCollapsed = useUiStateStore((state) => state.setIssueMilestoneCollapsed);
-
   const repositoryEntries = shownRepositories.flatMap((target) => {
     const key = repositoryKey(target.host, target.repository);
     const baseTarget = baseListTargets.find(
@@ -703,78 +699,83 @@ export function IssueBrowser({
           {renderRepositoryBody(entry)}
         </section>
       );
-    const collapseKey = issueSectionKey(entry, "repository");
-    const repositoryOpen = !(collapsedById[collapseKey] ?? false);
     const panelId = `issue-repository-${entry.key.replace(/[^a-z0-9_-]/gi, "-")}`;
     return (
-      <section key={entry.key}>
-        <div className="group/repository flex items-center">
-          <IssueTreeRow
-            level={0}
-            controls={panelId}
-            expanded={repositoryOpen}
-            onToggle={() => setCollapsed(collapseKey, repositoryOpen)}
-            count={entry.countLabel}
-          >
-            <span className="min-w-0 truncate text-sm font-medium">
-              {/* Another owner's repository keeps its owner so a fork and its upstream stay apart. */}
-              {viewerOwners.has(entry.owner.toLowerCase()) ? null : (
-                <span className="font-normal text-muted-foreground">{entry.owner}/</span>
-              )}
-              {entry.repository.slice(entry.repository.indexOf("/") + 1)}
-            </span>
-            {hosts.length > 1 ? (
-              <span className="truncate text-2xs text-muted-foreground">{entry.host}</span>
-            ) : null}
-            {entry.isPrivate ? (
-              <LockIcon aria-label="Private" className="size-3 shrink-0 text-muted-foreground" />
-            ) : null}
-            {entry.isArchived ? <IssueTreeTag>Archived</IssueTreeTag> : null}
-            {entry.isFork ? <IssueTreeTag>Fork</IssueTreeTag> : null}
-            {entry.pinned ? <IssueTreeTag>Pinned</IssueTreeTag> : null}
-            {capableEnvironmentList.length > 1 ? (
-              <span className="truncate text-2xs text-muted-foreground">
-                {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
+      <IssueSection key={`${entry.environmentId}:${entry.key}`} scope={entry} section="repository">
+        {(collapsed, toggleCollapsed) => (
+          <section>
+            <div className="group/repository flex items-center">
+              <IssueTreeRow
+                level={0}
+                controls={panelId}
+                expanded={!collapsed}
+                onToggle={toggleCollapsed}
+                count={entry.countLabel}
+              >
+                <span className="min-w-0 truncate text-sm font-medium">
+                  {/* Another owner's repository keeps its owner so a fork and its upstream stay apart. */}
+                  {viewerOwners.has(entry.owner.toLowerCase()) ? null : (
+                    <span className="font-normal text-muted-foreground">{entry.owner}/</span>
+                  )}
+                  {entry.repository.slice(entry.repository.indexOf("/") + 1)}
+                </span>
+                {hosts.length > 1 ? (
+                  <span className="truncate text-2xs text-muted-foreground">{entry.host}</span>
+                ) : null}
+                {entry.isPrivate ? (
+                  <LockIcon
+                    aria-label="Private"
+                    className="size-3 shrink-0 text-muted-foreground"
+                  />
+                ) : null}
+                {entry.isArchived ? <IssueTreeTag>Archived</IssueTreeTag> : null}
+                {entry.isFork ? <IssueTreeTag>Fork</IssueTreeTag> : null}
+                {entry.pinned ? <IssueTreeTag>Pinned</IssueTreeTag> : null}
+                {capableEnvironmentList.length > 1 ? (
+                  <span className="truncate text-2xs text-muted-foreground">
+                    {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
+                  </span>
+                ) : null}
+              </IssueTreeRow>
+              {/* Unpinned, the pin shows on row hover or focus; the wrapper owns that fade. */}
+              <span
+                className={
+                  entry.pinned
+                    ? "shrink-0"
+                    : "shrink-0 opacity-0 pointer-coarse:opacity-100 group-hover/repository:opacity-100 focus-within:opacity-100"
+                }
+              >
+                <Button
+                  aria-label={
+                    entry.pinned ? `Unpin ${entry.repository}` : `Always show ${entry.repository}`
+                  }
+                  title={entry.pinned ? "Unpin" : "Always show, whatever the filters say"}
+                  aria-pressed={entry.pinned}
+                  onClick={() => togglePinned(entry.key, entry.pinned)}
+                  size="icon-xs"
+                  variant="ghost"
+                >
+                  {entry.pinned ? <PinOffIcon /> : <PinIcon />}
+                </Button>
               </span>
+            </div>
+            {!collapsed ? (
+              <div id={panelId}>
+                <IssueRepositoryControls
+                  environmentId={entry.environmentId}
+                  reference={{ host: entry.host, repository: entry.repository }}
+                />
+                <IssueInboxSection
+                  issues={entry.snapshot?.issues}
+                  environmentId={entry.environmentId}
+                  reference={{ host: entry.host, repository: entry.repository }}
+                />
+                {renderRepositoryBody(entry)}
+              </div>
             ) : null}
-          </IssueTreeRow>
-          {/* Unpinned, the pin shows on row hover or focus; the wrapper owns that fade. */}
-          <span
-            className={
-              entry.pinned
-                ? "shrink-0"
-                : "shrink-0 opacity-0 pointer-coarse:opacity-100 group-hover/repository:opacity-100 focus-within:opacity-100"
-            }
-          >
-            <Button
-              aria-label={
-                entry.pinned ? `Unpin ${entry.repository}` : `Always show ${entry.repository}`
-              }
-              title={entry.pinned ? "Unpin" : "Always show, whatever the filters say"}
-              aria-pressed={entry.pinned}
-              onClick={() => togglePinned(entry.key, entry.pinned)}
-              size="icon-xs"
-              variant="ghost"
-            >
-              {entry.pinned ? <PinOffIcon /> : <PinIcon />}
-            </Button>
-          </span>
-        </div>
-        {repositoryOpen ? (
-          <div id={panelId}>
-            <IssueRepositoryControls
-              environmentId={entry.environmentId}
-              reference={{ host: entry.host, repository: entry.repository }}
-            />
-            <IssueInboxSection
-              issues={entry.snapshot?.issues}
-              environmentId={entry.environmentId}
-              reference={{ host: entry.host, repository: entry.repository }}
-            />
-            {renderRepositoryBody(entry)}
-          </div>
-        ) : null}
-      </section>
+          </section>
+        )}
+      </IssueSection>
     );
   });
 

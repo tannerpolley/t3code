@@ -5,10 +5,11 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import type { IssueDetailResult } from "@t3tools/contracts";
 import { RunId } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 
 const state = vi.hoisted(() => ({
   shells: null as Atom.Writable<readonly EnvironmentThreadShell[]> | null,
-  detail: null as Atom.Writable<AsyncResult.AsyncResult<IssueDetailResult>> | null,
+  detail: null as Atom.Writable<AsyncResult.AsyncResult<IssueDetailResult, Error>> | null,
 }));
 vi.mock("../../state/threads", async () => {
   const { Atom } = await import("effect/reactivity");
@@ -17,7 +18,9 @@ vi.mock("../../state/threads", async () => {
 });
 vi.mock("@t3tools/client-runtime/state/issues", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
-  state.detail = Atom.make<AsyncResult.AsyncResult<IssueDetailResult>>(AsyncResult.initial());
+  state.detail = Atom.make<AsyncResult.AsyncResult<IssueDetailResult, Error>>(
+    AsyncResult.initial(),
+  );
   return { createIssueEnvironmentAtoms: () => ({ detail: () => state.detail }) };
 });
 vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: undefined }));
@@ -128,6 +131,52 @@ it("updates the linked row and detail glyph from the shell stream while cached d
     });
     expect(displayed()).not.toContain("In progress");
     expect(appAtomRegistry.get(state.detail!)).toBe(cached);
+  } finally {
+    await act(async () => renderer?.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps linked issues reachable without claiming an Open state before detail loads or after failure", async () => {
+  const thread = makeThreadFixture({
+    linkedIssue: {
+      host: "github.com",
+      repository: "owner/repo",
+      number: 43,
+      title: "Closed issue",
+      repositoryId: "repo",
+      id: "43",
+      nodeId: "I_43",
+      url: "https://github.com/owner/repo/issues/43",
+    },
+  });
+  appAtomRegistry.set(state.shells!, [thread]);
+  appAtomRegistry.set(state.detail!, AsyncResult.initial());
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      renderer = create(
+        <AppAtomRegistryProvider>
+          <ThreadLinkedIssueRow environmentId={thread.environmentId} threadId={thread.id} />
+        </AppAtomRegistryProvider>,
+      );
+    });
+    const expectUnknownState = () => {
+      expect(renderer!.root.findAllByType("button")).toHaveLength(1);
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Closed issue");
+      expect(
+        renderer!.root.findAll(
+          (node) => node.type === "svg" && node.props["aria-label"] === "Open",
+        ),
+      ).toHaveLength(0);
+      expect(renderer!.root.findAllByType("svg")).toHaveLength(0);
+    };
+    expectUnknownState();
+    await act(async () => {
+      appAtomRegistry.set(state.detail!, AsyncResult.failure(Cause.fail(new Error("Unavailable"))));
+    });
+    expectUnknownState();
   } finally {
     await act(async () => renderer?.unmount());
     vi.unstubAllGlobals();

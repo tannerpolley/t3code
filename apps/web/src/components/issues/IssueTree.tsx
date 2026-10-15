@@ -7,8 +7,7 @@ import type {
 import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { useUiStateStore } from "~/uiStateStore";
-import { issueSectionKey } from "./useIssueSectionCollapsed";
+import { IssueSection } from "./IssueSection";
 import { cn } from "~/lib/utils";
 import { IssueRow } from "./IssueRow";
 import type { IssueGroup } from "./issueTree.logic";
@@ -70,7 +69,7 @@ export function IssueTreeTag({ children }: { readonly children: ReactNode }) {
 
 export interface IssueTreeProps {
   readonly scope: IssueRepositoryRef;
-  readonly environmentId?: EnvironmentId;
+  readonly environmentId: EnvironmentId;
   readonly groups: readonly IssueGroup[];
   readonly issuesComplete: boolean;
   readonly selectedIssueNumber?: number;
@@ -90,57 +89,63 @@ export function IssueTree({
   onSelect,
   renderMilestoneActions,
 }: IssueTreeProps) {
-  const collapsedById = useUiStateStore((state) => state.issueMilestoneCollapsedById);
-  const setCollapsed = useUiStateStore((state) => state.setIssueMilestoneCollapsed);
-
   return (
     <div data-issue-tree>
       {groups.map((group) => {
-        const key = issueSectionKey(scope, group.id);
-        const isExpanded = !(collapsedById[key] ?? false);
         const panelId = `issue-group-${group.id.replace(/[^a-z0-9_-]/gi, "-")}`;
         return (
-          <section key={group.id}>
-            <div className="flex items-start gap-2">
-              <IssueTreeRow
-                level={1}
-                controls={panelId}
-                expanded={isExpanded}
-                onToggle={() => setCollapsed(key, isExpanded)}
-                count={
-                  issuesComplete
-                    ? `${group.issues.length} ${group.issues.length === 1 ? "issue" : "issues"}`
-                    : `${group.issues.length} loaded`
-                }
-              >
-                <span className="min-w-0 truncate text-sm text-foreground/90">{group.title}</span>
-                {group.milestone?.state === "closed" ? <IssueTreeTag>Closed</IssueTreeTag> : null}
-              </IssueTreeRow>
-              {group.milestone == null ? null : renderMilestoneActions?.(group.milestone)}
-            </div>
-            {isExpanded && group.issues.length === 0 ? (
-              <p
-                id={panelId}
-                className={cn("py-1.5 text-xs text-muted-foreground", LEVEL_PADDING[2])}
-              >
-                No matching issues
-              </p>
-            ) : isExpanded ? (
-              <ul id={panelId} className="pb-1">
-                {group.issues.map((issue) => (
-                  <li key={issue.number}>
-                    <IssueRow
-                      environmentId={environmentId}
-                      issue={issue}
-                      selected={selectedIssueNumber === issue.number}
-                      onSelect={() => onSelect(issue)}
-                      className={LEVEL_PADDING[2]}
-                    />
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </section>
+          <IssueSection key={group.id} scope={{ ...scope, environmentId }} section={group.id}>
+            {(collapsed, toggleCollapsed) => {
+              const isExpanded = !collapsed;
+              return (
+                <section>
+                  <div className="flex items-start gap-2">
+                    <IssueTreeRow
+                      level={1}
+                      controls={panelId}
+                      expanded={isExpanded}
+                      onToggle={toggleCollapsed}
+                      count={
+                        issuesComplete
+                          ? `${group.issues.length} ${group.issues.length === 1 ? "issue" : "issues"}`
+                          : `${group.issues.length} loaded`
+                      }
+                    >
+                      <span className="min-w-0 truncate text-sm text-foreground/90">
+                        {group.title}
+                      </span>
+                      {group.milestone?.state === "closed" ? (
+                        <IssueTreeTag>Closed</IssueTreeTag>
+                      ) : null}
+                    </IssueTreeRow>
+                    {group.milestone == null ? null : renderMilestoneActions?.(group.milestone)}
+                  </div>
+                  {isExpanded && group.issues.length === 0 ? (
+                    <p
+                      id={panelId}
+                      className={cn("py-1.5 text-xs text-muted-foreground", LEVEL_PADDING[2])}
+                    >
+                      No matching issues
+                    </p>
+                  ) : isExpanded ? (
+                    <ul id={panelId} className="pb-1">
+                      {group.issues.map((issue) => (
+                        <li key={issue.number}>
+                          <IssueRow
+                            environmentId={environmentId}
+                            issue={issue}
+                            selected={selectedIssueNumber === issue.number}
+                            onSelect={() => onSelect(issue)}
+                            className={LEVEL_PADDING[2]}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </section>
+              );
+            }}
+          </IssueSection>
         );
       })}
     </div>

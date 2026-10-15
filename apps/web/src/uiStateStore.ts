@@ -529,7 +529,8 @@ export function setIssueMilestoneCollapsed(
   key: string,
   collapsed: boolean,
 ): UiState {
-  if ((state.issueMilestoneCollapsedById[key] ?? false) === collapsed) return state;
+  // An explicit false must override a legacy collapsed milestone.
+  if (state.issueMilestoneCollapsedById[key] === collapsed) return state;
   return {
     ...state,
     issueMilestoneCollapsedById: { ...state.issueMilestoneCollapsedById, [key]: collapsed },
