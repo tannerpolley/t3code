@@ -105,6 +105,8 @@ export function makeIssueWorkCommands({
   // An issue has one current worker, and only it is admitted to run. A message
   // from a person or agent to a former worker would queue for an admission that
   // never comes, so it is refused with the current worker's name instead.
+  // Usage-limit resumes send as the user but retry every tick, so a refusal
+  // would only repeat; they are left to the scheduler as before.
   const guardFormerWorkerMessage = (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
     thread: OrchestrationV2AppThread,
@@ -116,6 +118,8 @@ export function makeIssueWorkCommands({
         issue === undefined ||
         Option.isNone(issueWorkStore) ||
         command.delegatedCompletion !== undefined ||
+        command.usageLimitContinuationOfRunId !== undefined ||
+        command.automaticProviderContinuationOfRunId !== undefined ||
         (command.createdBy !== "user" && command.creationSource !== "mcp")
       )
         return;
@@ -137,7 +141,7 @@ export function makeIssueWorkCommands({
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        detail: `Issue #${issue.number} is now worked by another thread${ownerShell ? ` ("${ownerShell.title}")` : ""}, ${owner}. Send this follow-up there, or delegate a new task for the issue.`,
+        detail: `Issue #${issue.number} is now worked by another thread${ownerShell ? ` ("${ownerShell.title}")` : ""}, ${owner}. Delegate a new task for the issue, or send this to that thread if it should do the work.`,
       });
     });
   const start = Effect.fn("orchestrationV2.dispatch.issueWorkStart")(function* (
