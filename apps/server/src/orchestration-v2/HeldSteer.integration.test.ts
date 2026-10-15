@@ -1,12 +1,15 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
+  NodeId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   ThreadId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -16,6 +19,7 @@ import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -24,6 +28,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { usageLimitSwitchMessageId } from "./usageLimitRecoveryPending.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -320,7 +325,7 @@ it.effect("steers a live turn directly without holding it", () =>
   ),
 );
 
-it.effect.each(["live", "held"] as const)(
+it.effect.each(["live", "held", "held-switch"] as const)(
   "completes a delegated follow-up steered into a %s provider turn",
   (timing) =>
     runScenario(`delegated-${timing}`, ({ started, events, steered, cwd }) =>
@@ -414,7 +419,7 @@ it.effect.each(["live", "held"] as const)(
           (task) => task.id !== original.id,
         )!;
         assert.isDefined(followup);
-        if (timing === "held") {
+        if (timing !== "live") {
           const promoted = yield* watch(
             (event) =>
               event.type === "message.updated" &&
@@ -434,10 +439,94 @@ it.effect.each(["live", "held"] as const)(
           )!.result,
           "steering into a live run must not publish the cancelled queue holder",
         );
-        yield* finish(resumed);
+        if (timing === "held-switch") {
+          const sink = yield* EventSink.EventSinkV2;
+          const child = yield* orchestrator.getThreadProjection(childThreadId);
+          const source = child.runs.find((run) => run.id === resumed.runId)!;
+          const failedAt = yield* DateTime.now;
+          yield* TestClock.adjust("3 minutes");
+          const completedAt = yield* DateTime.now;
+          const switchedRunId = RunId.make("run:switched-provider");
+          const switchedSelection = { ...modelSelection, model: "switched-model" };
+          // Replay persisted switch completion after the source's recovery hold expires.
+          yield* sink.write({
+            commandId: CommandId.make("command:runtime-reconcile:completed-provider-switch"),
+            events: [
+              {
+                id: EventId.make("event:source-usage-limit"),
+                type: "run.updated",
+                threadId: childThreadId,
+                occurredAt: failedAt,
+                payload: { ...source, status: "failed", completedAt: failedAt },
+              },
+              {
+                id: EventId.make("event:provider-switched"),
+                type: "thread.provider-switched",
+                threadId: childThreadId,
+                occurredAt: failedAt,
+                payload: {
+                  ...child.thread,
+                  modelSelection: switchedSelection,
+                  autoProviderSwitch: {
+                    runId: source.id,
+                    from: modelSelection,
+                    to: switchedSelection,
+                    resetAt: DateTime.formatIso(DateTime.add(failedAt, { hours: 1 })),
+                    message: "Usage limit; switched provider selection.",
+                  },
+                },
+              },
+              {
+                id: EventId.make("event:switched-run-completed"),
+                type: "run.updated",
+                threadId: childThreadId,
+                occurredAt: completedAt,
+                payload: {
+                  ...source,
+                  id: switchedRunId,
+                  ordinal: 4,
+                  userMessageId: usageLimitSwitchMessageId(childThreadId, source.id),
+                  rootNodeId: NodeId.make("node:switched-provider"),
+                  activeAttemptId: null,
+                  modelSelection: switchedSelection,
+                  status: "completed",
+                  requestedAt: failedAt,
+                  startedAt: failedAt,
+                  completedAt,
+                },
+              },
+              {
+                id: EventId.make("event:switched-provider-result"),
+                type: "message.updated",
+                threadId: childThreadId,
+                occurredAt: completedAt,
+                payload: {
+                  id: MessageId.make("message:switched-provider-result"),
+                  threadId: childThreadId,
+                  runId: switchedRunId,
+                  nodeId: NodeId.make("node:switched-provider"),
+                  role: "assistant",
+                  text: "Switched provider finished the checks.",
+                  attachments: [],
+                  streaming: false,
+                  createdBy: "agent",
+                  creationSource: "provider",
+                  createdAt: completedAt,
+                  updatedAt: completedAt,
+                },
+              },
+            ],
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+        } else {
+          yield* finish(resumed);
+        }
         const finished = yield* orchestrator.getThreadProjection(threadId);
         const task = finished.subagents.find((row) => row.id === followup.id)!;
         assert.equal(task.status, "completed");
+        if (timing === "held-switch") {
+          assert.equal(task.result, "Switched provider finished the checks.");
+        }
         assert.isFalse(yield* orchestrator.delegatedTaskResultPending(childThreadId, followup.id));
         assert.isNotNull(task.completedAt);
         assert.isNotNull(task.result);

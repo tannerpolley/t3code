@@ -677,7 +677,11 @@ function delegatedTaskResultRun(
       let result = projection.runs.find((row) => row.id === message?.runId) ?? run;
       for (;;) {
         const continuation = projection.runs.find(
-          (row) => row.restartContinuationOfRunId === result.id && row.ordinal > result.ordinal,
+          (row) =>
+            row.ordinal > result.ordinal &&
+            (row.restartContinuationOfRunId === result.id ||
+              (row.userMessageId === usageLimitSwitchMessageId(projection.thread.id, result.id) &&
+                row.startedAt !== null)),
         );
         if (continuation === undefined) return result;
         result = continuation;
