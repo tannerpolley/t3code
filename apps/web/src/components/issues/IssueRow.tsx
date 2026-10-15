@@ -144,7 +144,8 @@ export function IssueRow({
           updatedAt={issue.updatedAt}
         />
       </button>
-      <span className="mt-0.75 shrink-0 self-start">
+      {/* Same size as the row's other counts, which sit in the status slot. */}
+      <span className="mt-0.75 shrink-0 self-start text-2xs">
         <IssuePullRequests
           pullRequests={issue.pullRequests}
           count={issue.pullRequestCount}

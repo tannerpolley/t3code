@@ -50,6 +50,7 @@ function DetailedIssuePullRequests({
   if (pullRequests.length === 1)
     return (
       <InlineButton
+        tone="muted"
         render={<a href={pr.url} target="_blank" rel="noopener noreferrer" />}
         onClick={(event) => openPr(event, pr.url)}
         aria-label={`Open pull request ${pr.repository}#${pr.number}: ${pr.title}`}
@@ -65,7 +66,7 @@ function DetailedIssuePullRequests({
   return (
     <Popover>
       <PopoverTrigger
-        render={<InlineButton />}
+        render={<InlineButton tone="muted" />}
         onClick={(event) => event.stopPropagation()}
         aria-label={`Show ${pullRequests.length} linked pull requests`}
       >
