@@ -65,7 +65,7 @@ import {
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { useServerConfigs } from "../../state/entities";
-import { ThreadLocationHeader, ThreadLocationIcon } from "../ThreadLocationIcon";
+import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import {
@@ -108,7 +108,6 @@ import {
   resolveLocationLeads,
   resolveSidebarThreadStatus,
   resolveThreadStatusMark,
-  threadLocationKey,
   withChildNeeds,
 } from "../Sidebar.logic";
 import { ThreadStatusMark } from "../ThreadStatusMark";
@@ -227,7 +226,7 @@ interface SidebarProjectSectionsProps {
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-  /** Subagents listed under their own location's section; see `placeThreadsByLocation`. */
+  /** Subagents listed with their own location instead; see `placeThreadsByLocation`. */
   readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
   readonly isProjectExpanded: (projectKey: string) => boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
@@ -667,7 +666,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-  /** Subagents listed under their own location's section; see `placeThreadsByLocation`. */
+  /** Subagents listed with their own location instead; see `placeThreadsByLocation`. */
   readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
 }) {
   const { setNodeRef: setDropRef } = useDroppable({
@@ -994,7 +993,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
     if (!codexStyle) return null;
     const keyOf = (thread: SidebarThreadSummary) =>
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    // A moved subagent is its own section row, so its parent's tree leaves it out.
+    // A moved subagent is its own top-level row, so its parent's tree leaves it out.
     const descendants = (
       thread: SidebarThreadSummary,
     ): { readonly thread: SidebarThreadSummary; readonly topLevel: boolean }[] =>
@@ -1179,31 +1178,21 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               : undefined
           }
         >
-          {props.threads.map((thread, index) => {
-            // Threads arrive grouped by location (see groupThreadsByLocation); each group opens
-            // with a header naming its location and branch.
-            const location = threadLocationKey(thread);
-            const previous = props.threads[index - 1];
-            const header =
-              codexStyle && (previous === undefined || threadLocationKey(previous) !== location);
-            return (
-              <Fragment key={`${thread.environmentId}:${thread.id}`}>
-                {header ? (
-                  <ThreadLocationHeader thread={locationLeads?.get(location) ?? thread} />
-                ) : null}
-                <SidebarProjectThreadRow
-                  codexStyle={codexStyle}
-                  activeThreadKey={props.activeThreadKey}
-                  onClick={props.onThreadClick}
-                  onContextMenu={props.onThreadContextMenu}
-                  thread={thread}
-                  runningSubagentsByParentKey={props.runningSubagentsByParentKey}
-                  relocatedThreadKeys={props.relocatedThreadKeys}
-                  locationLeadKeys={locationLeadKeys}
-                />
-              </Fragment>
-            );
-          })}
+          {/* Threads arrive grouped by location (see groupThreadsByLocation); each location's
+              lead row carries its icon. */}
+          {props.threads.map((thread) => (
+            <SidebarProjectThreadRow
+              key={`${thread.environmentId}:${thread.id}`}
+              codexStyle={codexStyle}
+              activeThreadKey={props.activeThreadKey}
+              onClick={props.onThreadClick}
+              onContextMenu={props.onThreadContextMenu}
+              thread={thread}
+              runningSubagentsByParentKey={props.runningSubagentsByParentKey}
+              relocatedThreadKeys={props.relocatedThreadKeys}
+              locationLeadKeys={locationLeadKeys}
+            />
+          ))}
           {props.threads.length === 0 ? (
             <li className="px-2 py-1 text-2xs text-sidebar-muted-foreground/55">No threads yet</li>
           ) : null}
@@ -1302,7 +1291,7 @@ const SidebarProjectThreadRow = memo(
       <li
         className={cn("relative list-none", props.codexStyle && "sidebar-thread-outdent")}
         // A family of threads shares one hue, from its root: a thread with listed descendants, and a
-        // subagent listed in its own location's section away from its parent.
+        // subagent listed with its own location away from its parent.
         style={
           props.codexStyle &&
           (workRows.some((row) => row.kind === "subagent") ||

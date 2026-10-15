@@ -1163,8 +1163,8 @@ export function threadLocationKey(
 }
 
 /**
- * Projects lists a project's threads under one header per location: main checkouts first, then
- * worktrees, each in the order its first thread appears. Threads keep their order within one.
+ * Projects lists a project's threads grouped by location: main checkouts first, then worktrees,
+ * each in the order its first thread appears. Threads keep their order within one.
  */
 export function groupThreadsByLocation<
   TThread extends Pick<SidebarThreadSummary, "environmentId" | "worktreePath">,
@@ -1215,8 +1215,8 @@ export function resolveLocationLeads<
 
 /**
  * Projects lists each thread under the location it works in. A running subagent working somewhere
- * other than its parent leaves its parent's tree for its own location's section, where its
- * same-location descendants stay nested under it. Returns the section rows, grouped by location,
+ * other than its parent leaves its parent's tree for its own location's group, where its
+ * same-location descendants stay nested under it. Returns the top-level rows, grouped by location,
  * and the keys of the subagents that moved, which their parents' trees leave out.
  */
 export function placeThreadsByLocation<

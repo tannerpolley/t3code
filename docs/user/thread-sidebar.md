@@ -101,19 +101,17 @@ Running subagents and background tasks appear beneath their parent
 thread: its own background tasks first, then its native subagents, then app-owned
 children, each followed by its own work.
 
-With **Codex-style sidebar** on, each project lists its threads under one small
-header per location: **Local · main** for the project's own checkout, then
-**Worktree feature · t3/feature** for each worktree, led by the environment's name
-when it is elsewhere. The location is the folder; the branch is what is checked out
-there. Each thread sits under the location it works in: a child agent working in a
-worktree is listed under that worktree's section even when its parent works in the
-local checkout, with the agents working alongside it nested under it. It keeps its
-family's tint color.
+With **Codex-style sidebar** on, each project lists its threads grouped by the
+location they work in: the project's own checkout first, then each worktree. A
+child agent working in a worktree is listed with that worktree even when its
+parent works in the local checkout, with the agents working alongside it nested
+under it. It keeps its family's tint color.
 
-Within a location, only its lead thread shows the folder or branch icon: the
-implementor in a worktree; in the local checkout, the orchestrator if there is one,
-otherwise the implementor or top-level thread. Hover the icon for the location and
-branch. A child's question or approval also appears on the parent.
+Within a location, only its lead thread shows the checkout icon: the implementor
+in a worktree; in the local checkout, the orchestrator if there is one, otherwise
+the implementor or top-level thread. Hover the icon to see **Local** or the
+worktree folder, led by the environment's name when it is elsewhere. A child's
+question or approval also appears on the parent.
 An amber spinner means the thread is waiting on its background work. Times show
 how long the work has run, such as **05m 09s** or **01h 05m 09s**, rather than time
 since the last message.

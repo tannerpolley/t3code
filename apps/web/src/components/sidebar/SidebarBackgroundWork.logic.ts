@@ -138,7 +138,7 @@ export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,
   ownerThreadId?: ThreadId,
-  /** Children listed under another location's section instead (see placeThreadsByLocation). */
+  /** Children listed with another location instead (see placeThreadsByLocation). */
   relocated?: ReadonlySet<string>,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
   // Moved children stay "listed", so their tasks and commands do not resurface here.
