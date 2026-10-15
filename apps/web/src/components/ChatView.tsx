@@ -2416,7 +2416,12 @@ export default function ChatView(props: ChatViewProps) {
     renderedRightPanelSurface?.kind === "pull-request" && activeThreadRef !== null
       ? issueOriginFor(
           activeThreadRef,
-          renderedRightPanelSurface,
+          {
+            environmentId: renderedRightPanelSurface.environmentId ?? activeThreadRef.environmentId,
+            host: renderedRightPanelSurface.host,
+            repository: renderedRightPanelSurface.repository,
+            number: renderedRightPanelSurface.number,
+          },
           rightPanelState.surfaces.map((surface) => surface.id),
         )
       : null;

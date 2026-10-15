@@ -46,7 +46,7 @@ import {
 } from "../pullRequest/pullRequestPresentation";
 import { issueSurface } from "~/rightPanelStore";
 import { rememberIssueOrigin } from "./issuePullRequestOrigin";
-import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { useOpenChangeRequestLink, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { issueEnvironment } from "~/state/issues";
@@ -116,6 +116,24 @@ function issuePanelError(cause: Cause.Cause<unknown>, fallback: string | null): 
   };
 }
 
+/** The detail read's answer for an address that names a pull request. */
+function isPullRequestError(cause: Cause.Cause<unknown>): boolean {
+  const error = Cause.squash(cause);
+  return isIssueReadError(error) && error.operation === "detail" && error.code === "unsupported";
+}
+
+// ponytail: per session, so an issue tab restored after a reload does not open its pull request
+// again. A stored flag on the surface if that should survive reloads.
+const redirectedToPullRequest = new Set<string>();
+
+/** A plain click, for opening a link outside a real click handler. */
+const NO_MODIFIER_CLICK = {
+  metaKey: false,
+  ctrlKey: false,
+  preventDefault: () => undefined,
+  stopPropagation: () => undefined,
+};
+
 function safeExternalUrl(value: string): string | null {
   try {
     const url = new URL(value);
@@ -161,8 +179,18 @@ function LinkedPullRequests({
                 onClick={
                   url
                     ? (event) => {
+                        // The tab opens on the thread's server, on the issue's host.
                         if (threadRef !== null)
-                          rememberIssueOrigin(threadRef, pr, issueSurface(issue));
+                          rememberIssueOrigin(
+                            threadRef,
+                            {
+                              environmentId: threadRef.environmentId,
+                              host: issue.host,
+                              repository: pr.repository,
+                              number: pr.number,
+                            },
+                            issueSurface(issue),
+                          );
                         openPrLink(event, url);
                       }
                     : undefined
@@ -342,6 +370,7 @@ export function IssueDetailPanel({
   onBack,
 }: IssueDetailPanelProps) {
   const atom = issueEnvironment.detail({ environmentId, input: reference });
+  const openChangeRequest = useOpenChangeRequestLink(threadRef ?? undefined);
   // The tab belongs to one issue; the panel is reused as another opens, which starts on Summary.
   const issueKey = `${reference.host}/${reference.repository}#${reference.number}`;
   const [tabChoice, setTabChoice] = useState<{ key: string; tab: IssueDetailTab } | null>(null);
@@ -365,33 +394,98 @@ export function IssueDetailPanel({
     lastRefreshToken.current = refreshToken;
   }, [query.refresh, refreshToken]);
 
+  // GitHub's `/issues/n` address can name a pull request; the reader then opens it where pull
+  // requests open, once per issue address.
+  const pullRequestUrl =
+    query.data === null && result._tag === "Failure" && isPullRequestError(result.cause)
+      ? `https://${reference.host}/${reference.repository}/pull/${reference.number}`
+      : null;
+  useEffect(() => {
+    if (pullRequestUrl === null || redirectedToPullRequest.has(pullRequestUrl)) return;
+    redirectedToPullRequest.add(pullRequestUrl);
+    openChangeRequest(NO_MODIFIER_CLICK, pullRequestUrl, undefined, environmentId);
+  }, [environmentId, openChangeRequest, pullRequestUrl]);
+
+  const backButton = onBack ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label="Back to issues"
+            className="-ml-1.5"
+            onClick={onBack}
+            size="icon-micro"
+            variant="ghost-muted"
+          >
+            <ArrowLeftIcon aria-hidden className="size-3.5" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">Back to issues</TooltipPopup>
+    </Tooltip>
+  ) : null;
+  // Loading and failure keep the way back too; a narrow page has no other one.
+  const backRow = backButton ? (
+    <div className="flex h-7 shrink-0 items-center px-4 pt-1">{backButton}</div>
+  ) : null;
+
   if (query.data === null && result._tag === "Failure") {
     const error = issuePanelError(result.cause, query.error);
     return (
-      <Empty className="min-h-64">
-        <EmptyHeader>
-          <EmptyTitle>{error.title}</EmptyTitle>
-          <EmptyDescription>{error.description}</EmptyDescription>
-          {error.retryAt !== undefined ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Retry after {retryDeadline(error.retryAt)}.
-            </p>
-          ) : null}
-        </EmptyHeader>
-        <Button onClick={query.refresh} size="sm" variant="outline">
-          <RefreshCwIcon aria-hidden />
-          Retry
-        </Button>
-      </Empty>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {backRow}
+        {pullRequestUrl !== null ? (
+          <Empty className="min-h-64">
+            <EmptyHeader>
+              <EmptyTitle>This is a pull request</EmptyTitle>
+              <EmptyDescription>
+                #{reference.number} in {reference.repository} is a pull request, not an issue.
+              </EmptyDescription>
+            </EmptyHeader>
+            <Button
+              onClick={(event) =>
+                openChangeRequest(event, pullRequestUrl, undefined, environmentId)
+              }
+              render={<a href={pullRequestUrl} rel="noopener noreferrer" target="_blank" />}
+              size="sm"
+              variant="outline"
+            >
+              Open pull request
+            </Button>
+          </Empty>
+        ) : (
+          <Empty className="min-h-64">
+            <EmptyHeader>
+              <EmptyTitle>{error.title}</EmptyTitle>
+              <EmptyDescription>{error.description}</EmptyDescription>
+              {error.retryAt !== undefined ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Retry after {retryDeadline(error.retryAt)}.
+                </p>
+              ) : null}
+            </EmptyHeader>
+            <Button onClick={query.refresh} size="sm" variant="outline">
+              <RefreshCwIcon aria-hidden />
+              Retry
+            </Button>
+          </Empty>
+        )}
+      </div>
     );
   }
 
   if (query.data === null) {
     return (
-      <div className="flex min-h-64 flex-1 items-center justify-center" aria-label="Loading issue">
-        <p className="text-xs text-muted-foreground" role="status">
-          Loading issue…
-        </p>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {backRow}
+        <div
+          className="flex min-h-64 flex-1 items-center justify-center"
+          aria-label="Loading issue"
+        >
+          <p className="text-xs text-muted-foreground" role="status">
+            Loading issue…
+          </p>
+        </div>
       </div>
     );
   }
@@ -413,24 +507,7 @@ export function IssueDetailPanel({
           then the state, author and update time. */}
       <header className="shrink-0 border-b border-border/60">
         <div className="flex h-7 min-w-0 items-center gap-1 px-4 pt-1 text-xs text-muted-foreground">
-          {onBack ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label="Back to issues"
-                    className="-ml-1.5"
-                    onClick={onBack}
-                    size="icon-micro"
-                    variant="ghost-muted"
-                  >
-                    <ArrowLeftIcon aria-hidden className="size-3.5" />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Back to issues</TooltipPopup>
-            </Tooltip>
-          ) : null}
+          {backButton}
           <span className="min-w-0 truncate font-medium">{repository.repository}</span>
           {issueUrl ? (
             <a

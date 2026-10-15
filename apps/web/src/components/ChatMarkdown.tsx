@@ -3010,7 +3010,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
             ? plainHastText(node)
             : undefined;
       const isPullRequestAutolink = pullRequestCopy !== undefined;
-      const confirmBeforeOpen = pullRequestAutolink === "reference";
+      // GitHub's `/issues/n` can name a pull request, so an authored issue link is checked the
+      // way a generated `#n` is: a pull request opens in its pane, anything else as an issue.
+      const authoredIssuePage =
+        pullRequestAutolink === "" && href
+          ? pullRequestCandidateUrlFromReferenceAutolink(href) !== null
+          : false;
+      const confirmBeforeOpen = pullRequestAutolink === "reference" || authoredIssuePage;
       const pullRequestCandidateUrl =
         confirmBeforeOpen && href ? pullRequestCandidateUrlFromReferenceAutolink(href) : href;
       const pullRequestPreviewTarget = pullRequestCandidateUrl

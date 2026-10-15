@@ -109,6 +109,7 @@ vi.mock("../localApi", () => ({
   }),
 }));
 vi.mock("~/lib/openPullRequestLink", () => ({
+  pullRequestCandidateUrlFromReferenceAutolink: () => null,
   resolvePullRequestPreviewTarget: () => null,
   findProjectForChangeRequest: (projects: readonly { id: ProjectId }[]) => projects[0],
   matchesLinkedPullRequestUrl: (candidate: ThreadLinkedPullRequest, href: string) =>

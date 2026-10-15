@@ -273,9 +273,9 @@ the issue filters and search. Pins are remembered with your filter choices.
 
 Select an issue to open it in a resizable panel: **Summary** shows its description and the pull
 requests linked to it, **Timeline** its comments. A linked pull request opens in the pull request
-panel, and its back arrow returns to the issue. A GitHub issue link in a pull request, issue or
-chat message opens the same issue panel. **Prepare draft** opens a new thread
-for the issue's project in a worktree on a branch named after the issue, with an unsent prompt.
+panel, and its back arrow returns to the issue. A link to a GitHub issue in a pull request, issue
+or chat message opens the same issue panel. **Prepare draft** opens a new thread for the issue's
+project in a worktree on a branch named after the issue, with an unsent prompt.
 Select the issue number at the top to comment or make other changes on GitHub.
 
 To run issue work, open an issue, choose **Start agent**, then a model role and the

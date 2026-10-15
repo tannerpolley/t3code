@@ -47,7 +47,7 @@ function RowCount({
 
 /**
  * An issue list row in the pull request row's shape: the state glyph, then `#n title` with
- * sub-issue progress, linked pull requests, comments and assignees on the right, and a meta line
+ * sub-issue progress, closing pull requests, comments and assignees on the right, and a meta line
  * of author, labels and Project fields with the update time on the right. The caller places it.
  */
 export function IssueRow({
@@ -94,7 +94,11 @@ export function IssueRow({
               <RowCount
                 icon={<PullRequestGlyph.pullRequest aria-hidden className="size-3" />}
                 count={String(issue.pullRequestCount)}
-                label={`${issue.pullRequestCount} linked pull ${issue.pullRequestCount === 1 ? "request" : "requests"}`}
+                label={
+                  issue.pullRequestCount === 1
+                    ? "1 pull request closes this issue"
+                    : `${issue.pullRequestCount} pull requests close this issue`
+                }
               />
             ) : null}
             {issue.commentCount > 0 ? (
