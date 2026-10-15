@@ -844,18 +844,20 @@ function SortableSectionHeader(props: {
         }}
         type="button"
       >
-        {codexStyle ? (
-          <SidebarCaretSlot
-            open={expanded}
-            className="opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100"
-          />
-        ) : (
+        {codexStyle ? null : (
           <ChevronDownIcon
             aria-hidden
             className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")}
           />
         )}
-        <span className="truncate">{projectSectionName(section)}</span>
+        <span className="min-w-0 truncate">{projectSectionName(section)}</span>
+        {/* Codex style: the caret follows the name, so flat rows keep the left edge for names. */}
+        {codexStyle ? (
+          <SidebarCaretSlot
+            open={expanded}
+            className="opacity-0 group-hover/section:opacity-100 group-focus-within/section:opacity-100"
+          />
+        ) : null}
         {codexStyle ? (
           // Counts show only while collapsed: they stand in for the hidden rows.
           <SidebarTrailingColumns count={expanded ? undefined : section.projectKeys.length} />
@@ -1074,9 +1076,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             if (canWrite) props.onToggleProject(project.projectKey, !props.isProjectExpanded);
           }}
         >
-          {codexStyle ? (
-            <SidebarCaretSlot open={props.isProjectExpanded} className="text-icon-muted" />
-          ) : (
+          {codexStyle ? null : (
             <ChevronRightIcon
               aria-hidden
               className={cn(
@@ -1092,7 +1092,12 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             project={project}
             {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
           />
-          <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
+          <span className={cn("min-w-0 truncate", !codexStyle && "flex-1")}>
+            {project.displayName}
+          </span>
+          {codexStyle ? (
+            <SidebarCaretSlot open={props.isProjectExpanded} className="text-icon-muted" />
+          ) : null}
           {codexStyle ? (
             <SidebarTrailingColumns
               count={
