@@ -185,7 +185,7 @@ export function createSidebarLayoutClient(
       const entry = environments.get(id);
       if (!entry) return false;
       if (entry.server) {
-        if (!entry.canWrite || !entry.base) return false;
+        if (!entry.canWrite) return false;
         entry.pending.push(operation);
         schedule(id, entry);
       } else {

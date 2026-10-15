@@ -138,19 +138,40 @@ describe("sidebar client writes", () => {
   });
 });
 
-it("rejects edits made before the first server record instead of replaying stale orderings", async () => {
+it("queues edits before the first server record and tolerates a section missing from that record", async () => {
   vi.useFakeTimers();
-  const send = vi.fn();
-  const client = createSidebarLayoutClient(send, vi.fn());
+  const onError = vi.fn();
+  const send = vi.fn(async (_id: EnvironmentId, input: SidebarLayoutUpdate) => ({
+    ...record,
+    revision: record.revision + 1,
+    layout: input.operations.reduce(
+      (layout, operation) => applySidebarLayoutMutation(layout, operation) ?? layout,
+      EMPTY_SIDEBAR_LAYOUT,
+    ),
+  }));
+  const client = createSidebarLayoutClient(send, onError);
   client.configure(local, true, record.layout);
-  expect(client.enqueue(local, { type: "sectionsOrder", sectionIds: ["work"] })).toBe(false);
-  expect(
-    client.enqueue(local, { type: "sectionExpanded", sectionId: "work", expanded: false }),
-  ).toBe(false);
-  client.receive(local, record);
+  expect(client.enqueue(local, { type: "rename", sectionId: "work", name: "Stale section" })).toBe(
+    true,
+  );
+  const section = { id: "new", name: "New section", projectKeys: [], collapsed: false };
+  expect(client.enqueue(local, { type: "add", section })).toBe(true);
   await vi.advanceTimersByTimeAsync(SIDEBAR_WRITE_DELAY);
   expect(send).not.toHaveBeenCalled();
-  expect(client.layouts([local]).get(local)).toEqual(record.layout);
+  expect(client.hasPending(local)).toBe(true);
+  expect(() => client.receive(local, { ...record, layout: EMPTY_SIDEBAR_LAYOUT })).not.toThrow();
+  expect(client.layouts([local]).get(local)?.sidebarProjectSections).toEqual([section]);
+  await vi.advanceTimersByTimeAsync(SIDEBAR_WRITE_DELAY);
+  expect(send).toHaveBeenCalledExactlyOnceWith(local, {
+    revision: record.revision,
+    operations: [
+      { type: "rename", sectionId: "work", name: "Stale section" },
+      { type: "add", section },
+    ],
+  });
+  expect(client.layouts([local]).get(local)?.sidebarProjectSections).toEqual([section]);
+  expect(client.hasPending(local)).toBe(false);
+  expect(onError).not.toHaveBeenCalled();
   client.dispose();
 });
 
