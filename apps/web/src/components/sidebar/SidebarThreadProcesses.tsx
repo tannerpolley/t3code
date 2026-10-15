@@ -55,6 +55,7 @@ export function useSidebarThreadProcesses(thread: SidebarThreadSummary, working:
       command: command.command,
       followable: command.followable,
       ownerThreadId: thread.id,
+      underSummary: true,
     })) ?? NO_COMMAND_ROWS;
   const processGroups = data?.processGroups ?? NO_GROUPS;
   const hiddenProcessGroups = data?.hiddenProcessGroupCount ?? 0;

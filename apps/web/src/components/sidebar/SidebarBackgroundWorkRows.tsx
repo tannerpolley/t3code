@@ -53,6 +53,7 @@ import { AgentElapsed } from "../chat/AgentElapsed";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
+  afterTasksIndex,
   childWorktreeLabel,
   groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
@@ -122,10 +123,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
       : [],
     title: draggedChild.current?.title ?? "Thread",
   }));
-  // Rows keep describeSidebarBackgroundWork's order: the thread's own tasks, then its agents;
-  // `afterTasks` goes between them.
+  // Rows keep describeSidebarBackgroundWork's order: the thread's own tasks, then its agents.
+  // `afterTasks` goes between them, above the commands its summary row opens into.
   const rows = props.rows;
-  const firstAgent = rows.findIndex((row) => row.kind === "subagent");
+  const afterTasksAt = afterTasksIndex(rows);
   const { backgroundTasks } = groupBackgroundWorkTaskRows(rows);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
@@ -355,7 +356,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           );
 
         return [
-          ...(index === firstAgent
+          ...(index === afterTasksAt
             ? [<Fragment key="after-tasks">{props.afterTasks}</Fragment>]
             : []),
           <li
@@ -422,7 +423,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           </li>,
         ];
       })}
-      {firstAgent === -1 ? props.afterTasks : null}
+      {afterTasksAt === -1 ? props.afterTasks : null}
     </ul>
   );
 }

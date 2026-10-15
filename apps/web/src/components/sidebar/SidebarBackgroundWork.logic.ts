@@ -51,7 +51,17 @@ export type BackgroundWorkTaskRow =
       readonly command?: string;
       /** False when its output cannot be followed or it cannot be stopped alone. */
       readonly followable?: boolean;
+      /** Shown only while the thread's commands-and-processes summary row is open, below it. */
+      readonly underSummary?: boolean;
     });
+
+/**
+ * Where a work list's `afterTasks` (the commands-and-processes summary) goes: above the commands
+ * it opens into, else before the thread's agents; -1 puts it last.
+ */
+export function afterTasksIndex(rows: ReadonlyArray<BackgroundWorkTaskRow>): number {
+  return rows.findIndex((row) => row.kind === "subagent" || row.underSummary === true);
+}
 
 /**
  * The name of the worktree a child thread works in (its folder), for its worktree icon's tooltip;

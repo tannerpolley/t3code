@@ -1,7 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
-import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
+import { afterTasksIndex, type BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
 import { summarizeProcessWork, withRunningCommandRows } from "./SidebarThreadProcesses.logic";
 
 const task = (taskId: string): BackgroundWorkTaskRow => ({
@@ -25,6 +25,17 @@ it("lists each running command once, after the thread's tasks and before its age
     [task("dev-server"), task("pytest")],
   );
   expect(rows.map((row) => row.taskId)).toEqual(["dev-server", "pytest", "agent"]);
+});
+
+it("opens the summary row above the commands it folds, else before the agents", () => {
+  const folded = { ...task("pytest"), underSummary: true };
+  // Open: a pending task stays above the summary; the folded command goes below it.
+  const open = withRunningCommandRows([task("dev-server"), agent], [folded]);
+  expect(open[afterTasksIndex(open)]?.taskId).toBe("pytest");
+  // Collapsed: no folded commands, so the summary sits right above the agents.
+  const collapsed = withRunningCommandRows([task("dev-server"), agent], []);
+  expect(collapsed[afterTasksIndex(collapsed)]?.taskId).toBe("agent");
+  expect(afterTasksIndex([task("dev-server")])).toBe(-1);
 });
 
 it("summarizes commands and process groups, and is empty with neither", () => {
