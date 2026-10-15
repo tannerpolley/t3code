@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
   ClientSettingsSchema,
   ClientSettingsPatch,
   ServerSettings,
   ServerSettingsPatch,
 } from "./settings.ts";
+
+const decodeServerSettingsFile = Schema.decodeUnknownSync(Schema.fromJsonString(ServerSettings));
+const decodeClientSettingsFile = Schema.decodeUnknownSync(
+  Schema.fromJsonString(ClientSettingsSchema),
+);
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
+const decodeServerPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeClientPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 
 // Captured before extraction from settings.ts (da1d4777fc).
 const storedSettingsFile = JSON.stringify({
@@ -89,12 +100,8 @@ const storedSettingsFile = JSON.stringify({
 describe("stored fork settings compatibility", () => {
   it("preserves every stored fork field, legacy roles, and omitted-field defaults", () => {
     const stored = JSON.parse(storedSettingsFile);
-    const server = Schema.decodeUnknownSync(Schema.fromJsonString(ServerSettings))(
-      JSON.stringify(stored.server),
-    );
-    const client = Schema.decodeUnknownSync(Schema.fromJsonString(ClientSettingsSchema))(
-      JSON.stringify(stored.client),
-    );
+    const server = decodeServerSettingsFile(JSON.stringify(stored.server));
+    const client = decodeClientSettingsFile(JSON.stringify(stored.client));
     const { modelRoles: _legacyRoles, ...serverFields } = stored.server;
     expect(server).toMatchObject({ ...serverFields, projectFolderRoot: "/work/projects" });
     expect(client).toMatchObject(stored.client);
@@ -103,13 +110,13 @@ describe("stored fork settings compatibility", () => {
       targets: stored.server.modelRoles.map((role: { target: unknown }) => role.target),
     });
     expect(server.modelRoles).toHaveLength(7);
-    expect(Schema.encodeSync(ServerSettings)(server)).toMatchObject({
+    expect(encodeServerSettings(server)).toMatchObject({
       ...serverFields,
       projectFolderRoot: "/work/projects",
       modelRoles: server.modelRoles,
     });
-    expect(Schema.encodeSync(ClientSettingsSchema)(client)).toMatchObject(stored.client);
-    expect(Schema.decodeUnknownSync(ServerSettingsPatch)(stored.server)).toEqual({
+    expect(encodeClientSettings(client)).toMatchObject(stored.client);
+    expect(decodeServerPatch(stored.server)).toEqual({
       ...serverFields,
       projectFolderRoot: "/work/projects",
       modelRoles: server.modelRoles,
@@ -120,10 +127,10 @@ describe("stored fork settings compatibility", () => {
       runningCommandsAndProcesses: _running,
       ...clientPatch
     } = stored.client;
-    expect(Schema.decodeUnknownSync(ClientSettingsPatch)(stored.client)).toEqual(clientPatch);
+    expect(decodeClientPatch(stored.client)).toEqual(clientPatch);
     const defaults = {
-      server: Schema.decodeSync(ServerSettings)({}),
-      client: Schema.decodeSync(ClientSettingsSchema)({}),
+      server: DEFAULT_SERVER_SETTINGS,
+      client: DEFAULT_CLIENT_SETTINGS,
     };
     expect(
       Object.fromEntries(
