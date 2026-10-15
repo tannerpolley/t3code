@@ -29,6 +29,23 @@ function milestoneReads(statuses: ReadonlyMap<number, number>, calls: number[]) 
       Layer.mergeAll(
         Layer.mock(GitHubApi.GitHubApi)({
           rest: (input) => {
+            // A 422 status marks a deleted milestone: its issue list is invalid and its lookup 404s.
+            const lookup = /\/milestones\/(\d+)$/u.exec(input.path);
+            if (lookup !== null)
+              return statuses.get(Number(lookup[1])) === 422
+                ? Effect.fail(
+                    new GitHubApi.GitHubApiNotFoundError({
+                      host: input.host,
+                      operation: input.operation,
+                    }),
+                  )
+                : Effect.succeed({
+                    status: 200,
+                    headers: {},
+                    body: "{}",
+                    truncated: false,
+                    invalidUtf8: false,
+                  });
             const number = Number(
               new URL(input.path, "https://github.com").searchParams.get("milestone"),
             );

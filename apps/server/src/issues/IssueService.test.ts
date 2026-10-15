@@ -198,19 +198,31 @@ it.effect("paginates only the selected milestone during repository reconciliatio
   }),
 );
 
-it.effect("distinguishes a missing milestone from other GitHub read failures", () =>
+it.effect("treats a milestone as missing only when GitHub cannot find it", () =>
   Effect.gen(function* () {
-    for (const status of [422, 403, 500]) {
-      const harness = makeHarness({ responses: [httpResponse({}, {}, status)] });
+    // [issue list status, milestone lookup status]; a 422 with a found milestone is the spam guard.
+    for (const [listStatus, lookupStatus] of [
+      [422, 404],
+      [422, 200],
+      [403, undefined],
+      [500, undefined],
+    ] as const) {
+      const harness = makeHarness({
+        responses: [
+          httpResponse({}, {}, listStatus),
+          ...(lookupStatus === undefined ? [] : [httpResponse({}, {}, lookupStatus)]),
+        ],
+      });
       const result = yield* (yield* service(harness))
         .milestoneIssues({ ...listInput, milestoneNumber: 23 })
         .pipe(Effect.result);
-      if (status === 422) {
+      if (lookupStatus === 404) {
         assert.deepEqual(Result.getOrThrow(result), { issues: [], complete: true, missing: true });
+        assert.include(harness.calls[1]!.url, "/milestones/23");
       } else {
         assert.isTrue(Result.isFailure(result));
         if (Result.isFailure(result))
-          assert.equal(result.failure.code, status === 403 ? "inaccessible" : "upstream");
+          assert.equal(result.failure.code, listStatus === 403 ? "inaccessible" : "upstream");
       }
       assert.include(harness.calls[0]!.url, "state=all");
     }

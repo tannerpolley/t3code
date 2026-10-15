@@ -565,16 +565,17 @@ function mapGitHubError(
 ): IssueReadError {
   const outcome = (value: "rejected" | "uncertain") =>
     write?.tracksOutcome === true ? value : undefined;
-  const inaccessible = () =>
-    readError(
+  const inaccessible = (status: 403 | 404) =>
+    new IssueResponseError({
       operation,
-      "inaccessible",
-      write === undefined
-        ? "The GitHub repository is not accessible."
-        : "GitHub issue write denied. Check repository access and Issues write permission.",
-      undefined,
-      outcome("rejected"),
-    );
+      code: "inaccessible",
+      message:
+        write === undefined
+          ? "The GitHub repository is not accessible."
+          : "GitHub issue write denied. Check repository access and Issues write permission.",
+      createOutcome: outcome("rejected"),
+      status,
+    });
   const failed =
     write === undefined
       ? "GitHub could not complete the read."
@@ -615,9 +616,9 @@ function mapGitHubError(
         "GitHub account verification is unavailable.",
       );
     case "GitHubApiNotFoundError":
-      return inaccessible();
+      return inaccessible(404);
     case "GitHubApiResponseError":
-      if (error.status === 403) return inaccessible();
+      if (error.status === 403) return inaccessible(403);
       // A 2xx failure is a GraphQL answer: one GitHub cut at the size cap, or one carrying errors.
       if (error.status < 300) {
         return error.githubErrors === undefined
@@ -1559,10 +1560,25 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
           }
           return { issues, complete: page === null };
         }).pipe(
-          // Every other list parameter is fixed here, so 422 identifies an invalid milestone.
+          // GitHub answers 422 for an invalid milestone and for its spam guard, so only a 404 from
+          // the milestone itself proves it is missing. Any other answer keeps the list failure.
           Effect.catchIf(
             (error) => isIssueResponseError(error) && error.status === 422,
-            () => Effect.succeed({ issues: [], complete: true, missing: true as const }),
+            (listError) =>
+              executeApi({
+                operation: "list",
+                scope,
+                endpoint: `repos/${encodeRepositoryPath(scope.repository)}/milestones/${input.milestoneNumber}`,
+                maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+              }).pipe(
+                Effect.matchEffect({
+                  onSuccess: () => Effect.fail(listError),
+                  onFailure: (lookupError) =>
+                    isIssueResponseError(lookupError) && lookupError.status === 404
+                      ? Effect.succeed({ issues: [], complete: true, missing: true as const })
+                      : Effect.fail(listError),
+                }),
+              ),
           ),
         ),
       )
