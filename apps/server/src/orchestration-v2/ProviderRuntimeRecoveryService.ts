@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -22,6 +23,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 import { endTurnItemsLeftRunning } from "./EndedRunTurnItems.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
@@ -188,6 +190,7 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
       projection: ProjectionStore.ProjectionRuntimeRecoveryState,
@@ -288,6 +291,22 @@ export const make = Effect.gen(function* () {
         }
       };
       const queuedRuns = projection.runs.filter((run) => run.status === "queued");
+      const issueOwner =
+        queuedRuns.length > 0 &&
+        projection.thread.linkedIssue !== undefined &&
+        Option.isSome(issueWorkStore)
+          ? yield* issueWorkStore.value.issueOwner(projection.thread.linkedIssue).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderRuntimeRecoveryError({
+                    operation: "read-projections",
+                    threadId: projection.thread.id,
+                    cause,
+                  }),
+              ),
+            )
+          : null;
+      const replacedWorker = issueOwner !== null && issueOwner !== projection.thread.id;
       const queuedMessages =
         queuedRuns.length === 0
           ? []
@@ -311,7 +330,12 @@ export const make = Effect.gen(function* () {
       // Buffered wakes lost their output with the process. Durable queued messages
       // keep their execution identities and order until the user resumes them.
       for (const run of queuedRuns) {
-        if (bufferedMessageIds.has(run.userMessageId)) {
+        // Older versions accepted follow-ups to replaced issue workers. Admission
+        // can never start them; let the existing cancellation/result recovery settle them.
+        if (
+          bufferedMessageIds.has(run.userMessageId) ||
+          (replacedWorker && run.queueHeld !== true)
+        ) {
           runs.push(run);
           continue;
         }

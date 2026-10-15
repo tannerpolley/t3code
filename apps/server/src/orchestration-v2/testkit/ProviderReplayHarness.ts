@@ -553,6 +553,7 @@ export function layerWithRegistry<Error>(
               layerEventSinkProvided,
               IdAllocator.layer,
               layerServerSettings,
+              IssueWorkStore.layer.pipe(Layer.provide(layerDatabase)),
             ),
           ),
         )
