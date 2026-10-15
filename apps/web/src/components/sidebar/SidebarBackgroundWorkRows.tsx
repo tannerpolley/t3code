@@ -44,12 +44,15 @@ import { cn } from "../../lib/utils";
 import {
   SidebarCaretToggle,
   SidebarThreadColumns,
-  sidebarThreadName,
   SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "../chat/AgentElapsed";
+import {
+  SidebarProjectThreadName,
+  SidebarProjectThreadTooltip,
+} from "./SidebarProjectThreadTooltip";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
@@ -198,7 +201,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 props.locationLeadKeys?.has(
                   scopedThreadKey(scopeThreadRef(props.environmentId, row.child.id)),
                 ) !== false ? (
-                  <ThreadLocationIcon thread={row.child} />
+                  <ThreadLocationIcon thread={row.child} tooltip={!props.columns} />
                 ) : null,
               )
             : null;
@@ -248,9 +251,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   className="min-w-0 flex-1 truncate"
                   command={row.kind === "subagent" ? undefined : row.command}
                 >
-                  {row.kind === "subagent" && row.child
-                    ? sidebarThreadName(row.label, sidebarThreadTitle(row.child.source))
-                    : row.label}
+                  {row.kind === "subagent" && row.child ? (
+                    <SidebarProjectThreadName thread={row.child}>
+                      {sidebarThreadTitle(row.child.source)}
+                    </SidebarProjectThreadName>
+                  ) : (
+                    row.label
+                  )}
                 </RowLabel>
                 {row.kind === "subagent" ? null : usage}
               </span>
@@ -380,7 +387,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 : undefined
             }
           >
-            {props.compact ? (
+            {props.columns && row.kind === "subagent" && row.child ? (
+              <SidebarProjectThreadTooltip
+                thread={row.child}
+                provider={provider}
+                render={element}
+              />
+            ) : props.compact ? (
               <Tooltip>
                 <TooltipTrigger render={element} />
                 <TooltipPopup side="right">

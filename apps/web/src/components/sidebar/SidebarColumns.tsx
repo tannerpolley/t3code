@@ -97,7 +97,7 @@ export function SidebarTrailingColumns(props: {
 
 /**
  * All thread surfaces share these fixed tracks; only the name gets spare width. Rows never indent,
- * so every column lines up at every depth; in Projects a group tint marks the depth instead.
+ * so every column lines up at every depth; in Projects a group tint connects a thread's lineage.
  */
 export function SidebarThreadColumns(props: {
   readonly caret?: ReactNode;

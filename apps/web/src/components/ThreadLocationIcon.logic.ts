@@ -1,5 +1,16 @@
-import type { EnvironmentMachineKind } from "@t3tools/contracts";
+import type { EnvironmentMachineKind, OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { fileBasename } from "@t3tools/shared/path";
+
+/** App-owned worktree children prepare before their path can be bound. */
+export function isThreadPreparingWorktree(
+  thread: Pick<OrchestrationV2ThreadShell, "status" | "lineage" | "branch"> | undefined,
+) {
+  return (
+    thread?.status === "preparing" &&
+    thread.lineage.relationshipToParent === "subagent" &&
+    thread.branch !== null
+  );
+}
 
 /**
  * Where a thread works. `kind` picks the checkout icon. `label` is the hover text: "Local" or

@@ -37,14 +37,7 @@ export function generateSidebarColumnLayoutCss() {
   const visible = (hidden: ReadonlySet<string>) => entries.filter(([name]) => !hidden.has(name));
   const template = (hidden: ReadonlySet<string>) =>
     visible(hidden)
-      .map(([name]) =>
-        name === "name"
-          ? "minmax(0, 1fr)"
-          : name === "caret"
-            ? // Projects rows reach back over their list indent; the caret column takes it up.
-              "calc(var(--sidebar-caret-width) + var(--sidebar-thread-inset, 0px))"
-            : `var(--sidebar-${name}-width)`,
-      )
+      .map(([name]) => (name === "name" ? "minmax(0, 1fr)" : `var(--sidebar-${name}-width)`))
       .join(" ");
   const threshold = (hidden: ReadonlySet<string>) => {
     const budget = sidebarColumnBudget(hidden);

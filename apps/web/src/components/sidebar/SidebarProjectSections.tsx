@@ -51,6 +51,11 @@ import {
   SquarePenIcon,
   Trash2Icon,
 } from "lucide-react";
+import {
+  SidebarProjectThreadName,
+  SidebarProjectThreadTooltip,
+} from "./SidebarProjectThreadTooltip";
+import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { SidebarBackgroundWorkRows } from "./SidebarBackgroundWorkRows";
 import { SidebarProcessGroupRows, useSidebarThreadProcesses } from "./SidebarThreadProcesses";
@@ -60,7 +65,6 @@ import {
   SidebarCaretToggle,
   SidebarTrailingColumns,
   SidebarThreadColumns,
-  sidebarThreadName,
   threadGroupHue,
   SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
@@ -713,15 +717,7 @@ const ProjectSection = memo(function ProjectSection(props: {
       />
       {expanded ? (
         <ul
-          className={props.codexStyle ? "ps-3" : "ms-3 border-sidebar-border/60 border-s ps-1"}
-          // How far this section's projects sit in from the list, for thread rows to reach back.
-          style={
-            props.codexStyle
-              ? ({
-                  "--sidebar-section-indent": isSubsection ? "1.5rem" : "0.75rem",
-                } as CSSProperties)
-              : undefined
-          }
+          className={props.codexStyle ? undefined : "ms-3 border-sidebar-border/60 border-s ps-1"}
         >
           {props.subsections.map((subsection) => (
             <ProjectSection key={subsection.id} {...props} section={subsection} subsections={[]} />
@@ -1204,17 +1200,8 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
         <ul
           className={cn(
             codexStyle && "sidebar-columns-container",
-            codexStyle ? "ps-6" : "ms-5 border-sidebar-border/60 border-s ps-2",
+            !codexStyle && "ms-5 border-sidebar-border/60 border-s ps-2",
           )}
-          style={
-            codexStyle
-              ? ({
-                  "--sidebar-thread-outdent": "calc(var(--sidebar-section-indent, 0px) + 1.5rem)",
-                  // The same caret start for every thread: a top-level section's project indent.
-                  "--sidebar-thread-inset": "2.25rem",
-                } as CSSProperties)
-              : undefined
-          }
         >
           {/* Threads arrive grouped by location (see groupThreadsByLocation); each location's
               lead row carries its icon. */}
@@ -1327,7 +1314,7 @@ const SidebarProjectThreadRow = memo(
       ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
     return (
       <li
-        className={cn("relative list-none", props.codexStyle && "sidebar-thread-outdent")}
+        className="relative list-none"
         // A family of threads shares one hue, from its root: a thread with listed descendants, and a
         // subagent listed with its own location away from its parent.
         style={
@@ -1343,81 +1330,104 @@ const SidebarProjectThreadRow = memo(
         data-sidebar-thread-key={activeThreadKey}
         ref={watchRow}
       >
-        <button
-          type="button"
-          aria-current={active ? "page" : undefined}
-          aria-label={`${props.thread.title}, ${status}`}
-          className={cn(
-            "group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
-            PROJECTS_WORK_ROW_HEIGHT,
-            props.codexStyle ? "sidebar-thread-tint text-xs" : "text-sm",
-            active
-              ? "bg-sidebar-row-active text-sidebar-foreground"
-              : selected
-                ? "bg-sidebar-row-selected text-sidebar-foreground"
-                : cn(
-                    // Codex style: the same white as subagent and shell rows, not only when selected.
-                    props.codexStyle ? "text-foreground/85" : "text-sidebar-muted-foreground/80",
-                    "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-                  ),
-          )}
-          onClick={(event) => props.onClick(event, props.thread)}
-          // Drag the row onto a chat composer to add the thread as context.
-          onPointerDown={contextDrag.onPointerDown}
-          onClickCapture={contextDrag.onClickCapture}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });
-          }}
-        >
-          {props.codexStyle ? (
-            <SidebarThreadColumns
-              location={threadLocationCell(
-                props.thread.source,
-                props.locationLeadKeys?.has(activeThreadKey) === false ? undefined : (
-                  <ThreadLocationIcon thread={props.thread} />
-                ),
+        <SidebarProjectThreadTooltip
+          thread={props.thread}
+          provider={provider}
+          render={
+            <button
+              type="button"
+              aria-current={active ? "page" : undefined}
+              aria-label={sidebarProjectThreadAccessibleName(
+                props.thread.title,
+                status,
+                props.thread.pullRequests,
               )}
-              role={<ThreadRoleIcon thread={props.thread.source} nativeMark={false} />}
-              provider={
-                <ThreadRelationshipIcon
-                  driver={provider?.driver}
-                  provider={provider}
-                  fallbackIcon={CornerDownRightIcon}
-                />
-              }
-              model={resolveSidebarThreadModelLabel(props.thread, provider, true, false)}
-              effort={shortModelSelectionEffort(
-                formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
+              className={cn(
+                "group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
+                PROJECTS_WORK_ROW_HEIGHT,
+                props.codexStyle ? "sidebar-thread-tint text-xs" : "text-sm",
+                active
+                  ? "bg-sidebar-row-active text-sidebar-foreground"
+                  : selected
+                    ? "bg-sidebar-row-selected text-sidebar-foreground"
+                    : cn(
+                        // Codex style: the same white as subagent and shell rows, not only when selected.
+                        props.codexStyle
+                          ? "text-foreground/85"
+                          : "text-sidebar-muted-foreground/80",
+                        "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+                      ),
               )}
-              name={sidebarThreadName(props.thread.title, sidebarThreadTitle(props.thread.source))}
-              count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
-              time={<SidebarThreadTime thread={props.thread} status={status} />}
-              status={<ThreadStatusMark status={statusMark} />}
-              usage={
-                <SidebarTokenUsage
-                  summary={props.thread.source.usageSummary}
-                  driver={provider?.driver}
+              onClick={(event) => props.onClick(event, props.thread)}
+              // Drag the row onto a chat composer to add the thread as context.
+              onPointerDown={contextDrag.onPointerDown}
+              onClickCapture={contextDrag.onClickCapture}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                props.onContextMenu(props.thread, { x: event.clientX, y: event.clientY });
+              }}
+            >
+              {props.codexStyle ? (
+                <SidebarThreadColumns
+                  location={threadLocationCell(
+                    props.thread.source,
+                    props.locationLeadKeys?.has(activeThreadKey) === false ? undefined : (
+                      <ThreadLocationIcon thread={props.thread} tooltip={false} />
+                    ),
+                  )}
+                  role={<ThreadRoleIcon thread={props.thread.source} nativeMark={false} />}
+                  provider={
+                    <ThreadRelationshipIcon
+                      driver={provider?.driver}
+                      provider={provider}
+                      fallbackIcon={CornerDownRightIcon}
+                    />
+                  }
+                  model={resolveSidebarThreadModelLabel(props.thread, provider, true, false)}
+                  effort={shortModelSelectionEffort(
+                    formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
+                  )}
+                  name={
+                    <SidebarProjectThreadName thread={props.thread}>
+                      {sidebarThreadTitle(props.thread.source)}
+                    </SidebarProjectThreadName>
+                  }
+                  count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
+                  time={<SidebarThreadTime thread={props.thread} status={status} />}
+                  status={<ThreadStatusMark status={statusMark} />}
+                  usage={
+                    <SidebarTokenUsage
+                      summary={props.thread.source.usageSummary}
+                      driver={provider?.driver}
+                    />
+                  }
                 />
-              }
-            />
-          ) : (
-            <>
-              <span
-                aria-hidden
-                className={cn("size-1.5 shrink-0 rounded-full", THREAD_STATUS_DOT_CLASS[status])}
-              />
-              <ThreadLocationIcon thread={props.thread} />
-              <ThreadRoleIcon thread={props.thread.source} />
-              <span className="min-w-0 flex-1 truncate">{props.thread.title}</span>
-              {workRows.length > 0 ? (
-                <span aria-hidden className="w-8 shrink-0" />
               ) : (
-                <SidebarThreadTime thread={props.thread} status={status} />
+                <>
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      THREAD_STATUS_DOT_CLASS[status],
+                    )}
+                  />
+                  <ThreadLocationIcon thread={props.thread} tooltip={false} />
+                  <ThreadRoleIcon thread={props.thread.source} />
+                  <span className="min-w-0 flex-1">
+                    <SidebarProjectThreadName thread={props.thread}>
+                      {props.thread.title}
+                    </SidebarProjectThreadName>
+                  </span>
+                  {workRows.length > 0 ? (
+                    <span aria-hidden className="w-8 shrink-0" />
+                  ) : (
+                    <SidebarThreadTime thread={props.thread} status={status} />
+                  )}
+                </>
               )}
-            </>
-          )}
-        </button>
+            </button>
+          }
+        />
         {workRows.length > 0 && props.codexStyle ? (
           <SidebarCaretToggle
             open={workOpen}

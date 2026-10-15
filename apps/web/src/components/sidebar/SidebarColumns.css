@@ -9,15 +9,7 @@
   font-weight: normal;
 }
 @utility sidebar-caret-toggle {
-  inset-inline-start: calc(0.125rem + var(--sidebar-thread-inset, 0px));
-}
-/*
- * Projects thread rows reach back over their section and project indents (the outdent) to the
- * list's start, so every thread's columns sit at one x however deeply its project is nested. Only
- * section and project rows indent; the thread inset keeps the caret clear of them.
- */
-@utility sidebar-thread-outdent {
-  margin-inline-start: calc(-1 * var(--sidebar-thread-outdent, 0px));
+  inset-inline-start: 0.125rem;
 }
 /*
  * A thread group (a top-level thread and its descendants) tints its rows with the group's hue, set

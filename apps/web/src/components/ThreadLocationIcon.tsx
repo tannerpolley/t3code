@@ -5,7 +5,7 @@ import {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import type { SidebarThreadSummary } from "../types";
-import { threadLocation } from "./ThreadLocationIcon.logic";
+import { isThreadPreparingWorktree, threadLocation } from "./ThreadLocationIcon.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 type LocatedThread = Pick<SidebarThreadSummary, "environmentId" | "worktreePath"> & {
@@ -22,22 +22,29 @@ const CHECKOUT_ICON = {
 };
 
 /** The location mark is independent of the row's caret, provider and role. */
-export function ThreadLocationIcon({ thread }: { readonly thread: LocatedThread }) {
+export function ThreadLocationIcon({
+  thread,
+  tooltip = true,
+}: {
+  readonly thread: LocatedThread;
+  /** A Projects row supplies its own complete checkout hover. */
+  readonly tooltip?: boolean;
+}) {
   const location = useThreadLocation(thread);
   const CheckoutIcon = CHECKOUT_ICON[location.kind];
+  const icon = (
+    <span
+      role="img"
+      aria-label={location.label}
+      className="inline-flex shrink-0 text-muted-foreground"
+    >
+      <CheckoutIcon aria-hidden className="size-3 shrink-0" />
+    </span>
+  );
+  if (!tooltip) return icon;
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            role="img"
-            aria-label={location.label}
-            className="inline-flex shrink-0 text-muted-foreground"
-          />
-        }
-      >
-        <CheckoutIcon aria-hidden className="size-3 shrink-0" />
-      </TooltipTrigger>
+      <TooltipTrigger render={icon} />
       <TooltipPopup side="right">{location.label}</TooltipPopup>
     </Tooltip>
   );
@@ -57,10 +64,6 @@ function useThreadLocation(thread: LocatedThread) {
     machine,
     environmentName: environmentName ?? (remote ? "Remote environment" : "Local checkout"),
     worktreePath: thread.worktreePath,
-    // App-owned worktree children prepare before their path can be bound.
-    preparingWorktree:
-      thread.source?.status === "preparing" &&
-      thread.source.lineage.relationshipToParent === "subagent" &&
-      thread.source.branch !== null,
+    preparingWorktree: isThreadPreparingWorktree(thread.source),
   });
 }
