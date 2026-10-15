@@ -12523,13 +12523,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   // message can settle it. A long-lived parent keeps every
                   // past delivery run, and finalizing each of them would
                   // reload the thread once per historical delivery.
-                  const openDeliveryMessageIds = new Set(
-                    projection.runs.flatMap((run) =>
+                  const openDeliveryMessageIds = new Set([
+                    ...(projection.thread.delegatedCompletion?.delivery == null
+                      ? []
+                      : [projection.thread.delegatedCompletion.delivery.messageId]),
+                    ...projection.runs.flatMap((run) =>
                       run.delegatedCompletion?.delivery == null
                         ? []
                         : [run.delegatedCompletion.delivery.messageId],
                     ),
-                  );
+                  ]);
                   const terminalDeliveryRunIds = projection.runs
                     .filter(
                       (run) =>
@@ -12544,6 +12547,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     terminalDeliveryRunIds.length === 0
                       ? projection
                       : yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+                  if (refreshed.thread.delegatedCompletion?.delivery != null) {
+                    yield* offerDelegatedCompletionDelivery(threadId, null);
+                  }
                   for (const run of refreshed.runs) {
                     if (
                       run.delegatedCompletion?.delivery !== null &&

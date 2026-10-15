@@ -8,10 +8,14 @@ import {
   MessageId,
   NodeId,
   ProviderInstanceId,
+  ProjectId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import { vi } from "vitest";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -46,8 +50,120 @@ import {
   ownerCanSee,
   reconcileCommandId,
   seedChildWaitingOnUser,
+  seedParentWithTerminalTask,
   wakeChildQuestion,
 } from "./DelegatedCompletionDelivery.testHarness.ts";
+
+it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
+  "thread-owned completion recovery",
+  (it) => {
+    it.effect(
+      "restart recovery re-offers and settles a thread-owned parentRunId-null delivery",
+      () =>
+        Effect.gen(function* () {
+          const engine = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make("thread:thread-owned-recovery");
+          const runId = RunId.make("run:thread-owned-recovery");
+          const taskId = NodeId.make("task:thread-owned-recovery");
+          const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+          yield* seedParentWithTerminalTask({
+            threadId,
+            projectId: ProjectId.make("project:thread-owned-recovery"),
+            runId,
+            rootNodeId: NodeId.make("root:thread-owned-recovery"),
+            taskId,
+            deliveryState: "claimed",
+            completionWake: "always",
+            deliveryTaskIds: [taskId],
+            now,
+          });
+          const parent = yield* engine.getThreadProjection(threadId);
+          const run = parent.runs[0]!;
+          const task = parent.subagents[0]!;
+          // The result and reservation committed, but no continuation was dispatched before shutdown.
+          yield* sink.write({
+            commandId: reconcileCommandId("thread-owned-reservation"),
+            events: [
+              {
+                id: EventId.make("thread-owned-cohort"),
+                type: "thread.metadata-updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...parent.thread, delegatedCompletion: run.delegatedCompletion },
+              },
+              {
+                id: EventId.make("thread-owned-idle-parent"),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...run,
+                  status: "completed",
+                  completedAt: now,
+                  delegatedCompletion: { ...run.delegatedCompletion!, delivery: null },
+                },
+              },
+              {
+                id: EventId.make("thread-owned-task"),
+                type: "subagent.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...task, runId: null },
+              },
+            ],
+          });
+          const offer = vi.spyOn(requests, "offer");
+          yield* Effect.gen(function* () {
+            yield* engine.recoverDelegatedTasks;
+            assert.equal(offer.mock.calls.length, 1);
+            assert.deepEqual(offer.mock.calls[0]![0].delegatedCompletion, {
+              parentRunId: null,
+              generation: 1,
+              messageId,
+            });
+            yield* engine.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("thread-owned-delivery"),
+              threadId,
+              messageId,
+              text: "Issue worker finished.",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              delegatedCompletion: { parentRunId: null, generation: 1 },
+              createdBy: "agent",
+              creationSource: "server",
+            });
+            const dispatched = yield* engine.getThreadProjection(threadId);
+            const deliveryRun = dispatched.runs.find(
+              (candidate) => candidate.userMessageId === messageId,
+            )!;
+            // This delivery also ended before startup's terminal-run listener was attached.
+            yield* sink.write({
+              commandId: reconcileCommandId("thread-owned-delivery-ended"),
+              events: [
+                {
+                  id: EventId.make("thread-owned-delivery-ended"),
+                  type: "run.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: { ...deliveryRun, status: "completed", completedAt: now },
+                },
+              ],
+            });
+            yield* engine.recoverDelegatedTasks;
+            const settled = yield* engine.getThreadProjection(threadId);
+            assert.isNull(settled.thread.delegatedCompletion?.delivery);
+            assert.equal(settled.subagents[0]!.completionDelivery?.state, "delivered");
+            assert.equal(settled.subagents[0]!.result, "child finished");
+            assert.equal(offer.mock.calls.length, 1);
+          }).pipe(Effect.ensuring(Effect.sync(() => offer.mockRestore())));
+        }),
+    );
+  },
+);
 
 it.layer(layerTest)("child question wake", (it) => {
   it.effect("wakes the parent with the full question once", () =>
