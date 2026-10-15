@@ -394,6 +394,7 @@ export const layerProduction = Layer.mergeAll(
         IdAllocator.layer,
         layerProviderAdapterRegistryProvided,
         layerEventSinkProvided,
+        layerCommandReceiptStoreProvided,
       ),
     ),
   ),

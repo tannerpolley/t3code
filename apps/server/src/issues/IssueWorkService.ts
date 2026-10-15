@@ -59,6 +59,7 @@ import {
 } from "./IssueEligibility.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Stream from "effect/Stream";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -130,6 +131,7 @@ export const layer = Layer.effect(
     const providers = yield* ProviderRegistry;
     const adapters = yield* ProviderAdapterRegistryV2;
     const ids = yield* IdAllocatorV2;
+    const commandReceipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
     const mapError = (cause: unknown) =>
       isIssueWorkError(cause)
         ? cause
@@ -960,15 +962,23 @@ export const layer = Layer.effect(
               else running = true;
               continue;
             }
+            const firstCommandId = `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`;
+            let clientRequestId = CommandId.make(firstCommandId);
+            // Rejected commands are immutable; only a rejected attempt gets a new identity.
+            for (let retry = 1; ; retry++) {
+              const receipt = yield* commandReceipts
+                .getByCommandId(clientRequestId)
+                .pipe(Effect.mapError(mapError));
+              if (!Option.exists(receipt, (value) => value.status === "rejected")) break;
+              clientRequestId = CommandId.make(`${firstCommandId}:retry:${retry}`);
+            }
             const started = yield* start({
               host: config.host,
               repository: config.repository,
               number: issue.number,
               projectId: config.projectId,
               modelRoleId: plan.modelRoleId,
-              clientRequestId: CommandId.make(
-                `milestone-issue:${rootThreadId}:${plan.number}:${read.issue.id}:first`,
-              ),
+              clientRequestId,
             }).pipe(Effect.result);
             if (started._tag === "Failure") {
               if (started.failure.code === "invalid-request") awaiting = true;

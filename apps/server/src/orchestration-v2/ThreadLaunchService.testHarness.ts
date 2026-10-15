@@ -291,6 +291,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerOutbox,
       layerDatabase,
       layerExternalServices,
+      layerReceipts,
     ),
     createWorktree,
     removeWorktree,
