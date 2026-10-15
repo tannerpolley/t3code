@@ -1895,21 +1895,14 @@ layer("ProviderEventIngestorV2", (it) => {
         const created = yield* Effect.all([ingest(offered), ingest(offered)], {
           concurrency: "unbounded",
         });
+        // Spawning a native subagent leaves the parent's stored role as it was.
         assert.deepEqual(
           created.flat().map((stored) => stored.event.type),
-          parentRole === undefined
-            ? ["thread.created", "thread.metadata-updated"]
-            : ["thread.created"],
+          ["thread.created"],
         );
-        assert.equal(
-          (yield* projectionStore.getThread(rootEvent.threadId)).role,
-          parentRole ?? "orchestrator",
-        );
+        assert.equal((yield* projectionStore.getThread(rootEvent.threadId)).role, parentRole);
         assert.isUndefined((yield* projectionStore.getThread(childThreadId)).role);
-        assert.equal(
-          (yield* projectionStore.getThreadShell(rootEvent.threadId))?.role,
-          parentRole ?? "orchestrator",
-        );
+        assert.equal((yield* projectionStore.getThreadShell(rootEvent.threadId))?.role, parentRole);
         assert.deepEqual(
           (yield* ingest(offered)).map((stored) => stored.event.type),
           [],

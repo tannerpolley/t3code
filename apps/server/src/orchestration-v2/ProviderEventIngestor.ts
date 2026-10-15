@@ -557,7 +557,7 @@ export const layer: Layer.Layer<
             )
               return [];
             const now = yield* DateTime.now;
-            const events = [
+            return [
               yield* makeDomainEvent(input, {
                 type: existing === null ? "thread.created" : "thread.metadata-updated",
                 threadId: offered.id,
@@ -575,28 +575,6 @@ export const layer: Layer.Layer<
                 occurredAt: now,
               }),
             ];
-            if (
-              existing === null &&
-              isProviderNativeSubagentThread(offered) &&
-              offered.lineage.parentThreadId !== null
-            ) {
-              const parent = yield* projections.getThread(offered.lineage.parentThreadId).pipe(
-                Effect.catchTags({
-                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
-                }),
-              );
-              if (parent !== null && parent.role === undefined) {
-                events.push(
-                  yield* makeDomainEvent(input, {
-                    type: "thread.metadata-updated",
-                    threadId: parent.id,
-                    payload: { ...parent, role: "orchestrator", updatedAt: now },
-                    occurredAt: now,
-                  }),
-                );
-              }
-            }
-            return events;
           }
           case "provider_session.updated":
             return [

@@ -618,13 +618,11 @@ it.effect.each([undefined, "reviewer"] as const)(
       const updatedParent = yield* projections.getThreadProjection(parentThreadId);
       const childThreadId = updatedParent.subagents[0]!.childThreadId!;
       const child = yield* projections.getThreadProjection(childThreadId);
-      assert.equal(updatedParent.thread.role, parentRole ?? "orchestrator");
+      // Delegating stores no role on the parent; it shows as an Orchestrator by default.
+      assert.equal(updatedParent.thread.role, parentRole);
       const childRole = parentRole === undefined ? "implementor" : "reviewer";
       assert.equal(child.thread.role, childRole);
-      assert.equal(
-        (yield* projections.getThreadShell(parentThreadId))?.role,
-        parentRole ?? "orchestrator",
-      );
+      assert.equal((yield* projections.getThreadShell(parentThreadId))?.role, parentRole);
       assert.equal((yield* projections.getThreadShell(childThreadId))?.role, childRole);
       assert.isNull(child.thread.linkedPullRequest);
       assert.deepEqual(child.thread.pullRequests, []);
@@ -652,6 +650,19 @@ it.effect.each([undefined, "reviewer"] as const)(
       const parentAfterChildLink = yield* projections.getThreadProjection(parentThreadId);
       assert.deepEqual(parentAfterChildLink.thread.linkedPullRequest, parentPullRequest);
       assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
+
+      // A parent that delegated still becomes an Implementor once it moves into a worktree.
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("move-parent-pr"),
+        threadId: parentThreadId,
+        branch: "t3/parent-pr",
+        worktreePath: "/repo-worktrees/parent-pr",
+      });
+      assert.equal(
+        (yield* projections.getThreadShell(parentThreadId))?.role,
+        parentRole ?? "implementor",
+      );
     }).pipe(Effect.provide(layerTest)),
 );
 

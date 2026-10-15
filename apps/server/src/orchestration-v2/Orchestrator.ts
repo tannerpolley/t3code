@@ -7235,15 +7235,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         result: null,
       };
       const emitEvent = emit(events, command);
-      if (parentProjection.thread.role === undefined) {
-        yield* emitEvent({
-          type: "thread.metadata-updated",
-          threadId: request.parentThreadId,
-          occurredAt: now,
-          payload: { ...parentProjection.thread, role: "orchestrator", updatedAt: now },
-        });
-      }
-
       yield* emitEvent({
         type: "thread.created",
         threadId: childThreadId,

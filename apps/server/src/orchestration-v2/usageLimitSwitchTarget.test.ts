@@ -78,6 +78,8 @@ const role = (
     },
   ],
 });
+// A thread the user started in the main checkout: an Orchestrator unless it stores a role.
+const topLevel = { branch: null, worktreePath: null, lineage: { relationshipToParent: null } };
 const alternative: ModelSelection = {
   instanceId: claude,
   model: "opus",
@@ -85,7 +87,32 @@ const alternative: ModelSelection = {
 };
 
 describe("usage-limit target selection", () => {
-  it("prefers persisted roles, matches Implementor profiles, and only matches other roles when no role is stored", () => {
+  it("switches a role-less top-level thread as an Orchestrator even when a Reviewer lists its model", () => {
+    const reviewerTarget: ModelSelection = { instanceId: otherClaude, model: "opus" };
+    const settings = {
+      modelRoles: [
+        role("reviewer", source, reviewerTarget, { role: "reviewer" }),
+        role("orchestrator", source, alternative, { role: "orchestrator" }),
+      ],
+      usageLimitFallbackModels: [],
+    };
+    const providers = [
+      provider(codex, "codex", "sol"),
+      provider(claude, "claudeAgent", "opus"),
+      provider(otherClaude, "claudeAgent", "opus"),
+    ];
+    expect(
+      usageLimitSwitchTarget(
+        { ...topLevel, modelSelection: source },
+        settings,
+        providers,
+        new Set([codex, claude, otherClaude]),
+        now,
+      ),
+    ).toEqual(alternative);
+  });
+
+  it("uses the thread's effective role and matches Implementor profiles within it", () => {
     const orchestrator = role("orchestrator", source, alternative, { role: "orchestrator" });
     const fast = role(
       "implementor-fast",
@@ -100,21 +127,21 @@ describe("usage-limit target selection", () => {
     const roles = [orchestrator, fast, thorough];
     expect(
       usageLimitThreadRole(
-        { modelSelection: { ...source, options: source.options!.toReversed() } },
+        { ...topLevel, modelSelection: { ...source, options: source.options!.toReversed() } },
         roles,
       ),
     ).toBe(orchestrator);
-    expect(usageLimitThreadRole({ role: "implementor", modelSelection: source }, roles)).toBe(
-      thorough,
-    );
+    expect(
+      usageLimitThreadRole({ ...topLevel, role: "implementor", modelSelection: source }, roles),
+    ).toBe(thorough);
     expect(
       usageLimitThreadRole(
-        { role: "implementor", modelSelection: { ...source, model: "custom" } },
+        { ...topLevel, role: "implementor", modelSelection: { ...source, model: "custom" } },
         roles,
       ),
     ).toBe(fast);
     expect(
-      usageLimitThreadRole({ role: "reviewer", modelSelection: source }, roles),
+      usageLimitThreadRole({ ...topLevel, role: "reviewer", modelSelection: source }, roles),
     ).toBeUndefined();
   });
 
@@ -137,7 +164,7 @@ describe("usage-limit target selection", () => {
       provider(otherClaude, "claudeAgent", "opus", 20),
     ];
     const result = usageLimitSwitchTarget(
-      { role: "reviewer", modelSelection: source },
+      { ...topLevel, role: "reviewer", modelSelection: source },
       { modelRoles: [ranked], usageLimitFallbackModels: [] },
       providers,
       new Set([codex, claude, otherClaude]),
@@ -180,7 +207,7 @@ describe("usage-limit target selection", () => {
           : {}),
       };
       const result = usageLimitSwitchTarget(
-        { modelSelection: source },
+        { ...topLevel, modelSelection: source },
         { modelRoles: [], usageLimitFallbackModels: [alternative] },
         [provider(codex, "codex", "sol"), target],
         new Set(reason === "missing-adapter" ? [codex] : [codex, claude]),
@@ -199,7 +226,7 @@ it("uses fallbacks when a role has no available other-provider choice and exclud
   const providers = [provider(codex, "codex", "sol"), provider(claude, "claudeAgent", "opus")];
   expect(
     usageLimitSwitchTarget(
-      { role: "orchestrator", modelSelection: source },
+      { ...topLevel, role: "orchestrator", modelSelection: source },
       settings,
       providers,
       new Set([codex, claude]),
@@ -208,7 +235,7 @@ it("uses fallbacks when a role has no available other-provider choice and exclud
   ).toEqual(alternative);
   expect(
     usageLimitSwitchTarget(
-      { role: "orchestrator", modelSelection: source },
+      { ...topLevel, role: "orchestrator", modelSelection: source },
       settings,
       providers,
       new Set([codex, claude]),

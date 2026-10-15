@@ -288,11 +288,10 @@ On web and desktop, choose **Usage limit recovery** in **Settings → General**:
   “Continue where you left off.” with a context handoff. Other threads and children keep running.
   Switching proceeds without asking, including in Don't ask mode.
 
-A thread with a model role uses that role's available alternatives, ordered by weekly headroom.
-Implementor threads use the profile matching their current model and effort, or the first
-configured Implementor profile if none matches. Threads without a role use the first role
-matching their provider, model, and options. If the role has no available choice on another
-provider, or no role matches, the thread uses the fallback model configured for that provider.
+A thread uses its role's available alternatives, ordered by weekly headroom. Implementor threads
+use the profile matching their current model and effort, or the first configured Implementor
+profile if none matches. If the role has no available choice on another provider, the thread
+uses the fallback model configured for that provider.
 Set each fallback's effort separately; efforts are not translated.
 If no alternative is available, the thread says so and waits for reset. Without a reported reset
 time, retry manually.

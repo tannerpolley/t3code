@@ -6331,7 +6331,20 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
             : scenario === "wait"
               ? ("wait" as const)
               : ("switch" as const),
-        modelRoles: scenario === "role" || scenario === "reactor" ? [role] : [],
+        // The role-less thread is an Orchestrator: keep that profile on its own provider so only
+        // the scenario's fallback models offer a target.
+        modelRoles:
+          scenario === "role" || scenario === "reactor"
+            ? [role]
+            : [
+                {
+                  id: "orchestrator",
+                  role: "orchestrator" as const,
+                  name: "Orchestrator",
+                  description: "",
+                  targets: [{ providerInstanceId: source.instanceId, model: source.model }],
+                },
+              ],
         usageLimitFallbackModels:
           scenario === "unavailable" || scenario === "expired-no-target" ? [] : [target],
         dontAskMode: true,

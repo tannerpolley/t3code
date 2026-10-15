@@ -9,7 +9,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import { RuntimeRequestId, type OrchestrationV2RuntimeRequest } from "@t3tools/contracts";
 import * as EventSink from "./EventSink.ts";
-import { EventId } from "@t3tools/contracts";
+import { EventId, effectiveThreadRole } from "@t3tools/contracts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as IssueService from "../issues/IssueService.ts";
@@ -268,7 +268,8 @@ describe("managed issue work", () => {
         creationSource: "web",
       });
       const root = yield* threads.getThreadProjection(starts[0].rootThreadId);
-      assert.equal(root.thread.role, "orchestrator");
+      // The root stores no role; it works as an Orchestrator by default.
+      assert.equal(effectiveThreadRole(root.thread), "orchestrator");
       assert.equal(root.messages.length, 1);
       assert.equal((yield* issues.workStatus(input)).status, "queued_preparing");
       assert.equal((yield* issues.workStatus(input)).projectId, projectId);
@@ -369,7 +370,7 @@ describe("managed issue work", () => {
       assert.deepEqual(child.thread.linkedIssue, issue);
       assert.equal(child.thread.role, "implementor");
       assert.equal(
-        (yield* threads.getThreadProjection(root.thread.id)).thread.role,
+        effectiveThreadRole((yield* threads.getThreadProjection(root.thread.id)).thread),
         "orchestrator",
       );
       assert.equal(child.thread.title, "#8 Single issue");
@@ -394,7 +395,18 @@ describe("managed issue work", () => {
         })
         .pipe(Effect.result);
       assert.isTrue(deletion._tag === "Failure");
-      const childRun = child.runs[0]!;
+      // The worker's workspace preparation runs on its own fiber; wait until it releases the run.
+      yield* sink.stream({ afterSequence: 0, eventType: "run.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.threadId === child.thread.id &&
+            stored.event.type === "run.updated" &&
+            stored.event.payload.status === "starting",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const childRun = (yield* threads.getThreadProjection(child.thread.id)).runs[0]!;
       const now = yield* DateTime.now;
       if (childRun.activeAttemptId === null) return yield* Effect.die("No current worker attempt");
       const running = { ...childRun, status: "running" as const, startedAt: now };

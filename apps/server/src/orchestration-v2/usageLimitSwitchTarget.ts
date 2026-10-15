@@ -1,4 +1,5 @@
 import {
+  effectiveThreadRole,
   resolveThreadRole,
   type ModelRole,
   type ModelSelection,
@@ -11,30 +12,37 @@ import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelRoleStatuses } from "../mcp/delegateTaskTarget.ts";
 
-/** Role ownership wins over selection matching. Implementor profiles live in settings. */
+type UsageLimitThread = Pick<
+  OrchestrationV2AppThread,
+  "modelSelection" | "role" | "branch" | "worktreePath"
+> & {
+  readonly lineage: Pick<OrchestrationV2AppThread["lineage"], "relationshipToParent">;
+};
+
+/**
+ * The thread's role (the same one the sidebar shows) picks the profiles; within it, the profile
+ * listing the current selection wins, else its first one. Implementor profiles live in settings.
+ */
 export function usageLimitThreadRole(
-  thread: Pick<OrchestrationV2AppThread, "modelSelection" | "role">,
+  thread: UsageLimitThread,
   roles: readonly ModelRole[],
 ): ModelRole | undefined {
-  const selection = thread.modelSelection;
-  const owned =
-    thread.role === undefined
-      ? roles
-      : roles.filter((role) => (role.role ?? resolveThreadRole(role.id)) === thread.role);
+  const threadRole = effectiveThreadRole(thread);
+  const owned = roles.filter((role) => (role.role ?? resolveThreadRole(role.id)) === threadRole);
   const matched = owned.find((role) =>
     role.targets.some((target) =>
-      modelSelectionsEqual(selection, {
+      modelSelectionsEqual(thread.modelSelection, {
         instanceId: target.providerInstanceId,
         model: target.model,
         ...(target.options === undefined ? {} : { options: target.options }),
       }),
     ),
   );
-  return thread.role === undefined ? matched : (matched ?? owned[0]);
+  return matched ?? owned[0];
 }
 
 export function usageLimitSwitchTarget(
-  thread: Pick<OrchestrationV2AppThread, "modelSelection" | "role">,
+  thread: UsageLimitThread,
   settings: Pick<ServerSettings, "modelRoles" | "usageLimitFallbackModels">,
   providers: readonly ServerProvider[],
   capableIds: ReadonlySet<ProviderInstanceId>,
