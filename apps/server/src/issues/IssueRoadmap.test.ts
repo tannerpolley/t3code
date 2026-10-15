@@ -91,3 +91,61 @@ it.effect("preserves an underlying GitHub read failure", () => {
     assert.strictEqual(yield* roadmap.list({ ...input, roadmap: true }).pipe(Effect.flip), error);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("gives an issue's detail the live work its row has, matched by closing PRs", () => {
+  const { pullRequestRefs: _refs, ...summary } = list.issues[0]!;
+  const detail = {
+    repository: input,
+    viewer: null,
+    fetchedAt: "2026-10-13T00:00:00Z",
+    issue: summary,
+    body: "",
+    comments: [],
+    linkedPullRequests: [
+      {
+        repository: "owner/repo",
+        number: 42,
+        title: "Closes",
+        state: "open" as const,
+        isDraft: false,
+        url: "https://github.com/owner/repo/pull/42",
+        closesIssue: true,
+      },
+      {
+        repository: "owner/repo",
+        number: 43,
+        title: "Mentions",
+        state: "open" as const,
+        isDraft: false,
+        url: "https://github.com/owner/repo/pull/43",
+        closesIssue: false,
+      },
+    ],
+  };
+  let enriched: IssueListResult | undefined;
+  const layer = IssueRoadmap.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(IssueService.IssueService)({ detail: () => Effect.succeed(detail) }),
+        Layer.mock(IssueLinks.IssueLinks)({
+          enrich: (value) => {
+            enriched = value;
+            return Effect.succeed({
+              ...value,
+              issues: value.issues.map(({ pullRequestRefs: _ignored, ...issue }) => ({
+                ...issue,
+                liveWork: [],
+              })),
+            });
+          },
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const result = yield* (yield* IssueRoadmap.IssueRoadmap).detail({ ...input, number: 13 });
+    assert.deepEqual(enriched?.issues[0]?.pullRequestRefs, [{ ...input, number: 42 }]);
+    assert.deepEqual(result.issue.liveWork, []);
+    assert.equal(result.linkedPullRequests.length, 2);
+  }).pipe(Effect.provide(layer));
+});

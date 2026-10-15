@@ -940,7 +940,10 @@ it.effect("maps malformed upstream data safely and normalizes null detail bodies
     assert.notInclude(malformedError.message, "secret-token");
 
     const detailHarness = makeHarness({
-      responses: [httpResponse(graphQlDetail(graphQlIssue({ body: null })))],
+      responses: [
+        httpResponse(graphQlDetail(graphQlIssue({ body: null }))),
+        httpResponse({ data: {} }),
+      ],
     });
     const detailService = yield* service(detailHarness);
     const detail = yield* detailService.detail({
@@ -994,7 +997,7 @@ function graphQlDetail(issue: unknown, errors?: ReadonlyArray<unknown>): unknown
   };
 }
 
-it.effect("reads issue detail, comments, and linked pull requests in one GraphQL request", () =>
+it.effect("reads issue detail, comments, linked pull requests and list relationships", () =>
   Effect.gen(function* () {
     const harness = makeHarness({
       responses: [
@@ -1053,13 +1056,41 @@ it.effect("reads issue detail, comments, and linked pull requests in one GraphQL
             }),
           ),
         ),
+        // The list's metadata read for this issue: an open blocker and a Project status.
+        httpResponse({
+          data: {
+            p0: {
+              issue: {
+                parent: null,
+                blockedBy: {
+                  nodes: [{ number: 3, state: "OPEN", repository: { nameWithOwner: REPOSITORY } }],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+                closedByPullRequestsReferences: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+                projectItems: projectConnection([
+                  projectItem("P1", "Board", projectField("In progress")),
+                ]),
+              },
+            },
+          },
+        }),
       ],
     });
     const issues = yield* service(harness);
     const detail = yield* issues.detail({ ...listInput, number: 7 });
 
-    assert.equal(harness.calls.length, 1);
+    assert.equal(harness.calls.length, 2);
     assert.include(harness.calls[0]!.url, "graphql");
+    // The detail carries the relationships its list row has, so it can say blocked.
+    assert.deepEqual(
+      detail.issue.blockedBy?.map((blocker) => [blocker.number, blocker.state]),
+      [[3, "open"]],
+    );
+    assert.equal(detail.issue.projects?.[0]?.status, "In progress");
+    assert.notProperty(detail.issue, "pullRequestRefs");
     assert.equal(detail.issue.state, "closed");
     assert.equal(detail.issue.stateReason, "not_planned");
     assert.equal(detail.issue.commentCount, 150);
@@ -1103,13 +1134,14 @@ it.effect("rereads an issue without its links when GitHub refuses a cross-refere
           ]),
         ),
         httpResponse(graphQlDetail(issue)),
+        httpResponse({ data: {} }),
       ],
     });
     const detail = yield* (yield* service(harness)).detail({ ...listInput, number: 7 });
 
     assert.equal(detail.issue.number, 7);
     assert.deepEqual(detail.linkedPullRequests, []);
-    assert.equal(harness.calls.length, 2);
+    assert.equal(harness.calls.length, 3);
     assert.notInclude(harness.calls[1]!.body!, "timelineItems");
   }),
 );

@@ -1,4 +1,10 @@
-import { type IssueReadError, type IssueListInput, type IssueListResult } from "@t3tools/contracts";
+import {
+  type IssueDetailInput,
+  type IssueDetailResult,
+  type IssueReadError,
+  type IssueListInput,
+  type IssueListResult,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,6 +16,8 @@ export class IssueRoadmap extends Context.Service<
   IssueRoadmap,
   {
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueReadError>;
+    /** The issue with the same local work its list row carries. */
+    readonly detail: (input: IssueDetailInput) => Effect.Effect<IssueDetailResult, IssueReadError>;
   }
 >()("t3/issues/IssueRoadmap") {}
 
@@ -33,6 +41,36 @@ export const layer = Layer.effect(
                     })),
                   })),
                 ),
+          ),
+        ),
+      detail: (input) =>
+        issues.detail(input).pipe(
+          Effect.flatMap((detail) =>
+            links
+              .enrich({
+                ...detail,
+                milestones: [],
+                nextCursor: null,
+                issuesComplete: true,
+                milestonesComplete: true,
+                issues: [
+                  {
+                    ...detail.issue,
+                    // The list associates threads through closing pull requests; so does this.
+                    pullRequestRefs: detail.linkedPullRequests
+                      .filter((pr) => pr.closesIssue)
+                      .map((pr) => ({
+                        host: detail.repository.host,
+                        repository: pr.repository,
+                        number: pr.number,
+                      })),
+                  },
+                ],
+              })
+              .pipe(
+                Effect.map((list) => ({ ...detail, issue: list.issues[0] ?? detail.issue })),
+                Effect.orElseSucceed(() => detail),
+              ),
           ),
         ),
     });

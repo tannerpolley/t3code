@@ -1422,11 +1422,20 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                   "Pull requests are not GitHub issues.",
                 );
               }
+              // The list's own metadata read for this one issue, so the detail can say blocked or
+              // in progress as its row does. It never fails the detail.
+              const metadata = yield* readIssueListMetadata(scope, [raw.number], true).pipe(
+                Effect.provideService(GitHubApi.GitHubApi, api),
+              );
+              const { pullRequestRefs: _refs, ...relationships } = metadata.get(raw.number) ?? {};
               return {
                 repository: { host: scope.host, repository: scope.repository },
                 viewer: { accountId: identity.accountId, login: identity.viewer },
                 fetchedAt: DateTime.formatIso(yield* DateTime.now),
-                issue: normalizeGraphQlIssue(scope.host, scope.repository, raw),
+                issue: {
+                  ...normalizeGraphQlIssue(scope.host, scope.repository, raw),
+                  ...relationships,
+                },
                 body: raw.body ?? "",
                 comments: presentNodes(raw.comments).map((comment) => ({
                   author: comment.author === null ? null : normalizeGraphQlActor(comment.author),
