@@ -38,7 +38,7 @@ const I = (name, meaning, color, flag) => [svg(name, color), name, meaning, flag
 const sections = [
   [
     "Sidebar thread row: location column",
-    "Shown on the lead agent of each location; the same icons lead the location group headers.",
+    "Shown on the lead agent of each location.",
     [
       I(
         "FolderRoot",
@@ -113,10 +113,9 @@ const sections = [
     ],
   ],
   [
-    "Location group headers (Projects view)",
-    "Checkout icon, then Local or the worktree name, then branch. The machine icon leads only for another environment.",
+    "Environment machine",
+    "Where an environment runs, on its badges and selectors.",
     [
-      I("GitBranch", "Branch of the location group", C.muted),
       I("Monitor", "Machine: desktop (also the default when unknown)", C.muted),
       I("Laptop", "Machine: laptop", C.muted),
       I("Server", "Machine: server", C.muted, 'Server also marks a "Running server" command'),

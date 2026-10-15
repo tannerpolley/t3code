@@ -3009,7 +3009,7 @@ export default function Sidebar() {
       projectThreads.push(thread);
       grouped.set(projectKey, projectThreads);
     }
-    // The Codex-style rows sit under one header per location, so keyboard order follows them too.
+    // The Codex-style rows are grouped by location, so keyboard order follows them too.
     const relocated = new Set<string>();
     if (codexStyleSidebar) {
       for (const [projectKey, projectThreads] of grouped) {
