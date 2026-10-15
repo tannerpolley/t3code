@@ -129,6 +129,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
       }
     }
   }
+  expect(names.has("set_repository_worker_limit")).toBe(true);
   expect(names.has("t3_thread_launch")).toBe(true);
   expect(names.has("t3_thread_start")).toBe(false);
 });

@@ -46,6 +46,7 @@ export class IssueWorkStore extends Context.Service<
     readonly configuration: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<RepositoryOrchestration | null, IssueWorkError>;
+    readonly slotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
     readonly activeRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly subtreeDrained: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
     readonly recoveryInventory: (
@@ -113,7 +114,28 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const mapError = (cause: unknown) =>
       new IssueWorkError({ code: "orchestration-error", message: String(cause) });
+    // Keep the displayed occupancy and admission rule identical. `thread` is the worker alias.
+    const usesWorkerSlot = sql`(EXISTS (
+      SELECT 1 FROM orchestration_v2_projection_runs run
+      WHERE run.thread_id = thread.thread_id
+        AND run.status IN ('preparing', 'starting', 'running', 'waiting')
+    ) OR EXISTS (
+      SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+      WHERE request.thread_id = thread.thread_id AND request.status = 'pending'
+        AND request.kind NOT IN ('auth_refresh', 'dynamic_tool_call')
+    ))`;
     return IssueWorkStore.of({
+      slotsInUse: (rootThreadId) =>
+        sql<{ active: number }>`
+          SELECT count(*) AS active FROM orchestration_v2_projection_issue_work work
+          JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
+          JOIN orchestration_v2_projection_repository_orchestration owner
+            ON owner.host = work.host AND owner.repository_id = work.repository_id
+          WHERE owner.root_thread_id = ${rootThreadId} AND ${usesWorkerSlot}
+        `.pipe(
+          Effect.map((rows) => rows[0]!.active),
+          Effect.mapError(mapError),
+        ),
       subtreeDrained: (rootThreadId) =>
         sql<{ thread_id: string }>`
           WITH subtree AS MATERIALIZED (
@@ -270,13 +292,7 @@ export const layer = Layer.effect(
               JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
               WHERE work.host = ${issue.host} AND work.repository_id = ${issue.repositoryId}
                 AND thread.thread_id <> ${threadId}
-                AND (EXISTS (SELECT 1 FROM orchestration_v2_projection_runs run
-                  WHERE run.thread_id = thread.thread_id
-                    AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
-                    AND run.status <> 'queued') OR EXISTS (
-                  SELECT 1 FROM orchestration_v2_projection_runtime_requests request
-                  WHERE request.thread_id = thread.thread_id AND request.status = 'pending'
-                    AND request.kind NOT IN ('auth_refresh', 'dynamic_tool_call')))) AS active,
+                AND ${usesWorkerSlot}) AS active,
             (WITH RECURSIVE ancestors(id, parent, payload) AS (
               SELECT thread_id, json_extract(payload_json, '$.lineage.parentThreadId'), payload_json
                 FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}

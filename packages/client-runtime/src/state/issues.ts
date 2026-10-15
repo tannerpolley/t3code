@@ -89,6 +89,10 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:milestone",
       tag: WS_METHODS.issuesWorkMilestone,
     }),
+    setWorkerLimit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:worker-limit",
+      tag: WS_METHODS.issuesSetWorkerLimit,
+    }),
     setPaused: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:pause",
       tag: WS_METHODS.issuesSetPaused,

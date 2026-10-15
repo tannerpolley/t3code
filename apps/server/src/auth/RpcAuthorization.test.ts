@@ -37,6 +37,9 @@ describe("RPC authorization scopes", () => {
   it("guards issue state writes and unlink separately", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesSetState)).toBe(AuthSourceControlWriteScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesUnlink)).toBe(AuthOrchestrationOperateScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.issuesSetWorkerLimit)).toBe(
+      AuthOrchestrationOperateScope,
+    );
   });
 
   it("declares exactly one scope for every RPC in the server group", () => {

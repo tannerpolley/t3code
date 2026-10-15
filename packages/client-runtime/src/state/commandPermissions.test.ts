@@ -160,6 +160,7 @@ describe("command permissions", () => {
           WS_METHODS.issuesCancelRequest,
           WS_METHODS.issuesRestoreRoot,
           WS_METHODS.issuesInboxMarkRead,
+          WS_METHODS.issuesSetWorkerLimit,
         ]) {
           const recovery = createCommandPermissions(runtime, method);
           expect(registry.get(recovery.permissionAtom(env))).toBe(true);
@@ -185,6 +186,8 @@ describe("command permissions", () => {
           client: {
             [WS_METHODS.issuesCancelRequest]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesCancelRequest)),
+            [WS_METHODS.issuesSetWorkerLimit]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesSetWorkerLimit)),
             [WS_METHODS.issuesRestoreRoot]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesRestoreRoot)),
           },
@@ -228,9 +231,23 @@ describe("command permissions", () => {
           const restored = yield* Effect.promise(() =>
             issues.restoreRoot.run(registry, { environmentId, input: restore }),
           );
-          expect([cancelled._tag, restored._tag]).toEqual([outcome, outcome]);
+          const limited = yield* Effect.promise(() =>
+            issues.setWorkerLimit.run(registry, {
+              environmentId,
+              input: { ...scope, workerLimit: 8, expectedRevision: 2 },
+            }),
+          );
+          expect([cancelled._tag, restored._tag, limited._tag]).toEqual([
+            outcome,
+            outcome,
+            outcome,
+          ]);
         }
-        expect(calls).toEqual([WS_METHODS.issuesCancelRequest, WS_METHODS.issuesRestoreRoot]);
+        expect(calls).toEqual([
+          WS_METHODS.issuesCancelRequest,
+          WS_METHODS.issuesRestoreRoot,
+          WS_METHODS.issuesSetWorkerLimit,
+        ]);
       }),
     ),
   );

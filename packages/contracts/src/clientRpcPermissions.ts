@@ -60,6 +60,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.issuesUnlink]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesCancelRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesRestoreRoot]: AuthOrchestrationOperateScope,
+  [WS_METHODS.issuesSetWorkerLimit]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesInboxMarkRead]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;

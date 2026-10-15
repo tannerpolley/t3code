@@ -299,6 +299,11 @@ worker exists; use the repository's orchestrator link on the Issues page to open
 **Linked issue** in thread details opens the issue beside that thread. A worker marked done may
 still need review, publishing, or merge approval; T3 does not automatically close the GitHub issue.
 
+To change how much issue work runs at once, set the worker limit in the repository header of the
+Issues pane. The limit starts at 4 and can be set from 1 to 32; the header shows how many slots
+are in use. Raising it starts eligible queued work. Lowering it lets current workers finish and
+holds new starts until there is room. The repository orchestrator does not use a worker slot.
+
 Issue agents can create issues, split work into sub-issues, and move issues between milestones.
 To require approval for these too, turn on **Ask before agents create, split or move issues** in
 **Settings → Source Control → Version control & issues** for the server. This applies to new

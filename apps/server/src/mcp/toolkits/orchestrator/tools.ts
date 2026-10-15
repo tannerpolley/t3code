@@ -32,6 +32,7 @@ import {
   ThreadMetadataMcpUpdateResult,
   RepositoryWorkInput,
   RepositoryWorkControlInput,
+  RepositoryWorkerLimitInput,
   RepositoryHandoffRequestInput,
   RepositoryWorkResult,
   IssueRepositoryRef,
@@ -318,13 +319,23 @@ export const OrchestratorToolkit = Toolkit.make(
     dependencies,
   }).annotate(Tool.Destructive, true),
   Tool.make("get_repository_orchestration", {
-    description: "Read repository ownership, pause state and milestone progress.",
+    description:
+      "Read repository ownership, worker limit, slots in use, pause state and milestone progress.",
     parameters: IssueRepositoryRef,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
     failureMode: "return",
     dependencies,
   }).annotate(Tool.Readonly, true),
+  Tool.make("set_repository_worker_limit", {
+    description:
+      "Set the repository worker limit (1–32). Read get_repository_orchestration for the current revision. Raising admits queued work promptly; lowering holds new starts without stopping running workers.",
+    parameters: RepositoryWorkerLimitInput,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, true),
   Tool.make("set_repository_work_paused", {
     description: "Pause new worker admissions or resume after rechecking GitHub eligibility.",
     parameters: RepositoryWorkControlInput,

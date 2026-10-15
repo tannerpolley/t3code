@@ -156,6 +156,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").IssueRepositoryRef,
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
+  readonly setRepositoryWorkerLimit: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").RepositoryWorkerLimitInput,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly setRepositoryPaused: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryWorkControlInput,
@@ -1726,6 +1730,15 @@ const make = Effect.gen(function* () {
         return yield* issueWork.value
           .repositoryStatus(input)
           .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+      }),
+    setRepositoryWorkerLimit: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireRepositoryController(scope);
+        if (Option.isNone(issueWork))
+          return yield* failure("orchestration_error", "Issue work is unavailable.");
+        return yield* issueWork.value
+          .setWorkerLimit(input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       }),
     setRepositoryPaused: (scope, input) =>
       Effect.gen(function* () {

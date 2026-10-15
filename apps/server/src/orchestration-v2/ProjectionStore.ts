@@ -2288,7 +2288,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               const updated = yield* sql<{
                 root_thread_id: string;
               }>`UPDATE orchestration_v2_projection_repository_orchestration
-                SET paused = ${owner.paused ? 1 : 0}, revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
+                SET paused = ${owner.paused ? 1 : 0}, worker_limit = ${owner.workerLimit},
+                    revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
                 WHERE root_thread_id = ${event.threadId} RETURNING root_thread_id`;
               if (updated.length === 0) {
                 // The command checks the exact owner/revision under the repository
@@ -2301,7 +2302,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     : yield* sql<{ root_thread_id: string }>`
                   UPDATE orchestration_v2_projection_repository_orchestration
                   SET root_thread_id = ${event.threadId}, launch_command_id = ${owner.launchCommandId},
-                    paused = ${owner.paused ? 1 : 0}, revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
+                    paused = ${owner.paused ? 1 : 0}, worker_limit = ${owner.workerLimit},
+                    revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
                   WHERE host = ${owner.host} AND repository_id = ${owner.repositoryId}
                     AND root_thread_id IN ${sql.in(owner.handoffHistory!.map((entry) => entry.threadId))}
                     AND revision < ${owner.revision}

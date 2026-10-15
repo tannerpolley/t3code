@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
+  DEFAULT_REPOSITORY_WORK_SETTINGS,
   type EnvironmentId,
   type IssueMilestone,
   type IssueRepositoryRef,
@@ -21,6 +22,7 @@ import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { findIssueProject } from "./issueWorktree.logic";
+import { IssueWorkerLimitControl } from "./IssueWorkerLimitControl";
 import { useRepositoryLeads } from "./IssueStartAction";
 
 /** Shown only by servers that support repository orchestration. */
@@ -177,6 +179,14 @@ function RepositoryControls({
             Previous root {index + 1}
           </Button>
         ))}
+        <IssueWorkerLimitControl
+          key={`${data.rootThreadId}:${config.revision}`}
+          environmentId={environmentId}
+          reference={reference}
+          config={config}
+          slotsInUse={data.slotsInUse}
+          onSettled={() => appAtomRegistry.refresh(statusAtom)}
+        />
         {config.paused ? <span className="text-xs text-muted-foreground">Paused</span> : null}
         <Button
           size="xs"
@@ -395,8 +405,9 @@ function Controls({
             </SelectContent>
           </Select>
           <span className="text-xs text-muted-foreground">
-            Four workers across the repository, each in a new issue-named worktree from the default
-            branch. T3 publishes status and closeout comments.
+            Up to {config?.workerLimit ?? DEFAULT_REPOSITORY_WORK_SETTINGS.workerLimit} workers
+            across the repository, each in a new issue-named worktree from the default branch. T3
+            publishes status and closeout comments.
           </span>
           <Button size="xs" disabled={busy || role === undefined} onClick={() => void start()}>
             Start milestone work

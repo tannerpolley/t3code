@@ -133,6 +133,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Check", "Checking", "Checked", "repository orchestration"],
     "issue-work",
   ),
+  set_repository_worker_limit: tool(
+    ["Update", "Updating", "Updated", "repository worker limit"],
+    "issue-work",
+  ),
   set_repository_work_paused: tool(
     ["Update", "Updating", "Updated", "repository pause state"],
     "issue-work",

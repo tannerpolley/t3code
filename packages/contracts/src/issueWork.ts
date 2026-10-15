@@ -71,6 +71,13 @@ export const RepositoryWorkInput = Schema.Struct({
   clientRequestId: CommandId,
 });
 export type RepositoryWorkInput = typeof RepositoryWorkInput.Type;
+export const RepositoryWorkerLimitInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  workerLimit: RepositoryOrchestration.fields.workerLimit,
+  expectedRevision: RepositoryOrchestration.fields.revision,
+  clientRequestId: CommandId,
+});
+export type RepositoryWorkerLimitInput = typeof RepositoryWorkerLimitInput.Type;
 export const RepositoryWorkControlInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   paused: Schema.Boolean,
@@ -140,6 +147,7 @@ export const RepositoryWorkRestored = Schema.Struct({
 export const RepositoryWorkResult = Schema.Struct({
   rootThreadId: Schema.NullOr(ThreadId),
   orchestration: Schema.NullOr(RepositoryOrchestration),
+  slotsInUse: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type RepositoryWorkResult = typeof RepositoryWorkResult.Type;
 

@@ -13,6 +13,7 @@ import {
   type ModelSelection,
   type RepositoryWorkInput,
   type RepositoryWorkControlInput,
+  RepositoryWorkerLimitInput,
   type RepositoryHandoffInput,
   type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
@@ -66,6 +67,7 @@ import * as Deferred from "effect/Deferred";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
+const decodeWorkerLimit = Schema.decodeEffect(RepositoryWorkerLimitInput);
 const encodeToolArgument = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export class IssueWorkService extends Context.Service<
@@ -96,6 +98,9 @@ export class IssueWorkService extends Context.Service<
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly repositoryStatus: (
       input: Pick<IssueRef, "host" | "repository">,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
+    readonly setWorkerLimit: (
+      input: RepositoryWorkerLimitInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly setPaused: (
       input: RepositoryWorkControlInput,
@@ -608,6 +613,7 @@ export const layer = Layer.effect(
         return {
           rootThreadId: owner?.rootThreadId ?? null,
           orchestration: owner === null ? null : yield* store.configuration(owner.rootThreadId),
+          slotsInUse: owner === null ? 0 : yield* store.slotsInUse(owner.rootThreadId),
         };
       });
     const update = (
@@ -1068,6 +1074,59 @@ export const layer = Layer.effect(
         yield* reconcile(owner.rootThreadId);
         return yield* repositoryStatus(input);
       });
+    const resumeWorkers = Effect.fn("IssueWorkService.resumeWorkers")(function* (
+      rootThreadId: ThreadId,
+      commandId: CommandId,
+    ) {
+      yield* reconcile(rootThreadId);
+      for (const threadId of yield* store.workerThreads(rootThreadId))
+        yield* threads
+          .dispatch({
+            type: "queue.resume",
+            threadId,
+            commandId: CommandId.make(`${commandId}:queue:${threadId}`),
+          })
+          .pipe(Effect.mapError(mapError));
+    });
+    const setWorkerLimit: IssueWorkService["Service"]["setWorkerLimit"] = (input) =>
+      Effect.gen(function* () {
+        yield* decodeWorkerLimit(input).pipe(
+          Effect.mapError(
+            () =>
+              new IssueWorkError({
+                code: "invalid-request",
+                message:
+                  "Use an integer worker limit from 1 to 32 and the current repository revision.",
+              }),
+          ),
+        );
+        const owner = yield* store.repositoryOwnerByRef(input);
+        if (owner === null)
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: "This repository has no registered orchestrator.",
+          });
+        const config = (yield* store.configuration(owner.rootThreadId))!;
+        if (config.revision !== input.expectedRevision)
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: "Repository ownership changed. Refresh before updating work.",
+          });
+        if (config.handoff?.status === "draining")
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: "A handoff is draining. Cancel the handoff before changing the worker limit.",
+          });
+        if (input.workerLimit !== config.workerLimit)
+          yield* update(
+            owner.rootThreadId,
+            { ...config, workerLimit: input.workerLimit },
+            input.clientRequestId,
+          );
+        if (input.workerLimit > config.workerLimit && !config.paused)
+          yield* resumeWorkers(owner.rootThreadId, input.clientRequestId);
+        return yield* repositoryStatus(input);
+      });
     const setPaused: IssueWorkService["Service"]["setPaused"] = (input) =>
       Effect.gen(function* () {
         const owner = yield* store.repositoryOwnerByRef(input);
@@ -1094,15 +1153,7 @@ export const layer = Layer.effect(
             input.clientRequestId,
           );
         if (!input.paused) {
-          yield* reconcile(owner.rootThreadId);
-          for (const threadId of yield* store.workerThreads(owner.rootThreadId))
-            yield* threads
-              .dispatch({
-                type: "queue.resume",
-                threadId,
-                commandId: CommandId.make(`${input.clientRequestId}:queue:${threadId}`),
-              })
-              .pipe(Effect.mapError(mapError));
+          yield* resumeWorkers(owner.rootThreadId, input.clientRequestId);
         }
         return yield* repositoryStatus(input);
       });
@@ -1400,6 +1451,7 @@ export const layer = Layer.effect(
       workMilestone,
       repositoryStatus,
       setPaused,
+      setWorkerLimit,
       assertCurrentCaller,
       requestHandoff: (threadId, input) => prepareHandoff(input, "awaiting_approval", threadId),
       handoff,
