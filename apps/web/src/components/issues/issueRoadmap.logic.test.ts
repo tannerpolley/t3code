@@ -114,11 +114,11 @@ describe("live roadmap", () => {
         issue(2, {
           milestone: alpha,
           parent: null,
-          blockedBy: [ref(3)],
           liveWork: work("working"),
           projects: [{ id: "p", title: "P", status: null, priority: { name: "High", rank: 0 } }],
         }),
-        issue(3, { milestone: zeta, liveWork: work("working") }),
+        // An open blocker would move #2 to Blocked; a child edge orders it within In progress.
+        issue(3, { milestone: zeta, parent: ref(2), liveWork: work("working") }),
       ],
     );
     expect(numbers(sections[0]!.rows)).toEqual([3, 2]);
@@ -158,7 +158,7 @@ describe("live roadmap", () => {
     expect(numbers(sections[2]!.rows)).toEqual([3, 4, 2]);
     expect(sections[2]!.rows.find((row) => row.issue.number === 2)?.cycle).toBe(false);
   });
-  it("keeps every linked thread In progress and returns an unlinked issue to Ready on refresh", () => {
+  it("keeps linked threads In progress unless an open blocker holds the issue, and returns an unlinked issue to Ready on refresh", () => {
     const first = issueRoadmap(
       scope,
       [],
@@ -167,9 +167,11 @@ describe("live roadmap", () => {
         issue(2, { liveWork: work("waiting_on_you") }),
         issue(3, { liveWork: work("idle") }),
         issue(4, { relationshipsComplete: false }),
+        issue(5, { liveWork: work("idle"), blockedBy: [ref(98)] }),
+        issue(6, { liveWork: work("idle"), relationshipsComplete: false }),
       ],
     );
-    expect(first.map((section) => numbers(section.rows))).toEqual([[1, 2, 3], [], [4]]);
+    expect(first.map((section) => numbers(section.rows))).toEqual([[2, 3, 6], [], [1, 4, 5]]);
     expect(
       issueLiveStatus(
         issue(1, { liveWork: [...work("idle"), ...work("waiting_on_you"), ...work("working")] }),

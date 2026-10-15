@@ -112,16 +112,16 @@ export function issueRoadmap(
     { id: "ready", title: "Ready", rows: [] as typeof ordered },
     { id: "blocked", title: "Blocked", rows: [] as typeof ordered },
   ];
+  // An open blocker wins over linked work, as in issueProgress, so the section matches the icon.
   for (const row of ordered) {
-    const status = issueLiveStatus(row.issue);
     const section =
-      status !== null
-        ? 0
-        : openIssueBlockers(row.issue).length > 0 ||
-            row.issue.relationshipsComplete === false ||
-            row.issue.blockedBy === undefined
-          ? 2
-          : 1;
+      openIssueBlockers(row.issue).length > 0
+        ? 2
+        : issueLiveStatus(row.issue) !== null
+          ? 0
+          : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
+            ? 2
+            : 1;
     sections[section]!.rows.push(row);
   }
   return sections;
