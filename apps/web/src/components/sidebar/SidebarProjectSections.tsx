@@ -821,6 +821,10 @@ function SortableSectionHeader(props: {
           "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           // Codex style sets sections apart from the project rows under them: a small uppercase label.
           codexStyle ? "gap-2 text-2xs font-semibold uppercase tracking-wide" : "gap-1.5 text-xs",
+          // Its actions menu overlays the row end, so the count moves aside while the menu shows.
+          codexStyle &&
+            section.custom &&
+            "group-hover/project-section:pe-7 group-focus-within/project-section:pe-7",
         )}
         onClick={() => {
           if (canWrite) props.onSetExpanded(section.id, !expanded);
