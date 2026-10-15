@@ -38,14 +38,14 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
 ) {
   const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
-  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+  return Layer.unwrap(
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
-        .makeTempDirectory({
+        .makeTempDirectoryScoped({
           prefix: `t3-orchestration-v2-acp-registry-replay-${transcript.scenario}-`,
         })
         .pipe(Effect.orDie);
@@ -68,7 +68,7 @@ function layerAcpRegistryProviderAdapterRegistryReplay(
         }),
         assertComplete: makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript),
       });
-      return [adapter];
+      return ProviderAdapterRegistry.layerFromAdapters([adapter]);
     }),
   ).pipe(
     Layer.provide(

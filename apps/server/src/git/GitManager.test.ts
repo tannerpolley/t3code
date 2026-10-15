@@ -210,7 +210,9 @@ function makeTempDir(
 ): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    return yield* fileSystem.makeTempDirectoryScoped({ prefix });
+    // Worktrees are created beside the repository, so scope their shared parent.
+    const parentDir = yield* fileSystem.makeTempDirectoryScoped({ prefix });
+    return yield* fileSystem.makeTempDirectory({ directory: parentDir, prefix });
   });
 }
 

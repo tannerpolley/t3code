@@ -38,7 +38,7 @@ function layerGrokProviderAdapterRegistryReplay(
 ) {
   const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
-  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+  return Layer.unwrap(
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -48,7 +48,7 @@ function layerGrokProviderAdapterRegistryReplay(
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const replayGate = options.replayGate;
       const replayDir = yield* fileSystem
-        .makeTempDirectory({
+        .makeTempDirectoryScoped({
           prefix: `t3-orchestration-v2-grok-replay-${transcript.scenario}-`,
         })
         .pipe(Effect.orDie);
@@ -87,7 +87,7 @@ function layerGrokProviderAdapterRegistryReplay(
               },
             }),
       });
-      return [adapter];
+      return ProviderAdapterRegistry.layerFromAdapters([adapter]);
     }),
   ).pipe(
     Layer.provide(Layer.mergeAll(layerHost, NodeServices.layer, IdAllocator.layer)),

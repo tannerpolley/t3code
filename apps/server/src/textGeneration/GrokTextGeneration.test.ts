@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
-import { expect } from "vite-plus/test";
+import { expect, onTestFinished } from "vite-plus/test";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
 
@@ -72,6 +72,7 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
     const requestLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),
     );
+    onTestFinished(() => NodeFS.rmSync(requestLogDir, { recursive: true, force: true }));
     const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
 
     return withFakeAcpGrok(
