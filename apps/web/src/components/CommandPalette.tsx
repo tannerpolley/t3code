@@ -2465,6 +2465,7 @@ function OpenCommandPaletteDialog(props: {
     }) => {
       const sectionId =
         input.sectionId === undefined ? currentAddProjectSection() : input.sectionId;
+      if (!canPlaceProjectInSection(input.environmentId, sectionId)) return;
       const environment = environments.find(
         (candidate) => candidate.environmentId === input.environmentId,
       );
@@ -2798,6 +2799,8 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const sectionId = currentAddProjectSection();
+    const placement = sectionPlacementInput(addProjectCloneFlow.environmentId, sectionId);
+    if (placement === null) return;
 
     // Older servers only offer the blocking clone: the palette has to wait
     // for git so it can add the project afterwards.
@@ -2831,8 +2834,6 @@ function OpenCommandPaletteDialog(props: {
     // shows in a toast and in the draft's composer banner, so the palette
     // closes as soon as the clone is under way. Only problems found before
     // git runs (bad destination, unknown repository) come back here.
-    const placement = sectionPlacementInput(addProjectCloneFlow.environmentId, sectionId);
-    if (placement === null) return;
     const projectId = newProjectId();
     setIsRemoteProjectCloning(true);
     const startResult = await startProjectClone({

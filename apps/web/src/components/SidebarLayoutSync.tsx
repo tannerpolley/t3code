@@ -8,6 +8,7 @@ import {
 } from "../sidebarLayoutMigration";
 import { configureProjectSectionPlacement, sectionTarget } from "../projectSectionPlacement";
 import { randomUUID } from "../lib/utils";
+import { environmentCatalog } from "../connection/catalog";
 import { environmentShell } from "../state/shell";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -31,6 +32,7 @@ import {
   sidebarProjectRefsForKeys,
 } from "../sidebarLayoutProjection";
 import {
+  applySidebarLayoutProjection,
   configureSidebarLayoutActions,
   legacySidebarLayout,
   clearLegacySidebarLayout,
@@ -52,6 +54,7 @@ export function SidebarLayoutSync() {
   const projects = useProjects();
   const configs = useServerConfigs();
   const environmentIds = useEnvironmentIds();
+  const catalogReady = useAtomValue(environmentCatalog.catalogValueAtom).isReady;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const grouping = useClientSettings(selectProjectGroupingSettings);
   const groups = useMemo(
@@ -105,21 +108,38 @@ export function SidebarLayoutSync() {
 
   useEffect(() => {
     const projected = projectSidebarLayout({ layouts, groups, primaryEnvironmentId });
-    const current = useUiStateStore.getState();
-    if (
-      JSON.stringify(projected) !==
-      JSON.stringify({
-        sidebarProjectSections: current.sidebarProjectSections,
-        projectExpandedById: current.projectExpandedById,
-        projectOrder: current.projectOrder,
-        sidebarOtherProjectsExpanded: current.sidebarOtherProjectsExpanded,
-      })
-    )
-      useUiStateStore.setState(projected);
-  }, [layouts, groups, primaryEnvironmentId]);
+    const knownIds = catalogReady ? environmentIds : null;
+    const complete =
+      catalogReady &&
+      environmentIds.every(
+        (id) =>
+          configs.has(id) &&
+          snapshot.has(id) &&
+          (!usesServerSidebar(configs.get(id)?.sidebarLayoutSync) ||
+            controller.record(id) !== null),
+      );
+    applySidebarLayoutProjection(projected, knownIds, complete);
+    const display = useUiStateStore.getState().sidebarDisplaySnapshot;
+    if (display === null) return;
+    const timer = setTimeout(
+      () => applySidebarLayoutProjection(projected, knownIds, complete),
+      Math.max(0, display.expiresAt - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [
+    layouts,
+    groups,
+    primaryEnvironmentId,
+    catalogReady,
+    environmentIds,
+    configs,
+    snapshot,
+    controller,
+  ]);
 
   useEffect(() => {
-    const refresh = () =>
+    const refresh = () => {
+      if (useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
       useUiStateStore.setState(
         projectSidebarLayout({
           layouts: controller.layouts(configs.keys()),
@@ -127,12 +147,14 @@ export function SidebarLayoutSync() {
           primaryEnvironmentId,
         }),
       );
+    };
     const send = async (environmentId: EnvironmentId, mutation: SidebarLayoutMutation) => {
       const accepted = controller.enqueue(environmentId, mutation);
       refresh();
       return accepted;
     };
     configureProjectSectionPlacement((ref, key) => {
+      if (useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
       const target = sectionTarget(key);
       if (target?.[0] !== ref.environmentId) return;
       controller.enqueue(ref.environmentId, {
@@ -305,9 +327,7 @@ function SidebarLayoutEnvironment(props: {
   const legacy = useMemo(
     () =>
       pendingImport?.legacy ??
-      (server
-        ? readLocalSidebarLayout(props.environmentId, props.legacy, { forImport: true })
-        : props.legacy),
+      (server ? readLocalSidebarLayout(props.environmentId, props.legacy) : props.legacy),
     [pendingImport, server, props.environmentId, props.legacy],
   );
   const candidate = useMemo(

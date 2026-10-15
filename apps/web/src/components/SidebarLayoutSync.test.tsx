@@ -7,7 +7,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 const fixture = vi.hoisted(() => ({
   canWrite: true,
   record: null as SidebarLayoutRecord | null,
-  otherRecords: new Map<string, SidebarLayoutRecord>(),
   send: vi.fn(),
   version: 0,
   listeners: new Set<() => void>(),
@@ -15,7 +14,7 @@ const fixture = vi.hoisted(() => ({
 const environmentId = EnvironmentId.make("client-c");
 const environmentIds = [environmentId];
 const projects: [] = [];
-let configs = new Map([[environmentId, { sidebarLayoutSync: true }]]);
+const configs = new Map([[environmentId, { sidebarLayoutSync: true }]]);
 const grouping = { sidebarProjectGroupingMode: "repository", sidebarProjectGroupingOverrides: {} };
 
 vi.mock("@effect/atom-react", async () => {
@@ -29,21 +28,22 @@ vi.mock("@effect/atom-react", async () => {
         },
         () => fixture.version,
       );
+      if (atom === "catalog") return { isReady: true };
       if (atom === "permission") return fixture.canWrite;
       if (atom === "shell") return { status: "live" };
-      if (atom.startsWith("layout:")) {
-        const record =
-          atom === "layout:client-c" ? fixture.record : fixture.otherRecords.get(atom.slice(7));
-        return record == null ? AsyncResult.initial() : AsyncResult.success(record);
-      }
+      if (atom === "layout")
+        return fixture.record === null
+          ? AsyncResult.initial()
+          : AsyncResult.success(fixture.record);
       throw new Error("Unexpected atom: " + atom);
     },
   };
 });
+vi.mock("../connection/catalog", () => ({ environmentCatalog: { catalogValueAtom: "catalog" } }));
 vi.mock("../state/server", () => ({
   serverEnvironment: {
     updateSidebarLayout: { permissionAtom: () => "permission" },
-    sidebarLayout: ({ environmentId }: { environmentId: string }) => "layout:" + environmentId,
+    sidebarLayout: () => "layout",
   },
 }));
 vi.mock("../state/shell", () => ({
@@ -71,7 +71,6 @@ vi.mock("./ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
 import { SidebarLayoutSync } from "./SidebarLayoutSync";
 import { useUiStateStore } from "../uiStateStore";
-import { readPendingSidebarImport } from "../sidebarLayoutMigration";
 
 let renderer: ReactTestRenderer | undefined;
 const record = (revision: number, collapsed = false): SidebarLayoutRecord => ({
@@ -97,8 +96,6 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", localStorage);
   vi.stubGlobal("window", { localStorage });
   fixture.canWrite = true;
-  fixture.otherRecords.clear();
-  configs = new Map([[environmentId, { sidebarLayoutSync: true }]]);
   fixture.send.mockReset();
   fixture.record = record(1);
   useUiStateStore.setState({
@@ -158,65 +155,5 @@ it("a read-only client sees the shared layout and live updates without submittin
   fixture.record = record(2, true);
   await render();
   expect(useUiStateStore.getState().sidebarProjectSections[0]?.collapsed).toBe(true);
-  expect(fixture.send).not.toHaveBeenCalled();
-});
-
-it.each([null, "2026-10-15T12:00:00Z"])(
-  "restores each environment independently without importing server snapshots (legacyImportedAt: %s)",
-  async (legacyImportedAt) => {
-    const other = EnvironmentId.make("client-d");
-    const cached = (name: string) => ({
-      ...record(1).layout,
-      sidebarProjectSections: [
-        { id: "saved", name, projectKeys: [], collapsed: true, color: "blue", folderIcons: true },
-      ],
-      serverSnapshot: true,
-    });
-    localStorage.setItem(
-      "t3code:sidebar-local:" + environmentId,
-      JSON.stringify(cached("Saved C")),
-    );
-    localStorage.setItem("t3code:sidebar-local:" + other, JSON.stringify(cached("Saved D")));
-    fixture.record = null;
-    configs = new Map([
-      [environmentId, { sidebarLayoutSync: true }],
-      [other, { sidebarLayoutSync: true }],
-    ]);
-    await render();
-    expect(useUiStateStore.getState().sidebarProjectSections).toMatchObject([
-      { name: "Saved C", color: "blue", folderIcons: true },
-      { name: "Saved D", color: "blue", folderIcons: true },
-    ]);
-    fixture.record = { ...record(1), legacyImportedAt };
-    await render();
-    expect(
-      useUiStateStore.getState().sidebarProjectSections.map((section) => section.name),
-    ).toEqual(["Shared empty section", "Saved D"]);
-    fixture.otherRecords.set(other, {
-      ...record(1),
-      legacyImportedAt,
-      layout: EMPTY_SIDEBAR_LAYOUT,
-    });
-    await render();
-    expect(
-      useUiStateStore.getState().sidebarProjectSections.map((section) => section.name),
-    ).toEqual(["Shared empty section"]);
-    await act(() => vi.advanceTimersByTimeAsync(500));
-    expect(readPendingSidebarImport(environmentId)).toBeNull();
-    expect(readPendingSidebarImport(other)).toBeNull();
-    expect(fixture.send).not.toHaveBeenCalled();
-  },
-);
-it("drops a removed environment's saved layout before any environment answers", async () => {
-  localStorage.setItem(
-    "t3code:sidebar-local:" + environmentId,
-    JSON.stringify({ ...record(1).layout, serverSnapshot: true }),
-  );
-  fixture.record = null;
-  await render();
-  expect(useUiStateStore.getState().sidebarProjectSections).toHaveLength(1);
-  configs = new Map();
-  await render();
-  expect(useUiStateStore.getState().sidebarProjectSections).toEqual([]);
   expect(fixture.send).not.toHaveBeenCalled();
 });

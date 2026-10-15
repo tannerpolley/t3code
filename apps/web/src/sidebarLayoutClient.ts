@@ -23,33 +23,19 @@ interface ClientEnvironment {
   flight: SidebarLayoutMutation[];
   timer: ReturnType<typeof setTimeout> | null;
 }
-const decodeLocal = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({ ...SidebarLayout.fields, serverSnapshot: Schema.optional(Schema.Boolean) }),
-  ),
-);
+const decodeLocal = Schema.decodeUnknownOption(Schema.fromJsonString(SidebarLayout));
 const localKey = (id: EnvironmentId) => "t3code:sidebar-local:" + id;
-export function readLocalSidebarLayout(
-  id: EnvironmentId,
-  fallback: SidebarLayout,
-  options: { forImport?: boolean } = {},
-): SidebarLayout {
+export function readLocalSidebarLayout(id: EnvironmentId, fallback: SidebarLayout): SidebarLayout {
   try {
     const saved = localStorage.getItem(localKey(id));
-    const decoded = saved ? Option.getOrNull(decodeLocal(saved)) : null;
-    if (decoded === null || (options.forImport && decoded.serverSnapshot)) return fallback;
-    const { serverSnapshot: _, ...layout } = decoded;
-    return layout;
+    return saved ? Option.getOrElse(decodeLocal(saved), () => fallback) : fallback;
   } catch {
     return fallback;
   }
 }
-function saveLocal(id: EnvironmentId, layout: SidebarLayout, serverSnapshot = false) {
+function saveLocal(id: EnvironmentId, layout: SidebarLayout) {
   try {
-    // Confirmed server data is a display fallback, never a legacy import candidate.
-    const serialized = JSON.stringify(
-      serverSnapshot ? { ...layout, serverSnapshot: true } : layout,
-    );
+    const serialized = JSON.stringify(layout);
     if (localStorage.getItem(localKey(id)) !== serialized)
       localStorage.setItem(localKey(id), serialized);
   } catch {
@@ -118,10 +104,7 @@ export function createSidebarLayoutClient(
     entry.pending = [];
     try {
       const record = await send(id, { revision: entry.base.revision, operations: entry.flight });
-      if (record.revision >= entry.base.revision) {
-        entry.base = record;
-        saveLocal(id, record.layout, true);
-      }
+      if (record.revision >= entry.base.revision) entry.base = record;
     } catch (error) {
       onError(error);
     } finally {
@@ -162,7 +145,7 @@ export function createSidebarLayoutClient(
         }
         if (!server) {
           const local = readLocalSidebarLayout(id, fallback);
-          if (fallbackReady && local === fallback) saveLocal(id, local);
+          if (fallbackReady) saveLocal(id, local);
           if (JSON.stringify(local) !== JSON.stringify(previous.local)) {
             previous.local = local;
             notify();
@@ -171,9 +154,8 @@ export function createSidebarLayoutClient(
         return;
       }
       if (previous?.timer) clearTimeout(previous.timer);
-      const initial = previous ? layout(previous) : fallback;
-      const local = readLocalSidebarLayout(id, initial);
-      if (!server && fallbackReady && local === initial) saveLocal(id, local);
+      const local = readLocalSidebarLayout(id, previous ? layout(previous) : fallback);
+      if (!server && fallbackReady) saveLocal(id, local);
       environments.set(id, {
         server,
         canWrite,
@@ -189,7 +171,6 @@ export function createSidebarLayoutClient(
       const entry = environments.get(id);
       if (!entry?.server || (entry.base && record.revision <= entry.base.revision)) return;
       entry.base = record;
-      saveLocal(id, record.layout, true);
       notify();
       if (entry.pending.length) schedule(id, entry);
     },
@@ -204,7 +185,7 @@ export function createSidebarLayoutClient(
       const entry = environments.get(id);
       if (!entry) return false;
       if (entry.server) {
-        if (!entry.canWrite) return false;
+        if (!entry.canWrite || !entry.base) return false;
         entry.pending.push(operation);
         schedule(id, entry);
       } else {

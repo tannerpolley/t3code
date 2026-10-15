@@ -1,3 +1,4 @@
+import { useUiStateStore } from "./uiStateStore";
 import { useSyncExternalStore } from "react";
 import type { createSidebarLayoutClient } from "./sidebarLayoutClient";
 import * as Schema from "effect/Schema";
@@ -32,12 +33,16 @@ let unsubscribeLayout: (() => void) | undefined;
 const readinessListeners = new Set<() => void>();
 function subscribeReadiness(listener: () => void) {
   readinessListeners.add(listener);
+  const unsubscribeUi = useUiStateStore.subscribe(listener);
   return () => {
     readinessListeners.delete(listener);
+    unsubscribeUi();
   };
 }
 /** Section-derived RPC input must come from a live server layout. */
 export function canPlaceProjectInSection(environmentId: EnvironmentId, sectionId: string | null) {
+  if (sectionId !== null && useUiStateStore.getState().sidebarDisplaySnapshot !== null)
+    return false;
   const target = sectionTarget(sectionId);
   if (target === null || target[0] !== environmentId) return true;
   if (
@@ -83,12 +88,18 @@ export function sectionPlacementInput(environmentId: EnvironmentId, sectionId: s
     : { sectionId: target[1], sidebarExpanded: true };
 }
 export function completeProjectSectionPlacement(ref: ScopedProjectRef, sectionId: string | null) {
-  if (sectionId !== null && !serverPlacement(ref.environmentId)) place(ref, sectionId);
+  if (
+    sectionId !== null &&
+    canPlaceProjectInSection(ref.environmentId, sectionId) &&
+    !serverPlacement(ref.environmentId)
+  )
+    place(ref, sectionId);
 }
 export async function placeAddedProject(
   ref: ScopedProjectRef,
   sectionId = addProjectSectionId,
 ): Promise<void> {
   if (sectionId === addProjectSectionId) addProjectSectionId = null;
-  if (sectionId !== null) place(ref, sectionId);
+  if (sectionId !== null && canPlaceProjectInSection(ref.environmentId, sectionId))
+    place(ref, sectionId);
 }

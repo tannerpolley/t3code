@@ -26,6 +26,7 @@ import {
   type RefObject,
 } from "react";
 
+import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -82,6 +83,7 @@ export function SidebarThreadHeader({
   activeSearchResultIndex,
   onClearSearch,
 }: SidebarThreadHeaderProps) {
+  const canWriteLayout = useSidebarLayoutPermission();
   const projectsViewEnabled = useClientSettings((s) => s.projectsView);
   const codexStyleSidebar = useClientSettings((s) => s.codexStyleSidebar);
   const showingProjects = sidebarMode === "projects";
@@ -198,6 +200,7 @@ export function SidebarThreadHeader({
         <div className="flex min-w-0 items-center gap-1">
           {showingProjects && codexStyleSidebar ? (
             <SidebarHeaderLabeledButton
+              disabled={!canWriteLayout}
               onClick={onNewSection}
               data-testid="sidebar-create-project-section"
             >

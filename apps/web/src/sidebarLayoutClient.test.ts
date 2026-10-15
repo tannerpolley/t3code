@@ -8,7 +8,6 @@ import {
 } from "@t3tools/contracts";
 import {
   createSidebarLayoutClient,
-  readLocalSidebarLayout,
   SIDEBAR_WRITE_DELAY,
   usesServerSidebar,
 } from "./sidebarLayoutClient";
@@ -139,106 +138,56 @@ describe("sidebar client writes", () => {
   });
 });
 
-describe("saved server layouts", () => {
-  function storage() {
-    const values = new Map<string, string>();
-    vi.stubGlobal("localStorage", {
-      getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => values.set(key, value),
-    });
-    return values;
-  }
-  it("restores confirmed layouts independently and replaces only the environment that answers", () => {
-    storage();
-    const send = vi.fn();
-    const first = createSidebarLayoutClient(send, vi.fn());
-    first.configure(local, true, EMPTY_SIDEBAR_LAYOUT);
-    first.configure(remote, true, EMPTY_SIDEBAR_LAYOUT);
-    const remoteRecord = {
-      ...record,
-      layout: {
-        ...record.layout,
-        sidebarProjectSections: [{ ...record.layout.sidebarProjectSections[0]!, name: "Remote" }],
-      },
-    };
-    first.receive(local, record);
-    first.receive(remote, remoteRecord);
-    first.dispose();
+it("rejects edits made before the first server record instead of replaying stale orderings", async () => {
+  vi.useFakeTimers();
+  const send = vi.fn();
+  const client = createSidebarLayoutClient(send, vi.fn());
+  client.configure(local, true, record.layout);
+  expect(client.enqueue(local, { type: "sectionsOrder", sectionIds: ["work"] })).toBe(false);
+  expect(
+    client.enqueue(local, { type: "sectionExpanded", sectionId: "work", expanded: false }),
+  ).toBe(false);
+  client.receive(local, record);
+  await vi.advanceTimersByTimeAsync(SIDEBAR_WRITE_DELAY);
+  expect(send).not.toHaveBeenCalled();
+  expect(client.layouts([local]).get(local)).toEqual(record.layout);
+  client.dispose();
+});
 
-    const reloaded = createSidebarLayoutClient(send, vi.fn());
-    reloaded.configure(local, true, EMPTY_SIDEBAR_LAYOUT);
-    reloaded.configure(remote, true, EMPTY_SIDEBAR_LAYOUT);
-    expect(reloaded.record(local)).toBeNull();
-    expect(reloaded.layouts([local, remote])).toEqual(
-      new Map([
-        [local, record.layout],
-        [remote, remoteRecord.layout],
-      ]),
-    );
-    reloaded.receive(local, { ...record, revision: 1, layout: EMPTY_SIDEBAR_LAYOUT });
-    expect(reloaded.layouts([local, remote])).toEqual(
-      new Map([
-        [local, EMPTY_SIDEBAR_LAYOUT],
-        [remote, remoteRecord.layout],
-      ]),
-    );
-    const differentHome = EnvironmentId.make("another-home");
-    reloaded.configure(differentHome, true, EMPTY_SIDEBAR_LAYOUT);
-    expect(reloaded.layouts([differentHome]).get(differentHome)).toEqual(EMPTY_SIDEBAR_LAYOUT);
-    expect(send).not.toHaveBeenCalled();
-    reloaded.dispose();
+it("server receives and old flush completions preserve the sole copy of local-mode data", async () => {
+  vi.useFakeTimers();
+  const values = new Map<string, string>();
+  const getItem = vi.fn((key: string) => values.get(key) ?? null);
+  vi.stubGlobal("localStorage", {
+    getItem,
+    setItem: (key: string, value: string) => values.set(key, value),
   });
-  it("persists a successful flush without a subscription broadcast, excluding queued edits", async () => {
-    vi.useFakeTimers();
-    storage();
-    const confirmed = { ...record, revision: 1, layout: EMPTY_SIDEBAR_LAYOUT };
-    const send = vi.fn(async () => confirmed);
-    const client = createSidebarLayoutClient(send, vi.fn());
-    client.configure(local, true, EMPTY_SIDEBAR_LAYOUT);
-    client.receive(local, record);
-    client.enqueue(local, { type: "delete", sectionId: "work" });
-    expect(readLocalSidebarLayout(local, EMPTY_SIDEBAR_LAYOUT)).toEqual(record.layout);
-    await vi.advanceTimersByTimeAsync(SIDEBAR_WRITE_DELAY);
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(readLocalSidebarLayout(local, record.layout)).toEqual(EMPTY_SIDEBAR_LAYOUT);
-    client.dispose();
-  });
-  it("holds edits until receive and ignores cached sections missing from the live layout", async () => {
-    vi.useFakeTimers();
-    storage().set("t3code:sidebar-local:" + local, JSON.stringify(record.layout));
-    const send = vi.fn(async () => ({ ...record, revision: 2, layout: EMPTY_SIDEBAR_LAYOUT }));
-    const client = createSidebarLayoutClient(send, vi.fn());
-    client.configure(local, true, EMPTY_SIDEBAR_LAYOUT);
-    client.enqueue(local, { type: "rename", sectionId: "work", name: "Stale" });
-    client.enqueue(local, { type: "sectionExpanded", sectionId: "work", expanded: false });
-    await vi.advanceTimersByTimeAsync(SIDEBAR_WRITE_DELAY);
-    expect(send).not.toHaveBeenCalled();
-    client.receive(local, { ...record, revision: 1, layout: EMPTY_SIDEBAR_LAYOUT });
-    expect(client.layouts([local]).get(local)).toEqual(EMPTY_SIDEBAR_LAYOUT);
-    await vi.advanceTimersByTimeAsync(SIDEBAR_WRITE_DELAY);
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(client.layouts([local]).get(local)).toEqual(EMPTY_SIDEBAR_LAYOUT);
-    client.dispose();
-  });
-  it("never imports a saved server snapshot, including after switching to local mode", () => {
-    storage();
-    const client = createSidebarLayoutClient(vi.fn(), vi.fn());
-    client.configure(local, true, EMPTY_SIDEBAR_LAYOUT);
-    client.receive(local, record);
-    expect(readLocalSidebarLayout(local, EMPTY_SIDEBAR_LAYOUT, { forImport: true })).toEqual(
-      EMPTY_SIDEBAR_LAYOUT,
-    );
-    client.configure(local, false, EMPTY_SIDEBAR_LAYOUT);
-    expect(client.layouts([local]).get(local)).toEqual(record.layout);
-    expect(readLocalSidebarLayout(local, EMPTY_SIDEBAR_LAYOUT, { forImport: true })).toEqual(
-      EMPTY_SIDEBAR_LAYOUT,
-    );
-    // A local edit makes this local-mode data eligible for the existing upgrade import.
-    client.enqueue(local, { type: "rename", sectionId: "work", name: "Local edit" });
-    expect(
-      readLocalSidebarLayout(local, EMPTY_SIDEBAR_LAYOUT, { forImport: true })
-        .sidebarProjectSections[0]?.name,
-    ).toBe("Local edit");
-    client.dispose();
-  });
+  const key = "t3code:sidebar-local:" + local;
+  values.set(key, JSON.stringify(record.layout));
+  // A display snapshot must be invisible to configuration, local mode and legacy import reads.
+  values.set("t3code:sidebar-display:v1", JSON.stringify({ layout: EMPTY_SIDEBAR_LAYOUT }));
+  let finish!: (value: SidebarLayoutRecord) => void;
+  const client = createSidebarLayoutClient(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    vi.fn(),
+  );
+  client.configure(local, true, EMPTY_SIDEBAR_LAYOUT);
+  client.receive(local, { ...record, layout: EMPTY_SIDEBAR_LAYOUT });
+  expect(JSON.parse(values.get(key)!)).toEqual(record.layout);
+  client.enqueue(local, { type: "otherExpanded", expanded: false });
+  await vi.advanceTimersByTimeAsync(SIDEBAR_WRITE_DELAY);
+  client.configure(local, false, EMPTY_SIDEBAR_LAYOUT);
+  client.enqueue(local, { type: "rename", sectionId: "work", name: "Local edit" });
+  finish({ ...record, revision: 1, layout: EMPTY_SIDEBAR_LAYOUT });
+  await vi.runAllTimersAsync();
+  const { readLocalSidebarLayout } = await import("./sidebarLayoutClient");
+  expect(readLocalSidebarLayout(local, EMPTY_SIDEBAR_LAYOUT).sidebarProjectSections[0]?.name).toBe(
+    "Local edit",
+  );
+  expect(client.layouts([local]).get(local)?.sidebarProjectSections[0]?.name).toBe("Local edit");
+  expect(getItem.mock.calls.map(([key]) => key)).not.toContain("t3code:sidebar-display:v1");
+  client.dispose();
 });

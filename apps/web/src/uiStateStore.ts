@@ -12,7 +12,8 @@ export {
   setProjectExpanded,
   reorderProjects,
 } from "@t3tools/shared/sidebarLayout";
-import type { SidebarLayoutMutation } from "@t3tools/contracts";
+import { EnvironmentId, SidebarLayout, type SidebarLayoutMutation } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { Debouncer } from "@tanstack/react-pacer";
 import { ProjectIconColor, type PullRequestMergeMethod } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -568,9 +569,14 @@ export function resolveProjectExpanded(
   return projectExpandedById[LEGACY_PROJECT_EXPANSION_DEFAULT_KEY] ?? true;
 }
 
-let sendSidebarMutation: (mutation: SidebarLayoutMutation) => Promise<boolean> = async () => false;
+let sidebarMutationSender: (mutation: SidebarLayoutMutation) => Promise<boolean> = async () =>
+  false;
+const sendSidebarMutation: typeof sidebarMutationSender = (mutation) =>
+  useUiStateStore.getState().sidebarDisplaySnapshot === null
+    ? sidebarMutationSender(mutation)
+    : Promise.resolve(false);
 export function configureSidebarLayoutActions(send: typeof sendSidebarMutation): void {
-  sendSidebarMutation = send;
+  sidebarMutationSender = send;
 }
 export let legacySidebarLayout = readPersistedState();
 export function clearLegacySidebarLayout() {
@@ -584,7 +590,88 @@ export function clearLegacySidebarLayout() {
   persistState(useUiStateStore.getState());
 }
 
+export const SIDEBAR_DISPLAY_KEY = "t3code:sidebar-display:v1";
+export const SIDEBAR_DISPLAY_LIFETIME = 15_000;
+const decodeSidebarDisplay = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ environmentIds: Schema.Array(EnvironmentId), layout: SidebarLayout }),
+  ),
+);
+function readSidebarDisplay() {
+  try {
+    const saved = window.localStorage.getItem(SIDEBAR_DISPLAY_KEY);
+    const display = saved === null ? null : Option.getOrNull(decodeSidebarDisplay(saved));
+    return display === null
+      ? null
+      : {
+          ...display,
+          layout: {
+            ...display.layout,
+            projectOrder: [...display.layout.projectOrder],
+            sidebarProjectSections: display.layout.sidebarProjectSections.map((section) => ({
+              ...section,
+              projectKeys: [...section.projectKeys],
+            })),
+          },
+        };
+  } catch {
+    return null;
+  }
+}
+const startupDisplay = readSidebarDisplay();
+let savedSidebarDisplay: string | null = null;
+
+/** Only the UI store owns the display snapshot; it never becomes sync or import input. */
+export function applySidebarLayoutProjection(
+  projected: Pick<
+    UiState,
+    | "sidebarProjectSections"
+    | "projectExpandedById"
+    | "projectOrder"
+    | "sidebarOtherProjectsExpanded"
+  >,
+  environmentIds: readonly EnvironmentId[] | null,
+  complete: boolean,
+) {
+  const current = useUiStateStore.getState();
+  const display = current.sidebarDisplaySnapshot;
+  const ids = environmentIds === null ? null : [...environmentIds].sort();
+  if (
+    display !== null &&
+    !complete &&
+    display.expiresAt > Date.now() &&
+    (ids === null || JSON.stringify(ids) === JSON.stringify(display.environmentIds))
+  )
+    return;
+  try {
+    if (complete && ids !== null) {
+      const saved = JSON.stringify({ environmentIds: ids, layout: projected });
+      if (savedSidebarDisplay !== saved) {
+        window.localStorage.setItem(SIDEBAR_DISPLAY_KEY, saved);
+        savedSidebarDisplay = saved;
+      }
+    } else if (display !== null) {
+      window.localStorage.removeItem(SIDEBAR_DISPLAY_KEY);
+      savedSidebarDisplay = null;
+    }
+  } catch {
+    /* Storage may be unavailable. */
+  }
+  if (
+    display !== null ||
+    JSON.stringify(projected) !==
+      JSON.stringify({
+        sidebarProjectSections: current.sidebarProjectSections,
+        projectExpandedById: current.projectExpandedById,
+        projectOrder: current.projectOrder,
+        sidebarOtherProjectsExpanded: current.sidebarOtherProjectsExpanded,
+      })
+  )
+    useUiStateStore.setState({ ...projected, sidebarDisplaySnapshot: null });
+}
+
 interface UiStateStore extends UiState {
+  sidebarDisplaySnapshot: { environmentIds: readonly EnvironmentId[]; expiresAt: number } | null;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
@@ -621,6 +708,14 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  ...startupDisplay?.layout,
+  sidebarDisplaySnapshot:
+    startupDisplay === null
+      ? null
+      : {
+          environmentIds: startupDisplay.environmentIds,
+          expiresAt: Date.now() + SIDEBAR_DISPLAY_LIFETIME,
+        },
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>

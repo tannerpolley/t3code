@@ -262,6 +262,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     threadsByProjectKey,
   } = props;
   // Off restores the original Projects view: heading, action row, All projects, chevrons and grips.
+  const canWrite = useSidebarLayoutPermission();
   const codexStyle = useClientSettings((settings) => settings.codexStyleSidebar);
   const folderColors = useClientSettings((settings) => settings.sectionFolderColors);
   const deleteSection = useUiStateStore((store) => store.deleteSidebarProjectSection);
@@ -359,6 +360,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const resetSectionIcons = useCallback(
     async (section: SidebarProjectSectionRender) => {
+      if (!canWrite || useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
       const sectionIds = new Set([
         section.id,
         ...renderedSections.filter((s) => s.parentId === section.id).map((s) => s.id),
@@ -397,7 +399,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
             },
       );
     },
-    [projectByKey, renderedSections, updateProject],
+    [canWrite, projectByKey, renderedSections, updateProject],
   );
 
   const setSectionExpanded = useCallback(
@@ -484,7 +486,13 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       setProjectDrop(null);
       const activeData = event.active.data.current as SidebarProjectDragData | undefined;
       const overData = event.over?.data.current as SidebarProjectDragData | undefined;
-      if (!activeData || !event.over) return;
+      if (
+        !canWrite ||
+        useUiStateStore.getState().sidebarDisplaySnapshot !== null ||
+        !activeData ||
+        !event.over
+      )
+        return;
 
       if (activeData.type === "section") {
         const targetSectionId = sectionIdFromDragData(overData);
@@ -518,7 +526,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       if (activeData.sectionId !== drop.sectionId) moveProject(projectKey, drop.sectionId);
       reorderSectionProjects(drop.sectionId, [...drop.projectKeys]);
     },
-    [moveProject, reorderSectionProjects, reorderSections, renderedSections, sections],
+    [canWrite, moveProject, reorderSectionProjects, reorderSections, renderedSections, sections],
   );
 
   return (
@@ -538,6 +546,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
             </Button>
             <Button
               className="justify-start"
+              disabled={!canWrite}
               data-testid="sidebar-create-project-section"
               onClick={onNewSection}
               size="xs"
@@ -670,7 +679,9 @@ const ProjectSection = memo(function ProjectSection(props: {
   /** Subagents listed with their own location instead; see `placeThreadsByLocation`. */
   readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
 }) {
+  const canWrite = useSidebarLayoutPermission();
   const { setNodeRef: setDropRef } = useDroppable({
+    disabled: !canWrite,
     data: {
       type: "section-container",
       sectionId: props.section.custom ? props.section.id : null,
@@ -821,6 +832,7 @@ function SortableSectionHeader(props: {
       <button
         ref={draggable && codexStyle ? setActivatorNodeRef : undefined}
         {...(draggable && codexStyle ? { ...attributes, ...listeners } : {})}
+        disabled={!canWrite}
         aria-expanded={expanded}
         className={cn(
           "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -875,6 +887,7 @@ function SortableSectionHeader(props: {
             <MenuTrigger
               render={
                 <button
+                  disabled={!canWrite}
                   aria-label={`Actions for ${section.name}`}
                   className={cn(
                     "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100",
@@ -889,26 +902,26 @@ function SortableSectionHeader(props: {
             </MenuTrigger>
             <MenuPopup align="end" className="min-w-40">
               <MenuItem
-                disabled={!placementReady}
+                disabled={!canWrite || !placementReady}
                 onClick={() => openCommandPalette({ open: "add-project", sectionId: section.id })}
               >
                 <FolderPlusIcon />
                 Add project
               </MenuItem>
               <MenuItem
-                disabled={!placementReady}
+                disabled={!canWrite || !placementReady}
                 onClick={() => props.onNewProjectInSection(section)}
               >
                 <FilePlusIcon />
                 New project…
               </MenuItem>
               {props.onNewSubsection ? (
-                <MenuItem onClick={() => props.onNewSubsection?.(section)}>
+                <MenuItem disabled={!canWrite} onClick={() => props.onNewSubsection?.(section)}>
                   <FolderTreeIcon />
                   New subsection
                 </MenuItem>
               ) : null}
-              <MenuItem onClick={() => props.onOpenRename(section)}>
+              <MenuItem disabled={!canWrite} onClick={() => props.onOpenRename(section)}>
                 <SettingsIcon />
                 Rename section
               </MenuItem>
@@ -919,13 +932,17 @@ function SortableSectionHeader(props: {
                     Folder color
                   </MenuSubTrigger>
                   <MenuSubPopup>
-                    <MenuItem onClick={() => setSectionColor(section.id, null)}>
+                    <MenuItem
+                      disabled={!canWrite}
+                      onClick={() => setSectionColor(section.id, null)}
+                    >
                       <span aria-hidden className="size-3 rounded-full border border-border" />
                       None
                       {section.ownColor === undefined ? <CheckIcon className="ms-auto" /> : null}
                     </MenuItem>
                     {PROJECT_ICON_COLORS.map((color) => (
                       <MenuItem
+                        disabled={!canWrite}
                         key={color.value}
                         onClick={() => setSectionColor(section.id, color.value)}
                       >
@@ -942,17 +959,24 @@ function SortableSectionHeader(props: {
                   </MenuSubPopup>
                 </MenuSub>
               ) : null}
-              <MenuItem onClick={() => setSectionFolderIcons(section.id, !section.ownFolderIcons)}>
+              <MenuItem
+                disabled={!canWrite}
+                onClick={() => setSectionFolderIcons(section.id, !section.ownFolderIcons)}
+              >
                 <FolderIcon />
                 Use folder icons
                 {section.ownFolderIcons ? <CheckIcon className="ms-auto" /> : null}
               </MenuItem>
-              <MenuItem onClick={() => props.onResetIcons(section)}>
+              <MenuItem disabled={!canWrite} onClick={() => props.onResetIcons(section)}>
                 <RotateCcwIcon />
                 Reset project icons…
               </MenuItem>
               <MenuSeparator />
-              <MenuItem onClick={() => props.onDelete(section.id)} variant="destructive">
+              <MenuItem
+                disabled={!canWrite}
+                onClick={() => props.onDelete(section.id)}
+                variant="destructive"
+              >
                 <Trash2Icon />
                 Delete section
               </MenuItem>
@@ -1040,6 +1064,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           type="button"
           {...(codexStyle ? { ...attributes, ...listeners } : {})}
           ref={codexStyle ? setActivatorNodeRef : undefined}
+          disabled={!canWrite}
           aria-expanded={props.isProjectExpanded}
           className={cn(
             "flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",

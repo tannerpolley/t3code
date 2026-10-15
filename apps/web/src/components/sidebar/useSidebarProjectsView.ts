@@ -24,6 +24,7 @@ export function useSidebarProjectsView() {
     readonly id: number;
   } | null>(null);
   const openSectionDialog = useCallback((target: ProjectSectionDialogTarget) => {
+    if (useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
     setSectionDialog((current) => ({ target, open: true, id: (current?.id ?? 0) + 1 }));
   }, []);
   const setSectionDialogOpen = useCallback((open: boolean) => {
