@@ -71,16 +71,11 @@ export function IssueDetailActions({
         })
       : null,
   );
-  const { data: parentWork } = useEnvironmentQuery(
-    capabilities?.issueWork === true && issue.parent != null && thread !== null
-      ? issueEnvironment.workStatus({ environmentId, input: issue.parent })
-      : null,
-  );
   const implementation = issueImplementDestination({
     environmentId,
     rootThreadId: repositoryWork?.rootThreadId,
-    currentThread: thread,
-    parentOwnerThreadId: parentWork?.threadId ?? null,
+    hasParent: issue.parent != null,
+    paused: repositoryWork?.orchestration?.paused === true,
   });
   const project = findIssueProject(
     projects,

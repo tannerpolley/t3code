@@ -1,5 +1,4 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
   EnvironmentId,
   IssueComment,
@@ -13,23 +12,31 @@ export type IssueComposerAction = "ask" | "explain" | "implement";
 export function issueImplementDestination(input: {
   environmentId: EnvironmentId;
   rootThreadId: ThreadId | null | undefined;
-  currentThread: Pick<EnvironmentThreadShell, "environmentId" | "id" | "lineage"> | null;
-  parentOwnerThreadId: ThreadId | null;
+  hasParent: boolean;
+  paused: boolean;
 }) {
+  if (input.hasParent) {
+    return {
+      threadRef: null,
+      disabledReason: "Implement sub-issues from the parent issue's worker",
+    };
+  }
+  if (input.paused) {
+    return {
+      threadRef: null,
+      disabledReason: "Repository work is paused; resume it first",
+    };
+  }
   if (input.rootThreadId == null) {
     return {
       threadRef: null,
       disabledReason: "No orchestrator for this repository; use Start agent",
     };
   }
-  const current = input.currentThread;
-  const threadId =
-    current?.environmentId === input.environmentId &&
-    current.lineage.rootThreadId === input.rootThreadId &&
-    current.id === input.parentOwnerThreadId
-      ? current.id
-      : input.rootThreadId;
-  return { threadRef: scopeThreadRef(input.environmentId, threadId), disabledReason: null };
+  return {
+    threadRef: scopeThreadRef(input.environmentId, input.rootThreadId),
+    disabledReason: null,
+  };
 }
 
 /** Only ordinary associations can be removed; managed work and PR references keep their owners. */

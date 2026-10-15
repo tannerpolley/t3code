@@ -100,37 +100,29 @@ describe("issue menu", () => {
 describe("implementation composer routing", () => {
   const rootThreadId = ThreadId.make("root");
   const rootRef = { environmentId: threadRef.environmentId, threadId: rootThreadId };
-  const currentThread = {
-    environmentId: threadRef.environmentId,
-    id: threadRef.threadId,
-    lineage: {
-      rootThreadId,
-      parentThreadId: rootThreadId,
-      relationshipToParent: "subagent" as const,
-    },
-  };
   const input = {
     environmentId: threadRef.environmentId,
     rootThreadId,
-    currentThread,
-    parentOwnerThreadId: null,
+    hasParent: false,
+    paused: false,
   };
 
-  it("uses the current composer when the current thread is the registered root", () => {
-    expect(
-      issueImplementDestination({
-        ...input,
-        currentThread: {
-          ...currentThread,
-          id: rootThreadId,
-          lineage: { rootThreadId, parentThreadId: null, relationshipToParent: null },
-        },
-      }),
-    ).toEqual({ threadRef: rootRef, disabledReason: null });
+  it("targets the registered root's composer for a top-level issue, independently of the current thread", () => {
+    expect(issueImplementDestination(input)).toEqual({ threadRef: rootRef, disabledReason: null });
   });
 
-  it("routes an unrelated current thread to the registered root's composer", () => {
-    expect(issueImplementDestination(input)).toEqual({ threadRef: rootRef, disabledReason: null });
+  it("disables sub-issues and points to the parent issue's worker", () => {
+    expect(issueImplementDestination({ ...input, hasParent: true })).toEqual({
+      threadRef: null,
+      disabledReason: "Implement sub-issues from the parent issue's worker",
+    });
+  });
+
+  it("disables implementation while repository work is paused", () => {
+    expect(issueImplementDestination({ ...input, paused: true })).toEqual({
+      threadRef: null,
+      disabledReason: "Repository work is paused; resume it first",
+    });
   });
 
   it("disables implementation without a root and points to Start agent", () => {
@@ -140,34 +132,14 @@ describe("implementation composer routing", () => {
     });
   });
 
-  it("uses the root's composer without a current thread", () => {
-    expect(issueImplementDestination({ ...input, currentThread: null })).toEqual({
-      threadRef: rootRef,
-      disabledReason: null,
-    });
-  });
-
-  it("allows the immediate parent's current owner within the registered root's lineage", () => {
-    const parentInput = { ...input, parentOwnerThreadId: currentThread.id };
-    expect(issueImplementDestination(parentInput)).toEqual({
-      threadRef,
-      disabledReason: null,
-    });
+  it("preserves the delegation prompt and existing composer text", () => {
+    const prompt = issueComposerPrompt("implement", issue);
+    expect(prompt).toBe(
+      `Implement this issue: #44: Match PR panes\n\n${issue.url}\n\nRead the issue and its latest comments, then delegate it with delegate_task using the issue argument, following the repository's model roles.`,
+    );
     expect(
-      issueImplementDestination({
-        ...parentInput,
-        currentThread: {
-          ...currentThread,
-          lineage: { ...currentThread.lineage, rootThreadId: ThreadId.make("retired-root") },
-        },
-      }).threadRef,
-    ).toEqual(rootRef);
-    expect(
-      issueImplementDestination({
-        ...parentInput,
-        currentThread: { ...currentThread, environmentId: EnvironmentId.make("another-host") },
-      }).threadRef,
-    ).toEqual(rootRef);
+      handoffPrompt({ prompt: "Existing instructions", lastHandoffPrompt: undefined }, prompt),
+    ).toBe(`Existing instructions\n\n${prompt}`);
   });
 });
 
