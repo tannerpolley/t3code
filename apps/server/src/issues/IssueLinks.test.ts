@@ -301,6 +301,13 @@ it.effect(
       ]);
       assert.notProperty(first.issues[0]!, "pullRequestRefs");
       assert.equal(first.issues[0]!.pullRequestCount, 2);
+      assert.deepEqual(
+        first.issues[0]!.pullRequests?.map((pr) => [pr.host, pr.repository, pr.number]),
+        [
+          ["github.com", "owner/repo", 42],
+          ["github.com", "other/repo", 42],
+        ],
+      );
       const work = first.issues[0]!.liveWork!;
       assert.deepEqual(
         work.map((item) => [item.threadId, item.status]),
@@ -458,3 +465,97 @@ it.effect(
       ),
     ),
 );
+
+it.effect("does not count stale active IDs or parked background work as a running agent", () => {
+  const base = {
+    ...liveThreadShell(threadId),
+    linkedIssue: {
+      ...ref,
+      repositoryId: "repo",
+      id: "13",
+      nodeId: "I_13",
+      title: "Fix",
+      url: "https://github.com/owner/repo/issues/13",
+    },
+  };
+  const h = harness([base]);
+  return Effect.gen(function* () {
+    const links = yield* IssueLinks.IssueLinks;
+    for (const [thread, expected] of [
+      [{ ...base, status: "running" as const }, "working"],
+      [{ ...base, status: "completed" as const, activityRunStatus: "running" as const }, "working"],
+      [{ ...base, status: "completed" as const }, "idle"],
+      [
+        {
+          ...base,
+          status: "running" as const,
+          pendingBackgroundTasks: [{ kind: "monitor" as const, taskId: "monitor" }],
+        },
+        "idle",
+      ],
+      [
+        {
+          ...base,
+          status: "running" as const,
+          pendingBackgroundTasks: [{ kind: "command" as const, taskId: "server" }],
+        },
+        "working",
+      ],
+    ] as const) {
+      h.setShells([thread]);
+      assert.equal((yield* links.enrich(list())).issues[0]?.liveWork?.[0]?.status, expected);
+    }
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("returns closing and linked-thread PRs with state, deduplicating the same PR", () => {
+  const pr = {
+    host: ref.host,
+    repository: ref.repository,
+    number: 42,
+    url: "https://github.com/owner/repo/pull/42",
+    source: "manual" as const,
+    linkedAt: "2026-10-15T00:00:00Z",
+    stack: null,
+    snapshot: {
+      state: "open" as const,
+      title: "Fix",
+      isDraft: true,
+      headBranch: "fix",
+      baseBranch: "main",
+      updatedAt: null,
+      syncedAt: "2026-10-15T00:00:00Z",
+    },
+  };
+  const thread = {
+    ...liveThreadShell(threadId),
+    pullRequests: [
+      pr,
+      {
+        ...pr,
+        number: 43,
+        url: "https://github.com/owner/repo/pull/43",
+        snapshot: { ...pr.snapshot, state: "merged" as const },
+      },
+      { ...pr, number: 44, source: "stack-dismissed" as const },
+    ],
+  };
+  const h = harness([thread]);
+  return Effect.gen(function* () {
+    const links = yield* IssueLinks.IssueLinks;
+    yield* links.link(ref, threadId);
+    const input = list();
+    const result = yield* links.enrich({
+      ...input,
+      issues: [{ ...input.issues[0]!, pullRequestRefs: [{ ...ref, number: 42 }] }],
+    });
+    assert.equal(result.issues[0]?.pullRequestCount, 2);
+    assert.deepEqual(
+      result.issues[0]?.pullRequests?.map((pr) => [pr.number, pr.state, pr.isDraft]),
+      [
+        [42, "open", true],
+        [43, "merged", true],
+      ],
+    );
+  }).pipe(Effect.provide(h.layer));
+});

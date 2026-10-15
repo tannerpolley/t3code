@@ -48,6 +48,14 @@ const work = (status: "working" | "waiting_on_you" | "idle") => [
     status,
   },
 ];
+const pr = (state: "open" | "merged" | "closed") => ({
+  ...scope,
+  number: 42,
+  url: "https://github.com/owner/repo/pull/42",
+  title: "Fix",
+  state,
+  isDraft: false,
+});
 const numbers = (rows: ReturnType<typeof issueRoadmap>[number]["rows"]) =>
   rows.map((row) => row.issue.number);
 
@@ -65,9 +73,9 @@ describe("live roadmap", () => {
         issue(423),
       ],
     );
-    expect(numbers(sections[1]!.rows)).toEqual([423, 431]);
-    expect(numbers(sections[2]!.rows)).toEqual([432, 434, 439, 435]);
-    const blocked = numbers(sections[2]!.rows);
+    expect(numbers(sections[2]!.rows)).toEqual([423, 431]);
+    expect(numbers(sections[3]!.rows)).toEqual([432, 434, 439, 435]);
+    const blocked = numbers(sections[3]!.rows);
     expect(blocked.indexOf(439)).toBeLessThan(blocked.indexOf(435));
   });
   it("orders an open child before its parent, ignores closed children and closed blockers, and excludes closed issues", () => {
@@ -81,8 +89,8 @@ describe("live roadmap", () => {
         issue(5, { state: "closed", parent: ref(1) }),
       ],
     );
-    expect(numbers(sections[1]!.rows)).toEqual([2, 7, 1]);
-    expect(sections[2]!.rows).toEqual([]);
+    expect(numbers(sections[2]!.rows)).toEqual([2, 7, 1]);
+    expect(sections[3]!.rows).toEqual([]);
   });
   it("uses milestone group order, then Project Priority, then oldest issue number for available nodes", () => {
     const alpha = milestone(2, "Alpha"),
@@ -102,7 +110,7 @@ describe("live roadmap", () => {
         issue(3, { milestone: alpha }),
       ],
     );
-    expect(numbers(sections[1]!.rows)).toEqual([7, 8, 9, 3, 2, 1]);
+    expect(numbers(sections[2]!.rows)).toEqual([7, 8, 9, 3, 2, 1]);
   });
   it("dependency order beats priority and milestone order in the same section", () => {
     const alpha = milestone(1, "Alpha"),
@@ -133,7 +141,7 @@ describe("live roadmap", () => {
         issue(7, { blockedBy: [ref(1000)] }),
       ],
     );
-    expect(numbers(sections[2]!.rows)).toEqual([1, 2, 7]);
+    expect(numbers(sections[3]!.rows)).toEqual([1, 2, 7]);
   });
   it("numbers cycles deterministically, including child/blocker cycles and self edges, without badging their descendants", () => {
     const sections = issueRoadmap(
@@ -147,7 +155,7 @@ describe("live roadmap", () => {
         issue(1),
       ],
     );
-    expect(numbers(sections[1]!.rows)).toEqual([1, 9]);
+    expect(numbers(sections[2]!.rows)).toEqual([1, 9]);
     expect(
       sections
         .flatMap((section) => section.rows)
@@ -155,10 +163,10 @@ describe("live roadmap", () => {
         .map((row) => row.issue.number)
         .sort((a, b) => a - b),
     ).toEqual([3, 4, 9]);
-    expect(numbers(sections[2]!.rows)).toEqual([3, 4, 2]);
-    expect(sections[2]!.rows.find((row) => row.issue.number === 2)?.cycle).toBe(false);
+    expect(numbers(sections[3]!.rows)).toEqual([3, 4, 2]);
+    expect(sections[3]!.rows.find((row) => row.issue.number === 2)?.cycle).toBe(false);
   });
-  it("keeps linked threads In progress unless an open blocker holds the issue, and returns an unlinked issue to Ready on refresh", () => {
+  it("keeps only running agents In progress, open PRs In review, and blockers ahead of both", () => {
     const first = issueRoadmap(
       scope,
       [],
@@ -169,9 +177,24 @@ describe("live roadmap", () => {
         issue(4, { relationshipsComplete: false }),
         issue(5, { liveWork: work("idle"), blockedBy: [ref(98)] }),
         issue(6, { liveWork: work("idle"), relationshipsComplete: false }),
+        issue(7, { liveWork: work("working") }),
+        issue(8, { pullRequests: [pr("open")] }),
+        issue(9, { pullRequests: [pr("merged")] }),
+        issue(10, { pullRequests: [pr("open")], blockedBy: [ref(99)] }),
+        issue(11, { pullRequests: [pr("open")], liveWork: work("working") }),
+        issue(12, { pullRequests: [pr("open")], liveWork: work("waiting_on_you") }),
+        issue(13, {
+          projects: [{ id: "p", title: "Board", status: "In progress", priority: null }],
+        }),
+        issue(14, { pullRequests: [pr("closed")] }),
       ],
     );
-    expect(first.map((section) => numbers(section.rows))).toEqual([[2, 3, 6], [], [1, 4, 5]]);
+    expect(first.map((section) => numbers(section.rows))).toEqual([
+      [7, 11],
+      [8, 12],
+      [2, 3, 9, 13, 14],
+      [1, 4, 5, 6, 10],
+    ]);
     expect(
       issueLiveStatus(
         issue(1, { liveWork: [...work("idle"), ...work("waiting_on_you"), ...work("working")] }),
@@ -187,6 +210,6 @@ describe("live roadmap", () => {
         issue(4),
       ],
     );
-    expect(refreshed.map((section) => numbers(section.rows))).toEqual([[1, 2], [3, 4], []]);
+    expect(refreshed.map((section) => numbers(section.rows))).toEqual([[], [], [1, 2, 3, 4], []]);
   });
 });

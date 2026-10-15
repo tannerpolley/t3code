@@ -1,7 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { IssueRepositoryRef, IssueSummary, IssueRef } from "@t3tools/contracts";
+import type {
+  IssueRepositoryRef,
+  IssueSummary,
+  IssueRef,
+  IssuePullRequest,
+} from "@t3tools/contracts";
 import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 
 const PageInfo = Schema.Struct({
@@ -38,6 +43,10 @@ const PullRequestRef = Schema.Struct({
   __typename: Schema.optional(Schema.String),
   number: Schema.optional(Schema.Int),
   repository: Schema.optional(Schema.Struct({ nameWithOwner: Schema.String })),
+  title: Schema.optional(Schema.String),
+  url: Schema.optional(Schema.String),
+  state: Schema.optional(Schema.Literals(["OPEN", "CLOSED", "MERGED"])),
+  isDraft: Schema.optional(Schema.Boolean),
 });
 const Response = Schema.Struct({
   errors: Schema.optional(
@@ -82,7 +91,7 @@ const decodeResponse = Schema.decodeEffect(Schema.fromJsonString(Response));
 type IssueProject = NonNullable<IssueSummary["projects"]>[number];
 type ListMetadata = Pick<
   IssueSummary,
-  "projects" | "blockedBy" | "parent" | "relationshipsComplete" | "pullRequestRefs"
+  "projects" | "blockedBy" | "parent" | "relationshipsComplete" | "pullRequestRefs" | "pullRequests"
 >;
 type MetadataPage = {
   readonly number: number;
@@ -110,7 +119,7 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
     const api = yield* GitHubApi.GitHubApi;
     const projects = new Map<number, Map<string, IssueProject>>();
     const metadata = new Map<number, ListMetadata>();
-    const pullRequests = new Map<number, Map<string, IssueRef>>();
+    const pullRequests = new Map<number, Map<string, IssuePullRequest>>();
     const blockers = new Map<number, Map<string, NonNullable<IssueSummary["blockedBy"]>[number]>>();
     const unavailable = new Set<number>();
     const pending: MetadataPage[] = numbers.map((number) => ({
@@ -154,7 +163,7 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
             page.pullRequestCursor === undefined
               ? ""
               : `closedByPullRequestsReferences(first: 100, after: $pullRequest${index}, includeClosedPrs: true) {
-            nodes { number repository { nameWithOwner } }
+            nodes { number title url state isDraft repository { nameWithOwner } }
             pageInfo { hasNextPage endCursor }
           }`
           }
@@ -208,11 +217,24 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
           });
         }
         blockers.set(page.number, issueBlockers);
-        const prs = pullRequests.get(page.number) ?? new Map<string, IssueRef>();
+        const prs = pullRequests.get(page.number) ?? new Map<string, IssuePullRequest>();
         for (const pr of node?.closedByPullRequestsReferences?.nodes ?? []) {
           if (pr?.number === undefined || pr.repository === undefined) continue;
           const identity = ref(pr.number, pr.repository.nameWithOwner);
-          prs.set(`${identity.repository.toLowerCase()}#${identity.number}`, identity);
+          prs.set(`${identity.repository.toLowerCase()}#${identity.number}`, {
+            ...identity,
+            title: pr.title ?? "",
+            url: pr.url ?? `https://${scope.host}/${identity.repository}/pull/${pr.number}`,
+            state:
+              pr.state === undefined
+                ? null
+                : pr.state === "OPEN"
+                  ? "open"
+                  : pr.state === "MERGED"
+                    ? "merged"
+                    : "closed",
+            isDraft: pr.isDraft ?? false,
+          });
         }
         pullRequests.set(page.number, prs);
         const previous = metadata.get(page.number);
@@ -230,7 +252,12 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
                 (blocked != null && blocked.nodes.every((node) => node !== null))) &&
               !failedFields(alias, "blockedBy") &&
               !failedFields(alias, "parent"),
-            pullRequestRefs: [...prs.values()],
+            pullRequestRefs: [...prs.values()].map(({ host, repository, number }) => ({
+              host,
+              repository,
+              number,
+            })),
+            pullRequests: [...prs.values()],
           });
         const nextProject = connection?.pageInfo.hasNextPage
           ? connection.pageInfo.endCursor

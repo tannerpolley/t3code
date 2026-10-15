@@ -1,6 +1,7 @@
 import type { IssueMilestone, IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 import { issuePriorityRank } from "./issueProjects.logic";
+import { issueProgress } from "./IssueStateIcon";
 
 export function issueLiveStatus(issue: IssueSummary) {
   const work = issue.liveWork ?? [];
@@ -109,19 +110,23 @@ export function issueRoadmap(
   }
   const sections = [
     { id: "in-progress", title: "In progress", rows: [] as typeof ordered },
+    { id: "in-review", title: "In review", rows: [] as typeof ordered },
     { id: "ready", title: "Ready", rows: [] as typeof ordered },
     { id: "blocked", title: "Blocked", rows: [] as typeof ordered },
   ];
   // An open blocker wins over linked work, as in issueProgress, so the section matches the icon.
   for (const row of ordered) {
+    const progress = issueProgress(row.issue);
     const section =
-      openIssueBlockers(row.issue).length > 0
-        ? 2
-        : issueLiveStatus(row.issue) !== null
+      progress === "blocked"
+        ? 3
+        : progress === "in_progress"
           ? 0
-          : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
-            ? 2
-            : 1;
+          : progress === "in_review"
+            ? 1
+            : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
+              ? 3
+              : 2;
     sections[section]!.rows.push(row);
   }
   return sections;

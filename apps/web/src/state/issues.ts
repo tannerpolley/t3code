@@ -13,8 +13,29 @@ import { useCallback } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useThreadShells, useAllEnvironmentShellsBootstrapped } from "./entities";
+import { withLiveIssueWork } from "../components/issues/issueLiveWork.logic";
 
 export const issueEnvironment = createIssueEnvironmentAtoms(connectionAtomRuntime);
+
+/** Apply streamed work after GitHub paging, whose freshness is keyed by fetchedAt. */
+export function useLiveIssueWork() {
+  const shells = useThreadShells();
+  const ready = useAllEnvironmentShellsBootstrapped();
+  return useCallback(
+    <T extends IssueListResult>(list: T, environmentId: EnvironmentId): T => {
+      if (!ready) return list;
+      return {
+        ...list,
+        ...withLiveIssueWork(
+          list,
+          shells.filter((thread) => thread.environmentId === environmentId),
+        ),
+      };
+    },
+    [ready, shells],
+  );
+}
 
 export interface IssueListTarget {
   readonly environmentId: EnvironmentId;

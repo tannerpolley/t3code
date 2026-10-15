@@ -390,7 +390,7 @@ export function ThreadPullRequestsMiniList({
   );
 }
 
-function ThreadPullRequestMiniListItem({
+export function ThreadPullRequestMiniListItem({
   number,
   url,
   title,

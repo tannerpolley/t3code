@@ -6,7 +6,7 @@ import type {
   IssueRepositoryRef,
   IssueSummary,
 } from "@t3tools/contracts";
-import { CirclePauseIcon, LinkIcon, RadioIcon } from "lucide-react";
+import { CirclePauseIcon, LinkIcon } from "lucide-react";
 import { IssueRow } from "./IssueRow";
 import { Badge } from "~/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
@@ -33,8 +33,7 @@ function IssueLiveWork({
       : status === "waiting_on_you"
         ? "Waiting on you"
         : "Linked, idle";
-  const Icon =
-    status === "working" ? RadioIcon : status === "waiting_on_you" ? CirclePauseIcon : LinkIcon;
+  const Icon = status === "waiting_on_you" ? CirclePauseIcon : LinkIcon;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -52,16 +51,12 @@ function IssueLiveWork({
           />
         }
       >
-        {/* Two pulses announce work without continuously repainting every running row. */}
-        <Icon
-          aria-hidden
-          style={{ animationIterationCount: 2 }}
-          className={cn(
-            "size-3.5",
-            status === "working" && "text-success motion-safe:animate-pulse",
-            status === "waiting_on_you" && "text-warning-foreground",
-          )}
-        />
+        {status !== "working" ? (
+          <Icon
+            aria-hidden
+            className={cn("size-3.5", status === "waiting_on_you" && "text-warning-foreground")}
+          />
+        ) : null}
         <span>{label}</span>
       </TooltipTrigger>
       <TooltipPopup>
@@ -135,6 +130,7 @@ export function IssueRoadmap({
                   <div className="flex items-start gap-1">
                     <IssueRow
                       issue={issue}
+                      environmentId={environmentId}
                       selected={selectedIssueNumber === issue.number}
                       onSelect={() => onSelect(issue)}
                       className="flex-1 px-1"

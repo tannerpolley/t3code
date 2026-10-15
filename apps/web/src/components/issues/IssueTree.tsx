@@ -1,4 +1,4 @@
-import type { IssueMilestone, IssueSummary } from "@t3tools/contracts";
+import type { EnvironmentId, IssueMilestone, IssueSummary } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -62,6 +62,7 @@ export function IssueTreeTag({ children }: { readonly children: ReactNode }) {
 }
 
 export interface IssueTreeProps {
+  readonly environmentId?: EnvironmentId;
   readonly groups: readonly IssueGroup[];
   readonly issuesComplete: boolean;
   readonly selectedIssueNumber?: number;
@@ -74,6 +75,7 @@ export interface IssueTreeProps {
  * choice is kept by id, so it survives refreshes.
  */
 export function IssueTree({
+  environmentId,
   groups,
   issuesComplete,
   selectedIssueNumber,
@@ -118,6 +120,7 @@ export function IssueTree({
                 {group.issues.map((issue) => (
                   <li key={issue.number}>
                     <IssueRow
+                      environmentId={environmentId}
                       issue={issue}
                       selected={selectedIssueNumber === issue.number}
                       onSelect={() => onSelect(issue)}

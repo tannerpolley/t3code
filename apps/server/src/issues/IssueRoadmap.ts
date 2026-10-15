@@ -56,6 +56,9 @@ export const layer = Layer.effect(
                 issues: [
                   {
                     ...detail.issue,
+                    pullRequests: detail.linkedPullRequests
+                      .filter((pr) => pr.closesIssue)
+                      .map((pr) => ({ ...pr, host: detail.repository.host })),
                     // The list associates threads through closing pull requests; so does this.
                     pullRequestRefs: detail.linkedPullRequests
                       .filter((pr) => pr.closesIssue)

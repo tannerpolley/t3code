@@ -9,17 +9,26 @@ import {
 
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
+import { ThreadStatusMark } from "../ThreadStatusMark";
 
 type IssueStateInput = Pick<IssueSummary, "state"> &
-  Partial<Pick<IssueSummary, "stateReason" | "blockedBy" | "liveWork" | "projects">>;
+  Partial<
+    Pick<IssueSummary, "stateReason" | "blockedBy" | "liveWork" | "projects" | "pullRequests">
+  >;
 
-export type IssueProgress = "completed" | "not_planned" | "blocked" | "in_progress" | "open";
+export type IssueProgress =
+  | "completed"
+  | "not_planned"
+  | "blocked"
+  | "in_progress"
+  | "in_review"
+  | "open";
 
 /**
  * Closed wins, split the way GitHub closes an issue: not planned (or a duplicate) apart from
  * completed, which is also what an issue closed without a reason counts as. Then an open
- * blocker, then work in progress: an agent working on it or waiting on the user, or a GitHub
- * Project status of "In progress".
+ * blocker, then a running agent, then an open pull request. Project fields are metadata only.
  */
 export function issueProgress(issue: IssueStateInput): IssueProgress {
   if (issue.state === "closed")
@@ -27,11 +36,8 @@ export function issueProgress(issue: IssueStateInput): IssueProgress {
       ? "not_planned"
       : "completed";
   if (issue.blockedBy?.some((blocker) => blocker.state === "open")) return "blocked";
-  if (
-    issue.liveWork?.some((work) => work.status !== "idle") ||
-    issue.projects?.some((project) => /^in[\s-]?progress$/i.test(project.status ?? ""))
-  )
-    return "in_progress";
+  if (issue.liveWork?.some((work) => work.status === "working")) return "in_progress";
+  if (issue.pullRequests?.some((pr) => pr.state === "open")) return "in_review";
   return "open";
 }
 
@@ -48,6 +54,12 @@ export const ISSUE_PROGRESS_PRESENTATION = {
     toneClassName: "text-sky-600 dark:text-sky-300/90",
     badgeVariant: "info",
     Icon: CircleDotDashedIcon,
+  },
+  in_review: {
+    label: "In review",
+    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
+    badgeVariant: "success",
+    Icon: PullRequestGlyph.pullRequest,
   },
   blocked: {
     label: "Blocked",
@@ -89,11 +101,15 @@ export function IssueStateIcon({
     <Tooltip>
       {/* A span trigger: rows are buttons, and a nested control would steal their click. */}
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <presentation.Icon
-          role="img"
-          aria-label={presentation.label}
-          className={cn("size-4 shrink-0", presentation.toneClassName, className)}
-        />
+        {issueProgress(issue) === "in_progress" ? (
+          <ThreadStatusMark status="working" />
+        ) : (
+          <presentation.Icon
+            role="img"
+            aria-label={presentation.label}
+            className={cn("size-4 shrink-0", presentation.toneClassName, className)}
+          />
+        )}
       </TooltipTrigger>
       <TooltipPopup>{presentation.label}</TooltipPopup>
     </Tooltip>

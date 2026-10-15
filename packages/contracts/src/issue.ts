@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString, ThreadId } from "./baseSchemas.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
+import { PullRequestState } from "./pullRequest.ts";
 
 const IssueNumber = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
@@ -48,6 +49,17 @@ export const IssueMilestone = Schema.Struct({
 });
 export type IssueMilestone = typeof IssueMilestone.Type;
 
+/** Closing references and visible pull requests of linked threads, deduplicated by identity. */
+export const IssuePullRequest = Schema.Struct({
+  ...IssueRef.fields,
+  url: IssueUrl,
+  title: Schema.String,
+  /** Null until a linked thread's pull request has its first host snapshot. */
+  state: Schema.NullOr(PullRequestState),
+  isDraft: Schema.Boolean,
+});
+export type IssuePullRequest = typeof IssuePullRequest.Type;
+
 export const IssueSummary = Schema.Struct({
   number: IssueNumber,
   title: Schema.String,
@@ -87,8 +99,9 @@ export const IssueSummary = Schema.Struct({
   relationshipsComplete: Schema.optional(Schema.Boolean),
   /** Closing PR references, read with the list's metadata batch. */
   pullRequestRefs: Schema.optional(Schema.Array(IssueRef)),
-  /** How many pull requests close the issue, kept when the server drops the references. */
+  /** Count of the deduplicated closing and linked-thread pull requests. */
   pullRequestCount: Schema.optional(NonNegativeInt),
+  pullRequests: Schema.optional(Schema.Array(IssuePullRequest)),
   /** GitHub's sub-issue tally; absent on older servers and hosts without sub-issues. */
   subIssues: Schema.optional(Schema.Struct({ total: NonNegativeInt, completed: NonNegativeInt })),
   liveWork: Schema.optional(

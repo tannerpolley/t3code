@@ -18,7 +18,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironment } from "~/state/environments";
-import { issueEnvironment } from "~/state/issues";
+import { issueEnvironment, useLiveIssueWork } from "~/state/issues";
 import { useUiStateStore } from "~/uiStateStore";
 
 import { IssueRoadmap } from "../issues/IssueRoadmap";
@@ -129,7 +129,9 @@ function IssueRows({
       input: { host, repository, state: listState, roadmap: true },
     }),
   );
-  const list = Option.getOrNull(AsyncResult.value(result));
+  const cachedList = Option.getOrNull(AsyncResult.value(result));
+  const liveIssueWork = useLiveIssueWork();
+  const list = cachedList === null ? null : liveIssueWork(cachedList, environmentId);
   const [showAll, setShowAll] = useState(false);
   const view =
     list === null

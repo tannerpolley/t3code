@@ -1358,7 +1358,16 @@ it.effect(
         blockedBy,
         projectItems: projectConnection([]),
         closedByPullRequestsReferences: {
-          nodes: [{ number: 20, repository: { nameWithOwner: REPOSITORY } }],
+          nodes: [
+            {
+              number: 20,
+              title: "Fix",
+              url: `https://github.com/${REPOSITORY}/pull/20`,
+              state: "OPEN",
+              isDraft: true,
+              repository: { nameWithOwner: REPOSITORY },
+            },
+          ],
         },
         timelineItems: {
           nodes: [
@@ -1412,6 +1421,16 @@ it.effect(
       ]);
       assert.equal(result.issues[0]?.relationshipsComplete, true);
       assert.deepEqual(result.issues[0]?.pullRequestRefs, [{ ...listInput, number: 20 }]);
+      assert.deepEqual(result.issues[0]?.pullRequests, [
+        {
+          ...listInput,
+          number: 20,
+          title: "Fix",
+          url: `https://github.com/${REPOSITORY}/pull/20`,
+          state: "open",
+          isDraft: true,
+        },
+      ]);
       assert.deepEqual(result.issues[1]?.blockedBy, []);
       assert.equal(harness.calls.length, 4);
       const first = yield* decodeProjectRequest(harness.calls[2]!.body!);

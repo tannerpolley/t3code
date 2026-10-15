@@ -15,7 +15,12 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
-import { legacyThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
+import {
+  legacyThreadPullRequestKey,
+  threadPullRequestsOf,
+} from "@t3tools/shared/threadPullRequests";
+import { issuePullRequests } from "@t3tools/shared/issuePullRequests";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const key = (issue: IssueRef) =>
@@ -198,10 +203,26 @@ const make = Effect.gen(function* () {
       issues: list.issues.map((issue) => {
         // PR references are a server-side lookup, not another copy of the issue timeline on the wire.
         const { pullRequestRefs, ...summary } = issue;
+        const liveWork = work.get(issue.number) ?? [];
+        const pullRequests = issuePullRequests(
+          issue.pullRequests ??
+            (pullRequestRefs ?? []).map((ref) => ({
+              ...ref,
+              url: `https://${ref.host}/${ref.repository}/pull/${ref.number}`,
+              title: "",
+              state: null,
+              isDraft: false,
+            })),
+          liveWork.flatMap((item) => {
+            const thread = byId.get(item.threadId);
+            return thread === undefined ? [] : threadPullRequestsOf(thread);
+          }),
+        );
         return {
           ...summary,
-          ...(pullRequestRefs === undefined ? {} : { pullRequestCount: pullRequestRefs.length }),
-          liveWork: work.get(issue.number) ?? [],
+          pullRequests,
+          pullRequestCount: pullRequests.length,
+          liveWork,
         };
       }),
     };
@@ -218,9 +239,10 @@ function workState(
   )
     return "waiting_on_you";
   if (
-    thread.activeRunId !== null ||
-    ["queued", "preparing", "starting", "running", "waiting"].includes(thread.status) ||
-    thread.activityRunStatus != null
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
+    ["queued", "preparing", "starting", "running", "waiting"].includes(
+      thread.activityRunStatus ?? thread.status,
+    )
   )
     return "working";
   return "idle";

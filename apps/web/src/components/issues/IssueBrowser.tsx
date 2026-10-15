@@ -27,7 +27,12 @@ import {
 } from "~/rightPanelStore";
 import { useAllEnvironmentShellsBootstrapped } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
-import { useIssueLists, useIssueRepositories, type IssueListTarget } from "~/state/issues";
+import {
+  useLiveIssueWork,
+  useIssueLists,
+  useIssueRepositories,
+  type IssueListTarget,
+} from "~/state/issues";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { PageBackButton } from "../PageBackButton";
 import { Button } from "../ui/button";
@@ -346,6 +351,7 @@ export function IssueBrowser({
     [baseListTargets, pagingByKey],
   );
   const issueLists = useIssueLists(listTargets);
+  const liveIssueWork = useLiveIssueWork();
   const issueErrors = useMemo(() => {
     const errors = new Map<string, IssueError>();
     for (const failure of issueLists.failures) {
@@ -502,7 +508,9 @@ export function IssueBrowser({
     );
     const scopeKey = baseTarget === undefined ? null : issueListScopeKey(baseTarget);
     const state = scopeKey === null ? undefined : pagingByKey[scopeKey];
-    const snapshot = state?.snapshot ?? null;
+    const cachedSnapshot = state?.snapshot ?? null;
+    const snapshot =
+      cachedSnapshot === null ? null : liveIssueWork(cachedSnapshot, target.environmentId);
     const error = scopeKey === null ? null : (issueErrors.get(scopeKey) ?? null);
     const filteredIssues = snapshot
       ? filterAndSortIssues(
@@ -641,6 +649,7 @@ export function IssueBrowser({
         ) : filteredIssues.length > 0 ? (
           <IssueTree
             key={scopeKey}
+            environmentId={entry.environmentId}
             renderMilestoneActions={(milestone) => (
               <IssueMilestoneControls
                 environmentId={entry.environmentId}
