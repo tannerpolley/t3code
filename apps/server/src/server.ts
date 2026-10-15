@@ -772,7 +772,7 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   Layer.provide(IssueLinks.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   Layer.provide(layerIssueService),
-  // One PR service and refresh stream for transports, review guides, and issue link changes.
+  // One PR service and refresh stream for transports and review guides.
   Layer.provide(layerPullRequestService),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),

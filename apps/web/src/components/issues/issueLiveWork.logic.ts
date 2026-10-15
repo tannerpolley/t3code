@@ -62,6 +62,8 @@ export function createLiveIssueWorkOverlay() {
     environmentId: EnvironmentId,
     index: IssueWorkIndex,
   ): IssueSummary => {
+    // Older servers lack the provenance needed to safely replace their work and PR counts.
+    if (issue.closingPullRequests === undefined) return issue;
     const key = scopeKey(environmentId, scope);
     const ids = new Set((issue.liveWork ?? []).map((work) => work.threadId));
     for (const thread of index.issues.get(key)?.get(issue.number) ?? []) ids.add(thread.id);
@@ -96,17 +98,14 @@ export function createLiveIssueWorkOverlay() {
       };
     });
     const pullRequests = issuePullRequests(
-      issue.closingPullRequests ?? issue.pullRequests ?? [],
+      issue.closingPullRequests,
       active.flatMap((thread) => thread.pullRequests),
     );
-    const hasDetails =
-      issue.pullRequests !== undefined ||
-      issue.closingPullRequests !== undefined ||
-      pullRequests.length > 0;
     const result = {
       ...issue,
       ...(issue.liveWork !== undefined || liveWork.length > 0 ? { liveWork } : {}),
-      ...(hasDetails ? { pullRequests, pullRequestCount: pullRequests.length } : {}),
+      pullRequests,
+      pullRequestCount: pullRequests.length,
     };
     // Avoid replacing a server row whose observable work did not change.
     const stable =

@@ -14,7 +14,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -248,94 +248,122 @@ it.effect("re-reads an open issue when an agent turn finishes", () =>
   ),
 );
 
-it.effect(
-  "refreshes Roadmap and ordinary issue list associations after a link change on the existing environment refresh stream",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const environmentId = EnvironmentId.make("local");
-        const reads: string[] = [];
-        const secondRead = yield* Deferred.make<void>();
-        const target = new PrimaryConnectionTarget({
-          environmentId,
-          label: "local",
-          httpBaseUrl: "https://local.example.test",
-          wsBaseUrl: "wss://local.example.test",
-        });
-        const client = {
-          [WS_METHODS.issuesList]: (input: IssueListInput) =>
-            Effect.gen(function* () {
-              reads.push(input.roadmap ? "roadmap" : "milestones");
-              if (reads.filter((view) => view === "milestones").length === 2)
-                yield* Deferred.succeed(secondRead, undefined);
-              return {
-                repository: { host: input.host, repository: input.repository },
-                viewer: null,
-                fetchedAt: "2026-10-13T00:00:00Z",
-                issues: [],
-                milestones: [],
-                nextCursor: null,
-                issuesComplete: true,
-                milestonesComplete: true,
-              } satisfies IssueListResult;
-            }),
-        } as unknown as WsRpcProtocolClient;
-        const session: RpcSession = {
-          client,
-          ready: Effect.void,
-          probe: Effect.void,
-          closed: Effect.never,
-          initialConfig: Effect.never,
-          subscribeServerConfig: () => Stream.empty,
-        };
-        const supervisor = EnvironmentSupervisor.of({
-          target,
-          state: yield* SubscriptionRef.make<SupervisorConnectionState>({
-            ...AVAILABLE_CONNECTION_STATE,
-            desired: true,
-            network: "online",
-            phase: "connected",
-            attempt: 1,
-            generation: 1,
+it.effect("issue lists ignore turn-finished refreshes and still refresh on link changes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("local");
+      const reads: string[] = [];
+      const linkChanges = yield* SubscriptionRef.make(0);
+      const turnFinished = yield* SubscriptionRef.make(0);
+      const turnRead = yield* Deferred.make<void>();
+      const linkDetailRead = yield* Deferred.make<void>();
+      let detailReads = 0;
+      const secondRead = yield* Deferred.make<void>();
+      const target = new PrimaryConnectionTarget({
+        environmentId,
+        label: "local",
+        httpBaseUrl: "https://local.example.test",
+        wsBaseUrl: "wss://local.example.test",
+      });
+      const client = {
+        [WS_METHODS.issuesSubscribeLinkRefreshes]: () => SubscriptionRef.changes(linkChanges),
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => SubscriptionRef.changes(turnFinished),
+        [WS_METHODS.issuesDetail]: () =>
+          Effect.gen(function* () {
+            if (++detailReads === 2) yield* Deferred.succeed(turnRead, undefined);
+            if (detailReads === 3) yield* Deferred.succeed(linkDetailRead, undefined);
+            return {} as IssueDetailResult;
           }),
-          session: yield* SubscriptionRef.make(Option.some(session)),
-          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-          connect: Effect.void,
-          disconnect: Effect.void,
-          retryNow: Effect.void,
-        });
-        const environments = EnvironmentRegistry.of({
-          run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
-          followStream: (_id, stream) =>
-            Stream.provideService(stream, EnvironmentSupervisor, supervisor),
-        } as EnvironmentRegistry["Service"]);
-        let signalReads = 0;
-        const counter = Atom.make(AsyncResult.success(0));
-        const signal = Atom.make((get) => {
-          signalReads++;
-          return get(counter);
-        });
-        const queries = createIssueEnvironmentAtoms(
-          Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
-          () => signal,
-        );
-        const registry = AtomRegistry.make();
-        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
-        const input = { host: "github.com", repository: "owner/repo" };
-        const roadmap = queries.roadmapList({ environmentId, input: { ...input, roadmap: true } });
-        const unmountRoadmap = registry.mount(roadmap);
-        yield* Effect.addFinalizer(() => Effect.sync(unmountRoadmap));
-        yield* AtomRegistry.getResult(registry, roadmap, { suspendOnWaiting: true });
-        expect(signalReads).toBe(1);
-        const milestones = queries.list({ environmentId, input });
-        const unmountMilestones = registry.mount(milestones);
-        yield* Effect.addFinalizer(() => Effect.sync(unmountMilestones));
-        yield* AtomRegistry.getResult(registry, milestones, { suspendOnWaiting: true });
-        expect(signalReads).toBe(1);
-        registry.set(counter, AsyncResult.success(1));
-        yield* Deferred.await(secondRead);
-        yield* AtomRegistry.getResult(registry, roadmap, { suspendOnWaiting: true });
-        expect(reads).toEqual(["roadmap", "milestones", "roadmap", "milestones"]);
-      }),
-    ),
+        [WS_METHODS.issuesList]: (input: IssueListInput) =>
+          Effect.gen(function* () {
+            reads.push(input.roadmap ? "roadmap" : input.repository);
+            if (reads.length === 6) yield* Deferred.succeed(secondRead, undefined);
+            return {
+              repository: { host: input.host, repository: input.repository },
+              viewer: null,
+              fetchedAt: "2026-10-13T00:00:00Z",
+              issues: [],
+              milestones: [],
+              nextCursor: null,
+              issuesComplete: true,
+              milestonesComplete: true,
+            } satisfies IssueListResult;
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const session: RpcSession = {
+        client,
+        ready: Effect.void,
+        probe: Effect.void,
+        closed: Effect.never,
+        initialConfig: Effect.never,
+        subscribeServerConfig: () => Stream.empty,
+      };
+      const supervisor = EnvironmentSupervisor.of({
+        target,
+        state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+          ...AVAILABLE_CONNECTION_STATE,
+          desired: true,
+          network: "online",
+          phase: "connected",
+          attempt: 1,
+          generation: 1,
+        }),
+        session: yield* SubscriptionRef.make(Option.some(session)),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      });
+      const environments = EnvironmentRegistry.of({
+        run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+        followStream: (_id, stream) =>
+          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      } as EnvironmentRegistry["Service"]);
+      const queries = createIssueEnvironmentAtoms(
+        Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
+      );
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const input = { host: "github.com", repository: "owner/repo" };
+      const lists = [
+        queries.roadmapList({ environmentId, input: { ...input, roadmap: true } }),
+        queries.list({ environmentId, input }),
+        queries.liveList({ environmentId, input: { ...input, repository: "owner/live" } }),
+      ];
+      const detail = queries.detail({ environmentId, input: { ...input, number: 1 } });
+      for (const atom of lists) {
+        const unmount = registry.mount(atom);
+        yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+      }
+      const unmountDetail = registry.mount(detail);
+      yield* Effect.addFinalizer(() => Effect.sync(unmountDetail));
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      expect(reads).toHaveLength(3);
+      expect(detailReads).toBe(1);
+      yield* SubscriptionRef.set(turnFinished, 1);
+      // A detail re-read proves the turn signal was processed while lists were mounted.
+      yield* Deferred.await(turnRead);
+      expect(detailReads).toBe(2);
+      for (const atom of lists)
+        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+      expect(reads).toHaveLength(3);
+
+      yield* SubscriptionRef.set(linkChanges, 1);
+      yield* Deferred.await(secondRead);
+      for (const atom of lists)
+        yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      yield* Deferred.await(linkDetailRead);
+      expect(detailReads).toBe(3);
+      expect(reads).toEqual([
+        "roadmap",
+        "owner/repo",
+        "owner/live",
+        "roadmap",
+        "owner/repo",
+        "owner/live",
+      ]);
+    }),
+  ),
 );

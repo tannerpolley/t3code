@@ -49,6 +49,7 @@ const list: IssueListResult = {
       createdAt: "2026-10-15T00:00:00Z",
       updatedAt: "2026-10-15T00:00:00Z",
       commentCount: 0,
+      closingPullRequests: [],
     },
   ],
 };
@@ -66,6 +67,24 @@ const running = makeThreadFixture({
     updatedAt: root.updatedAt,
   },
 });
+const pr: ThreadPullRequestLink = {
+  ...scope,
+  number: 10,
+  url: "https://github.com/owner/repo/pull/10",
+  source: "manual",
+  linkedAt: list.fetchedAt,
+  stack: null,
+  snapshot: {
+    state: "open",
+    title: "Fix",
+    headBranch: "fix",
+    baseBranch: "main",
+    isDraft: true,
+    updatedAt: list.fetchedAt,
+    syncedAt: list.fetchedAt,
+  },
+};
+
 const section = (value: IssueListResult) =>
   issueRoadmap(scope, [], value.issues).find((section) => section.rows.length > 0)?.id;
 
@@ -129,12 +148,13 @@ it("the Linked issue summary derives the same live status as the issue list", ()
   );
 });
 
-it("preserves counts from an older server without pull request details", () => {
+it("preserves an older server row and count even when its thread has PRs", () => {
+  const { closingPullRequests: _, ...oldIssue } = list.issues[0]!;
   const old = {
     ...list,
     issues: [
       {
-        ...list.issues[0]!,
+        ...oldIssue,
         pullRequestCount: 3,
         liveWork: [
           {
@@ -149,29 +169,49 @@ it("preserves counts from an older server without pull request details", () => {
       },
     ],
   };
-  const result = withLiveIssueWork(old, [root]);
+  const result = withLiveIssueWork(old, [{ ...root, pullRequests: [pr] }]);
+  expect(result).toBe(old);
+  expect(
+    overlay.summary(
+      old.issues[0]!,
+      scope,
+      environmentId,
+      indexIssueWork([{ ...root, pullRequests: [pr] }]),
+    ),
+  ).toBe(old.issues[0]);
   expect(result.issues[0]?.pullRequestCount).toBe(3);
   expect(result.issues[0]?.pullRequests).toBeUndefined();
 });
 
-it("combines closing PRs with linked threads' PRs, deduplicates identity and follows streamed PR state", () => {
-  const pr: ThreadPullRequestLink = {
-    ...scope,
-    number: 10,
-    url: "https://github.com/owner/repo/pull/10",
-    source: "manual",
-    linkedAt: list.fetchedAt,
-    stack: null,
-    snapshot: {
-      state: "open",
-      title: "Fix",
-      headBranch: "fix",
-      baseBranch: "main",
-      isDraft: true,
-      updatedAt: list.fetchedAt,
-      syncedAt: list.fetchedAt,
-    },
+it("leaves older-server inherited work settled when an unlinked child runs", () => {
+  const { closingPullRequests: _, ...oldIssue } = list.issues[0]!;
+  const old = {
+    ...list,
+    issues: [
+      {
+        ...oldIssue,
+        liveWork: [root, running].map((thread) => ({
+          threadId: thread.id,
+          title: thread.title,
+          branch: null,
+          worktreePath: null,
+          pullRequests: [],
+          status: "idle" as const,
+        })),
+      },
+    ],
   };
+  const result = withLiveIssueWork(old, [root, running]);
+  expect(result).toBe(old);
+  expect(section(result)).toBe("ready");
+  expect(
+    issueProgress(
+      overlay.summary(old.issues[0]!, scope, environmentId, indexIssueWork([root, running])),
+    ),
+  ).toBe("open");
+});
+
+it("combines closing PRs with linked threads' PRs, deduplicates identity and follows streamed PR state", () => {
   const closing = {
     ...list,
     issues: [

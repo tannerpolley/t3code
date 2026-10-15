@@ -21,7 +21,8 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { issuePullRequests } from "@t3tools/shared/issuePullRequests";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const key = (issue: IssueRef) =>
@@ -68,6 +69,7 @@ export class IssueLinks extends Context.Service<
       callerThreadId?: ThreadId,
       remove?: boolean,
     ) => Effect.Effect<IssueLinkResult, IssueLinkError>;
+    readonly refreshes: Stream.Stream<number>;
     readonly enrich: (list: IssueListResult) => Effect.Effect<IssueListResult, IssueLinkError>;
   }
 >()("t3/issues/IssueLinks") {}
@@ -75,7 +77,7 @@ export class IssueLinks extends Context.Service<
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const pullRequestService = yield* PullRequestService.PullRequestService;
+  const refreshes = yield* SubscriptionRef.make(0);
   const link: IssueLinks["Service"]["link"] = Effect.fn("IssueLinks.link")(function* (
     input,
     callerThreadId,
@@ -96,8 +98,7 @@ const make = Effect.gen(function* () {
           VALUES (${issue.host}, ${issue.repository}, ${issue.number}, ${threadId})
           ON CONFLICT DO NOTHING RETURNING thread_id`
     ).pipe(Effect.mapError(storageError));
-    // Issue readers already subscribe to this environment-wide refresh stream.
-    if (rows.length > 0) yield* pullRequestService.refreshAfterTurn(thread.projectId);
+    if (rows.length > 0) yield* SubscriptionRef.update(refreshes, (revision) => revision + 1);
     return { issue, threadId, changed: rows.length > 0 };
   });
   const enrich: IssueLinks["Service"]["enrich"] = Effect.fn("IssueLinks.enrich")(function* (list) {
@@ -240,7 +241,7 @@ const make = Effect.gen(function* () {
       }),
     };
   });
-  return IssueLinks.of({ link, enrich });
+  return IssueLinks.of({ link, enrich, refreshes: SubscriptionRef.changes(refreshes) });
 });
 
 function workState(

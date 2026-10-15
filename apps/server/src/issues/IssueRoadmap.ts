@@ -8,6 +8,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as Stream from "effect/Stream";
 import * as IssueService from "./IssueService.ts";
 import * as IssueLinks from "./IssueLinks.ts";
 
@@ -15,6 +16,7 @@ import * as IssueLinks from "./IssueLinks.ts";
 export class IssueRoadmap extends Context.Service<
   IssueRoadmap,
   {
+    readonly linkRefreshes: Stream.Stream<number>;
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueReadError>;
     /** The issue with the same local work its list row carries. */
     readonly detail: (input: IssueDetailInput) => Effect.Effect<IssueDetailResult, IssueReadError>;
@@ -27,6 +29,7 @@ export const layer = Layer.effect(
     const issues = yield* IssueService.IssueService;
     const links = yield* IssueLinks.IssueLinks;
     return IssueRoadmap.of({
+      linkRefreshes: links.refreshes,
       list: (input) =>
         issues.list(input).pipe(
           Effect.flatMap((list) =>

@@ -68,6 +68,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
         [WS_METHODS.issuesRepositories]: () => issues.repositories(),
         [WS_METHODS.issuesList]: (input) => roadmap.list(input),
         [WS_METHODS.issuesDetail]: (input) => roadmap.detail(input),
+        [WS_METHODS.issuesSubscribeLinkRefreshes]: () => roadmap.linkRefreshes,
         [WS_METHODS.issuesInboxList]: (input) => inbox.list(input),
         [WS_METHODS.issuesInboxMarkRead]: (input) => inbox.markRead(input),
         [WS_METHODS.issuesInboxSubscribeUnread]: () => inbox.unread,

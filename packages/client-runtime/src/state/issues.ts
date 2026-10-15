@@ -1,5 +1,5 @@
 import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
-import type { Atom } from "effect/reactivity";
+import { Atom } from "effect/reactivity";
 import * as Effect from "effect/Effect";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -10,7 +10,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
-/** How often an issue someone is looking at re-reads GitHub, besides after agent turns. */
+/** How often an issue someone is looking at re-reads GitHub, besides explicit refreshes. */
 const LIVE_ISSUE_REFRESH_MS = 60_000;
 
 /** Issue reads run on the environment whose GitHub credential the user selected. */
@@ -27,6 +27,12 @@ export function createIssueEnvironmentAtoms<R, E>(
     refreshIntervalMs: 5_000,
     refreshTrigger,
   });
+  const linkRefreshes = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:issues:link-refreshes",
+    tag: WS_METHODS.issuesSubscribeLinkRefreshes,
+  });
+  const linkRefreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
+    linkRefreshes({ environmentId, input: {} });
   const changeRefreshes = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:issues:change-refreshes",
     tag: WS_METHODS.issueChangesSubscribe,
@@ -111,7 +117,7 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:list",
       tag: WS_METHODS.issuesList,
       staleTimeMs: 30_000,
-      refreshTrigger,
+      refreshTrigger: linkRefreshTrigger,
     }),
     /**
      * One repository's list shown beside a thread, kept live while agents work on its issues.
@@ -122,22 +128,23 @@ export function createIssueEnvironmentAtoms<R, E>(
       tag: WS_METHODS.issuesList,
       staleTimeMs: 30_000,
       refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
-      refreshTrigger,
+      refreshTrigger: linkRefreshTrigger,
     }),
-    /** Roadmap page one also observes link changes through the existing refresh stream. */
+    /** Roadmap page one observes link changes without re-reading after agent turns. */
     roadmapList: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:roadmap-list",
       tag: WS_METHODS.issuesList,
       staleTimeMs: 30_000,
       refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
-      refreshTrigger,
+      refreshTrigger: linkRefreshTrigger,
     }),
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:detail",
       tag: WS_METHODS.issuesDetail,
       staleTimeMs: 60_000,
       refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
-      refreshTrigger,
+      refreshTrigger: (target) =>
+        Atom.make((get) => [get(refreshTrigger(target)), get(linkRefreshTrigger(target))]),
     }),
   };
 }

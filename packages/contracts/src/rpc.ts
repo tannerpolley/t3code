@@ -588,6 +588,7 @@ export const WS_METHODS = {
   issuesRepositories: "issues.repositories",
   issuesList: "issues.list",
   issuesDetail: "issues.detail",
+  issuesSubscribeLinkRefreshes: "issues.subscribeLinkRefreshes",
   issuesStart: "issues.start",
   issuesWorkStatus: "issues.workStatus",
   issuesWorkMilestone: "issues.workMilestone",
@@ -1044,6 +1045,13 @@ const IssueRpcError = Schema.Union([
 const WsIssuesRepositoriesRpc = Rpc.make(WS_METHODS.issuesRepositories, {
   payload: Schema.Struct({}),
   success: IssueRepositoriesResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesSubscribeLinkRefreshesRpc = Rpc.make(WS_METHODS.issuesSubscribeLinkRefreshes, {
+  payload: Schema.Struct({}),
+  success: Schema.Number,
+  stream: true,
   error: IssueRpcError,
 });
 
@@ -2143,6 +2151,7 @@ const forkWsRpcs = [
   WsIssuesRepositoriesRpc,
   WsIssuesListRpc,
   WsIssuesDetailRpc,
+  WsIssuesSubscribeLinkRefreshesRpc,
   WsIssuesStartRpc,
   WsIssuesWorkStatusRpc,
   WsIssuesWorkMilestoneRpc,
@@ -2370,6 +2379,7 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issuesRepositories,
   WS_METHODS.issuesList,
   WS_METHODS.issuesDetail,
+  WS_METHODS.issuesSubscribeLinkRefreshes,
   WS_METHODS.issuesStart,
   WS_METHODS.issuesWorkStatus,
   WS_METHODS.issuesWorkMilestone,

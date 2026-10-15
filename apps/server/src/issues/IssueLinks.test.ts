@@ -9,12 +9,13 @@ import {
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
-import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as Stream from "effect/Stream";
 import * as IssueLinks from "./IssueLinks.ts";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
@@ -23,7 +24,6 @@ const threadId = ThreadId.make("ordinary-builder");
 function harness(initial: OrchestrationV2ThreadShell[]) {
   let shells = initial;
   const lookups: string[] = [];
-  const refreshes: ProjectId[] = [];
   const projections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
     getThreadShell: (id) =>
       Effect.sync(() => {
@@ -47,14 +47,6 @@ function harness(initial: OrchestrationV2ThreadShell[]) {
   );
   const layer = IssueLinks.layer.pipe(
     Layer.provide(projections),
-    Layer.provide(
-      Layer.mock(PullRequestService.PullRequestService)({
-        refreshAfterTurn: (projectId) =>
-          Effect.sync(() => {
-            refreshes.push(projectId);
-          }),
-      }),
-    ),
     Layer.provide(seed),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
@@ -64,7 +56,6 @@ function harness(initial: OrchestrationV2ThreadShell[]) {
       shells = next;
     },
     lookups,
-    refreshes,
   };
 }
 function list(): IssueListResult {
@@ -118,7 +109,7 @@ it.effect(
       assert.equal((yield* sql`SELECT * FROM issue_thread_links`).length, 3);
       assert.equal((yield* links.link(ref, threadId, true)).changed, true);
       assert.equal((yield* links.link(ref, threadId, true)).changed, false);
-      assert.equal(h.refreshes.length, 4);
+      assert.equal(yield* Stream.runHead(links.refreshes).pipe(Effect.map(Option.getOrThrow)), 4);
       assert.deepEqual(
         (yield* links.enrich(list())).issues[0]?.liveWork?.map((work) => work.threadId),
         ["another"],

@@ -82,8 +82,8 @@ interface IssueListsView {
   readonly isPending: boolean;
 }
 
-// Only first pages are kept live: the Roadmap's, and a one-repository pane's, which also re-reads
-// when links change or agent turns finish. Later pages also observe those refresh signals.
+// Only first pages are polled: the Roadmap's and a one-repository pane's.
+// All pages also re-read when issue links change.
 const issueListAtom = (target: IssueListTarget) =>
   (target.input.cursor !== undefined
     ? issueEnvironment.list
