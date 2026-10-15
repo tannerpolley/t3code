@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
-import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
+import { CommandId, EventId, MessageId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -7,6 +8,7 @@ import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import {
@@ -18,7 +20,7 @@ import {
 } from "./ThreadLaunchService.testHarness.ts";
 
 it.effect(
-  "validates repository limits and revisions, admits queued workers on a raise, and only holds new starts on a lower",
+  "validates repository limits, preserves Stop and usage-limit holds on a raise, and only holds new starts on a lower",
   () => {
     const reference = { host: "github.com", repository: "owner/repo" };
     const issue = (number: number) => ({
@@ -30,19 +32,22 @@ it.effect(
       title: `Issue ${number}`,
       url: `https://github.com/owner/repo/issues/${number}`,
     });
+    let failReads = false;
     const reads = Layer.mock(IssueService.IssueService)({
       workRead: (input) =>
-        Effect.succeed({
-          issue: issue(input.number),
-          state: "open",
-          milestoneNumber: null,
-          parent: null,
-          subIssues: [],
-          blockedBy: [],
-          parentComplete: true,
-          subIssuesComplete: true,
-          blockersComplete: true,
-        }),
+        failReads
+          ? Effect.die("Injected reconciliation failure")
+          : Effect.succeed({
+              issue: issue(input.number),
+              state: "open",
+              milestoneNumber: null,
+              parent: null,
+              subIssues: [],
+              blockedBy: [],
+              parentComplete: true,
+              subIssuesComplete: true,
+              blockersComplete: true,
+            }),
     });
     const harness = makeHarness({ issueServiceLayer: reads });
     const dependencies = Layer.mergeAll(
@@ -114,6 +119,55 @@ it.effect(
           creationSource: "mcp",
         });
       const store = yield* IssueWorkStore.IssueWorkStore;
+      // A provider-limited worker retains its failure while later work waits in its queue.
+      yield* delegate(4);
+      yield* worker.drain();
+      const limited = (yield* store.issueOwner(issue(4)))!;
+      const limitedRun = (yield* threads.getThreadRecords(limited, ["runs"])).runs[0]!;
+      assert.equal(limitedRun.status, "starting");
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("limit-worker-failed"),
+            type: "run.updated",
+            threadId: limited,
+            runId: limitedRun.id,
+            occurredAt: now,
+            payload: { ...limitedRun, status: "failed", completedAt: now },
+          },
+          {
+            id: EventId.make("limit-worker-error"),
+            type: "turn-item.updated",
+            threadId: limited,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("limit-worker-error"),
+              type: "error",
+              threadId: limited,
+              runId: limitedRun.id,
+              nodeId: limitedRun.rootNodeId,
+              providerThreadId: limitedRun.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "failed",
+              title: "Usage limit",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              failure: {
+                class: "usage_limit",
+                message: "Allowance used",
+                code: "usageLimitExceeded",
+                retryable: null,
+              },
+            },
+          },
+        ],
+      });
       yield* delegate(1);
       yield* delegate(2);
       yield* worker.drain();
@@ -125,6 +179,32 @@ it.effect(
           .pipe(Effect.map((records) => records.runs.at(-1)!.status));
       assert.equal(yield* status(first), "starting");
       assert.equal(yield* status(held), "queued");
+      yield* delegate(5);
+      const stopped = (yield* store.issueOwner(issue(5)))!;
+      yield* threads.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-limit-worker"),
+        threadId: stopped,
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("limited-worker-follow-up"),
+        threadId: limited,
+        messageId: MessageId.make("limited-worker-follow-up"),
+        text: "Waiting for allowance",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+      assert.equal(yield* status(stopped), "queued");
+      assert.equal(
+        (yield* threads.getThreadRecords(stopped, ["runs"])).runs.at(-1)!.queueHeld,
+        true,
+      );
+      assert.equal((yield* threads.getThreadShell(limited))?.lastErrorClass, "usage_limit");
+      assert.equal(yield* status(limited), "queued");
       // The active root does not consume a worker slot; queued workers do not either.
       assert.equal((yield* service.repositoryStatus(reference)).slotsInUse, 1);
       for (const invalid of [0, 33, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
@@ -156,6 +236,13 @@ it.effect(
       });
       yield* worker.drain();
       assert.equal(yield* status(held), "starting");
+      assert.equal(yield* status(stopped), "queued");
+      assert.equal(
+        (yield* threads.getThreadRecords(stopped, ["runs"])).runs.at(-1)!.queueHeld,
+        true,
+      );
+      assert.equal(yield* status(limited), "queued");
+      assert.equal((yield* threads.getThreadShell(limited))?.lastErrorClass, "usage_limit");
       assert.equal(raised.orchestration!.workerLimit, 2);
       assert.equal(raised.orchestration!.revision, 2);
       assert.equal(raised.slotsInUse, 2);
@@ -173,6 +260,16 @@ it.effect(
       yield* worker.drain();
       const third = (yield* store.issueOwner(issue(3)))!;
       assert.equal(yield* status(third), "queued");
+      failReads = true;
+      const committed = yield* service.setWorkerLimit({
+        ...reference,
+        workerLimit: 2,
+        expectedRevision: lowered.orchestration!.revision,
+        clientRequestId: CommandId.make("raise-limit-reconcile-fails"),
+      });
+      failReads = false;
+      assert.equal(committed.orchestration!.workerLimit, 2);
+      assert.equal(committed.orchestration!.revision, lowered.orchestration!.revision + 1);
       const paused = yield* service.setPaused({
         ...reference,
         paused: true,
@@ -194,6 +291,19 @@ it.effect(
         clientRequestId: CommandId.make("same-limit"),
       });
       assert.equal(unchanged.orchestration!.revision, max.orchestration!.revision);
+      yield* service.setPaused({
+        ...reference,
+        paused: false,
+        clientRequestId: CommandId.make("unpause-limit"),
+      });
+      yield* worker.drain();
+      assert.equal(yield* status(third), "starting");
+      assert.equal(yield* status(stopped), "queued");
+      assert.equal(
+        (yield* threads.getThreadRecords(stopped, ["runs"])).runs.at(-1)!.queueHeld,
+        true,
+      );
+      assert.equal(yield* status(limited), "queued");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

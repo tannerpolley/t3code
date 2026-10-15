@@ -1074,20 +1074,6 @@ export const layer = Layer.effect(
         yield* reconcile(owner.rootThreadId);
         return yield* repositoryStatus(input);
       });
-    const resumeWorkers = Effect.fn("IssueWorkService.resumeWorkers")(function* (
-      rootThreadId: ThreadId,
-      commandId: CommandId,
-    ) {
-      yield* reconcile(rootThreadId);
-      for (const threadId of yield* store.workerThreads(rootThreadId))
-        yield* threads
-          .dispatch({
-            type: "queue.resume",
-            threadId,
-            commandId: CommandId.make(`${commandId}:queue:${threadId}`),
-          })
-          .pipe(Effect.mapError(mapError));
-    });
     const setWorkerLimit: IssueWorkService["Service"]["setWorkerLimit"] = (input) =>
       Effect.gen(function* () {
         yield* decodeWorkerLimit(input).pipe(
@@ -1124,7 +1110,14 @@ export const layer = Layer.effect(
             input.clientRequestId,
           );
         if (input.workerLimit > config.workerLimit && !config.paused)
-          yield* resumeWorkers(owner.rootThreadId, input.clientRequestId);
+          yield* reconcile(owner.rootThreadId).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Issue queue continuation after worker limit change failed", {
+                rootThreadId: owner.rootThreadId,
+                cause,
+              }),
+            ),
+          );
         return yield* repositoryStatus(input);
       });
     const setPaused: IssueWorkService["Service"]["setPaused"] = (input) =>
@@ -1153,7 +1146,7 @@ export const layer = Layer.effect(
             input.clientRequestId,
           );
         if (!input.paused) {
-          yield* resumeWorkers(owner.rootThreadId, input.clientRequestId);
+          yield* reconcile(owner.rootThreadId);
         }
         return yield* repositoryStatus(input);
       });
