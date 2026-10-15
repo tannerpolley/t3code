@@ -636,9 +636,9 @@ export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
 function needsRecovery(
   projection: OrchestrationV2ThreadProjection,
   kind: ProjectionRecoveryKind,
-  parent?: Pick<OrchestrationV2ThreadProjection, "subagents" | "contextTransfers">,
+  projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>,
 ): boolean {
-  if (projection.thread.deletedAt !== null && kind !== "subagent-results") return false;
+  if (projection.thread.deletedAt !== null) return false;
   switch (kind) {
     case "queued-runs":
       return (
@@ -651,12 +651,20 @@ function needsRecovery(
     case "delegated-completions":
       return (
         projection.thread.delegatedCompletion?.delivery != null ||
-        projection.runs.some((run) => run.delegatedCompletion?.delivery != null)
+        projection.runs.some((run) => run.delegatedCompletion?.delivery != null) ||
+        projection.subagents.some(
+          (task) =>
+            task.origin === "app_owned" &&
+            task.result === null &&
+            task.childThreadId !== null &&
+            projections.get(task.childThreadId)?.thread.deletedAt != null,
+        )
       );
     case "pending-requests":
       return projection.runtimeRequests.some((request) => request.status === "pending");
     case "subagent-results": {
       const parentThreadId = projection.thread.lineage.parentThreadId;
+      const parent = parentThreadId === null ? undefined : projections.get(parentThreadId);
       return (
         projection.thread.lineage.relationshipToParent === "subagent" &&
         parentThreadId !== null &&
@@ -667,7 +675,6 @@ function needsRecovery(
             task.result === null &&
             task.childThreadId === projection.thread.id &&
             (projection.thread.archivedAt !== null ||
-              projection.thread.deletedAt !== null ||
               !projection.runs.some((run) =>
                 ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
               ) ||
@@ -4171,6 +4178,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE CASE WHEN json_valid(payload_json)
                   THEN json_type(payload_json, '$.delegatedCompletion.delivery') = 'object'
                   ELSE 0 END
+                UNION
+                -- The surviving parent owns unresolved deliveries from a deleted child.
+                SELECT task.thread_id FROM orchestration_v2_projection_subagents AS task
+                JOIN orchestration_v2_projection_threads AS child
+                  ON child.thread_id = task.child_thread_id
+                WHERE child.deleted_at IS NOT NULL AND task.origin = 'app_owned'
+                  AND json_extract(task.payload_json, '$.result') IS NULL
               `;
             case "subagent-results":
               return sql`
@@ -4194,7 +4208,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND task.origin = 'app_owned'
                       AND json_extract(task.payload_json, '$.result') IS NULL
                   ) AND (
-                    child.archived_at IS NOT NULL OR child.deleted_at IS NOT NULL
+                    child.archived_at IS NOT NULL
                     OR NOT EXISTS (
                       SELECT 1 FROM orchestration_v2_projection_runs AS active
                       WHERE active.thread_id = child.thread_id
@@ -4316,7 +4330,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const rows = yield* sql<{ readonly thread_id: string }>`
           SELECT thread_id FROM orchestration_v2_projection_threads
           WHERE thread_id IN (${candidates})
-            ${kind === "subagent-results" ? sql`` : sql`AND deleted_at IS NULL`}
+            AND deleted_at IS NULL
             ${kind === "queued-runs" ? sql`AND archived_at IS NULL` : sql``}
           ORDER BY updated_at ASC, thread_id ASC
         `;
@@ -7086,15 +7100,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         Effect.gen(function* () {
           const projections = (yield* Ref.get(replayState)).projections;
           return [...projections.values()]
-            .filter((projection) =>
-              needsRecovery(
-                projection,
-                kind,
-                projection.thread.lineage.parentThreadId === null
-                  ? undefined
-                  : projections.get(projection.thread.lineage.parentThreadId),
-              ),
-            )
+            .filter((projection) => needsRecovery(projection, kind, projections))
             .toSorted(
               (left, right) =>
                 DateTime.toEpochMillis(left.thread.updatedAt) -

@@ -12479,6 +12479,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .withLock(
                 threadId,
                 Effect.gen(function* () {
+                  const tasks = (yield* projectionStore.getThreadRecords(threadId, ["subagents"]))
+                    .subagents;
+                  const childIds = new Set(
+                    tasks.flatMap((task) =>
+                      task.origin === "app_owned" &&
+                      task.result === null &&
+                      task.childThreadId !== null
+                        ? [task.childThreadId]
+                        : [],
+                    ),
+                  );
+                  for (const childId of childIds) {
+                    const child = yield* projectionStore.getThread(childId);
+                    if (child.deletedAt === null) continue;
+                    yield* finalizeAppOwnedSubagent(childId);
+                    yield* withdrawReleasedUsageLimitContinuation(childId);
+                  }
                   const projection = yield* projectionStore.getThreadRecords(threadId, [
                     "runs",
                     "messages",

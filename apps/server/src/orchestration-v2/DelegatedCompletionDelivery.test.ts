@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSettings from "../serverSettings.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -1058,6 +1059,43 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
               : []),
           ],
         });
+        if (state.startsWith("deleted")) {
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          assert.notInclude(
+            yield* projections.getRecoveryThreadIds("subagent-results"),
+            child.childThreadId,
+          );
+          assert.include(
+            yield* projections.getRecoveryThreadIds("delegated-completions"),
+            parentThreadId,
+          );
+          // Memory projections select the surviving parent by the same rule.
+          const unresolved = yield* orchestrator.getThreadProjection(parentThreadId);
+          const deleted = yield* orchestrator.getThreadProjection(child.childThreadId);
+          yield* Effect.gen(function* () {
+            const memory = yield* ProjectionStore.ProjectionStoreV2;
+            for (const thread of [unresolved.thread, deleted.thread]) {
+              yield* memory.apply({
+                id: EventId.make(`memory:${thread.id}`),
+                type: "thread.created",
+                threadId: thread.id,
+                occurredAt: now,
+                payload: thread,
+              });
+            }
+            yield* memory.apply({
+              id: EventId.make(`memory:${stuckId}`),
+              type: "subagent.updated",
+              threadId: parentThreadId,
+              occurredAt: now,
+              payload: unresolved.subagents.find((row) => row.id === stuckId)!,
+            });
+            assert.deepEqual(yield* memory.getRecoveryThreadIds("subagent-results"), []);
+            assert.deepEqual(yield* memory.getRecoveryThreadIds("delegated-completions"), [
+              parentThreadId,
+            ]);
+          }).pipe(Effect.provide(ProjectionStore.layerMemory));
+        }
         yield* orchestrator.recoverDelegatedTasks;
         const recovered = yield* orchestrator.getThreadProjection(parentThreadId);
         const task = recovered.subagents.find((row) => row.id === stuckId)!;
