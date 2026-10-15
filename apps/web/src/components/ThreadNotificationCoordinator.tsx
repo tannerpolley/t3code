@@ -3,7 +3,11 @@ import {
   runtimeRequestIsOwnerVisible,
   runtimeRequestOwnerAlertIsSettled,
 } from "@t3tools/shared/delegatedRequestVisibility";
-import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  type PendingSubagentRequest,
+  presentThreadShell,
+} from "@t3tools/client-runtime/state/models";
+import { pendingSubagentRequestsByThread } from "@t3tools/client-runtime/state/threads";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
@@ -116,6 +120,7 @@ interface NotificationState {
   readonly raw: OrchestrationV2ThreadShell;
   readonly parent: OrchestrationV2ThreadShell | undefined;
   readonly notifiedAttention: ReadonlySet<string> | null;
+  readonly subagentRequest: PendingSubagentRequest | null;
   readonly attention: string | null;
   readonly completion: number | null;
   readonly ownerVisibleSince: number | null;
@@ -158,14 +163,26 @@ function EnvironmentNotifications({
     const now = Math.max(Date.now(), alertTime);
     let nextAlertDelay = Infinity;
     const index = new Map(threads.map((thread) => [thread.id, thread]));
+    // Subagents are skipped below, so their requests notify through the thread above them.
+    const subagentRequests = pendingSubagentRequestsByThread(
+      threads.filter((thread) => thread.pendingRuntimeRequest?.routedTo === undefined),
+    );
     for (const rawThread of threads) {
       const parent =
         rawThread.pendingRuntimeRequest?.routedTo === undefined
           ? undefined
           : index.get(rawThread.pendingRuntimeRequest.routedTo);
       const child = rawThread.lineage.relationshipToParent === "subagent";
+      if (
+        child &&
+        rawThread.pendingRuntimeRequest?.routedTo === undefined &&
+        rawThread.lineage.parentThreadId !== null &&
+        index.has(rawThread.lineage.parentThreadId)
+      )
+        continue;
       const ownerVisible = runtimeRequestIsOwnerVisible(rawThread.pendingRuntimeRequest, parent);
       const prior = previous.current.get(rawThread.id);
+      const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
       const request = rawThread.pendingRuntimeRequest;
       const ownerVisibleSince =
         ownerVisible && rawThread.archivedAt === null
@@ -188,6 +205,7 @@ function EnvironmentNotifications({
       if (
         prior?.raw === rawThread &&
         prior.parent === parent &&
+        prior.subagentRequest === subagentRequest &&
         (ownerVisibleSince === null ||
           request === null ||
           request.routedTo === undefined ||
@@ -197,7 +215,7 @@ function EnvironmentNotifications({
         next.set(rawThread.id, prior);
         continue;
       }
-      const thread = presentThreadShell(environmentId, rawThread, parent);
+      const thread = presentThreadShell(environmentId, rawThread, subagentRequest, parent);
       let status = resolveSidebarThreadStatus(thread);
       if (!child && status === "ready" && thread.latestRun?.status === "failed") status = "failed";
       const attention =
@@ -220,6 +238,7 @@ function EnvironmentNotifications({
       const notificationState = {
         raw: rawThread,
         parent,
+        subagentRequest,
         attention,
         completion,
         ownerVisibleSince,

@@ -113,14 +113,14 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
-// Events that can end a blocking task wait: the parent's task record, and the
-// child's runs, nested tasks, questions, and pending provider background work.
+// Events that can end a delegated task wait: the parent's task record,
+// and the child's runs, nested tasks, provider background work, and questions.
 const TASK_WAKE_EVENTS = [
   { thread: "parent", eventType: "subagent.updated" },
   { thread: "child", eventType: "run.updated" },
   { thread: "child", eventType: "subagent.updated" },
-  { thread: "child", eventType: "runtime-request.updated" },
   { thread: "child", eventType: "provider-thread.updated" },
+  { thread: "child", eventType: "runtime-request.updated" },
 ] as const;
 /** A person answers the card, so a slower poll is plenty. */
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
@@ -379,7 +379,11 @@ function isTerminalTaskStatus(
 
 /** A blocking task wait ends when the task finishes or its child asks the user something. */
 function taskWaitEnds(result: OrchestratorMcpDelegateTaskResult): boolean {
-  return isTerminalTaskStatus(result.status) || result.waitingOnUser !== undefined;
+  return (
+    isTerminalTaskStatus(result.status) ||
+    result.hasPendingQuestion ||
+    result.waitingOnUser !== undefined
+  );
 }
 
 function directAppOwnedChildTasks(
@@ -1471,8 +1475,17 @@ const make = Effect.gen(function* () {
             : subagentResultForRun(childProjection, terminalRun).text
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
+        // A finished task has no question of its own; later child runs belong to other tasks.
+        hasPendingQuestion:
+          !isTerminalTaskStatus(status) &&
+          childControls.runtimeRequests.some(
+            (request) =>
+              request.kind === "user_input" &&
+              request.status === "pending" &&
+              request.responseCapability.type === "live",
+          ),
         waitTimedOut,
-        ...(waitingRequests[0] === undefined
+        ...(isTerminalTaskStatus(status) || waitingRequests[0] === undefined
           ? {}
           : {
               waitingOnUser: {
@@ -1545,7 +1558,9 @@ const make = Effect.gen(function* () {
         .getThreadEventSequence(scope.thread.threadId)
         .pipe(Effect.mapError(streamError));
       const initial = yield* readTask(scope, taskId, false, true);
-      if (taskWaitEnds(initial)) return Option.some(initial);
+      if (taskWaitEnds(initial)) {
+        return Option.some(initial);
+      }
       // One stream per event type, so transcript events never fill a buffer.
       return yield* Stream.mergeAll(
         TASK_WAKE_EVENTS.map(({ thread, eventType }) =>
@@ -2317,7 +2332,7 @@ const make = Effect.gen(function* () {
             completionWake: "always",
           })
           .pipe(
-            // The tool result is the timed-out task either way, so failures
+            // The tool result still returns after a timeout or question, so failures
             // stay warnings. Keep the two shapes apart: a rejected receipt
             // means this exact command id already failed (a replay of a
             // no-op upgrade), while anything else is a fresh dispatch fault.
@@ -2339,9 +2354,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return withNote(
-          Option.isSome(waited) ? waited.value : yield* readTask(scope, taskId, true, true),
-        );
+        return withNote(yield* readTask(scope, taskId, Option.isNone(waited), true));
       }),
     taskStatus: (callerScope, taskId) =>
       Effect.gen(function* () {

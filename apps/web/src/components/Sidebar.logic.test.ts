@@ -2657,6 +2657,7 @@ describe("withChildNeeds", () => {
       const child = presentThreadShell(
         localEnvironmentId,
         childSource,
+        null,
         state === "missing" ? null : parent,
       );
       const parentRow = presentThreadShell(localEnvironmentId, parent);
@@ -2704,7 +2705,7 @@ describe("withChildNeeds", () => {
         routedTo: middle.id,
       },
     };
-    const leaf = presentThreadShell(localEnvironmentId, leafSource, middle);
+    const leaf = presentThreadShell(localEnvironmentId, leafSource, null, middle);
     const children = groupRunningSubagentsByParent([
       root,
       presentThreadShell(localEnvironmentId, middle),
@@ -2717,7 +2718,7 @@ describe("withChildNeeds", () => {
         hasPendingUserInput: children.some((child) => child.hasPendingUserInput),
       }),
     ).toBe(false);
-    const handling = presentThreadShell(localEnvironmentId, leafSource, {
+    const handling = presentThreadShell(localEnvironmentId, leafSource, null, {
       ...middle,
       status: "running",
     });
@@ -2740,10 +2741,10 @@ describe("withChildNeeds", () => {
         routedTo: parent.id,
       },
     };
-    const working = presentThreadShell(localEnvironmentId, child, parent);
+    const working = presentThreadShell(localEnvironmentId, child, null, parent);
     expect(withChildNeeds("working", [working])).toBe("working");
     expect(isSidebarThreadWorking(working)).toBe(true);
-    const visible = presentThreadShell(localEnvironmentId, child, {
+    const visible = presentThreadShell(localEnvironmentId, child, null, {
       ...parent,
       status: "interrupted",
       activeRunId: null,

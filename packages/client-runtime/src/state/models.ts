@@ -113,6 +113,9 @@ export interface EnvironmentThreadShell {
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  /** What a live subagent below this thread waits on the user for. Subagent
+      rows are hidden, so the threads above them carry it. */
+  readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   readonly hasActionableProposedPlan: boolean;
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
@@ -221,9 +224,12 @@ export function scopeProject(
   return { ...project, environmentId };
 }
 
+export type PendingSubagentRequest = "approval" | "user_input";
+
 export function presentThreadShell(
   environmentId: EnvironmentId,
   thread: OrchestrationV2ThreadShell,
+  pendingSubagentRequest: PendingSubagentRequest | null = null,
   parent?: RoutedRequestParent | null,
 ): EnvironmentThreadShell {
   const ownerVisible = runtimeRequestIsOwnerVisible(thread.pendingRuntimeRequest, parent);
@@ -277,6 +283,7 @@ export function presentThreadShell(
       thread.pendingRuntimeRequest.kind !== "user_input" &&
       thread.pendingRuntimeRequest.kind !== "auth_refresh",
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input" && ownerVisible,
+    pendingSubagentRequest,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
     providerInstanceHistory: thread.providerInstanceHistory ?? [],

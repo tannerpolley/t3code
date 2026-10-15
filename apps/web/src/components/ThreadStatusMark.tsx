@@ -1,4 +1,10 @@
-import { CircleAlertIcon, CircleXIcon, ClockIcon, MessageCircleQuestionIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  CircleDotDashedIcon,
+  CircleXIcon,
+  ClockIcon,
+  MessageCircleQuestionIcon,
+} from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import type { SidebarThreadStatus } from "./Sidebar.logic";
@@ -46,8 +52,12 @@ export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMark
     case "working":
       return <Spinner aria-label="Working" size="sm" tone="working" />;
     case "waiting":
-      // Its own turn is done but subagents or background tasks still run: same spinner, amber, half speed.
-      return <Spinner aria-label="Waiting on background work" size="sm" tone="waiting" />;
+      return (
+        <CircleDotDashedIcon
+          aria-label="Waiting on background work"
+          className={cn(iconClass, "text-muted-foreground")}
+        />
+      );
     case "done":
       return (
         <span aria-label="Done" role="img" className={cn(iconClass, "grid place-items-center")}>

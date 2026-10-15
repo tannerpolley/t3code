@@ -1775,7 +1775,7 @@ it.effect("ProviderSessionManagerV2 releases sessions in parallel on server shut
   }),
 );
 
-it.effect("ProviderSessionManagerV2 closes event subscriptions normally on server shutdown", () =>
+it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shutdown", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
@@ -1810,7 +1810,10 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
 
       yield* manager.shutdown;
 
-      assert.isEmpty(yield* bufferedSubscription.events.pipe(Stream.runCollect));
+      // Buffered events are dropped and the consumer sees an interruption, not
+      // a clean end, so it leaves run settlement to restart recovery.
+      const exit = yield* bufferedSubscription.events.pipe(Stream.runCollect, Effect.exit);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
@@ -3363,6 +3366,25 @@ it.effect("ProviderSessionManagerV2 ends only the released session's own open to
         layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
       ),
     );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 checks liveness without delaying idle release", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const { providerSessionId } = yield* openSessionWithBackgroundCommand(
+        "provider-session-manager-is-live",
+      );
+      yield* TestClock.adjust("600 millis");
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+      yield* TestClock.adjust("600 millis");
+      yield* Effect.yieldNow;
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
   }),
 );
 

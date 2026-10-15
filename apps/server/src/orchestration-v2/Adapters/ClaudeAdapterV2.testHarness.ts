@@ -303,6 +303,9 @@ const makeWakeHarnessWithOptions = (options?: {
   readonly stopTask?: (
     taskId: string,
   ) => Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+  readonly backgroundTasks?: (
+    toolUseId: string,
+  ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly subagentLaunchToolUseId?: string;
   readonly nativeSessionId?: string;
@@ -392,6 +395,7 @@ const makeWakeHarnessWithOptions = (options?: {
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
                 stopTask: options?.stopTask ?? (() => Effect.void),
                 interrupt: Effect.void,
                 close: Queue.shutdown(processMessages),
@@ -432,6 +436,7 @@ const makeWakeHarnessWithOptions = (options?: {
                 Effect.sync(() => {
                   permissionModeChanges.push(mode);
                 }),
+              backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
               stopTask:
                 options?.stopTask ??
                 ((taskId) => Effect.sync(() => void stoppedTaskIds.push(taskId))),

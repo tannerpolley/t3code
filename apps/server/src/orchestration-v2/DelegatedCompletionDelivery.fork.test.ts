@@ -1,4 +1,4 @@
-import { delegatedRequestWakeCommand } from "./DelegatedRequestWake.ts";
+import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import { assert, it } from "@effect/vitest";
 import {
@@ -66,6 +66,45 @@ it.layer(layerTest)("child question wake", (it) => {
       assert.include(notices[0]!.text, "t3_pending_request_respond");
       assert.include(notices[0]!.text, "waiting on you, its orchestrator");
       assert.isFalse(yield* ownerCanSee(question));
+    }),
+  );
+  it.effect("wakes once when a routed approval's prompt arrives after its request", () =>
+    Effect.gen(function* () {
+      const engine = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const reactor = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
+      const child = yield* seedChildWaitingOnUser({
+        name: "delayed-approval",
+        requestKind: "command",
+      });
+      const before = yield* engine.getThreadProjection(child.childThreadId);
+      const requestId = RuntimeRequestId.make("request:delayed-approval");
+      const now = yield* DateTime.now;
+      const requestEvent = {
+        id: EventId.make("event:delayed-approval-request"),
+        type: "runtime-request.updated" as const,
+        threadId: child.childThreadId,
+        occurredAt: now,
+        payload: { ...before.runtimeRequests[0]!, id: requestId },
+      };
+      yield* sink.write({ events: [requestEvent] });
+      yield* reactor.handle(requestEvent);
+      assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
+      const prompt = before.turnItems.find((item) => item.type === "approval_request")!;
+      if (prompt.type !== "approval_request") throw new Error("missing approval prompt");
+      const promptEvent = {
+        id: EventId.make("event:delayed-approval-prompt"),
+        type: "turn-item.updated" as const,
+        threadId: child.childThreadId,
+        occurredAt: now,
+        payload: { ...prompt, id: TurnItemId.make("item:delayed-approval"), requestId },
+      };
+      yield* sink.write({ events: [promptEvent] });
+      yield* reactor.handle(promptEvent);
+      yield* reactor.handle(promptEvent);
+      const notices = yield* childQuestionNotices(child.parentThreadId);
+      assert.equal(notices.length, 1);
+      assert.include(notices[0]!.text, "cat /tmp/requested-file");
     }),
   );
 });
@@ -704,7 +743,6 @@ it.layer(layerTest)("child question wake admission", (it) => {
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sink = yield* EventSink.EventSinkV2;
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const child = yield* seedChildWaitingOnUser({
         name: "already-held-question",
         requestKind: "user_input",
@@ -736,12 +774,7 @@ it.layer(layerTest)("child question wake admission", (it) => {
         })),
       });
       assert.isTrue(yield* ownerCanSee(child));
-      const wake = yield* delegatedRequestWakeCommand(
-        projections,
-        child.childThreadId,
-        child.requestId,
-      );
-      if (wake !== undefined) yield* orchestrator.dispatch(wake);
+      yield* wakeChildQuestion(child);
       const after = yield* orchestrator.getThreadProjection(child.parentThreadId);
       assert.isFalse(
         after.runs.some((run) => ["preparing", "starting", "running"].includes(run.status)),
@@ -767,7 +800,6 @@ it.layer(layerTest)("child question wake admission", (it) => {
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sink = yield* EventSink.EventSinkV2;
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const child = yield* seedChildWaitingOnUser({
         name: "rejected-question",
         requestKind: "user_input",
@@ -791,15 +823,7 @@ it.layer(layerTest)("child question wake admission", (it) => {
           },
         ],
       });
-      const wake = yield* delegatedRequestWakeCommand(
-        projections,
-        child.childThreadId,
-        child.requestId,
-      );
-      assert.isTrue(wake !== undefined);
-      if (wake === undefined) return;
-      const rejected = yield* Effect.exit(orchestrator.dispatch(wake));
-      assert.equal(rejected._tag, "Failure");
+      yield* wakeChildQuestion(child);
       assert.isTrue(yield* ownerCanSee(child));
       assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
     }),
@@ -811,7 +835,6 @@ it.layer(layerTest)("child question wake admission", (it) => {
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
         const child = yield* seedChildWaitingOnUser({
           name: "stop-delayed-question",
           requestKind: "user_input",
@@ -857,18 +880,14 @@ it.layer(layerTest)("child question wake admission", (it) => {
             },
           ],
         });
-        const wake = yield* delegatedRequestWakeCommand(
-          projections,
-          child.childThreadId,
-          requestId,
-        );
-        if (wake !== undefined) yield* orchestrator.dispatch(wake);
+        yield* wakeChildQuestion({ ...child, requestId });
         assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
         assert.isFalse(
           (yield* orchestrator.getThreadProjection(child.parentThreadId)).runs.some((run) =>
             ["preparing", "starting", "running"].includes(run.status),
           ),
         );
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
         const shell = yield* orchestrator.getThreadShell(child.childThreadId);
         assert.isTrue(
           runtimeRequestIsOwnerVisible(
@@ -888,7 +907,6 @@ it.layer(layerTest)("child question wake admission", (it) => {
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sink = yield* EventSink.EventSinkV2;
-      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const child = yield* seedChildWaitingOnUser({
         name: "cancelled-queue-after-stop",
         requestKind: "user_input",
@@ -932,13 +950,7 @@ it.layer(layerTest)("child question wake admission", (it) => {
         threadId: child.parentThreadId,
         runId: queued.id,
       });
-      const wake = yield* delegatedRequestWakeCommand(
-        projections,
-        child.childThreadId,
-        child.requestId,
-      );
-      assert.isTrue(wake === undefined);
-      if (wake !== undefined) yield* orchestrator.dispatch(wake);
+      yield* wakeChildQuestion(child);
       assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
       assert.isTrue(yield* ownerCanSee(child));
     }),

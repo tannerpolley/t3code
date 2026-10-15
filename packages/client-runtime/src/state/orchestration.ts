@@ -1,16 +1,27 @@
 import * as Stream from "effect/Stream";
 import {
+  type ThreadId,
   type OrchestrationV2BackgroundTaskOutputChunk,
   ORCHESTRATION_V2_WS_METHODS,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import type { HttpClient } from "effect/http";
 import { Atom } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentCommand,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import * as ManagedRelayDpopSigner from "../relay/managedRelay.ts";
+import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
+import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 
 /** Characters of background task output a viewer keeps, matching the server's tail size. */
 export const BACKGROUND_TASK_OUTPUT_BUFFER_CHARS = 200 * 1024;
@@ -27,9 +38,31 @@ export function appendBackgroundTaskOutput(
 }
 
 export function createOrchestrationEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
 ) {
   return {
+    threadTranscript: createEnvironmentCommand(runtime, {
+      label: "environment-data:orchestration:thread-transcript",
+      execute: (input: { readonly threadId: ThreadId }) =>
+        Effect.gen(function* () {
+          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+          const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+          if (Option.isNone(prepared)) {
+            return yield* new EnvironmentRpcUnavailableError({
+              environmentId: supervisor.target.environmentId,
+              message: "The source environment is not connected.",
+            });
+          }
+          return yield* fetchEnvironmentThreadTranscript({
+            prepared: prepared.value,
+            threadId: input.threadId,
+            signer: yield* Effect.serviceOption(ManagedRelayDpopSigner.ManagedRelayDpopSigner),
+            remoteAuthorization: yield* Effect.serviceOption(
+              RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+            ),
+          });
+        }),
+    }),
     v2: {
       dispatchCommand: createEnvironmentRpcCommand(runtime, {
         label: "environment-data:orchestration-v2:dispatch-command",

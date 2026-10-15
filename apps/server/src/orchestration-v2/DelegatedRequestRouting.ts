@@ -1,7 +1,5 @@
 import {
-  MessageId,
   type OrchestrationV2DomainEvent,
-  type RuntimeRequestId,
   type ThreadId,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
@@ -51,12 +49,6 @@ const delegatedParent = Effect.fn("delegatedParent")(function* <E>(
   );
   return task === undefined ? undefined : { parentThreadId, taskId: task.id, parent };
 });
-
-const noticePrefix = "message:child-question:";
-
-/** The message that wakes the parent for one child request. */
-export const delegatedRequestNoticeId = (childThreadId: ThreadId, requestId: RuntimeRequestId) =>
-  MessageId.make(`${noticePrefix}${childThreadId}:${requestId}`);
 
 /** Only a live app-owned parent receives newly created requests. */
 export const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function* (

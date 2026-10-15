@@ -1,3 +1,4 @@
+import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -107,7 +108,7 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
   },
 );
 
-const layerTest = Layer.mergeAll(
+const layerTestBase = Layer.mergeAll(
   RuntimeLayer.layer,
   RuntimeLayer.layerEventSink,
   ProjectionStore.layer,
@@ -147,6 +148,8 @@ const layerTest = Layer.mergeAll(
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerPlatformTest),
 );
+
+const layerTest = DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTestBase));
 
 const seedParentWithTerminalTask = (input: {
   readonly threadId: ThreadId;
@@ -547,7 +550,7 @@ const childQuestionNotices = (parentThreadId: ThreadId) =>
     const parent = yield* orchestrator.getThreadProjection(parentThreadId);
     return parent.messages.filter(
       (message) =>
-        String(message.id).startsWith("message:child-question:") && message.runId !== null,
+        String(message.id).startsWith("message:delegated-task-question:") && message.runId !== null,
     );
   });
 
@@ -559,7 +562,7 @@ const childQuestionWake = (parentThreadId: ThreadId) =>
     return parent.runs.find((run) => run.id === notice?.runId);
   });
 
-/** Exercise the live wake listener, awaiting its persisted notice rather than a timer. */
+/** Drive the reactor through the persisted request, then await its committed notice. */
 const wakeChildQuestion = (child: {
   childThreadId: ThreadId;
   parentThreadId: ThreadId;
@@ -568,30 +571,17 @@ const wakeChildQuestion = (child: {
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const sink = yield* EventSink.EventSinkV2;
+    const reactor = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
     const projection = yield* orchestrator.getThreadProjection(child.childThreadId);
-    const afterSequence = yield* sink.latestSequence();
-    yield* sink.write({
-      events: [
-        {
-          id: EventId.make(`event:live-question:${child.requestId}`),
-          type: "runtime-request.updated",
-          threadId: child.childThreadId,
-          occurredAt: yield* DateTime.now,
-          payload: projection.runtimeRequests[0]!,
-        },
-      ],
-    });
-    yield* sink.stream({ afterSequence, eventType: "message.updated" }).pipe(
-      Stream.filter(
-        (stored) =>
-          stored.event.type === "message.updated" &&
-          stored.event.payload.runId !== null &&
-          stored.event.payload.id ===
-            MessageId.make(`message:child-question:${child.childThreadId}:${child.requestId}`),
-      ),
-      Stream.take(1),
-      Stream.runDrain,
-    );
+    const event = {
+      id: EventId.make(`event:live-question:${child.requestId}`),
+      type: "runtime-request.updated",
+      threadId: child.childThreadId,
+      occurredAt: yield* DateTime.now,
+      payload: projection.runtimeRequests.find((request) => request.id === child.requestId)!,
+    } satisfies OrchestrationV2DomainEvent;
+    yield* sink.write({ events: [event] });
+    yield* reactor.handle(event);
   });
 
 const ownerCanSee = (child: { childThreadId: ThreadId; parentThreadId: ThreadId }) =>

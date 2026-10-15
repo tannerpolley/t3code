@@ -65,6 +65,7 @@ describe("ClaudeAdapterV2 fetched model catalog", () => {
                 return {
                   messages: Stream.never,
                   offer: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
                   stopTask: () => Effect.void,
                   setModel: () => Effect.void,
                   applyFlagSettings: () => Effect.void,
