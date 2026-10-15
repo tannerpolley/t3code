@@ -110,6 +110,7 @@ describe("DesktopUpdates", () => {
         );
         assert.equal(harness.checkCount(), 0);
         assert.equal(harness.listenerCount(), 0);
+        assert.deepEqual(harness.feedUrls(), []);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

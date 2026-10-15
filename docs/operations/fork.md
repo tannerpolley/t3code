@@ -75,6 +75,10 @@ The launcher `~/.local/bin/t3-code` installs a staged build the next time T3 ope
 
 Restarting T3 stops every running agent turn, so ask before doing it.
 
+When a newer fork build is staged, the in-app update pill offers to install it.
+After confirmation, T3 quits and reopens through the launcher to install the build.
+It checks for staged builds shortly after startup and every four minutes while running.
+
 ## Upstream syncs
 
 - A scheduled task merges `upstream/main` daily at 12:00. It uses a short-lived `sync/upstream-<date>` branch that is merged into `main` and deleted. `git rerere` replays repeated conflict resolutions.

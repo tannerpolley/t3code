@@ -35,6 +35,7 @@ import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
+import * as ForkStagedUpdates from "./ForkStagedUpdates.ts";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -354,6 +355,7 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const forkUpdates = yield* ForkStagedUpdates.make;
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
@@ -422,6 +424,7 @@ export const make = Effect.gen(function* () {
   );
 
   const resolveDisabledReason = Effect.gen(function* () {
+    if (forkUpdates) return Option.none<string>();
     const hasFeedConfig = yield* hasUpdateFeedConfig;
     return Option.fromNullishOr(
       getAutoUpdateDisabledReason({
@@ -503,7 +506,10 @@ export const make = Effect.gen(function* () {
       yield* setState(reduceDesktopUpdateStateOnCheckStart(state, checkedAt));
       yield* logUpdaterInfo("checking for updates", { reason });
 
-      return yield* electronUpdater.checkForUpdates.pipe(
+      const checkSource = forkUpdates
+        ? forkUpdates.check(state, checkedAt).pipe(Effect.flatMap(setState))
+        : electronUpdater.checkForUpdates;
+      return yield* checkSource.pipe(
         Effect.as(true),
         Effect.catchTags({
           ElectronUpdaterCheckForUpdatesError: Effect.fn(
@@ -768,10 +774,14 @@ export const make = Effect.gen(function* () {
             (instance) => instance.stop({ timeout: Duration.seconds(5) }),
             { concurrency: "unbounded" },
           );
-          yield* electronUpdater.quitAndInstall({
-            isSilent: true,
-            isForceRunAfter: true,
-          });
+          if (forkUpdates) {
+            yield* forkUpdates.install(downloadedVersion);
+          } else {
+            yield* electronUpdater.quitAndInstall({
+              isSilent: true,
+              isForceRunAfter: true,
+            });
+          }
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
@@ -1058,13 +1068,6 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      if (config.mockUpdates) {
-        yield* electronUpdater.setFeedURL({
-          provider: "generic",
-          url: `http://localhost:${config.mockUpdateServerPort}`,
-        } as ElectronUpdater.ElectronUpdaterFeedUrl);
-      }
-
       const settings = yield* desktopSettings.get;
       const enabled = yield* shouldEnableAutoUpdates;
       yield* setState(yield* baseUpdateState(settings.updateChannel, enabled));
@@ -1072,6 +1075,18 @@ export const make = Effect.gen(function* () {
         return;
       }
       yield* Ref.set(updaterConfiguredRef, true);
+
+      if (forkUpdates) {
+        yield* startUpdatePollers;
+        return;
+      }
+
+      if (config.mockUpdates) {
+        yield* electronUpdater.setFeedURL({
+          provider: "generic",
+          url: `http://localhost:${config.mockUpdateServerPort}`,
+        } as ElectronUpdater.ElectronUpdaterFeedUrl);
+      }
 
       yield* electronUpdater.setAutoDownload(false);
       yield* electronUpdater.setAutoInstallOnAppQuit(false);
@@ -1144,6 +1159,10 @@ export const make = Effect.gen(function* () {
           return yield* Ref.get(updateStateRef);
         }
 
+        if (forkUpdates) {
+          yield* checkForUpdates("channel-change", "held");
+          return yield* Ref.get(updateStateRef);
+        }
         yield* applyAutoUpdaterChannel(nextChannel);
         const allowDowngrade = yield* electronUpdater.allowDowngrade;
         yield* electronUpdater.setAllowDowngrade(true);

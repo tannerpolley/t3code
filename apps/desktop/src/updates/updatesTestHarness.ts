@@ -10,6 +10,7 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
@@ -36,6 +37,9 @@ export interface UpdatesHarnessOptions {
   readonly env?: Record<string, string | undefined>;
   readonly appVersion?: string;
   readonly platform?: NodeJS.Platform;
+  readonly homeDirectory?: string;
+  readonly fileSystem?: Partial<FileSystem.FileSystem>;
+  readonly relaunch?: Effect.Effect<void>;
   /** Contents of the resources/package-type marker a Linux package ships. */
   readonly packageType?: string | undefined;
   /** Contents of the install record a previous run left behind. */
@@ -52,6 +56,17 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
   const installSteps: string[] = [];
+  const relaunches: Array<{ execPath?: string; args?: string[] }> = [];
+  const layerApp = Layer.mock(ElectronApp.ElectronApp)({
+    relaunch: (relaunchOptions) =>
+      Effect.sync(() => {
+        relaunches.push(relaunchOptions);
+        installSteps.push("relaunch");
+      }).pipe(Effect.andThen(options.relaunch ?? Effect.void)),
+    quit: Effect.sync(() => {
+      installSteps.push("quit");
+    }),
+  });
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -152,7 +167,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
-    homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
+    homeDirectory: options.homeDirectory ?? `/tmp/t3-desktop-updates-home-${process.pid}`,
     platform: options.platform ?? "darwin",
     processArch: "x64",
     appVersion: options.appVersion ?? "1.2.3",
@@ -248,9 +263,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         installRecords.delete(path);
         if (isInstallRecord(path)) previousInstallRecord = undefined;
       }),
+    ...options.fileSystem,
   });
 
   const layer = DesktopUpdates.layer.pipe(
+    Layer.provide(layerApp),
     Layer.provide(layerFileSystem),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
@@ -274,6 +291,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkCount: () => checkCount,
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
+    relaunches,
     updateRestartMarkers,
     installRecords,
     /** The record the test started with, until the app removes it. */
