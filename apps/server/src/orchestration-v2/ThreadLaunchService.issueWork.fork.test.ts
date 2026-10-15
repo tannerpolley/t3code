@@ -91,6 +91,7 @@ describe("managed issue work", () => {
         blockersComplete: true,
       });
     const harness = makeHarness({
+      runContinuationWorker: scenario === "direct-resume",
       issueServiceLayer: Layer.mock(IssueService.IssueService)({ workRead }),
       localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
       hasCommit: () => Effect.succeed(true),
@@ -603,9 +604,19 @@ describe("managed issue work", () => {
       );
       assert.equal((yield* issues.workStatus(input)).status, "done");
       if (scenario === "direct-resume") {
-        const beforeTransfers = (yield* threads.getThreadProjection(
-          root.thread.id,
-        )).contextTransfers.filter((transfer) => transfer.type === "subagent_result").length;
+        const originalTaskId = taskEvent.event.payload.id;
+        yield* sink.stream({ afterSequence: 0, eventType: "message.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.threadId === root.thread.id &&
+              stored.event.type === "message.updated" &&
+              stored.event.payload.delegatedCompletion?.taskIds.includes(originalTaskId) === true,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const before = yield* threads.getThreadProjection(root.thread.id);
+        const originalTask = before.subagents.find((task) => task.id === originalTaskId)!;
         yield* threads.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("issue-worker:direct-followup"),
@@ -619,6 +630,8 @@ describe("managed issue work", () => {
           creationSource: "web",
         });
         const resumed = (yield* threads.getThreadProjection(child.thread.id)).runs.at(-1)!;
+        assert.isDefined(resumed.delegatedTaskId);
+        assert.notEqual(resumed.delegatedTaskId, originalTask.id);
         const finishedAt = yield* DateTime.now;
         yield* sink.write({
           events: [
@@ -662,6 +675,18 @@ describe("managed issue work", () => {
         yield* worker.drain();
         yield* orchestrator.recoverDelegatedTask(child.thread.id, resumed.id);
         yield* worker.drain();
+        yield* sink.stream({ afterSequence: 0, eventType: "message.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.threadId === root.thread.id &&
+              stored.event.type === "message.updated" &&
+              stored.event.payload.delegatedCompletion?.taskIds.includes(
+                resumed.delegatedTaskId!,
+              ) === true,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
         const closeoutCalls = writeCalls.filter((call) => call.operation === "closeout_create");
         assert.equal(closeoutCalls.length, 2);
         assert.include(closeoutCalls[1]!.body, "Follow-up complete.");
@@ -669,12 +694,34 @@ describe("managed issue work", () => {
           (yield* sql`SELECT * FROM orchestration_v2_projection_issue_comment_receipts`).length,
           2,
         );
-        assert.equal(
-          (yield* threads.getThreadProjection(root.thread.id)).contextTransfers.filter(
-            (transfer) => transfer.type === "subagent_result",
-          ).length,
-          beforeTransfers,
+        const after = yield* threads.getThreadProjection(root.thread.id);
+        assert.deepEqual(
+          after.subagents.find((task) => task.id === originalTask.id),
+          originalTask,
         );
+        assert.equal(
+          after.subagents.find((task) => task.id === resumed.delegatedTaskId)?.result,
+          "Follow-up complete.",
+        );
+        assert.sameMembers(
+          after.contextTransfers
+            .filter((transfer) => transfer.type === "subagent_result")
+            .map((transfer) => transfer.sourcePoint.runId),
+          [childRun.id, resumed.id],
+        );
+        const deliveries = after.messages.filter(
+          (message) => message.delegatedCompletion !== undefined,
+        );
+        assert.sameMembers(
+          deliveries.flatMap((message) => message.delegatedCompletion!.taskIds),
+          [originalTask.id, resumed.delegatedTaskId!],
+        );
+        for (const message of deliveries) {
+          assert.lengthOf(
+            after.runs.filter((run) => run.userMessageId === message.id),
+            1,
+          );
+        }
         return;
       }
       const rootHistoryBeforeRetry = yield* threads.getThreadRecords(root.thread.id, [
@@ -764,7 +811,7 @@ describe("managed issue work", () => {
     () => exercise("baseline"),
   );
   it.effect(
-    "a directly resumed worker publishes one closeout per completed run without owing another parent result",
+    "a directly resumed worker publishes one closeout and delivers one parent result per task",
     () => exercise("direct-resume"),
   );
   it.effect(
