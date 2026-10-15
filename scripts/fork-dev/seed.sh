@@ -11,7 +11,8 @@ SANDBOX=$HOME/Workspaces/Applications/t3code/.worktrees/fork-sandbox
 USERDATA=$SANDBOX/.t3/userdata
 
 # The usual t3-dev unit, minus the dev runner's own "server" project bootstrapped from its cwd.
-# Offset 860 keeps web on 6593 and the server on 14633 wherever the worktree lives.
+# Offset 860 prefers web 6593 and server 14633 wherever the worktree lives; the dev runner moves
+# both if a port is taken.
 start_dev() {
   systemctl --user reset-failed t3-dev 2>/dev/null || true
   local since
@@ -138,4 +139,5 @@ stop_dev
 python3 "$HERE/seed.py" base
 start_dev
 python3 "$HERE/seed.py" live
-echo "t3-dev is running on mock data: http://localhost:6593"
+port=$(journalctl --user -u t3-dev -o cat --no-pager | grep -o 'webPort=[0-9]*' | tail -n 1)
+echo "t3-dev is running on mock data: http://localhost:${port#webPort=}"

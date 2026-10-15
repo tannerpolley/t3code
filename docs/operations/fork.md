@@ -33,7 +33,7 @@ PATH=$M/node_modules/.bin:$PATH CI=true T3CODE_PROJECT_ROOT=$M node scripts/setu
 - Tests: `vp test run <files>`.
   - Run Git tests with `GIT_CONFIG_GLOBAL=/dev/null`, because the owner's global hooks interfere. One failure about binary diff statistics on Git 2.43 comes from the environment, not the code.
   - A branch that adds an MCP tool must also pass `apps/server/src/mcp/toolkits/core.test.ts`, which checks tool labels.
-- GitHub Actions are off on the fork. Upstream's workflows need its paid Blacksmith runners, so they would wait in the queue forever. A workflow that a sync adds starts out enabled: turn it off with `gh workflow disable -R tannerpolley/t3code <name>`.
+- GitHub Actions are off on the fork: every workflow is disabled. Upstream's build and test workflows need its paid Blacksmith runners and would wait in the queue forever, and the rest serve upstream's own repository. A workflow that a sync adds starts out enabled: turn it off with `gh workflow disable -R tannerpolley/t3code <name>`.
 
 ## Dev preview
 
@@ -41,7 +41,7 @@ The owner reviews UI changes live before a build, on a dev instance with mock da
 
 - **What it is:**
   - It runs from the detached worktree `.worktrees/fork-sandbox` as the user unit `t3-dev`.
-  - Web is on `http://localhost:6593` and the server on 14633. `T3CODE_PORT_OFFSET=860` pins those ports.
+  - Web prefers `http://localhost:6593` and the server 14633 (`T3CODE_PORT_OFFSET=860`). If a port is taken, the dev runner moves both; the `[dev-runner]` line in `journalctl --user -u t3-dev` shows the real ones.
   - The web dev server uses 4–5 GB of memory, and more after many branch switches. Restart the unit after a lot of branch switching.
 - **Mock data:** [scripts/fork-dev](../../scripts/fork-dev/README.md) builds it.
   - It creates `~/Workspaces-Dev`: made-up repositories, every thread state and role, and sections.
@@ -51,7 +51,7 @@ The owner reviews UI changes live before a build, on a dev instance with mock da
   - `scripts/fork-dev/seed.sh start` after a reboot.
   - `systemctl --user stop t3-dev && scripts/fork-dev/seed.sh start` to restart it.
   - `scripts/fork-dev/seed.sh` for a full rebuild.
-- **Previewing branches:** `git -C .worktrees/fork-sandbox checkout --detach main`, then `git merge --no-edit <branch>…`. It reloads on its own.
+- **Previewing branches:** `git -C .worktrees/fork-sandbox checkout --detach main`, then `git -C .worktrees/fork-sandbox merge --no-edit <branch>…`. It reloads on its own.
 - **Signing in:** the in-app browser stays signed in through the fixed `T3CODE_DEV_AUTH_TOKEN` in the main checkout's `.env`; never print it. For the owner's own browser, mint a link with `node apps/server/src/bin.ts pair --ttl 2h --base-dir <sandbox>/.t3`.
 - **GitHub:** the dev instance never writes to GitHub. Only `scripts/fork-dev/github.py` writes, and only to the sandbox repository.
 
@@ -60,7 +60,7 @@ The owner reviews UI changes live before a build, on a dev instance with mock da
 The dock icon's **Build & install update** action runs `~/.local/bin/t3-update`. It:
 
 1. pushes `main` if GitHub is behind;
-2. picks the next patch version after the newest `release/v*` tag (`v2.12.10` → `v2.12.11`);
+2. picks the next patch version after the newest `release/v*` tag (`v2.12.10` → `v2.12.11`) when `main` has moved since that tag; otherwise it offers the existing build;
 3. builds in `.worktrees/release-build`: setup, a migration check on a copy of the owner's database, then the AppImage (`T3CODE_DESKTOP_VERSION=0.0.45-vX.Y.Z`);
 4. stages the AppImage in `~/.local/opt/t3-code/pending/`, replacing any older staged build;
 5. tags `release/vX.Y.Z` and pushes the tag;

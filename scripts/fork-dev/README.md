@@ -100,8 +100,8 @@ outside the repository.
   (`pnpm` under the gradient header Implementor) and background tasks do show.
 - **GitHub sandbox (real data, read-only).** `seed.sh` clones the owner's private test repository
   `tannerpolley/t3code-sandbox` into `GitHub/t3code-sandbox` once, then only fetches.
-  - **What the seed reads:** each rebuild makes three `gh api` GET requests for the repository
-    and issue IDs and titles.
+  - **What the seed reads:** `seed.py` reads the repository's ID and the IDs and titles of the
+    issues it links (#6, #7, #15) with `gh api` GET requests. `github.py` runs separately first.
   - **What it seeds:** a repository orchestrator thread, plus issue workers on #6, #7 and #15
     (#15 finished in the local worktree `.worktrees/fix-absolute-zero`, linked to PR #24).
     - #6 has a live run, so it is "working".
