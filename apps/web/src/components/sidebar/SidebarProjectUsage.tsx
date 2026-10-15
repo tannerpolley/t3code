@@ -71,7 +71,11 @@ export const SidebarProjectUsage = memo(function SidebarProjectUsage(props: {
           key={driver}
           className={usage[driver] === undefined ? undefined : sidebarUsedClass(usage[driver])}
         >
-          {formatSidebarUsage(usage[driver])}
+          <span aria-hidden>{formatSidebarUsage(usage[driver])}</span>
+          <span className="sr-only">
+            {driver === "codex" ? "Codex" : "Claude"}, estimated weekly usage share:{" "}
+            {usage[driver] === undefined ? "unknown" : formatSidebarUsage(usage[driver])}
+          </span>
         </span>
       ))}
     </SidebarUsageColumns>

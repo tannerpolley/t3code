@@ -34,6 +34,33 @@ export function sumSidebarProjectUsage(
   return sums;
 }
 
+/** Include every represented project, even when its section or parent is collapsed. */
+export function sidebarSectionUsageKeys(
+  sections: readonly { readonly projectKeys: readonly string[] }[],
+  projectByKey: ReadonlyMap<
+    string,
+    {
+      readonly memberProjectRefs: readonly {
+        readonly environmentId: string;
+        readonly projectId: string;
+      }[];
+    }
+  >,
+): string[] {
+  return [
+    ...new Set(
+      sections.flatMap((section) =>
+        section.projectKeys.flatMap(
+          (key) =>
+            projectByKey
+              .get(key)
+              ?.memberProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`) ?? [],
+        ),
+      ),
+    ),
+  ];
+}
+
 /** A logical project can include several physical projects or environments. */
 export function selectSidebarUsage(
   sums: ReadonlyMap<string, SidebarUsage>,

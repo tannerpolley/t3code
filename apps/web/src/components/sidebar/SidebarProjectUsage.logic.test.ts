@@ -5,6 +5,7 @@ import {
   remainingToUsedPercent,
   selectSidebarUsage,
   sidebarUsedClass,
+  sidebarSectionUsageKeys,
   sumSidebarProjectUsage,
 } from "./SidebarProjectUsage.logic";
 
@@ -44,7 +45,7 @@ describe("Projects usage breakdown", () => {
     expect(formatSidebarUsage(merged.codex)).toBe("2%");
   });
 
-  it("puts only projects without listed rows into Remaining projects, including unknown projects", () => {
+  it("puts only projects outside the sidebar into Remaining projects, including unknown projects", () => {
     const sums = sumSidebarProjectUsage(
       [
         thread("listed", "codex", 10),
@@ -54,16 +55,81 @@ describe("Projects usage breakdown", () => {
       ],
       drivers,
     );
-    expect(selectSidebarUsage(sums, new Set(["local:listed"]), true)).toEqual({
-      codex: 20,
-      claudeAgent: 11,
-    });
-    // Expanding a section moves its sum into its project row, without double counting it.
+    // Collapsed projects still belong to the sidebar, so Remaining excludes them.
     expect(selectSidebarUsage(sums, new Set(["local:listed", "local:collapsed"]), true)).toEqual({
       claudeAgent: 7,
     });
     expect(selectSidebarUsage(sums, new Set(), true)).toEqual({ codex: 30, claudeAgent: 11 });
     expect(selectSidebarUsage(sums, new Set(sums.keys()), true)).toEqual({});
+  });
+
+  it("keeps Remaining unchanged on collapse and selects the hidden projects for the header", () => {
+    const sums = sumSidebarProjectUsage(
+      [
+        thread("a", "codex", 10),
+        thread("a", "claude", 4),
+        thread("b", "codex", 20),
+        thread("outside", "claude", 7),
+      ],
+      drivers,
+    );
+    const projects = new Map([
+      ["a", { memberProjectRefs: [{ environmentId: "local", projectId: "a" }] }],
+      ["b", { memberProjectRefs: [{ environmentId: "local", projectId: "b" }] }],
+    ]);
+    const section = { id: "section", projectKeys: ["a", "b"], collapsed: false };
+    const expandedRemaining = selectSidebarUsage(
+      sums,
+      new Set(sidebarSectionUsageKeys([section], projects)),
+      true,
+    );
+    const collapsed = { ...section, collapsed: true };
+    const hiddenKeys = sidebarSectionUsageKeys([collapsed], projects);
+    expect(selectSidebarUsage(sums, new Set(hiddenKeys), true)).toEqual(expandedRemaining);
+    expect(expandedRemaining).toEqual({ claudeAgent: 7 });
+    expect(selectSidebarUsage(sums, new Set(hiddenKeys))).toEqual({ codex: 30, claudeAgent: 4 });
+  });
+
+  it("moves subsection sums to a collapsed parent, including every member of merged projects", () => {
+    const sums = sumSidebarProjectUsage(
+      [
+        thread("a", "codex", 10),
+        thread("b", "claude", 4),
+        thread("b", "codex", 3, "remote"),
+        thread("outside", "codex", 7),
+      ],
+      drivers,
+    );
+    const projects = new Map([
+      ["a", { memberProjectRefs: [{ environmentId: "local", projectId: "a" }] }],
+      [
+        "b",
+        {
+          memberProjectRefs: [
+            { environmentId: "local", projectId: "b" },
+            { environmentId: "remote", projectId: "b" },
+          ],
+        },
+      ],
+    ]);
+    const parent = { id: "parent", projectKeys: ["a"], collapsed: false };
+    const child = { id: "child", parentId: "parent", projectKeys: ["b"], collapsed: false };
+    const remaining = (sections: readonly (typeof parent)[]) =>
+      selectSidebarUsage(sums, new Set(sidebarSectionUsageKeys(sections, projects)), true);
+    expect(remaining([parent, child])).toEqual({ codex: 7 });
+    const collapsedChild = { ...child, collapsed: true };
+    expect(remaining([parent, collapsedChild])).toEqual({ codex: 7 });
+    expect(
+      selectSidebarUsage(sums, new Set(sidebarSectionUsageKeys([collapsedChild], projects))),
+    ).toEqual({ claudeAgent: 7 });
+    const collapsedParent = { ...parent, collapsed: true };
+    expect(remaining([collapsedParent, collapsedChild])).toEqual({ codex: 7 });
+    expect(
+      selectSidebarUsage(
+        sums,
+        new Set(sidebarSectionUsageKeys([collapsedParent, collapsedChild], projects)),
+      ),
+    ).toEqual({ codex: 10, claudeAgent: 7 });
   });
 
   it("keeps missing estimates unknown, a single provider independent, and measured zero visible", () => {

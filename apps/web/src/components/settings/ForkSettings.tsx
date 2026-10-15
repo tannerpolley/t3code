@@ -208,21 +208,21 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "sidebar-five-hour-usage",
     section: "usage",
     description:
-      "The sidebar's Usage button shows Claude's and Codex's five-hour quota left (5h 62%). Hover for when it resets.",
+      "The sidebar's Usage button shows Claude's and Codex's five-hour quota used (5h 38%): green below 30%, amber below 70%, red from 70%. Hover for when it resets. Projects always shows Claude's five-hour usage in the weekly totals tooltip, regardless of this setting.",
   },
   {
     key: "dailyUsageMeter",
     searchId: "daily-usage-meter",
     section: "usage",
     description:
-      "The sidebar's Usage button shows today's budget left (1d 40%): each Monday–Friday gets 20% of each provider's weekly limit, and unused room carries forward. Red when over pace.",
+      "The sidebar's Usage button shows today's budget used (1d 60%): green below 30%, amber below 70%, red from 70%. Each Monday–Friday gets 20% of each provider's weekly limit, and unused room carries forward. This setting does not affect Projects totals.",
   },
   {
     key: "sidebarWeeklyUsage",
     searchId: "sidebar-weekly-usage",
     section: "usage",
     description:
-      "The sidebar's Usage button shows Claude's and Codex's weekly quota left (7d 75%). With any usage readout on, the button replaces its chart icon, colors each value green from 70%, amber from 30%, red below, and opens Limits.",
+      "The sidebar's Usage button shows Claude's and Codex's weekly quota used (7d 25%): green below 30%, amber below 70%, red from 70%. With any readout on, the button opens Limits. Projects always shows weekly totals with these colors, regardless of this setting; project and section rows estimate each provider's weekly usage share.",
   },
   {
     key: "fastShimmer",

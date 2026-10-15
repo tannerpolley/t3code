@@ -69,6 +69,7 @@ import {
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { SidebarProjectUsage, SidebarUsageColumns } from "./SidebarProjectUsage";
+import { sidebarSectionUsageKeys } from "./SidebarProjectUsage.logic";
 import { SidebarUsageItem } from "./SidebarUsageItem";
 import { useServerConfigs } from "../../state/entities";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
@@ -359,22 +360,10 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     }
     return next;
   }, [otherProjectsExpanded, projectByKey, projects, sections]);
-  const listedProjectKeys = useMemo(() => {
-    const visible = renderedSections.filter(
-      (section) =>
-        !section.collapsed &&
-        (section.parentId === undefined ||
-          renderedSections.some((parent) => parent.id === section.parentId && !parent.collapsed)),
-    );
-    return visible.flatMap((section) =>
-      section.projectKeys.flatMap(
-        (key) =>
-          projectByKey
-            .get(key)
-            ?.memberProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`) ?? [],
-      ),
-    );
-  }, [projectByKey, renderedSections]);
+  const listedProjectKeys = useMemo(
+    () => sidebarSectionUsageKeys(renderedSections, projectByKey),
+    [projectByKey, renderedSections],
+  );
 
   // Clears custom icons the same way the icon picker's Automatic choice does, on every checkout
   // of every project in the section and its subsections.
@@ -746,6 +735,14 @@ const ProjectSection = memo(function ProjectSection(props: {
         onOpenRename={props.onOpenRename}
         onSetExpanded={props.onSetExpanded}
         section={props.section}
+        usageProjectKeys={sidebarSectionUsageKeys(
+          [props.section, ...props.subsections],
+          props.projectByKey,
+        )}
+        projectCount={[props.section, ...props.subsections].reduce(
+          (count, section) => count + section.projectKeys.length,
+          0,
+        )}
       />
       {expanded ? (
         <ul
@@ -797,6 +794,8 @@ const ProjectSection = memo(function ProjectSection(props: {
 });
 
 function SortableSectionHeader(props: {
+  readonly usageProjectKeys: readonly string[];
+  readonly projectCount: number;
   readonly section: SidebarProjectSectionRender;
   readonly codexStyle: boolean;
   readonly folderColors: boolean;
@@ -846,7 +845,7 @@ function SortableSectionHeader(props: {
     <div
       ref={setNodeRef}
       className={cn(
-        "group/project-section relative flex h-7 items-center rounded-md px-1",
+        "sidebar-project-usage-row group/project-section relative h-7 rounded-md px-2",
         isDragging && "z-10 opacity-70",
       )}
       data-testid={`sidebar-project-section-${section.id}`}
@@ -863,13 +862,9 @@ function SortableSectionHeader(props: {
         disabled={!canWrite}
         aria-expanded={expanded}
         className={cn(
-          "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          "flex min-w-0 cursor-pointer items-center rounded-md text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           // Codex style sets sections apart from the project rows under them: a small uppercase label.
           codexStyle ? "gap-2 text-2xs font-semibold uppercase tracking-wide" : "gap-1.5 text-xs",
-          // Its actions menu overlays the row end, so the count moves aside while the menu shows.
-          codexStyle &&
-            section.custom &&
-            "group-hover/project-section:pe-7 group-focus-within/project-section:pe-7",
         )}
         onClick={() => {
           if (canWrite) props.onSetExpanded(section.id, !expanded);
@@ -892,15 +887,16 @@ function SortableSectionHeader(props: {
         ) : null}
         {codexStyle ? (
           // Counts show only while collapsed: they stand in for the hidden rows.
-          <SidebarTrailingColumns count={expanded ? undefined : section.projectKeys.length} />
+          <SidebarTrailingColumns count={expanded ? undefined : props.projectCount} />
         ) : (
           <span className="ms-auto shrink-0 text-2xs text-sidebar-muted-foreground/55">
-            {section.projectKeys.length}
+            {props.projectCount}
           </span>
         )}
       </button>
+      {expanded ? <span /> : <SidebarProjectUsage projectKeys={props.usageProjectKeys} />}
       {section.custom ? (
-        <>
+        <div className="flex items-center justify-end">
           {codexStyle || !draggable ? null : (
             <button
               aria-label={`Reorder ${section.name} section`}
@@ -919,11 +915,7 @@ function SortableSectionHeader(props: {
                 <button
                   disabled={!canWrite}
                   aria-label={`Actions for ${section.name}`}
-                  className={cn(
-                    "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100",
-                    // Codex style overlays the empty time and status slots, as on project rows.
-                    codexStyle && "absolute end-1 top-0.5",
-                  )}
+                  className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
                   type="button"
                 />
               }
@@ -1012,7 +1004,7 @@ function SortableSectionHeader(props: {
               </MenuItem>
             </MenuPopup>
           </Menu>
-        </>
+        </div>
       ) : null}
     </div>
   );

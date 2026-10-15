@@ -46,15 +46,19 @@ interface ReadoutRow {
  * Claude's and Codex's five-hour and general weekly limits, pooled across accounts, with today's
  * pace budget, keeping only the readouts that are switched on.
  */
-function useLimitReadoutRows(enabled: {
-  readonly session: boolean;
-  readonly daily: boolean;
-  readonly weekly: boolean;
-}): { readonly rows: readonly ReadoutRow[]; readonly now: number } {
+function useLimitReadoutRows(
+  enabled: {
+    readonly session: boolean;
+    readonly daily: boolean;
+    readonly weekly: boolean;
+  },
+  hidden = false,
+): { readonly rows: readonly ReadoutRow[]; readonly now: number } {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   // The minute clock moves the budget across midnight; no timer of its own.
   const now = Date.parse(`${useNowMinute()}:00Z`);
   const rows = useMemo(() => {
+    if (hidden) return [];
     const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
     const pools = collectLimitPools(collectLimitAccounts(presentations), now);
     return READOUT_DRIVERS.flatMap((driver): ReadoutRow[] => {
@@ -129,7 +133,7 @@ function useLimitReadoutRows(enabled: {
         },
       ];
     });
-  }, [enabled.daily, enabled.session, enabled.weekly, now, presentations]);
+  }, [enabled.daily, enabled.session, enabled.weekly, hidden, now, presentations]);
   return { rows, now };
 }
 
@@ -164,7 +168,7 @@ function UsageReadoutItem(props: {
   readonly enabled: Parameters<typeof useLimitReadoutRows>[0];
   readonly hidden: boolean;
 }) {
-  const { rows, now } = useLimitReadoutRows(props.enabled);
+  const { rows, now } = useLimitReadoutRows(props.enabled, props.hidden);
   const { refresh, refreshing, failed } = useForkUsageRefresh();
   const openLimits = useOpenUsageLimits();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);

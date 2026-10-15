@@ -79,14 +79,6 @@
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
-@utility sidebar-thread-usage {
-  font-size: 0.6875rem;
-  white-space: nowrap;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted-foreground);
-}
-
 @utility sidebar-thread-count {
   font-size: 0.6875rem;
   text-align: right;
