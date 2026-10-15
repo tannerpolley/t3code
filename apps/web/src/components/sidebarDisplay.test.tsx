@@ -8,10 +8,13 @@ import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import type { Project } from "../types";
 
 const fixture = vi.hoisted(() => ({
   canWrite: true,
   catalogReady: false,
+  shellStatuses: new Map<string, EnvironmentShellStatus>(),
   otherRecords: new Map<string, SidebarLayoutRecord>(),
   record: null as SidebarLayoutRecord | null,
   send: vi.fn(),
@@ -20,7 +23,7 @@ const fixture = vi.hoisted(() => ({
 }));
 const environmentId = EnvironmentId.make("client-c");
 let environmentIds = [environmentId];
-const projects: [] = [];
+let projects: Project[] = [];
 let configs = new Map([[environmentId, { sidebarLayoutSync: true }]]);
 const grouping = { sidebarProjectGroupingMode: "repository", sidebarProjectGroupingOverrides: {} };
 
@@ -37,7 +40,8 @@ vi.mock("@effect/atom-react", async () => {
       );
       if (atom === "catalog") return { isReady: fixture.catalogReady };
       if (atom === "permission") return fixture.canWrite;
-      if (atom === "shell") return { status: "live" };
+      if (atom.startsWith("shell:"))
+        return { status: fixture.shellStatuses.get(atom.slice(6)) ?? "live" };
       if (atom.startsWith("layout:")) {
         const record =
           atom === "layout:" + environmentId
@@ -58,9 +62,11 @@ vi.mock("../state/server", () => ({
   },
 }));
 vi.mock("../state/shell", () => ({
-  environmentShell: { stateValueAtom: () => "shell" },
+  environmentShell: { stateValueAtom: (id: string) => "shell:" + id },
 }));
 vi.mock("../state/entities", () => ({
+  useAllEnvironmentProjectSnapshotsReady: () =>
+    environmentIds.every((id) => (fixture.shellStatuses.get(id) ?? "live") === "live"),
   useProjects: () => projects,
   useServerConfigs: () => configs,
 }));
@@ -128,6 +134,8 @@ beforeEach(async () => {
   fixture.catalogReady = false;
   fixture.canWrite = true;
   fixture.record = null;
+  fixture.shellStatuses.clear();
+  projects = [];
   fixture.otherRecords.clear();
   fixture.send.mockReset();
   environmentIds = [environmentId, other];
@@ -241,6 +249,68 @@ it("blocks expansion, movement, reorder and section placement until all environm
   await act(() => vi.advanceTimersByTimeAsync(300));
   expect(fixture.send).toHaveBeenCalledTimes(1);
 });
+it.each(["empty", "cached", "synchronizing"] as const)(
+  "keeps the display snapshot and its storage when layouts are live but remote projects are %s",
+  async (status) => {
+    fixture.catalogReady = true;
+    configs = new Map(environmentIds.map((id) => [id, { sidebarLayoutSync: true }]));
+    fixture.record = liveRecord;
+    fixture.otherRecords.set(other, {
+      ...liveRecord,
+      layout: {
+        ...liveRecord.layout,
+        sidebarProjectSections: [
+          { id: "remote", name: "Remote section", projectKeys: ["p"], collapsed: true },
+        ],
+        projectOrder: ["p"],
+        projectExpandedById: { p: false },
+      },
+    });
+    fixture.shellStatuses.set(other, status);
+    const saved = localStorage.getItem(displayKey);
+    await render();
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(store.useUiStateStore.getState().sidebarDisplaySnapshot).not.toBeNull();
+    expect(store.useUiStateStore.getState().sidebarProjectSections).toEqual(
+      savedLayout.sidebarProjectSections,
+    );
+    expect(localStorage.getItem(displayKey)).toBe(saved);
+    expect(fixture.send).not.toHaveBeenCalled();
+
+    projects = [
+      {
+        id: ProjectId.make("p"),
+        environmentId: other,
+        title: "Project",
+        workspaceRoot: "/work/project",
+        repositoryIdentity: null,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-10-15T12:00:00Z",
+        updatedAt: "2026-10-15T12:00:00Z",
+      },
+    ];
+    fixture.shellStatuses.set(other, "live");
+    await render();
+    const state = store.useUiStateStore.getState();
+    const key = other + ":/work/project";
+    expect(state.sidebarDisplaySnapshot).toBeNull();
+    expect(state.sidebarProjectSections).toContainEqual({
+      id: JSON.stringify([other, "remote"]),
+      name: "Remote section",
+      projectKeys: [key],
+      collapsed: true,
+    });
+    expect(state.projectOrder).toEqual([key]);
+    expect(state.projectExpandedById[key]).toBe(false);
+    expect(JSON.parse(localStorage.getItem(displayKey)!).layout).toMatchObject({
+      sidebarProjectSections: state.sidebarProjectSections,
+      projectOrder: [key],
+      projectExpandedById: { [key]: false },
+    });
+    expect(fixture.send).not.toHaveBeenCalled();
+  },
+);
 it("drops a mismatched environment set as soon as the catalog is known, before configs", async () => {
   environmentIds = [environmentId];
   await render();

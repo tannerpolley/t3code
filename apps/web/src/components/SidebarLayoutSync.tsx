@@ -17,7 +17,11 @@ import {
   type SidebarLayoutMutation,
   type SidebarLayout,
 } from "@t3tools/contracts";
-import { useProjects, useServerConfigs } from "../state/entities";
+import {
+  useAllEnvironmentProjectSnapshotsReady,
+  useProjects,
+  useServerConfigs,
+} from "../state/entities";
 import { useEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
 import { useClientSettings } from "../hooks/useSettings";
 import { selectProjectGroupingSettings } from "../logicalProject";
@@ -52,6 +56,7 @@ import { toastManager } from "./ui/toast";
 /** Dedicated layout streams remain mounted while Settings unmounts the sidebar. */
 export function SidebarLayoutSync() {
   const projects = useProjects();
+  const projectsReady = useAllEnvironmentProjectSnapshotsReady();
   const configs = useServerConfigs();
   const environmentIds = useEnvironmentIds();
   const catalogReady = useAtomValue(environmentCatalog.catalogValueAtom).isReady;
@@ -111,6 +116,7 @@ export function SidebarLayoutSync() {
     const knownIds = catalogReady ? environmentIds : null;
     const complete =
       catalogReady &&
+      projectsReady &&
       environmentIds.every(
         (id) =>
           configs.has(id) &&
@@ -131,6 +137,7 @@ export function SidebarLayoutSync() {
     groups,
     primaryEnvironmentId,
     catalogReady,
+    projectsReady,
     environmentIds,
     configs,
     snapshot,

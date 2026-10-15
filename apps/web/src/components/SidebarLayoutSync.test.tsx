@@ -50,6 +50,7 @@ vi.mock("../state/shell", () => ({
   environmentShell: { stateValueAtom: () => "shell" },
 }));
 vi.mock("../state/entities", () => ({
+  useAllEnvironmentProjectSnapshotsReady: () => true,
   useProjects: () => projects,
   useServerConfigs: () => configs,
 }));
