@@ -5,6 +5,7 @@ import {
   issueReferenceCopyTarget,
   filterIssueComments,
   issueComposerPrompt,
+  issueImplementDestination,
   issueMenuAvailability,
 } from "./issueDetailActions.logic";
 import { handoffPrompt } from "../pullRequest/pullRequestDetail.logic";
@@ -88,14 +89,85 @@ describe("issue menu", () => {
     );
   });
 
-  it("explains without requesting implementation, and directs implementation through the orchestrator's managed issue path", () => {
+  it("explains without requesting implementation", () => {
     expect(issueComposerPrompt("explain", issue)).toBe(
       `Explain this issue: #44: Match PR panes\n\n${issue.url}\n\nRead the issue and its latest comments. Explain the problem, intended outcome, and relevant code. Leave implementation for a separate request.`,
     );
-    expect(issueComposerPrompt("implement", issue)).toBe(
-      `Implement this issue: #44: Match PR panes\n\n${issue.url}\n\nAct as the orchestrator. Read the issue and its latest comments, then start an issue implementor using the managed issue work path: delegate_task with the issue argument, or the start issue work command. Follow the repository's model roles and issue work policy. Track and integrate the implementor's result.`,
-    );
     expect(issueComposerPrompt("ask", { ...issue, title: "" })).toContain("Untitled issue");
+  });
+});
+
+describe("implementation composer routing", () => {
+  const rootThreadId = ThreadId.make("root");
+  const rootRef = { environmentId: threadRef.environmentId, threadId: rootThreadId };
+  const currentThread = {
+    environmentId: threadRef.environmentId,
+    id: threadRef.threadId,
+    lineage: {
+      rootThreadId,
+      parentThreadId: rootThreadId,
+      relationshipToParent: "subagent" as const,
+    },
+  };
+  const input = {
+    environmentId: threadRef.environmentId,
+    rootThreadId,
+    currentThread,
+    parentOwnerThreadId: null,
+  };
+
+  it("uses the current composer when the current thread is the registered root", () => {
+    expect(
+      issueImplementDestination({
+        ...input,
+        currentThread: {
+          ...currentThread,
+          id: rootThreadId,
+          lineage: { rootThreadId, parentThreadId: null, relationshipToParent: null },
+        },
+      }),
+    ).toEqual({ threadRef: rootRef, disabledReason: null });
+  });
+
+  it("routes an unrelated current thread to the registered root's composer", () => {
+    expect(issueImplementDestination(input)).toEqual({ threadRef: rootRef, disabledReason: null });
+  });
+
+  it("disables implementation without a root and points to Start agent", () => {
+    expect(issueImplementDestination({ ...input, rootThreadId: null })).toEqual({
+      threadRef: null,
+      disabledReason: "No orchestrator for this repository; use Start agent",
+    });
+  });
+
+  it("uses the root's composer without a current thread", () => {
+    expect(issueImplementDestination({ ...input, currentThread: null })).toEqual({
+      threadRef: rootRef,
+      disabledReason: null,
+    });
+  });
+
+  it("allows the immediate parent's current owner within the registered root's lineage", () => {
+    const parentInput = { ...input, parentOwnerThreadId: currentThread.id };
+    expect(issueImplementDestination(parentInput)).toEqual({
+      threadRef,
+      disabledReason: null,
+    });
+    expect(
+      issueImplementDestination({
+        ...parentInput,
+        currentThread: {
+          ...currentThread,
+          lineage: { ...currentThread.lineage, rootThreadId: ThreadId.make("retired-root") },
+        },
+      }).threadRef,
+    ).toEqual(rootRef);
+    expect(
+      issueImplementDestination({
+        ...parentInput,
+        currentThread: { ...currentThread, environmentId: EnvironmentId.make("another-host") },
+      }).threadRef,
+    ).toEqual(rootRef);
   });
 });
 

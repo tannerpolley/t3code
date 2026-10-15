@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, IssueRef, IssueSummary, ScopedThreadRef } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import {
   BookOpenIcon,
   CircleSlashIcon,
@@ -21,9 +22,9 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useProjects, useThreadShell } from "~/state/entities";
+import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
 import { issueEnvironment } from "~/state/issues";
-import { formatEnvironmentQueryError } from "~/state/query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { handoffPrompt } from "../pullRequest/pullRequestDetail.logic";
 import { useInlineActionConfirm } from "../pullRequest/useInlineActionConfirm";
@@ -33,6 +34,7 @@ import { toastManager } from "../ui/toast";
 import {
   canUnlinkIssue,
   issueComposerPrompt,
+  issueImplementDestination,
   issueMenuAvailability,
   type IssueComposerAction,
 } from "./issueDetailActions.logic";
@@ -58,6 +60,28 @@ export function IssueDetailActions({
 }) {
   const projects = useProjects();
   const thread = useThreadShell(threadRef);
+  const navigate = useNavigate();
+  const configs = useServerConfigs();
+  const capabilities = configs.get(environmentId)?.environment.capabilities;
+  const { data: repositoryWork } = useEnvironmentQuery(
+    capabilities?.issueMilestones === true
+      ? issueEnvironment.repositoryStatus({
+          environmentId,
+          input: { host: reference.host, repository: reference.repository },
+        })
+      : null,
+  );
+  const { data: parentWork } = useEnvironmentQuery(
+    capabilities?.issueWork === true && issue.parent != null && thread !== null
+      ? issueEnvironment.workStatus({ environmentId, input: issue.parent })
+      : null,
+  );
+  const implementation = issueImplementDestination({
+    environmentId,
+    rootThreadId: repositoryWork?.rootThreadId,
+    currentThread: thread,
+    parentOwnerThreadId: parentWork?.threadId ?? null,
+  });
   const project = findIssueProject(
     projects,
     { environmentId, ...reference },
@@ -87,11 +111,18 @@ export function IssueDetailActions({
     setPending(true);
     try {
       const opened =
-        threadRef === null && project !== null
+        action !== "implement" && threadRef === null && project !== null
           ? await handleNewThread(scopeProjectRef(project.environmentId, project.id))
           : null;
-      const target = threadRef ?? opened?.draftId;
-      if (!target) throw new Error("Add a project for this repository to open a thread.");
+      const target =
+        action === "implement" ? implementation.threadRef : (threadRef ?? opened?.draftId);
+      if (!target) {
+        throw new Error(
+          implementation.disabledReason && action === "implement"
+            ? implementation.disabledReason
+            : "Add a project for this repository to open a thread.",
+        );
+      }
       const store = useComposerDraftStore.getState();
       const key = typeof target === "string" ? `draft:${target}` : scopedThreadKey(target);
       const prompt = issueComposerPrompt(action, issue);
@@ -106,6 +137,14 @@ export function IssueDetailActions({
         ),
       );
       lastHandoffByDraft.set(key, prompt);
+      if (
+        action === "implement" &&
+        typeof target !== "string" &&
+        (target.environmentId !== threadRef?.environmentId ||
+          target.threadId !== threadRef?.threadId)
+      ) {
+        await navigate({ to: "/$environmentId/$threadId", params: target });
+      }
       toastManager.add({
         type: "success",
         title: "Added to the composer",
@@ -182,11 +221,16 @@ export function IssueDetailActions({
           Explain this issue
         </MenuItem>
         <MenuItem
-          disabled={pending || !availability.composer}
+          disabled={pending || implementation.threadRef === null}
           onClick={() => void paste("implement")}
         >
           <HammerIcon />
-          Implement this issue
+          <span className="flex flex-col">
+            <span>Implement this issue</span>
+            {implementation.disabledReason ? (
+              <span className="text-xs text-muted-foreground">{implementation.disabledReason}</span>
+            ) : null}
+          </span>
         </MenuItem>
         <MenuSeparator />
         <MenuItem render={<a href={issue.url} target="_blank" rel="noopener noreferrer" />}>

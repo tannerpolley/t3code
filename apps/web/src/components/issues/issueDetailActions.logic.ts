@@ -1,6 +1,36 @@
-import type { IssueComment, IssueSummary, ScopedThreadRef } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentId,
+  IssueComment,
+  IssueSummary,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 
 export type IssueComposerAction = "ask" | "explain" | "implement";
+
+export function issueImplementDestination(input: {
+  environmentId: EnvironmentId;
+  rootThreadId: ThreadId | null | undefined;
+  currentThread: Pick<EnvironmentThreadShell, "environmentId" | "id" | "lineage"> | null;
+  parentOwnerThreadId: ThreadId | null;
+}) {
+  if (input.rootThreadId == null) {
+    return {
+      threadRef: null,
+      disabledReason: "No orchestrator for this repository; use Start agent",
+    };
+  }
+  const current = input.currentThread;
+  const threadId =
+    current?.environmentId === input.environmentId &&
+    current.lineage.rootThreadId === input.rootThreadId &&
+    current.id === input.parentOwnerThreadId
+      ? current.id
+      : input.rootThreadId;
+  return { threadRef: scopeThreadRef(input.environmentId, threadId), disabledReason: null };
+}
 
 /** Only ordinary associations can be removed; managed work and PR references keep their owners. */
 export function canUnlinkIssue(
@@ -42,7 +72,7 @@ export function issueComposerPrompt(
     case "explain":
       return `Explain this issue: ${reference}\n\nRead the issue and its latest comments. Explain the problem, intended outcome, and relevant code. Leave implementation for a separate request.`;
     case "implement":
-      return `Implement this issue: ${reference}\n\nAct as the orchestrator. Read the issue and its latest comments, then start an issue implementor using the managed issue work path: delegate_task with the issue argument, or the start issue work command. Follow the repository's model roles and issue work policy. Track and integrate the implementor's result.`;
+      return `Implement this issue: ${reference}\n\nRead the issue and its latest comments, then delegate it with delegate_task using the issue argument, following the repository's model roles.`;
   }
 }
 
