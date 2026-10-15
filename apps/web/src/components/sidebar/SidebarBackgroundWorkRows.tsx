@@ -186,6 +186,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             <BackgroundProcessKindIcon
               kind={row.kind}
               commandKind={row.commandKind}
+              command={row.command}
               className={props.columns ? "size-4" : "size-3.5"}
             />
           );

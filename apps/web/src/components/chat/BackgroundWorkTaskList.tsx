@@ -56,6 +56,7 @@ export function BackgroundWorkTaskList(props: {
                 <BackgroundProcessKindIcon
                   kind={row.kind}
                   commandKind={row.commandKind}
+                  command={row.command}
                   className="size-3.5"
                 />
                 <Tooltip>

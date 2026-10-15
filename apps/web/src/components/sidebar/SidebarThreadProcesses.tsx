@@ -5,6 +5,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { ChevronRightIcon, CpuIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 
+import { ProcessProgramIcon } from "../ProcessProgramIcon";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useUiStateStore } from "../../uiStateStore";
@@ -152,7 +153,15 @@ export function SidebarProcessGroupRows(props: {
             <BackgroundTaskResourceUsageLabel usage={group} />
           </span>
         );
-        const icon = <CpuIcon aria-hidden className={props.columns ? "size-4" : "size-3.5"} />;
+        const iconClassName = props.columns ? "size-4" : "size-3.5";
+        const icon = (
+          <ProcessProgramIcon
+            program={group.label}
+            commandLine={group.commandLine}
+            className={iconClassName}
+            fallback={<CpuIcon aria-hidden className={iconClassName} />}
+          />
+        );
         return (
           <li key={`process:${group.label}`} style={depth}>
             <div className={rowClass}>

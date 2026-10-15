@@ -1,3 +1,6 @@
+import { shellProgramName } from "@t3tools/shared/shellCommand";
+import { useMemo } from "react";
+import { ProcessProgramIcon } from "../ProcessProgramIcon";
 import { ClockIcon, ServerIcon, TerminalIcon } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -64,9 +67,14 @@ export function backgroundProcessKindLabel(kind?: string, commandKind?: string):
 export function BackgroundProcessKindIcon(props: {
   readonly kind: "command" | "monitor" | "background_task";
   readonly commandKind?: string | undefined;
+  readonly command?: string | undefined;
   readonly className: string;
 }) {
   const { resolvedTheme } = useTheme();
+  const program = useMemo(
+    () => (props.command ? shellProgramName(props.command) : null) ?? props.commandKind ?? "",
+    [props.command, props.commandKind],
+  );
   const label = backgroundProcessKindLabel(props.kind, props.commandKind);
   const iconClassName = cn("size-4", props.className);
   const fileName = props.commandKind
@@ -95,7 +103,7 @@ export function BackgroundProcessKindIcon(props: {
       <TooltipTrigger
         render={<span aria-label={label} className="inline-flex shrink-0" role="img" />}
       >
-        {icon}
+        <ProcessProgramIcon program={program} className={iconClassName} fallback={icon} />
       </TooltipTrigger>
       <TooltipPopup side="right">{label}</TooltipPopup>
     </Tooltip>
