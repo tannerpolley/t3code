@@ -313,6 +313,11 @@ interface IssueRepositoryScope {
 
 type IssueOperation = IssueReadError["operation"];
 
+class IssueResponseError extends IssueReadError.extend<IssueResponseError>("IssueResponseError")({
+  status: Schema.Int,
+}) {}
+const isIssueResponseError = Schema.is(IssueResponseError);
+
 interface ApiResponse {
   readonly body: string;
   readonly headers: Readonly<Record<string, string | undefined>>;
@@ -619,13 +624,13 @@ function mapGitHubError(
           ? readError(operation, "invalid-response", "GitHub returned a truncated response.")
           : readError(operation, "inaccessible", "GitHub did not return every requested field.");
       }
-      return readError(
+      return new IssueResponseError({
         operation,
-        "upstream",
-        failed,
-        undefined,
-        outcome(error.status < 500 ? "rejected" : "uncertain"),
-      );
+        code: "upstream",
+        message: failed,
+        createOutcome: outcome(error.status < 500 ? "rejected" : "uncertain"),
+        status: error.status,
+      });
     case "GitHubPullRequestReadError":
       return readError(operation, "invalid-response", "GitHub returned an invalid response.");
     case "GitHubRepositorySelectorError":
@@ -734,7 +739,11 @@ export class IssueService extends Context.Service<
       readonly repository: string;
       readonly milestoneNumber: number;
     }) => Effect.Effect<
-      { readonly issues: ReadonlyArray<IssueSummaryType>; readonly complete: boolean },
+      {
+        readonly issues: ReadonlyArray<IssueSummaryType>;
+        readonly complete: boolean;
+        readonly missing?: true;
+      },
       IssueReadError
     >;
     readonly repositoryIdentity: (input: {
@@ -1549,7 +1558,13 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
             page = result.nextPage;
           }
           return { issues, complete: page === null };
-        }),
+        }).pipe(
+          // Every other list parameter is fixed here, so 422 identifies an invalid milestone.
+          Effect.catchIf(
+            (error) => isIssueResponseError(error) && error.status === 422,
+            () => Effect.succeed({ issues: [], complete: true, missing: true as const }),
+          ),
+        ),
       )
       .pipe(
         Effect.mapError((error) =>

@@ -198,6 +198,25 @@ it.effect("paginates only the selected milestone during repository reconciliatio
   }),
 );
 
+it.effect("distinguishes a missing milestone from other GitHub read failures", () =>
+  Effect.gen(function* () {
+    for (const status of [422, 403, 500]) {
+      const harness = makeHarness({ responses: [httpResponse({}, {}, status)] });
+      const result = yield* (yield* service(harness))
+        .milestoneIssues({ ...listInput, milestoneNumber: 23 })
+        .pipe(Effect.result);
+      if (status === 422) {
+        assert.deepEqual(Result.getOrThrow(result), { issues: [], complete: true, missing: true });
+      } else {
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result))
+          assert.equal(result.failure.code, status === 403 ? "inaccessible" : "upstream");
+      }
+      assert.include(harness.calls[0]!.url, "state=all");
+    }
+  }),
+);
+
 it.effect(
   "reads native hierarchy and closed blockers, and rejects partial GraphQL permission errors",
   () =>

@@ -666,6 +666,7 @@ export const layer = Layer.effect(
             milestoneNumber: plan.number,
           })
           .pipe(Effect.mapError(mapError));
+        if (listing.missing) continue;
         if (!listing.complete)
           return yield* new IssueWorkError({
             code: "issue-unavailable",
@@ -905,6 +906,15 @@ export const layer = Layer.effect(
               milestoneNumber: plan.number,
             })
             .pipe(Effect.result);
+          if (listing._tag === "Success" && listing.success.missing) {
+            yield* update(
+              rootThreadId,
+              { ...config, milestones: config.milestones.filter((p) => p.number !== plan.number) },
+              CommandId.make(`milestone-drop:${rootThreadId}:${config.revision}:${plan.number}`),
+            );
+            config = (yield* store.configuration(rootThreadId))!;
+            continue;
+          }
           if (listing._tag === "Failure" || !listing.success.complete) {
             plans.push({ ...plan, status: "unreadable", fingerprint: "unreadable" });
             continue;
@@ -1014,6 +1024,12 @@ export const layer = Layer.effect(
 
     const workMilestone: IssueWorkService["Service"]["workMilestone"] = (input) =>
       Effect.gen(function* () {
+        const listing = yield* issues.milestoneIssues(input).pipe(Effect.result);
+        if (listing._tag === "Success" && listing.success.missing)
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: `Milestone #${input.milestoneNumber} does not exist in ${input.repository}.`,
+          });
         let owner = yield* store.repositoryOwnerByRef(input);
         if (owner === null) {
           const repository = yield* issues
