@@ -18,6 +18,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
+import { useIssueSectionCollapsed } from "./useIssueSectionCollapsed";
 import { IssueStateIcon } from "./IssueStateIcon";
 
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
@@ -102,6 +104,7 @@ function InboxList({
   const { data } = useEnvironmentQuery(issueEnvironment.inbox({ environmentId, input: reference }));
   const markRead = useAtomCommand(issueEnvironment.markInboxRead);
   const canMark = useAtomValue(issueEnvironment.markInboxRead.permissionAtom(environmentId));
+  const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(reference, "inbox");
   const events = data?.events ?? [];
   const issuesByNumber = new Map(issues?.map((issue) => [issue.number, issue]));
   if (events.length === 0) return null;
@@ -116,55 +119,61 @@ function InboxList({
       className="my-1 ms-6 me-3 rounded-lg border border-border/60 px-3 py-2"
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold">
-          Inbox <span className="font-normal text-muted-foreground">{events.length} unread</span>
-        </h3>
+        <CollapsibleSectionHeader
+          expanded={!collapsed}
+          onClick={toggleCollapsed}
+          accessory={<span className="tabular-nums">{events.length} unread</span>}
+        >
+          Inbox
+        </CollapsibleSectionHeader>
         {canMark ? (
           <Button onClick={() => mark()} size="xs" variant="ghost">
             Mark all read
           </Button>
         ) : null}
       </div>
-      <ul className="mt-1 flex flex-col gap-1.5">
-        {events.map((event) => {
-          const issue = issuesByNumber.get(event.issueNumber);
-          return (
-            <li key={event.id} className="flex items-start gap-2 text-xs">
-              {issue ? <IssueStateIcon issue={issue} /> : null}
-              <div className="min-w-0 flex-1">
-                <a
-                  className="font-medium underline-offset-2 hover:underline"
-                  href={event.url}
-                  rel="noopener noreferrer"
-                  target="_blank"
-                >
-                  {event.issueNumber > 0 ? `#${event.issueNumber} ` : ""}
-                  {event.issueTitle}
-                </a>
-                <p className="text-muted-foreground">{describe(event)}</p>
-                {event.snippet !== "" ? (
-                  <p className="truncate text-muted-foreground">{event.snippet}</p>
+      {!collapsed ? (
+        <ul className="mt-1 flex flex-col gap-1.5">
+          {events.map((event) => {
+            const issue = issuesByNumber.get(event.issueNumber);
+            return (
+              <li key={event.id} className="flex items-start gap-2 text-xs">
+                {issue ? <IssueStateIcon issue={issue} /> : null}
+                <div className="min-w-0 flex-1">
+                  <a
+                    className="font-medium underline-offset-2 hover:underline"
+                    href={event.url}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    {event.issueNumber > 0 ? `#${event.issueNumber} ` : ""}
+                    {event.issueTitle}
+                  </a>
+                  <p className="text-muted-foreground">{describe(event)}</p>
+                  {event.snippet !== "" ? (
+                    <p className="truncate text-muted-foreground">{event.snippet}</p>
+                  ) : null}
+                </div>
+                {event.highPriority ? (
+                  <Badge size="sm" variant="warning">
+                    High priority
+                  </Badge>
                 ) : null}
-              </div>
-              {event.highPriority ? (
-                <Badge size="sm" variant="warning">
-                  High priority
-                </Badge>
-              ) : null}
-              {event.tagged ? (
-                <Badge size="sm" variant="info">
-                  Tagged
-                </Badge>
-              ) : null}
-              {canMark ? (
-                <Button onClick={() => mark([event.id])} size="xs" variant="ghost">
-                  Mark read
-                </Button>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
+                {event.tagged ? (
+                  <Badge size="sm" variant="info">
+                    Tagged
+                  </Badge>
+                ) : null}
+                {canMark ? (
+                  <Button onClick={() => mark([event.id])} size="xs" variant="ghost">
+                    Mark read
+                  </Button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </section>
   );
 }

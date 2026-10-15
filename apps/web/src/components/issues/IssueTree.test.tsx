@@ -3,6 +3,7 @@ import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
+import { useUiStateStore } from "~/uiStateStore";
 import { IssueTree } from "./IssueTree";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 
@@ -37,14 +38,16 @@ let renderer: ReactTestRenderer | undefined;
 afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
+  useUiStateStore.setState({ issueMilestoneCollapsedById: {} });
   vi.unstubAllGlobals();
 });
 
-it("expands a milestone when its first issue arrives and preserves a user's collapse on refresh", async () => {
+it("defaults milestones open and preserves a user's collapse across refreshes and remounts", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const render = (issues: readonly IssueSummary[], complete: boolean) => (
     <StrictMode>
       <IssueTree
+        scope={{ host: "github.com", repository: "owner/repo" }}
         groups={groupIssuesByMilestone([milestone], issues)}
         issuesComplete={complete}
         onSelect={() => {}}
@@ -55,6 +58,7 @@ it("expands a milestone when its first issue arrives and preserves a user's coll
     renderer = create(render([], false));
   });
   expect(renderer!.root.findAllByType("li")).toHaveLength(0);
+  expect(renderer!.root.findByType("button").props["aria-expanded"]).toBe(true);
 
   await act(async () => {
     renderer!.update(render([issue], true));
@@ -74,6 +78,12 @@ it("expands a milestone when its first issue arrives and preserves a user's coll
     renderer!.update(render([{ ...issue, title: "Updated title" }], true));
   });
   expect(renderer!.root.findAllByType("li")).toHaveLength(0);
+  await act(async () => renderer!.unmount());
+  await act(async () => {
+    renderer = create(render([issue], true));
+  });
+  expect(renderer!.root.findAllByType("li")).toHaveLength(0);
+  expect(disclosure().findAllByType("span").at(-1)!.children).toEqual(["1 issue"]);
   await act(async () => {
     disclosure().props.onClick();
   });

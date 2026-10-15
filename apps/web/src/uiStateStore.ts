@@ -93,8 +93,8 @@ export interface UiEndpointState {
 export interface UiPullRequestState {
   pullRequestMergeMethod: PullRequestMergeMethod;
   /**
-   * Issue milestone groups collapsed by hand in the thread details panel, keyed by repository and
-   * milestone. Groups without an entry default expanded.
+   * Issue sections collapsed by hand across issue surfaces, keyed by repository and section.
+   * Groups without an entry default expanded.
    */
   issueMilestoneCollapsedById: Record<string, boolean>;
 }
@@ -523,7 +523,7 @@ export function setLineageAgentsClearedAt(
   return { ...state, lineageAgentsClearedAtById };
 }
 
-/** Collapses or expands one issue milestone group by hand; other groups keep their default. */
+/** Collapses or expands one issue section by hand; other sections keep their default. */
 export function setIssueMilestoneCollapsed(
   state: UiState,
   key: string,

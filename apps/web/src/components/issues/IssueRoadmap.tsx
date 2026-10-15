@@ -5,6 +5,9 @@ import type {
   IssueRepositoryRef,
   IssueSummary,
 } from "@t3tools/contracts";
+import { CollapsibleSectionHeader } from "~/components/ui/collapsible-section-header";
+import { useUiStateStore } from "~/uiStateStore";
+import { issueSectionKey } from "./useIssueSectionCollapsed";
 import { IssueRow } from "./IssueRow";
 import { Badge } from "~/components/ui/badge";
 import { issueRoadmap, openIssueBlockers } from "./issueRoadmap.logic";
@@ -29,6 +32,8 @@ export function IssueRoadmap({
   selectedIssueNumber?: number;
   limit?: number;
 }) {
+  const collapsedById = useUiStateStore((state) => state.issueMilestoneCollapsedById);
+  const setCollapsed = useUiStateStore((state) => state.setIssueMilestoneCollapsed);
   const sections = useMemo(
     () => issueRoadmap({ host: scope.host, repository: scope.repository }, milestones, issues),
     [scope.host, scope.repository, milestones, issues],
@@ -44,56 +49,64 @@ export function IssueRoadmap({
     <div aria-label={`Roadmap for ${scope.repository}`}>
       {sections.map((section) => {
         const rows = section.rows.filter((row) => shown.has(row.issue.number));
+        const key = issueSectionKey(scope, `roadmap:${section.id}`);
+        const collapsed = collapsedById[key] ?? false;
         return (
           <section key={section.id} aria-label={section.title}>
-            <h3 className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            <CollapsibleSectionHeader
+              expanded={!collapsed}
+              onClick={() => setCollapsed(key, !collapsed)}
+              accessory={<span className="tabular-nums">{rows.length}</span>}
+            >
               {section.title}
-            </h3>
-            <ul>
-              {rows.map(({ issue, cycle }) => (
-                <li key={issue.number} className="px-2 py-1">
-                  <IssueRow
-                    issue={issue}
-                    environmentId={environmentId}
-                    selected={selectedIssueNumber === issue.number}
-                    onSelect={() => onSelect(issue)}
-                    className="flex-1 px-1"
-                  />
-                  <div className="flex flex-wrap items-center gap-1 ps-6 text-xs text-muted-foreground">
-                    {cycle ? (
-                      <Badge variant="secondary" size="sm">
-                        dependency cycle
-                      </Badge>
-                    ) : null}
-                    {issue.relationshipsComplete === false || issue.blockedBy === undefined ? (
-                      <span>Dependencies unavailable</span>
-                    ) : null}
-                    {openIssueBlockers(issue).length > 0 ? (
-                      <span>
-                        blocked by{" "}
-                        {openIssueBlockers(issue).map((blocker, index) => (
-                          <span key={`${blocker.host}/${blocker.repository}#${blocker.number}`}>
-                            {index > 0 ? ", " : ""}
-                            <a
-                              className="underline"
-                              href={`https://${blocker.host}/${blocker.repository}/issues/${blocker.number}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              {blocker.host.toLowerCase() === scope.host.toLowerCase() &&
-                              blocker.repository.toLowerCase() === scope.repository.toLowerCase()
-                                ? ""
-                                : `${blocker.repository}`}
-                              #{blocker.number}
-                            </a>
-                          </span>
-                        ))}
-                      </span>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            </CollapsibleSectionHeader>
+            {!collapsed ? (
+              <ul>
+                {rows.map(({ issue, cycle }) => (
+                  <li key={issue.number} className="px-2 py-1">
+                    <IssueRow
+                      issue={issue}
+                      environmentId={environmentId}
+                      selected={selectedIssueNumber === issue.number}
+                      onSelect={() => onSelect(issue)}
+                      className="flex-1 px-1"
+                    />
+                    <div className="flex flex-wrap items-center gap-1 ps-6 text-xs text-muted-foreground">
+                      {cycle ? (
+                        <Badge variant="secondary" size="sm">
+                          dependency cycle
+                        </Badge>
+                      ) : null}
+                      {issue.relationshipsComplete === false || issue.blockedBy === undefined ? (
+                        <span>Dependencies unavailable</span>
+                      ) : null}
+                      {openIssueBlockers(issue).length > 0 ? (
+                        <span>
+                          blocked by{" "}
+                          {openIssueBlockers(issue).map((blocker, index) => (
+                            <span key={`${blocker.host}/${blocker.repository}#${blocker.number}`}>
+                              {index > 0 ? ", " : ""}
+                              <a
+                                className="underline"
+                                href={`https://${blocker.host}/${blocker.repository}/issues/${blocker.number}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {blocker.host.toLowerCase() === scope.host.toLowerCase() &&
+                                blocker.repository.toLowerCase() === scope.repository.toLowerCase()
+                                  ? ""
+                                  : `${blocker.repository}`}
+                                #{blocker.number}
+                              </a>
+                            </span>
+                          ))}
+                        </span>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </section>
         );
       })}

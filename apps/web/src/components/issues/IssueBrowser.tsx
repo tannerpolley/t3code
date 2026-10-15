@@ -13,6 +13,7 @@ import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useUiStateStore } from "~/uiStateStore";
 import { cn } from "~/lib/utils";
 import {
   selectThreadRightPanelState,
@@ -37,6 +38,7 @@ import { Switch } from "../ui/switch";
 import { IssueFilterMenu, useIssueFilterPreferences, useIssueViews } from "./IssueFilterMenu";
 import { acceptIssueListPage, type IssueListSnapshot } from "./issuePaging.logic";
 import { IssueTree, IssueTreeRow, IssueTreeTag } from "./IssueTree";
+import { issueSectionKey } from "./useIssueSectionCollapsed";
 import { IssueRoadmap } from "./IssueRoadmap";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 import {
@@ -484,15 +486,8 @@ export function IssueBrowser({
     null,
   );
 
-  // Owners and repositories start collapsed, as a compact overview. A search, a repository
-  // link, a failure or the open issue opens them; a user's own choice wins after that.
-  const [expansionChoices, setExpansionChoices] = useState<ReadonlyMap<string, boolean>>(
-    () => new Map(),
-  );
-  const isExpanded = (key: string, openByDefault: boolean) =>
-    expansionChoices.get(key) ?? openByDefault;
-  const toggleExpanded = (key: string, expanded: boolean) =>
-    setExpansionChoices((current) => new Map(current).set(key, !expanded));
+  const collapsedById = useUiStateStore((state) => state.issueMilestoneCollapsedById);
+  const setCollapsed = useUiStateStore((state) => state.setIssueMilestoneCollapsed);
 
   const repositoryEntries = shownRepositories.flatMap((target) => {
     const key = repositoryKey(target.host, target.repository);
@@ -556,7 +551,6 @@ export function IssueBrowser({
   type RepositoryEntry = (typeof repositoryEntries)[number];
   const listedRepositories = viewerRepositoriesFirst(repositoryEntries, viewerLogins);
   const viewerOwners = new Set(viewerLogins.map((login) => login.toLowerCase()));
-  const openAll = explicitScope || query.trim() !== "";
   const totalCount = repositoryEntries.reduce((sum, entry) => sum + entry.count, 0);
   const totalIncomplete = repositoryEntries.some((entry) => !entry.settled);
 
@@ -643,6 +637,7 @@ export function IssueBrowser({
         ) : filteredIssues.length > 0 ? (
           <IssueTree
             key={scopeKey}
+            scope={entry}
             environmentId={entry.environmentId}
             renderMilestoneActions={(milestone) => (
               <IssueMilestoneControls
@@ -708,10 +703,8 @@ export function IssueBrowser({
           {renderRepositoryBody(entry)}
         </section>
       );
-    const repositoryOpen = isExpanded(
-      `repository:${entry.key}`,
-      openAll || entry.error !== null || entry.selectedIssueNumber !== undefined,
-    );
+    const collapseKey = issueSectionKey(entry, "repository");
+    const repositoryOpen = !(collapsedById[collapseKey] ?? false);
     const panelId = `issue-repository-${entry.key.replace(/[^a-z0-9_-]/gi, "-")}`;
     return (
       <section key={entry.key}>
@@ -720,7 +713,7 @@ export function IssueBrowser({
             level={0}
             controls={panelId}
             expanded={repositoryOpen}
-            onToggle={() => toggleExpanded(`repository:${entry.key}`, repositoryOpen)}
+            onToggle={() => setCollapsed(collapseKey, repositoryOpen)}
             count={entry.countLabel}
           >
             <span className="min-w-0 truncate text-sm font-medium">

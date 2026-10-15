@@ -10,16 +10,14 @@ import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work"
 import { ListIcon, MinusIcon, PlusIcon } from "lucide-react";
 import { IssueRow } from "../issues/IssueRow";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 
-import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironment } from "~/state/environments";
 import { issueEnvironment, useLiveIssueWork } from "~/state/issues";
-import { useUiStateStore } from "~/uiStateStore";
+import { useIssueSectionCollapsed } from "../issues/useIssueSectionCollapsed";
 
 import { IssueRoadmap } from "../issues/IssueRoadmap";
 import {
@@ -32,7 +30,6 @@ import {
   filterAndSortIssues,
   issueListStateFor,
   issueStateFilter,
-  repositoryKey,
   type IssueFilterPreferences,
 } from "../issues/issueWorkspace.logic";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
@@ -41,8 +38,6 @@ import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 /** Issue rows shown before "Show N more", matching the pull request rows. */
 const VISIBLE_ISSUE_COUNT = 5;
-
-const ExpandedIssueBlocks = Schema.Record(Schema.String, Schema.Boolean);
 
 export { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 
@@ -77,7 +72,7 @@ export function threadIssueGroups(
 
 /**
  * The fork's own sibling section for the thread repository's issues, a fork feature kept out of
- * the vanilla Version Control section. Collapsed by default and remembered per repository. The
+ * the vanilla Version Control section. Expanded by default and remembered per repository. The
  * Filter menu shares the Issues page's saved choices. A row opens the issue beside the thread, and
  * "Browse all issues" opens the full list there; the list stays live while agents work on it.
  */
@@ -111,15 +106,13 @@ function IssueRows({
   host: string;
   repository: string;
 }) {
-  const key = repositoryKey(host, repository);
-  const [expandedBlocks, setExpandedBlocks] = useLocalStorage(
-    "t3code:thread-issues-expanded",
-    {},
-    ExpandedIssueBlocks,
-  );
-  const open = expandedBlocks[key] === true;
   const [preferences, setPreferences] = useIssueFilterPreferences();
   const [issueView, setIssueView] = useIssueView(host, repository);
+  const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
+    { host, repository },
+    issueView === "roadmap" ? "roadmap" : `list:${issueStateFilter(preferences) ?? "open"}`,
+  );
+  const open = !collapsed;
   const listState =
     issueView === "roadmap" ? "open" : issueListStateFor(issueStateFilter(preferences) ?? "open");
   const result = useAtomValue(
@@ -162,7 +155,7 @@ function IssueRows({
       <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">
         <CollapsibleSectionHeader
           expanded={open}
-          onClick={() => setExpandedBlocks((current) => ({ ...current, [key]: !open }))}
+          onClick={toggleCollapsed}
           accessory={
             view === null ? null : (
               <span className="text-xs tabular-nums text-muted-foreground/70">
@@ -266,14 +259,12 @@ function IssueRowsBody({
     ) : null;
   }
   const { groups, total, hidden } = view;
-  const repoKey = repositoryKey(host, repository);
 
   return (
     <>
       {groups.map((group) => (
         <IssueMilestoneGroup
           key={group.id}
-          groupKey={`${repoKey}:${group.id}`}
           group={group}
           environmentId={environmentId}
           threadId={threadId}
@@ -314,30 +305,22 @@ function IssueRowsBody({
  * expanded), matching how Lineage's groups collapse.
  */
 function IssueMilestoneGroup({
-  groupKey,
   group,
   environmentId,
   threadId,
   host,
   repository,
 }: {
-  groupKey: string;
   group: IssueGroup;
   environmentId: EnvironmentId;
   threadId: ThreadId;
   host: string;
   repository: string;
 }) {
-  const collapsed = useUiStateStore(
-    (state) => state.issueMilestoneCollapsedById[groupKey] ?? false,
-  );
-  const setIssueMilestoneCollapsed = useUiStateStore((state) => state.setIssueMilestoneCollapsed);
+  const [collapsed, toggleCollapsed] = useIssueSectionCollapsed({ host, repository }, group.id);
   return (
     <div className="flex flex-col">
-      <CollapsibleSectionHeader
-        expanded={!collapsed}
-        onClick={() => setIssueMilestoneCollapsed(groupKey, !collapsed)}
-      >
+      <CollapsibleSectionHeader expanded={!collapsed} onClick={toggleCollapsed}>
         {group.title}
         {collapsed && ` (${group.issues.length})`}
       </CollapsibleSectionHeader>

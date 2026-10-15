@@ -1,7 +1,14 @@
-import type { EnvironmentId, IssueMilestone, IssueSummary } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueMilestone,
+  IssueRepositoryRef,
+  IssueSummary,
+} from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
 
+import { useUiStateStore } from "~/uiStateStore";
+import { issueSectionKey } from "./useIssueSectionCollapsed";
 import { cn } from "~/lib/utils";
 import { IssueRow } from "./IssueRow";
 import type { IssueGroup } from "./issueTree.logic";
@@ -62,6 +69,7 @@ export function IssueTreeTag({ children }: { readonly children: ReactNode }) {
 }
 
 export interface IssueTreeProps {
+  readonly scope: IssueRepositoryRef;
   readonly environmentId?: EnvironmentId;
   readonly groups: readonly IssueGroup[];
   readonly issuesComplete: boolean;
@@ -71,10 +79,10 @@ export interface IssueTreeProps {
 }
 
 /**
- * A repository's milestones and their issues. Milestones with issues start expanded; a user's
- * choice is kept by id, so it survives refreshes.
+ * A repository's milestones and their issues, expanded by default with choices persisted per group.
  */
 export function IssueTree({
+  scope,
   environmentId,
   groups,
   issuesComplete,
@@ -82,12 +90,14 @@ export function IssueTree({
   onSelect,
   renderMilestoneActions,
 }: IssueTreeProps) {
-  const [chosen, setChosen] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const collapsedById = useUiStateStore((state) => state.issueMilestoneCollapsedById);
+  const setCollapsed = useUiStateStore((state) => state.setIssueMilestoneCollapsed);
 
   return (
     <div data-issue-tree>
       {groups.map((group) => {
-        const isExpanded = chosen.get(group.id) ?? group.issues.length > 0;
+        const key = issueSectionKey(scope, group.id);
+        const isExpanded = !(collapsedById[key] ?? false);
         const panelId = `issue-group-${group.id.replace(/[^a-z0-9_-]/gi, "-")}`;
         return (
           <section key={group.id}>
@@ -96,7 +106,7 @@ export function IssueTree({
                 level={1}
                 controls={panelId}
                 expanded={isExpanded}
-                onToggle={() => setChosen((current) => new Map(current).set(group.id, !isExpanded))}
+                onToggle={() => setCollapsed(key, isExpanded)}
                 count={
                   issuesComplete
                     ? `${group.issues.length} ${group.issues.length === 1 ? "issue" : "issues"}`

@@ -20,6 +20,7 @@ import {
   setBranchPickerGroupCollapsed,
   setDefaultAdvertisedEndpointKey,
   setLineageAgentsClearedAt,
+  setIssueMilestoneCollapsed,
   setLineageDetailsExpanded,
   setProjectExpanded,
   setSidebarMode,
@@ -31,6 +32,8 @@ import {
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
+
+import { issueSectionKey } from "./components/issues/useIssueSectionCollapsed";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
@@ -472,6 +475,37 @@ describe("uiStateStore persistence", () => {
       projectExpandedById: {},
       projectOrder: [],
     });
+  });
+
+  it("persists issue sections independently by host, repository and section", () => {
+    const scope = { host: "github.com", repository: "owner/repo" };
+    const ready = issueSectionKey(scope, "roadmap:ready");
+    const review = issueSectionKey(scope, "roadmap:in-review");
+    const milestone = issueSectionKey(scope, "milestone:1");
+    const otherRepo = issueSectionKey({ ...scope, repository: "owner/other" }, "roadmap:ready");
+    const otherHost = issueSectionKey({ ...scope, host: "github.example.com" }, "roadmap:ready");
+    expect(issueSectionKey({ host: "GitHub.COM", repository: "Owner/Repo" }, "roadmap:ready")).toBe(
+      ready,
+    );
+    let state = setIssueMilestoneCollapsed(makeUiState(), ready, true);
+    state = setIssueMilestoneCollapsed(state, milestone, true);
+    expect(setIssueMilestoneCollapsed(state, ready, true)).toBe(state);
+    persistState(state);
+    const restored = parsePersistedState(
+      JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY)!),
+    );
+    expect(restored.issueMilestoneCollapsedById[ready]).toBe(true);
+    expect(restored.issueMilestoneCollapsedById[milestone]).toBe(true);
+    for (const key of [review, otherRepo, otherHost]) {
+      expect(restored.issueMilestoneCollapsedById[key] ?? false).toBe(false);
+    }
+    const reopened = setIssueMilestoneCollapsed(restored, ready, false);
+    persistState(reopened);
+    const reloaded = parsePersistedState(
+      JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY)!),
+    );
+    expect(reloaded.issueMilestoneCollapsedById[ready]).toBe(false);
+    expect(reloaded.issueMilestoneCollapsedById[milestone]).toBe(true);
   });
 
   it("restores the sidebar project scope across reloads", () => {
