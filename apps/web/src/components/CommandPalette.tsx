@@ -148,6 +148,7 @@ import {
   currentAddProjectSection,
   placeAddedProject,
   sectionPlacementInput,
+  canPlaceProjectInSection,
   completeProjectSectionPlacement,
   sectionTarget,
   setAddProjectSection,
@@ -1054,7 +1055,12 @@ function OpenCommandPaletteDialog(props: {
       // Started from a section: browse from that section's folder, the layout Organize by
       // folder reads (<root>/<Section>[/<Subsection>]).
       const sectionId = currentAddProjectSection();
-      const sections = sectionId === null ? [] : useUiStateStore.getState().sidebarProjectSections;
+      const sections =
+        sectionId === null ||
+        environmentId === null ||
+        !canPlaceProjectInSection(environmentId, sectionId)
+          ? []
+          : useUiStateStore.getState().sidebarProjectSections;
       const section = sections.find((candidate) => candidate.id === sectionId);
       const parent = sections.find((candidate) => candidate.id === section?.parentId);
       const sectionFolder =
@@ -2547,12 +2553,14 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
+      const placement = sectionPlacementInput(input.environmentId, sectionId);
+      if (placement === null) return;
       const projectId = newProjectId();
       const createResult = await createProject({
         environmentId: input.environmentId,
         input: {
           projectId,
-          ...sectionPlacementInput(input.environmentId, sectionId),
+          ...placement,
           title: inferProjectTitleFromPath(cwd),
           workspaceRoot: cwd,
           createWorkspaceRootIfMissing: true,
@@ -2823,13 +2831,15 @@ function OpenCommandPaletteDialog(props: {
     // shows in a toast and in the draft's composer banner, so the palette
     // closes as soon as the clone is under way. Only problems found before
     // git runs (bad destination, unknown repository) come back here.
+    const placement = sectionPlacementInput(addProjectCloneFlow.environmentId, sectionId);
+    if (placement === null) return;
     const projectId = newProjectId();
     setIsRemoteProjectCloning(true);
     const startResult = await startProjectClone({
       environmentId: addProjectCloneFlow.environmentId,
       input: {
         projectId,
-        ...sectionPlacementInput(addProjectCloneFlow.environmentId, sectionId),
+        ...placement,
         title: inferProjectTitleFromPath(destinationPath),
         createdAt: new Date().toISOString(),
         remoteUrl: addProjectCloneFlow.remoteUrl,

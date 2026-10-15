@@ -23,19 +23,33 @@ interface ClientEnvironment {
   flight: SidebarLayoutMutation[];
   timer: ReturnType<typeof setTimeout> | null;
 }
-const decodeLocal = Schema.decodeUnknownOption(Schema.fromJsonString(SidebarLayout));
+const decodeLocal = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ ...SidebarLayout.fields, serverSnapshot: Schema.optional(Schema.Boolean) }),
+  ),
+);
 const localKey = (id: EnvironmentId) => "t3code:sidebar-local:" + id;
-export function readLocalSidebarLayout(id: EnvironmentId, fallback: SidebarLayout): SidebarLayout {
+export function readLocalSidebarLayout(
+  id: EnvironmentId,
+  fallback: SidebarLayout,
+  options: { forImport?: boolean } = {},
+): SidebarLayout {
   try {
     const saved = localStorage.getItem(localKey(id));
-    return saved ? Option.getOrElse(decodeLocal(saved), () => fallback) : fallback;
+    const decoded = saved ? Option.getOrNull(decodeLocal(saved)) : null;
+    if (decoded === null || (options.forImport && decoded.serverSnapshot)) return fallback;
+    const { serverSnapshot: _, ...layout } = decoded;
+    return layout;
   } catch {
     return fallback;
   }
 }
-function saveLocal(id: EnvironmentId, layout: SidebarLayout) {
+function saveLocal(id: EnvironmentId, layout: SidebarLayout, serverSnapshot = false) {
   try {
-    const serialized = JSON.stringify(layout);
+    // Confirmed server data is a display fallback, never a legacy import candidate.
+    const serialized = JSON.stringify(
+      serverSnapshot ? { ...layout, serverSnapshot: true } : layout,
+    );
     if (localStorage.getItem(localKey(id)) !== serialized)
       localStorage.setItem(localKey(id), serialized);
   } catch {
@@ -55,7 +69,10 @@ export function createSidebarLayoutClient(
     for (const listener of listeners) listener();
   };
   const apply = (layout: SidebarLayout, operations: readonly SidebarLayoutMutation[]) =>
-    operations.reduce((state, operation) => applySidebarLayoutMutation(state, operation)!, layout);
+    operations.reduce(
+      (state, operation) => applySidebarLayoutMutation(state, operation) ?? state,
+      layout,
+    );
   const layout = (entry: ClientEnvironment) =>
     entry.server
       ? apply(entry.base?.layout ?? entry.local, [...entry.flight, ...entry.pending])
@@ -101,7 +118,10 @@ export function createSidebarLayoutClient(
     entry.pending = [];
     try {
       const record = await send(id, { revision: entry.base.revision, operations: entry.flight });
-      if (record.revision >= entry.base.revision) entry.base = record;
+      if (record.revision >= entry.base.revision) {
+        entry.base = record;
+        saveLocal(id, record.layout, true);
+      }
     } catch (error) {
       onError(error);
     } finally {
@@ -142,7 +162,7 @@ export function createSidebarLayoutClient(
         }
         if (!server) {
           const local = readLocalSidebarLayout(id, fallback);
-          if (fallbackReady) saveLocal(id, local);
+          if (fallbackReady && local === fallback) saveLocal(id, local);
           if (JSON.stringify(local) !== JSON.stringify(previous.local)) {
             previous.local = local;
             notify();
@@ -151,8 +171,9 @@ export function createSidebarLayoutClient(
         return;
       }
       if (previous?.timer) clearTimeout(previous.timer);
-      const local = readLocalSidebarLayout(id, previous ? layout(previous) : fallback);
-      if (!server && fallbackReady) saveLocal(id, local);
+      const initial = previous ? layout(previous) : fallback;
+      const local = readLocalSidebarLayout(id, initial);
+      if (!server && fallbackReady && local === initial) saveLocal(id, local);
       environments.set(id, {
         server,
         canWrite,
@@ -168,6 +189,7 @@ export function createSidebarLayoutClient(
       const entry = environments.get(id);
       if (!entry?.server || (entry.base && record.revision <= entry.base.revision)) return;
       entry.base = record;
+      saveLocal(id, record.layout, true);
       notify();
       if (entry.pending.length) schedule(id, entry);
     },

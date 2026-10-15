@@ -90,9 +90,11 @@ export function useNewProject() {
       readonly publishTo: NewProjectPublishTarget | null;
     }): Promise<boolean> => {
       const sectionId = currentAddProjectSection();
+      const placement = sectionPlacementInput(input.environmentId, sectionId);
+      if (placement === null) return false;
       const result = await createNew({
         environmentId: input.environmentId,
-        input: { name: input.name, ...sectionPlacementInput(input.environmentId, sectionId) },
+        input: { name: input.name, ...placement },
       });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {

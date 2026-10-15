@@ -82,7 +82,6 @@ export function SidebarLayoutSync() {
     [update],
   );
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
-  const hasProjectedLayout = useRef(false);
   useEffect(() => () => controller.dispose(), [controller]);
   const layouts = useMemo(
     () => new Map([...configs.keys()].map((id) => [id, snapshot.get(id)])),
@@ -105,17 +104,6 @@ export function SidebarLayoutSync() {
   );
 
   useEffect(() => {
-    // Keep the startup display until a live source is ready, then never reuse it.
-    if (
-      !hasProjectedLayout.current &&
-      ![...configs].some(([id, config]) =>
-        usesServerSidebar(config.sidebarLayoutSync)
-          ? controller.record(id) !== null
-          : snapshot.has(id),
-      )
-    )
-      return;
-    hasProjectedLayout.current = true;
     const projected = projectSidebarLayout({ layouts, groups, primaryEnvironmentId });
     const current = useUiStateStore.getState();
     if (
@@ -128,7 +116,7 @@ export function SidebarLayoutSync() {
       })
     )
       useUiStateStore.setState(projected);
-  }, [layouts, groups, primaryEnvironmentId, configs, controller, snapshot]);
+  }, [layouts, groups, primaryEnvironmentId]);
 
   useEffect(() => {
     const refresh = () =>
@@ -154,7 +142,7 @@ export function SidebarLayoutSync() {
         expanded: true,
       });
       refresh();
-    });
+    }, controller);
     configureSidebarLayoutActions(async (mutation) => {
       const refs = (keys: readonly string[]) => sidebarProjectRefsForKeys(groups, keys);
       const ids = (keys: readonly string[], environmentId: EnvironmentId) => [
@@ -317,7 +305,9 @@ function SidebarLayoutEnvironment(props: {
   const legacy = useMemo(
     () =>
       pendingImport?.legacy ??
-      (server ? readLocalSidebarLayout(props.environmentId, props.legacy) : props.legacy),
+      (server
+        ? readLocalSidebarLayout(props.environmentId, props.legacy, { forImport: true })
+        : props.legacy),
     [pendingImport, server, props.environmentId, props.legacy],
   );
   const candidate = useMemo(

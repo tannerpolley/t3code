@@ -1,3 +1,4 @@
+import { sectionTarget, useProjectSectionPlacementReady } from "../../projectSectionPlacement";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import {
   formatModelSelectionEffort,
@@ -772,6 +773,10 @@ function SortableSectionHeader(props: {
 }) {
   const { section } = props;
   const canWrite = useSidebarLayoutPermission(section.custom ? section.id : null);
+  const placementReady = useProjectSectionPlacementReady(
+    sectionTarget(section.id)?.[0] ?? null,
+    section.id,
+  );
   const setSectionColor = useUiStateStore((store) => store.setSidebarProjectSectionColor);
   const setSectionFolderIcons = useUiStateStore(
     (store) => store.setSidebarProjectSectionFolderIcons,
@@ -884,12 +889,16 @@ function SortableSectionHeader(props: {
             </MenuTrigger>
             <MenuPopup align="end" className="min-w-40">
               <MenuItem
+                disabled={!placementReady}
                 onClick={() => openCommandPalette({ open: "add-project", sectionId: section.id })}
               >
                 <FolderPlusIcon />
                 Add project
               </MenuItem>
-              <MenuItem onClick={() => props.onNewProjectInSection(section)}>
+              <MenuItem
+                disabled={!placementReady}
+                onClick={() => props.onNewProjectInSection(section)}
+              >
                 <FilePlusIcon />
                 New project…
               </MenuItem>

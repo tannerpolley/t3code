@@ -13,6 +13,7 @@ import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { newProjectId } from "../../lib/utils";
 import {
   sectionPlacementInput,
+  useProjectSectionPlacementReady,
   sectionTarget,
   completeProjectSectionPlacement,
 } from "../../projectSectionPlacement";
@@ -57,6 +58,7 @@ export function NewSectionProjectDialog(props: {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentId = sectionTarget(target.sectionId)?.[0] ?? primaryEnvironmentId;
   const canWrite = useSidebarLayoutPermission(target.sectionId);
+  const placementReady = useProjectSectionPlacementReady(environmentId, target.sectionId);
   // The same root Organize by folder reads, falling back to where Add project starts.
   const root = useEnvironmentSettings(
     environmentId ?? EnvironmentId.make("unavailable"),
@@ -80,13 +82,15 @@ export function NewSectionProjectDialog(props: {
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canWrite || environmentId === null || path === null || problem !== null || busy) return;
+    const placement = sectionPlacementInput(environmentId, target.sectionId);
+    if (placement === null) return;
     setBusy(true);
     const projectId = newProjectId();
     const created = await createProject({
       environmentId,
       input: {
         projectId,
-        ...sectionPlacementInput(environmentId, target.sectionId),
+        ...placement,
         title: name.trim(),
         workspaceRoot: path,
         createWorkspaceRootIfMissing: true,
@@ -163,7 +167,7 @@ export function NewSectionProjectDialog(props: {
               Cancel
             </Button>
             <Button
-              disabled={!canWrite || folder === null || problem !== null || busy}
+              disabled={!canWrite || !placementReady || folder === null || problem !== null || busy}
               type="submit"
             >
               Create
