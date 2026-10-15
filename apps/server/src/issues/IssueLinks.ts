@@ -21,6 +21,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { issuePullRequests } from "@t3tools/shared/issuePullRequests";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const key = (issue: IssueRef) =>
@@ -74,6 +75,7 @@ export class IssueLinks extends Context.Service<
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const pullRequestService = yield* PullRequestService.PullRequestService;
   const link: IssueLinks["Service"]["link"] = Effect.fn("IssueLinks.link")(function* (
     input,
     callerThreadId,
@@ -94,6 +96,8 @@ const make = Effect.gen(function* () {
           VALUES (${issue.host}, ${issue.repository}, ${issue.number}, ${threadId})
           ON CONFLICT DO NOTHING RETURNING thread_id`
     ).pipe(Effect.mapError(storageError));
+    // Issue readers already subscribe to this environment-wide refresh stream.
+    if (rows.length > 0) yield* pullRequestService.refreshAfterTurn(thread.projectId);
     return { issue, threadId, changed: rows.length > 0 };
   });
   const enrich: IssueLinks["Service"]["enrich"] = Effect.fn("IssueLinks.enrich")(function* (list) {
@@ -194,7 +198,12 @@ const make = Effect.gen(function* () {
       };
       for (const number of refs) {
         const linked = work.get(number) ?? [];
-        linked.push(item);
+        const inherited = !refsByThread.get(thread.id)?.has(number);
+        linked.push({
+          ...item,
+          inherited,
+          status: inherited && state === "working" ? "idle" : state,
+        });
         work.set(number, linked);
       }
     }
@@ -204,15 +213,18 @@ const make = Effect.gen(function* () {
         // PR references are a server-side lookup, not another copy of the issue timeline on the wire.
         const { pullRequestRefs, ...summary } = issue;
         const liveWork = work.get(issue.number) ?? [];
-        const pullRequests = issuePullRequests(
+        const closingPullRequests =
+          issue.closingPullRequests ??
           issue.pullRequests ??
-            (pullRequestRefs ?? []).map((ref) => ({
-              ...ref,
-              url: `https://${ref.host}/${ref.repository}/pull/${ref.number}`,
-              title: "",
-              state: null,
-              isDraft: false,
-            })),
+          (pullRequestRefs ?? []).map((ref) => ({
+            ...ref,
+            url: `https://${ref.host}/${ref.repository}/pull/${ref.number}`,
+            title: "",
+            state: null,
+            isDraft: false,
+          }));
+        const pullRequests = issuePullRequests(
+          closingPullRequests,
           liveWork.flatMap((item) => {
             const thread = byId.get(item.threadId);
             return thread === undefined ? [] : threadPullRequestsOf(thread);
@@ -220,6 +232,7 @@ const make = Effect.gen(function* () {
         );
         return {
           ...summary,
+          closingPullRequests,
           pullRequests,
           pullRequestCount: pullRequests.length,
           liveWork,

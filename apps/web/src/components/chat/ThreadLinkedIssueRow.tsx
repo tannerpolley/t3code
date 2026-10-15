@@ -6,7 +6,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useThreadShell } from "~/state/entities";
-import { issueEnvironment } from "~/state/issues";
+import { issueEnvironment, useLiveIssueSummary } from "~/state/issues";
 import { IssueStateIcon } from "../issues/IssueStateIcon";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -55,6 +55,10 @@ function LinkedIssueStateIcon({
       input: { host: issue.host, repository: issue.repository, number: issue.number },
     }),
   );
-  const summary = Option.getOrNull(AsyncResult.value(detail))?.issue;
+  const summary = useLiveIssueSummary(
+    Option.getOrNull(AsyncResult.value(detail))?.issue,
+    issue,
+    environmentId,
+  );
   return <IssueStateIcon issue={summary ?? { state: "open" }} className="size-4" />;
 }

@@ -13,6 +13,30 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 /** Issue rows use the PR pane's link behavior, glyphs and miniature list rows. */
 export function IssuePullRequests({
   pullRequests,
+  count,
+  environmentId,
+}: {
+  pullRequests?: readonly IssuePullRequest[] | undefined;
+  count?: number | undefined;
+  environmentId?: EnvironmentId | undefined;
+}) {
+  if (pullRequests === undefined) {
+    if (!count) return null;
+    return (
+      <span
+        className="inline-flex items-center gap-0.5 text-muted-foreground"
+        aria-label={`${count} linked pull requests`}
+      >
+        <PullRequestGlyph.pullRequest aria-hidden className="size-3" />
+        <span>{count}</span>
+      </span>
+    );
+  }
+  return <DetailedIssuePullRequests pullRequests={pullRequests} environmentId={environmentId} />;
+}
+
+function DetailedIssuePullRequests({
+  pullRequests,
   environmentId,
 }: {
   pullRequests: readonly IssuePullRequest[];

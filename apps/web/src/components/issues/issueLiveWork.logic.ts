@@ -1,75 +1,155 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { IssueListResult } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueListResult,
+  IssueRepositoryRef,
+  IssueSummary,
+} from "@t3tools/contracts";
 import { issuePullRequests } from "@t3tools/shared/issuePullRequests";
-import {
-  legacyThreadPullRequestKey,
-  threadPullRequestKeyOf,
-} from "@t3tools/shared/threadPullRequests";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 
-/** Overlay cached GitHub metadata with the sidebar's streamed shells, including new descendants. */
-export function withLiveIssueWork(
-  list: IssueListResult,
-  shells: readonly EnvironmentThreadShell[],
-): IssueListResult {
-  const active = shells.filter((thread) => thread.archivedAt === null);
-  const byId = new Map(active.map((thread) => [thread.id, thread]));
-  const scope = `${list.repository.host}/${list.repository.repository}`.toLowerCase();
-  return {
-    ...list,
-    issues: list.issues.map((issue) => {
-      const associated = new Set((issue.liveWork ?? []).map((work) => work.threadId));
-      const closing = new Set((issue.pullRequests ?? []).map(threadPullRequestKeyOf));
-      for (const thread of active) {
-        const linked = thread.linkedIssue;
-        if (
-          linked !== undefined &&
-          linked.number === issue.number &&
-          `${linked.host}/${linked.repository}`.toLowerCase() === scope
-        )
-          associated.add(thread.id);
-        if (
-          thread.linkedPullRequest != null &&
-          closing.has(threadPullRequestKeyOf(legacyThreadPullRequestKey(thread.linkedPullRequest)))
-        )
-          associated.add(thread.id);
+const scopeKey = (environmentId: EnvironmentId, scope: IssueRepositoryRef) =>
+  `${environmentId}:${scope.host.toLowerCase()}/${scope.repository.toLowerCase()}`;
+const threadKey = (environmentId: EnvironmentId, id: string) => `${environmentId}:${id}`;
+const sameItems = <T>(left: readonly T[], right: readonly T[]) =>
+  left.length === right.length && left.every((item, index) => item === right[index]);
+
+/** Built once per shell update, shared by all issue surfaces. No issue-by-thread scans. */
+export function indexIssueWork(shells: readonly EnvironmentThreadShell[]) {
+  const threads = new Map<string, EnvironmentThreadShell>();
+  const issues = new Map<string, Map<number, EnvironmentThreadShell[]>>();
+  for (const thread of shells) {
+    threads.set(threadKey(thread.environmentId, thread.id), thread);
+    if (thread.linkedIssue === undefined || thread.archivedAt !== null) continue;
+    const key = scopeKey(thread.environmentId, thread.linkedIssue);
+    let repository = issues.get(key);
+    if (repository === undefined) issues.set(key, (repository = new Map()));
+    const linked = repository.get(thread.linkedIssue.number) ?? [];
+    linked.push(thread);
+    repository.set(thread.linkedIssue.number, linked);
+  }
+  return { threads, issues };
+}
+type IssueWorkIndex = ReturnType<typeof indexIssueWork>;
+
+/** Cache only associated rows; unchanged shells keep the same issue and list objects. */
+export function createLiveIssueWorkOverlay() {
+  const summaries = new WeakMap<
+    IssueSummary,
+    Map<
+      string,
+      {
+        threads: readonly (EnvironmentThreadShell | undefined)[];
+        result: IssueSummary;
       }
-      const linkedThreads = active.filter((thread) => {
-        let current: EnvironmentThreadShell | undefined = thread;
-        const visited = new Set<string>();
-        while (current !== undefined && !visited.has(current.id)) {
-          if (associated.has(current.id)) return true;
-          visited.add(current.id);
-          current =
-            current.lineage.parentThreadId === null
-              ? undefined
-              : byId.get(current.lineage.parentThreadId);
-        }
-        return false;
-      });
-      const liveWork = linkedThreads.map((thread) => {
-        const sidebarStatus = resolveSidebarThreadStatus(thread);
-        return {
-          threadId: thread.id,
-          title: thread.title,
-          branch: thread.branch,
-          worktreePath: thread.worktreePath,
-          pullRequests: thread.pullRequests
-            .filter((pr) => pr.source !== "stack-dismissed")
-            .map((pr) => pr.url),
-          status:
-            sidebarStatus === "working"
-              ? ("working" as const)
-              : sidebarStatus === "approval" || sidebarStatus === "input"
-                ? ("waiting_on_you" as const)
-                : ("idle" as const),
-        };
-      });
-      const pullRequests = issuePullRequests(
-        issue.pullRequests ?? [],
-        linkedThreads.flatMap((thread) => thread.pullRequests),
-      );
-      return { ...issue, liveWork, pullRequests, pullRequestCount: pullRequests.length };
-    }),
+    >
+  >();
+  const lists = new WeakMap<
+    IssueListResult,
+    Map<
+      EnvironmentId,
+      {
+        result: IssueListResult;
+        associated: Set<number>;
+        positions: Map<number, number>;
+      }
+    >
+  >();
+
+  const summary = (
+    issue: IssueSummary,
+    scope: IssueRepositoryRef,
+    environmentId: EnvironmentId,
+    index: IssueWorkIndex,
+  ): IssueSummary => {
+    const key = scopeKey(environmentId, scope);
+    const ids = new Set((issue.liveWork ?? []).map((work) => work.threadId));
+    for (const thread of index.issues.get(key)?.get(issue.number) ?? []) ids.add(thread.id);
+    const threads = [...ids].map((id) => index.threads.get(threadKey(environmentId, id)));
+    let cached = summaries.get(issue);
+    if (cached === undefined) summaries.set(issue, (cached = new Map()));
+    const previous = cached.get(key);
+    if (previous !== undefined && sameItems(previous.threads, threads)) return previous.result;
+    const active = threads
+      .filter((thread) => thread !== undefined)
+      .filter((thread) => thread.archivedAt === null);
+    const inheritedIds = new Set(
+      (issue.liveWork ?? []).filter((work) => work.inherited).map((work) => work.threadId),
+    );
+    const liveWork = active.map((thread) => {
+      // An inherited subagent does not make a settled parent blue in the sidebar.
+      const status = resolveSidebarThreadStatus(thread);
+      return {
+        threadId: thread.id,
+        title: thread.title,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        pullRequests: thread.pullRequests
+          .filter((pr) => pr.source !== "stack-dismissed")
+          .map((pr) => pr.url),
+        status:
+          status === "working" && !inheritedIds.has(thread.id)
+            ? ("working" as const)
+            : status === "approval" || status === "input"
+              ? ("waiting_on_you" as const)
+              : ("idle" as const),
+      };
+    });
+    const pullRequests = issuePullRequests(
+      issue.closingPullRequests ?? issue.pullRequests ?? [],
+      active.flatMap((thread) => thread.pullRequests),
+    );
+    const hasDetails =
+      issue.pullRequests !== undefined ||
+      issue.closingPullRequests !== undefined ||
+      pullRequests.length > 0;
+    const result = {
+      ...issue,
+      ...(issue.liveWork !== undefined || liveWork.length > 0 ? { liveWork } : {}),
+      ...(hasDetails ? { pullRequests, pullRequestCount: pullRequests.length } : {}),
+    };
+    // Avoid replacing a server row whose observable work did not change.
+    const stable =
+      JSON.stringify(result) === JSON.stringify(previous?.result ?? issue)
+        ? (previous?.result ?? issue)
+        : result;
+    cached.set(key, { threads, result: stable });
+    return stable;
   };
+
+  const list = <T extends IssueListResult>(
+    source: T,
+    environmentId: EnvironmentId,
+    index: IssueWorkIndex,
+  ): T => {
+    let cached = lists.get(source);
+    if (cached === undefined) lists.set(source, (cached = new Map()));
+    let previous = cached.get(environmentId);
+    if (previous === undefined) {
+      previous = {
+        result: source,
+        associated: new Set(
+          source.issues
+            .filter((issue) => (issue.liveWork?.length ?? 0) > 0)
+            .map((issue) => issue.number),
+        ),
+        positions: new Map(source.issues.map((issue, position) => [issue.number, position])),
+      };
+      cached.set(environmentId, previous);
+    }
+    for (const number of index.issues.get(scopeKey(environmentId, source.repository))?.keys() ??
+      []) {
+      if (previous.positions.has(number)) previous.associated.add(number);
+    }
+    let issues: IssueSummary[] | undefined;
+    for (const number of previous.associated) {
+      const position = previous.positions.get(number)!;
+      const next = summary(source.issues[position]!, source.repository, environmentId, index);
+      if (next === previous.result.issues[position]) continue;
+      (issues ??= [...previous.result.issues])[position] = next;
+    }
+    if (issues !== undefined) previous.result = { ...source, issues };
+    return previous.result as T;
+  };
+  return { list, summary };
 }

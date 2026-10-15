@@ -249,7 +249,7 @@ it.effect("re-reads an open issue when an agent turn finishes", () =>
 );
 
 it.effect(
-  "Roadmap ignores turn-finished signals while Milestones preserves its refresh behavior",
+  "refreshes Roadmap and ordinary issue list associations after a link change on the existing environment refresh stream",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -326,8 +326,8 @@ it.effect(
         const unmountRoadmap = registry.mount(roadmap);
         yield* Effect.addFinalizer(() => Effect.sync(unmountRoadmap));
         yield* AtomRegistry.getResult(registry, roadmap, { suspendOnWaiting: true });
-        expect(signalReads).toBe(0);
-        const milestones = queries.liveList({ environmentId, input });
+        expect(signalReads).toBe(1);
+        const milestones = queries.list({ environmentId, input });
         const unmountMilestones = registry.mount(milestones);
         yield* Effect.addFinalizer(() => Effect.sync(unmountMilestones));
         yield* AtomRegistry.getResult(registry, milestones, { suspendOnWaiting: true });
@@ -335,7 +335,7 @@ it.effect(
         registry.set(counter, AsyncResult.success(1));
         yield* Deferred.await(secondRead);
         yield* AtomRegistry.getResult(registry, roadmap, { suspendOnWaiting: true });
-        expect(reads).toEqual(["roadmap", "milestones", "milestones"]);
+        expect(reads).toEqual(["roadmap", "milestones", "roadmap", "milestones"]);
       }),
     ),
 );

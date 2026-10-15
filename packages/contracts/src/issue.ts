@@ -57,6 +57,7 @@ export const IssuePullRequest = Schema.Struct({
   /** Null until a linked thread's pull request has its first host snapshot. */
   state: Schema.NullOr(PullRequestState),
   isDraft: Schema.Boolean,
+  updatedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
 });
 export type IssuePullRequest = typeof IssuePullRequest.Type;
 
@@ -102,12 +103,16 @@ export const IssueSummary = Schema.Struct({
   /** Count of the deduplicated closing and linked-thread pull requests. */
   pullRequestCount: Schema.optional(NonNegativeInt),
   pullRequests: Schema.optional(Schema.Array(IssuePullRequest)),
+  /** GitHub closing references only; thread PRs are added from current associations. */
+  closingPullRequests: Schema.optional(Schema.Array(IssuePullRequest)),
   /** GitHub's sub-issue tally; absent on older servers and hosts without sub-issues. */
   subIssues: Schema.optional(Schema.Struct({ total: NonNegativeInt, completed: NonNegativeInt })),
   liveWork: Schema.optional(
     Schema.Array(
       Schema.Struct({
         threadId: ThreadId,
+        /** Descendant work is visible, but only the directly linked thread drives running status. */
+        inherited: Schema.optional(Schema.Boolean),
         title: Schema.String,
         branch: Schema.NullOr(Schema.String),
         worktreePath: Schema.NullOr(Schema.String),

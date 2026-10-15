@@ -181,7 +181,7 @@ export function useOpenChangeRequestLink(
       const exactProject = findProjectForChangeRequest(projects, parsed);
       const project =
         exactProject ??
-        (resolvedPanelRef
+        (resolvedPanelRef || targetEnvironmentId
           ? findProjectOnChangeRequestHost(
               projects.filter(
                 (candidate) =>

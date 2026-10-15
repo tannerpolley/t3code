@@ -47,6 +47,7 @@ const PullRequestRef = Schema.Struct({
   url: Schema.optional(Schema.String),
   state: Schema.optional(Schema.Literals(["OPEN", "CLOSED", "MERGED"])),
   isDraft: Schema.optional(Schema.Boolean),
+  updatedAt: Schema.optional(Schema.String),
 });
 const Response = Schema.Struct({
   errors: Schema.optional(
@@ -163,7 +164,7 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
             page.pullRequestCursor === undefined
               ? ""
               : `closedByPullRequestsReferences(first: 100, after: $pullRequest${index}, includeClosedPrs: true) {
-            nodes { number title url state isDraft repository { nameWithOwner } }
+            nodes { number title url state isDraft updatedAt repository { nameWithOwner } }
             pageInfo { hasNextPage endCursor }
           }`
           }
@@ -234,6 +235,7 @@ export const readIssueListMetadata = Effect.fn("IssueService.readIssueListMetada
                     ? "merged"
                     : "closed",
             isDraft: pr.isDraft ?? false,
+            ...(pr.updatedAt === undefined ? {} : { updatedAt: pr.updatedAt }),
           });
         }
         pullRequests.set(page.number, prs);

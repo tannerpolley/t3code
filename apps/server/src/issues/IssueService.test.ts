@@ -1365,6 +1365,7 @@ it.effect(
               url: `https://github.com/${REPOSITORY}/pull/20`,
               state: "OPEN",
               isDraft: true,
+              updatedAt: "2026-10-15T00:00:00Z",
               repository: { nameWithOwner: REPOSITORY },
             },
           ],
@@ -1429,6 +1430,7 @@ it.effect(
           url: `https://github.com/${REPOSITORY}/pull/20`,
           state: "open",
           isDraft: true,
+          updatedAt: "2026-10-15T00:00:00Z",
         },
       ]);
       assert.deepEqual(result.issues[1]?.blockedBy, []);

@@ -111,6 +111,7 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:list",
       tag: WS_METHODS.issuesList,
       staleTimeMs: 30_000,
+      refreshTrigger,
     }),
     /**
      * One repository's list shown beside a thread, kept live while agents work on its issues.
@@ -123,12 +124,13 @@ export function createIssueEnvironmentAtoms<R, E>(
       refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
       refreshTrigger,
     }),
-    /** Roadmap page one: polled like `liveList`, but agent turns finishing do not re-read it. */
+    /** Roadmap page one also observes link changes through the existing refresh stream. */
     roadmapList: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:roadmap-list",
       tag: WS_METHODS.issuesList,
       staleTimeMs: 30_000,
       refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
+      refreshTrigger,
     }),
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:detail",

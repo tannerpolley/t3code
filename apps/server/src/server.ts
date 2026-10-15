@@ -759,10 +759,6 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
-  // Both transports consume the same service instance, so caches single-flight across clients
-  // and mutations observed on WebSocket invalidate patches subsequently read over HTTP. Provided
-  // after the guide service so it reaches that too.
-  Layer.provide(layerPullRequestService),
   // The stream route and the WebSocket RPCs share one browser.
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
   // Server browser tabs and HTML render previews install and run the same headless browser.
@@ -776,6 +772,8 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   Layer.provide(IssueLinks.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   Layer.provide(layerIssueService),
+  // One PR service and refresh stream for transports, review guides, and issue link changes.
+  Layer.provide(layerPullRequestService),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),

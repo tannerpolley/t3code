@@ -4,37 +4,56 @@ import type {
   EnvironmentId,
   IssueListInput,
   IssueListResult,
+  IssueRepositoryRef,
+  IssueSummary,
   IssueRepositoriesResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { useThreadShells, useAllEnvironmentShellsBootstrapped } from "./entities";
-import { withLiveIssueWork } from "../components/issues/issueLiveWork.logic";
+import { useAllEnvironmentShellsBootstrapped } from "./entities";
+import { environmentThreadShells } from "./threads";
+import {
+  createLiveIssueWorkOverlay,
+  indexIssueWork,
+} from "../components/issues/issueLiveWork.logic";
+
+const issueWorkIndexAtom = Atom.make((get) =>
+  indexIssueWork(get(environmentThreadShells.threadShellsAtom)),
+);
 
 export const issueEnvironment = createIssueEnvironmentAtoms(connectionAtomRuntime);
 
 /** Apply streamed work after GitHub paging, whose freshness is keyed by fetchedAt. */
 export function useLiveIssueWork() {
-  const shells = useThreadShells();
+  const index = useAtomValue(issueWorkIndexAtom);
+  const overlay = useMemo(() => createLiveIssueWorkOverlay(), []);
   const ready = useAllEnvironmentShellsBootstrapped();
   return useCallback(
     <T extends IssueListResult>(list: T, environmentId: EnvironmentId): T => {
       if (!ready) return list;
-      return {
-        ...list,
-        ...withLiveIssueWork(
-          list,
-          shells.filter((thread) => thread.environmentId === environmentId),
-        ),
-      };
+      return overlay.list(list, environmentId, index);
     },
-    [ready, shells],
+    [ready, index, overlay],
   );
+}
+
+/** The durable Linked issue row uses the same shell overlay as repository issue rows. */
+export function useLiveIssueSummary(
+  issue: IssueSummary | undefined,
+  scope: IssueRepositoryRef,
+  environmentId: EnvironmentId,
+) {
+  const index = useAtomValue(issueWorkIndexAtom);
+  const ready = useAllEnvironmentShellsBootstrapped();
+  const overlay = useMemo(() => createLiveIssueWorkOverlay(), []);
+  return !ready || issue === undefined
+    ? issue
+    : overlay.summary(issue, scope, environmentId, index);
 }
 
 export interface IssueListTarget {
@@ -64,7 +83,7 @@ interface IssueListsView {
 }
 
 // Only first pages are kept live: the Roadmap's, and a one-repository pane's, which also re-reads
-// when agent turns finish. Later pages and the many-repository page retain ordinary reads.
+// when links change or agent turns finish. Later pages also observe those refresh signals.
 const issueListAtom = (target: IssueListTarget) =>
   (target.input.cursor !== undefined
     ? issueEnvironment.list

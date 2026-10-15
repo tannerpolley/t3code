@@ -145,7 +145,11 @@ export function IssueRow({
         />
       </button>
       <span className="mt-0.75 shrink-0 self-start">
-        <IssuePullRequests pullRequests={issue.pullRequests ?? []} environmentId={environmentId} />
+        <IssuePullRequests
+          pullRequests={issue.pullRequests}
+          count={issue.pullRequestCount}
+          environmentId={environmentId}
+        />
       </span>
     </div>
   );

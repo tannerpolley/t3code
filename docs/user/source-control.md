@@ -258,11 +258,15 @@ details.
 
 In the Issues pane, turn on **Roadmap view** for a repository (at the top of **Filter** when the
 pane shows one repository) for its open issues in dependency order, with **In progress**,
-**Ready**, and **Blocked** sections. Within a section, open blockers and sub-issues come before
-the issues that depend on them; closed blockers no longer hold work back. The view choice is
-remembered per repository. An issue with any linked thread stays **In progress**, including when
-that thread is idle. A thread’s own linked pull request also associates it with the issues that
-GitHub identifies that pull request as closing.
+**In review**, **Ready**, and **Blocked** sections. Within a section, open blockers and sub-issues
+come before the issues that depend on them; closed blockers no longer hold work back. The view
+choice is remembered per repository. **In progress** follows a linked thread's running indicator;
+waiting for a question or approval does not count as running. With no running agent, an open linked
+pull request puts the issue **In review**. An open blocker keeps the issue **Blocked**. GitHub Project
+status does not change these sections or the issue icon. A thread’s own linked pull request also
+associates it with the issues that GitHub identifies that pull request as closing.
+Select a pull request on an issue row to open it, or select the count to choose among several.
+These links follow **Open pull requests in T3 Code**; middle-click opens them in the browser.
 Select a work indicator to open its linked thread; hover to see the thread's branch, worktree and
 pull requests. To include work started outside **Start agent**, ask the agent to link the issue it
 is working on. Ordinary threads and delegated workers can both link issues.
