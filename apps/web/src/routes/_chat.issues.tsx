@@ -5,6 +5,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { IssueBrowser, useIssueRepositoryTargets } from "../components/issues/IssueBrowser";
+import { useIssuePageCopyShortcut } from "../components/issues/useIssueReferenceCopyTarget";
 import { IssueDetailPanel } from "../components/issues/IssueDetailPanel";
 import { sameRepository } from "../components/issues/issueWorkspace.logic";
 import { RightPanelTabs } from "../components/RightPanelTabs";
@@ -106,6 +107,7 @@ function IssuesRouteView() {
   const navigate = useNavigate({ from: Route.fullPath });
   const isNarrow = useMediaQuery("max-md");
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  useIssuePageCopyShortcut();
   const repositories = useIssueRepositoryTargets();
   const { repositoryTargets } = repositories;
   const originThreadRef = useMemo<ScopedThreadRef | null>(

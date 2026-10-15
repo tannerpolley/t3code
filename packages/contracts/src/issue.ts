@@ -113,6 +113,8 @@ export const IssueSummary = Schema.Struct({
         threadId: ThreadId,
         /** Descendant work is visible, but only the directly linked thread drives running status. */
         inherited: Schema.optional(Schema.Boolean),
+        /** An ordinary issue link, removable without altering managed work or PRs. */
+        canUnlink: Schema.optional(Schema.Boolean),
         title: Schema.String,
         branch: Schema.NullOr(Schema.String),
         worktreePath: Schema.NullOr(Schema.String),

@@ -222,6 +222,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.issuesRepositories]: "issues",
   [WS_METHODS.issuesList]: "issues",
   [WS_METHODS.issuesDetail]: "issues",
+  [WS_METHODS.issuesSetState]: "issues",
+  [WS_METHODS.issuesUnlink]: "issues",
   [WS_METHODS.issuesSubscribeLinkRefreshes]: "issues",
   [WS_METHODS.issuesStart]: "issues",
   [WS_METHODS.issuesWorkStatus]: "issues",

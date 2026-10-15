@@ -97,6 +97,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useIssueReferenceCopyTarget } from "./issues/useIssueReferenceCopyTarget";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import {
@@ -160,6 +161,7 @@ import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   PULL_REQUESTS_PANEL_REF,
+  ISSUES_PANEL_REF,
   selectActiveRightPanel,
   useRightPanelStore,
 } from "../rightPanelStore";
@@ -678,23 +680,29 @@ function OpenCommandPaletteDialog(props: {
         )
         ? PULL_REQUESTS_PANEL_REF
         : null
-      : activeThread
-        ? scopeThreadRef(activeThread.environmentId, activeThread.id)
-        : null;
+      : pathname === "/issues"
+        ? ISSUES_PANEL_REF
+        : activeThread
+          ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+          : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
+  const issueReferenceCopyTarget = useIssueReferenceCopyTarget(referenceThreadRef);
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
   const activeThreadReferenceCopyTarget =
-    referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
+    referenceThreadRef === null ||
+    (pathname === "/pull-requests" && !openPanelPullRequestUrl) ||
+    (pathname === "/issues" && issueReferenceCopyTarget === null)
       ? null
-      : resolveThreadReferenceCopyTarget({
+      : (issueReferenceCopyTarget ??
+        resolveThreadReferenceCopyTarget({
           threadId: referenceThreadRef.threadId,
           openPanelPullRequestUrl,
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl:
             activeThread?.linkedPullRequest?.url ?? activeThread?.branchPullRequest?.url ?? null,
-        });
+        }));
   const copyActiveThreadReference = useCallback(async () => {
     const target = activeThreadReferenceCopyTarget;
     if (target === null) return;
@@ -1984,9 +1992,13 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:copy-thread-reference",
-      searchTerms: ["copy", "pull request", "pr link", "thread id", "reference"],
+      searchTerms: ["copy", "pull request", "pr link", "issue link", "thread id", "reference"],
       title:
-        activeThreadReferenceCopyTarget.kind === "pull-request" ? "Copy PR link" : "Copy thread ID",
+        activeThreadReferenceCopyTarget.kind === "issue"
+          ? "Copy issue link"
+          : activeThreadReferenceCopyTarget.kind === "pull-request"
+            ? "Copy PR link"
+            : "Copy thread ID",
       description: activeThreadReferenceCopyTarget.value,
       icon: <LinkIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.copyReference",

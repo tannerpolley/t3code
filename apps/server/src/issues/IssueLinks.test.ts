@@ -107,6 +107,11 @@ it.effect(
         true,
       );
       assert.equal((yield* sql`SELECT * FROM issue_thread_links`).length, 3);
+      assert.isTrue(
+        (yield* links.enrich(list())).issues[0]?.liveWork?.find(
+          (work) => work.threadId === threadId,
+        )?.canUnlink,
+      );
       assert.equal((yield* links.link(ref, threadId, true)).changed, true);
       assert.equal((yield* links.link(ref, threadId, true)).changed, false);
       assert.equal(yield* Stream.runHead(links.refreshes).pipe(Effect.map(Option.getOrThrow)), 4);
@@ -316,6 +321,10 @@ it.effect(
         ],
       );
       const work = first.issues[0]!.liveWork!;
+      assert.deepEqual(
+        work.filter((item) => item.canUnlink).map((item) => item.threadId),
+        [managed.id, threadId],
+      );
       assert.deepEqual(
         work.map((item) => [item.threadId, item.status]),
         [

@@ -272,7 +272,7 @@ function CollapsedComment({
   );
 }
 
-function MetaRow({
+export function MetaRow({
   icon,
   label,
   children,
@@ -287,12 +287,12 @@ function MetaRow({
         {icon}
         {label}
       </span>
-      <span className="min-w-0 text-foreground">{children}</span>
+      <div className="min-w-0 text-foreground">{children}</div>
     </div>
   );
 }
 
-function Section({
+export function Section({
   title,
   defaultOpen = true,
   keepMounted = false,

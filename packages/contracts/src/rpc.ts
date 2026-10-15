@@ -187,7 +187,9 @@ import {
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
+import { IssueLinkInput, IssueLinkResult, IssueLinkError } from "./issueLinks.ts";
 import {
+  IssueRef,
   IssueDetailInput,
   IssueDetailResult,
   IssueListInput,
@@ -588,6 +590,8 @@ export const WS_METHODS = {
   issuesRepositories: "issues.repositories",
   issuesList: "issues.list",
   issuesDetail: "issues.detail",
+  issuesSetState: "issues.setState",
+  issuesUnlink: "issues.unlink",
   issuesSubscribeLinkRefreshes: "issues.subscribeLinkRefreshes",
   issuesStart: "issues.start",
   issuesWorkStatus: "issues.workStatus",
@@ -1065,6 +1069,17 @@ const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
   payload: IssueDetailInput,
   success: IssueDetailResult,
   error: IssueRpcError,
+});
+
+const WsIssuesSetStateRpc = Rpc.make(WS_METHODS.issuesSetState, {
+  payload: Schema.Struct({ ...IssueRef.fields, state: Schema.Literals(["open", "closed"]) }),
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+const WsIssuesUnlinkRpc = Rpc.make(WS_METHODS.issuesUnlink, {
+  payload: Schema.Struct({ ...IssueLinkInput.fields, threadId: ThreadId }),
+  success: IssueLinkResult,
+  error: Schema.Union([IssueLinkError, EnvironmentAuthorizationError]),
 });
 
 const WsIssuesStartRpc = Rpc.make(WS_METHODS.issuesStart, {
@@ -2151,6 +2166,8 @@ const forkWsRpcs = [
   WsIssuesRepositoriesRpc,
   WsIssuesListRpc,
   WsIssuesDetailRpc,
+  WsIssuesSetStateRpc,
+  WsIssuesUnlinkRpc,
   WsIssuesSubscribeLinkRefreshesRpc,
   WsIssuesStartRpc,
   WsIssuesWorkStatusRpc,
@@ -2379,6 +2396,8 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issuesRepositories,
   WS_METHODS.issuesList,
   WS_METHODS.issuesDetail,
+  WS_METHODS.issuesSetState,
+  WS_METHODS.issuesUnlink,
   WS_METHODS.issuesSubscribeLinkRefreshes,
   WS_METHODS.issuesStart,
   WS_METHODS.issuesWorkStatus,

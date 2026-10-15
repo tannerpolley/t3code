@@ -34,6 +34,11 @@ import {
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
+  it("guards issue state writes and unlink separately", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.issuesSetState)).toBe(AuthSourceControlWriteScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.issuesUnlink)).toBe(AuthOrchestrationOperateScope);
+  });
+
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });

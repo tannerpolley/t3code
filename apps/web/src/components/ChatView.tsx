@@ -365,6 +365,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
+import { useIssueReferenceCopyTarget } from "./issues/useIssueReferenceCopyTarget";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import {
@@ -7002,22 +7003,25 @@ export default function ChatView(props: ChatViewProps) {
     publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
   }, [composerMounted, composerOverlayElement, publishComposerOverlayHeightStable]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
+  const issueReferenceCopyTarget = useIssueReferenceCopyTarget(activeThreadRef);
   const activeThreadReferenceCopyTarget = useMemo(
     () =>
       activeThreadId === null || !isServerThread
         ? null
-        : resolveThreadReferenceCopyTarget({
+        : (issueReferenceCopyTarget ??
+          resolveThreadReferenceCopyTarget({
             threadId: activeThreadId,
             openPanelPullRequestUrl,
             pullRequests: activeThread?.pullRequests,
             linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
-          }),
+          })),
     [
       activeThreadId,
       isServerThread,
       activeThread?.pullRequests,
       linkedThreadPullRequest?.url,
       openPanelPullRequestUrl,
+      issueReferenceCopyTarget,
     ],
   );
   const copyActiveThreadReference = () => {

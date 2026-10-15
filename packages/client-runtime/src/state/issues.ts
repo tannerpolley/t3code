@@ -31,8 +31,12 @@ export function createIssueEnvironmentAtoms<R, E>(
     label: "environment-data:issues:link-refreshes",
     tag: WS_METHODS.issuesSubscribeLinkRefreshes,
   });
+  const localChanges = Atom.family((_environmentId: EnvironmentId) => Atom.make(0));
   const linkRefreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
-    linkRefreshes({ environmentId, input: {} });
+    Atom.make((get) => [
+      get(linkRefreshes({ environmentId, input: {} })),
+      get(localChanges(environmentId)),
+    ]);
   const changeRefreshes = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:issues:change-refreshes",
     tag: WS_METHODS.issueChangesSubscribe,
@@ -59,6 +63,16 @@ export function createIssueEnvironmentAtoms<R, E>(
       tag: WS_METHODS.issueChangesList,
       staleTimeMs: 60_000,
       refreshTrigger: (target) => changeRefreshes(target),
+    }),
+    setState: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:set-state",
+      tag: WS_METHODS.issuesSetState,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
+    }),
+    unlink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:unlink",
+      tag: WS_METHODS.issuesUnlink,
     }),
     decideChange: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:decide-change",

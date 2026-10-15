@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import * as SidebarLayout from "./sidebarLayout.ts";
 import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
+import * as IssueLinks from "./issues/IssueLinks.ts";
 import * as IssueInbox from "./issues/IssueInbox.ts";
 import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
 import * as IssueService from "./issues/IssueService.ts";
@@ -27,6 +28,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const inlineShell = yield* InlineShellRuns;
       const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
       const issues = yield* IssueService.IssueService;
+      const issueLinks = yield* IssueLinks.IssueLinks;
       const roadmap = yield* IssueRoadmap.IssueRoadmap;
       const issueWork = yield* IssueWorkService.IssueWorkService;
       const issueChanges = yield* IssueChangeService.IssueChangeService;
@@ -67,6 +69,8 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
           }),
         [WS_METHODS.issuesRepositories]: () => issues.repositories(),
         [WS_METHODS.issuesList]: (input) => roadmap.list(input),
+        [WS_METHODS.issuesSetState]: (input) => issues.setState(input),
+        [WS_METHODS.issuesUnlink]: (input) => issueLinks.link(input, undefined, true),
         [WS_METHODS.issuesDetail]: (input) => roadmap.detail(input),
         [WS_METHODS.issuesSubscribeLinkRefreshes]: () => roadmap.linkRefreshes,
         [WS_METHODS.issuesInboxList]: (input) => inbox.list(input),

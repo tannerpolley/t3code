@@ -531,3 +531,30 @@ it.effect("guards inline shell launch and input against the destination terminal
     }),
   ),
 );
+
+it.effect("issue state and unlink writes check the destination's exact grant", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const issues = createIssueEnvironmentAtoms(runtime);
+      const statePermission = issues.setState.permissionAtom(env);
+      const unlinkPermission = issues.unlink.permissionAtom(env);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({ ...grant(true), permissions: [AuthSourceControlWriteScope] }),
+      );
+      expect(registry.get(statePermission)).toBe(true);
+      expect(registry.get(unlinkPermission)).toBe(false);
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(statePermission)).toBe(false);
+      expect(registry.get(unlinkPermission)).toBe(true);
+      const failed = yield* Effect.promise(() =>
+        issues.setState.run(registry, {
+          environmentId: env,
+          input: { host: "github.com", repository: "owner/repo", number: 44, state: "closed" },
+        }),
+      );
+      expect(failed._tag).toBe("Failure");
+    }),
+  ),
+);

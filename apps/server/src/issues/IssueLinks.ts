@@ -141,6 +141,7 @@ const make = Effect.gen(function* () {
       refs.add(number);
       refsByThread.set(threadId, refs);
     };
+    const removableLinks = new Set(rows.map((row) => `${row.thread_id}:${row.issue_number}`));
     for (const row of rows) add(row.thread_id, row.issue_number);
     const issuesByPr = new Map<string, Set<number>>();
     for (const issue of list.issues)
@@ -203,6 +204,7 @@ const make = Effect.gen(function* () {
         linked.push({
           ...item,
           inherited,
+          canUnlink: removableLinks.has(`${thread.id}:${number}`),
           status: inherited && state === "working" ? "idle" : state,
         });
         work.set(number, linked);

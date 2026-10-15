@@ -11,6 +11,7 @@ export function PullRequestDetailHeaderBody({
   author,
   updated,
   checkout,
+  branchLine,
   base,
   head,
   files,
@@ -20,10 +21,11 @@ export function PullRequestDetailHeaderBody({
   author: ReactNode;
   updated: ReactNode;
   checkout?: ReactNode;
-  base: ReactNode;
-  head: ReactNode;
-  files: ReactNode;
-  diffStat: ReactNode;
+  branchLine?: ReactNode;
+  base?: ReactNode;
+  head?: ReactNode;
+  files?: ReactNode;
+  diffStat?: ReactNode;
 }) {
   return (
     <div className="col-span-2 mt-1 min-w-0 px-4 pb-4">
@@ -36,21 +38,25 @@ export function PullRequestDetailHeaderBody({
         {checkout}
       </div>
       <div className="mt-4 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
-          {base}
-          <ArrowLeftIcon
-            aria-label="receives changes from"
-            className="size-3.5 shrink-0 opacity-60"
-          />
-          {head}
-        </span>
-        <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
-          <span className="inline-flex min-w-16 items-center justify-end gap-1.5 tabular-nums">
-            <FileDiffIcon aria-hidden className="size-3.5" />
-            {files}
-          </span>
-          {diffStat}
-        </span>
+        {branchLine ?? (
+          <>
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
+              {base}
+              <ArrowLeftIcon
+                aria-label="receives changes from"
+                className="size-3.5 shrink-0 opacity-60"
+              />
+              {head}
+            </span>
+            <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
+              <span className="inline-flex min-w-16 items-center justify-end gap-1.5 tabular-nums">
+                <FileDiffIcon aria-hidden className="size-3.5" />
+                {files}
+              </span>
+              {diffStat}
+            </span>
+          </>
+        )}
       </div>
     </div>
   );
@@ -63,6 +69,7 @@ export function PullRequestDetailTitleRow({ className, ...props }: ComponentProp
 }
 
 export function PullRequestDetailTabBar<Tab extends string>({
+  label = "Pull request tabs",
   tabs,
   value,
   onValueChange,
@@ -70,6 +77,7 @@ export function PullRequestDetailTabBar<Tab extends string>({
   inert,
   children,
 }: {
+  label?: string;
   tabs: ReadonlyArray<{ readonly value: Tab; readonly label: string }>;
   value: Tab;
   onValueChange?: (tab: Tab) => void;
@@ -80,7 +88,7 @@ export function PullRequestDetailTabBar<Tab extends string>({
   return (
     <nav
       className="col-span-2 flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2"
-      aria-label="Pull request tabs"
+      aria-label={label}
       inert={inert}
     >
       <ToggleGroup
