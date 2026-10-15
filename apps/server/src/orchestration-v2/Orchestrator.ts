@@ -12662,18 +12662,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     awaitRestartContinuation: (run) =>
       effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore),
     dispatch: dispatchWithReceipt,
+    // Issue reads can wait on GitHub, so they run before the lock, as in dispatchWithReceipt.
     dispatchDelegatedRequestWake: (task, request, command) =>
-      threadDispatch.withLock(
-        task.threadId,
-        Effect.gen(function* () {
-          const allowed = yield* canWakeDelegatedRequest(projectionStore, task, request).pipe(
-            Effect.mapError(
-              (cause) => new OrchestratorProjectionError({ threadId: task.threadId, cause }),
-            ),
-          );
-          if (allowed) yield* dispatchWithReceipt(command);
-        }),
-      ),
+      Effect.gen(function* () {
+        const receipt = yield* commandReceipts
+          .getByCommandId(command.commandId)
+          .pipe(mapDispatchError(command));
+        const issueReads = Option.isNone(receipt)
+          ? yield* readIssueSnapshots(command.threadId).pipe(mapDispatchError(command))
+          : [];
+        yield* threadDispatch.withLock(
+          command.threadId,
+          Effect.gen(function* () {
+            const allowed = yield* canWakeDelegatedRequest(projectionStore, task, request).pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: task.threadId, cause }),
+              ),
+            );
+            if (!allowed) return;
+            yield* dispatchWithReceiptEffect({ ...command, issueReads }).pipe(
+              Effect.provideService(IssueReadSnapshots, issueReads),
+            );
+          }),
+        );
+      }),
     searchThreadStream: (input) =>
       projectionStore
         .searchThreadStream(input)
