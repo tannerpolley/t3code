@@ -164,20 +164,32 @@ export function migrateSidebarLayout(
   };
 }
 
+/** Resolve aliases in request order so layout reorders reach the server unchanged. */
 export function sidebarProjectRefsForKeys(
   groups: readonly SidebarProjectSnapshot[],
   keys: readonly string[],
 ): ScopedProjectRef[] {
-  const requested = new Set(keys);
-  return groups.flatMap((group) =>
-    requested.has(group.projectKey)
-      ? [...group.memberProjectRefs]
-      : group.memberProjects
-          .filter(
-            (member) =>
-              requested.has(derivePhysicalProjectKey(member)) ||
-              requested.has(member.environmentId + ":" + member.id),
-          )
-          .map((member) => ({ environmentId: member.environmentId, projectId: member.id })),
+  const refsByKey = new Map<string, ScopedProjectRef[]>();
+  const add = (key: string, refs: readonly ScopedProjectRef[]) => {
+    const existing = refsByKey.get(key);
+    if (existing) existing.push(...refs);
+    else refsByKey.set(key, [...refs]);
+  };
+  for (const group of groups) {
+    add(group.projectKey, group.memberProjectRefs);
+    for (const member of group.memberProjects) {
+      const refs = [{ environmentId: member.environmentId, projectId: member.id }];
+      add(derivePhysicalProjectKey(member), refs);
+      add(member.environmentId + ":" + member.id, refs);
+    }
+  }
+  const seen = new Set<string>();
+  return keys.flatMap((key) =>
+    (refsByKey.get(key) ?? []).filter((ref) => {
+      const id = JSON.stringify([ref.environmentId, ref.projectId]);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    }),
   );
 }

@@ -4,13 +4,17 @@ import {
   EnvironmentId,
   ProjectId,
   type SidebarProjectGroupingMode,
+  type SidebarLayout,
 } from "@t3tools/contracts";
 import type { Project } from "./types";
 import { buildSidebarProjectSnapshots } from "./sidebarProjectGrouping";
 import { derivePhysicalProjectKey } from "./logicalProject";
+import { applySidebarLayoutMutation } from "@t3tools/shared/sidebarLayout";
+import { resolveProjectDrop } from "./components/sidebar/SidebarProjectSections.logic";
 import {
   migrateSidebarLayout,
   projectSidebarLayout,
+  sidebarProjectRefsForKeys,
   sidebarSectionKey,
 } from "./sidebarLayoutProjection";
 import { createLegacySidebarRetirement } from "./sidebarLayoutMigration";
@@ -57,6 +61,92 @@ const layout = {
 };
 
 describe("shared sidebar projection", () => {
+  it.each([
+    { dragged: "process-monitor", over: "stimulant-tracker", order: [0, 4, 1, 2, 3] },
+    { dragged: "monitor-control", over: "fly-tree", order: [0, 1, 3, 2, 4] },
+  ])(
+    "keeps a $dragged reorder through server ID translation and projection",
+    ({ dragged, over, order }) => {
+      const names = [
+        "t3code",
+        "stimulant-tracker",
+        "monitor-control",
+        "fly-tree",
+        "process-monitor",
+      ];
+      const snapshot = groups(
+        names.map((name) => project(name)),
+        "separate",
+      );
+      const key = (name: string) =>
+        snapshot.find((group) => group.displayName === name)!.projectKey;
+      const initial = {
+        ...EMPTY_SIDEBAR_LAYOUT,
+        sidebarProjectSections: [
+          { id: "applications", name: "Applications", collapsed: false, projectKeys: names },
+        ],
+      };
+      const projectLayout = (state: SidebarLayout) =>
+        projectSidebarLayout({
+          layouts: new Map([[local, state]]),
+          groups: snapshot,
+          primaryEnvironmentId: local,
+        });
+      const section = projectLayout(initial).sidebarProjectSections[0]!;
+      const drop = resolveProjectDrop({
+        projectKey: key(dragged),
+        over: { type: "project", projectKey: key(over) },
+        sections: [{ ...section, custom: true }],
+      })!;
+      const projectKeys = sidebarProjectRefsForKeys(snapshot, drop.projectKeys!).map(
+        (ref) => ref.projectId,
+      );
+      const updated = applySidebarLayoutMutation(initial, {
+        type: "sectionProjectsOrder",
+        sectionId: "applications",
+        projectKeys,
+      })!;
+      const expected = order.map((index) => names[index]!);
+      expect(updated.sidebarProjectSections[0]!.projectKeys).toEqual(expected);
+      expect(projectLayout(updated).sidebarProjectSections[0]!.projectKeys).toEqual(
+        expected.map(key),
+      );
+      expect(updated.projectOrder).toEqual(initial.projectOrder);
+    },
+  );
+
+  it("resolves grouped, physical and legacy keys in request order, once per scoped project", () => {
+    const clone = project("clone", local, identity);
+    const copy = project("clone", remote, { ...identity, rootPath: "/work/copy" });
+    const other = project("other");
+    const snapshot = groups([clone, copy, other]);
+    const groupedKey = snapshot.find((group) => group.groupedProjectCount === 2)!.projectKey;
+    expect(
+      sidebarProjectRefsForKeys(snapshot, [
+        derivePhysicalProjectKey(other),
+        local + ":clone",
+        groupedKey,
+        remote + ":clone",
+        derivePhysicalProjectKey(clone),
+        "missing",
+      ]),
+    ).toEqual([
+      { environmentId: local, projectId: "other" },
+      { environmentId: local, projectId: "clone" },
+      { environmentId: remote, projectId: "clone" },
+    ]);
+  });
+
+  it("retains every project ID when a physical key is also a grouped row's key", () => {
+    const first = project("first", local, identity);
+    const second = { ...project("second", local, identity), workspaceRoot: first.workspaceRoot };
+    const snapshot = groups([first, second], "separate");
+    expect(sidebarProjectRefsForKeys(snapshot, [derivePhysicalProjectKey(first)])).toEqual([
+      { environmentId: local, projectId: "first" },
+      { environmentId: local, projectId: "second" },
+    ]);
+  });
+
   it("keeps an unavailable environment's legacy sections across reload and saves fallback before any edit", () => {
     const storage = new Map<string, string>();
     const localStorage = {

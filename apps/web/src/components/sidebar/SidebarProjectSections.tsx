@@ -1219,8 +1219,8 @@ function ProjectDragPreview(props: { readonly project: SidebarProjectSnapshot | 
 /** A zero-height marker, so showing it never shifts the rows around it. */
 function ProjectDropLine() {
   return (
-    <li aria-hidden className="relative h-0 list-none">
-      <span className="absolute inset-x-2 -top-px h-0.5 rounded-full bg-accent" />
+    <li aria-hidden className="pointer-events-none relative z-10 h-0 list-none">
+      <span className="absolute inset-x-2 -top-px h-0.5 rounded-full bg-primary" />
     </li>
   );
 }
