@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
@@ -159,6 +160,7 @@ export class ProjectService extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const commandReceipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
@@ -253,6 +255,12 @@ export const make = Effect.gen(function* () {
       new ProjectOperationError({ operation: "dispatch-project-command", projectId, cause });
     const workspaceRoot = command.type === "project.delete" ? undefined : command.workspaceRoot;
     const planAndCommit = Effect.gen(function* () {
+      // Check under the project lock before changing settings, outside SQLite's transaction.
+      const priorReceipt = yield* commandReceipts.getProjectByCommandId(command.commandId);
+      if (Option.isSome(priorReceipt)) return priorReceipt.value;
+      if (Option.isSome(yield* commandReceipts.getByCommandId(command.commandId))) {
+        return yield* dispatchError("The command ID belongs to a thread command.");
+      }
       const project = Option.getOrUndefined(yield* readRow(projectId, { includeDeleted: true }));
       const workspaceOwner =
         workspaceRoot === undefined
@@ -301,26 +309,25 @@ export const make = Effect.gen(function* () {
           }
           return event;
         })();
-        const persist = Effect.gen(function* () {
-          if (beforeCommit !== undefined) yield* beforeCommit;
-          if (foldedScripts) {
-            yield* serverSettings.updateSettingsWith((current) => ({
-              projectSettingsOverrides: {
-                [projectId]: {
-                  ...current.projectSettingsOverrides[projectId],
-                  defaultProjectScripts: scripts,
-                },
+        // Settings revalidation takes its semaphore before reading SQLite. Never
+        // acquire that semaphore from the event sink's transaction callback.
+        if (foldedScripts) {
+          yield* serverSettings.updateSettingsWith((current) => ({
+            projectSettingsOverrides: {
+              [projectId]: {
+                ...current.projectSettingsOverrides[projectId],
+                defaultProjectScripts: scripts,
               },
-            }));
-          }
-        });
+            },
+          }));
+        }
         const { receipt } = yield* eventSink.commitProjectCommand({
           commandId: command.commandId,
           projectId,
           commandType: command.type,
           acceptedAt: now,
           event: storedEvent,
-          beforeCommit: persist,
+          ...(beforeCommit === undefined ? {} : { beforeCommit }),
         });
         return receipt;
       }
@@ -345,8 +352,7 @@ export const make = Effect.gen(function* () {
         `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
       );
     }
-    // A retried command re-plans against the state it already produced, so its
-    // first receipt, not the new plan, decides the outcome.
+    // The recorded receipt decides the outcome even if the project has since changed.
     if (receipt.status === "accepted") return;
     const rejection = Option.getOrUndefined(decodeProjectCommandRejection(receipt.error));
     switch (rejection?._tag) {
@@ -733,4 +739,5 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(ProjectService, make).pipe(
   Layer.provideMerge(SidebarLayout.layer),
   Layer.provide(ThreadCommandExecutor.layer),
+  Layer.provide(CommandReceiptStore.layer),
 );

@@ -26,10 +26,12 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
@@ -92,6 +94,7 @@ const layerTest = layerTestFor(layerMetadata);
 /** Every dependency of ProjectService.make, so a test can swap one of them. */
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
+  CommandReceiptStore.layer,
   ProjectStore.layer,
   ProjectionStore.layer,
   IdAllocator.layer,
@@ -1155,6 +1158,72 @@ it.effect("rejects an update that waited on the lock while its project was delet
     assert.equal(
       Option.getOrThrow(yield* service.getById(projectId, { includeDeleted: true })).title,
       "Update race",
+    );
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+it.effect("folded script writes let settings revalidation read SQLite under contention", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const settings = yield* ServerSettings.ServerSettingsService.pipe(
+      Effect.provide(ServerSettings.layerTest({ projectSettingsFolded: true })),
+    );
+    const settingsLock = yield* Semaphore.make(1);
+    const watcherHasLock = yield* Deferred.make<void>();
+    const scriptWriteStarted = yield* Deferred.make<void>();
+    const reloaded = yield* Deferred.make<void>();
+    const contendedSettings = ServerSettings.ServerSettingsService.of({
+      ...settings,
+      updateSettingsWith: (patch) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(scriptWriteStarted, undefined);
+          return yield* settingsLock.withPermits(1)(settings.updateSettingsWith(patch));
+        }),
+    });
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, contendedSettings),
+    );
+    const projectId = ProjectId.make("project:settings-contention");
+    yield* service.create({
+      projectId,
+      commandId: CommandId.make("settings-contention:create"),
+      title: "Settings contention",
+      workspaceRoot: "/work/settings-contention",
+    });
+    // Revalidation owns the settings lock, then reloads database-backed provider history.
+    const watcher = yield* settingsLock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          yield* Deferred.succeed(watcherHasLock, undefined);
+          yield* Deferred.await(scriptWriteStarted);
+          yield* sql.withTransaction(sql`SELECT COUNT(*) FROM projection_projects`);
+          yield* Deferred.succeed(reloaded, undefined);
+        }),
+      )
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(watcherHasLock);
+    const scripts = [
+      {
+        id: "status",
+        name: "Status",
+        command: "echo status",
+        icon: "play" as const,
+        runOnWorktreeCreate: false,
+      },
+    ];
+    const update = yield* service
+      .update({
+        projectId,
+        commandId: CommandId.make("settings-contention:update"),
+        scripts,
+      })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(reloaded);
+    yield* Fiber.join(watcher);
+    assert.deepEqual((yield* Fiber.join(update)).scripts, scripts);
+    assert.deepEqual(
+      (yield* settings.getSettings).projectSettingsOverrides[projectId]?.defaultProjectScripts,
+      scripts,
     );
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );
