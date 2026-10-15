@@ -1,5 +1,6 @@
 import { IssueMilestoneControls, IssueRepositoryControls } from "./IssueMilestoneControls";
 import { IssueInboxSection } from "./IssueInbox";
+import { IssueStateIcon } from "./IssueStateIcon";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import {
@@ -9,14 +10,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
-import {
-  CircleDotIcon,
-  LockIcon,
-  PinIcon,
-  PinOffIcon,
-  RefreshCwIcon,
-  SearchIcon,
-} from "lucide-react";
+import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -707,6 +701,7 @@ export function IssueBrowser({
             reference={{ host: entry.host, repository: entry.repository }}
           />
           <IssueInboxSection
+            issues={entry.snapshot?.issues}
             environmentId={entry.environmentId}
             reference={{ host: entry.host, repository: entry.repository }}
           />
@@ -779,6 +774,7 @@ export function IssueBrowser({
               reference={{ host: entry.host, repository: entry.repository }}
             />
             <IssueInboxSection
+              issues={entry.snapshot?.issues}
               environmentId={entry.environmentId}
               reference={{ host: entry.host, repository: entry.repository }}
             />
@@ -889,7 +885,7 @@ export function IssueBrowser({
       >
         <div className="flex items-center gap-2">
           {variant === "page" ? <PageBackButton /> : null}
-          <CircleDotIcon aria-hidden className="size-4 text-success" />
+          <IssueStateIcon issue={{ state: "open" }} />
           <Heading
             ref={headingRef}
             tabIndex={-1}

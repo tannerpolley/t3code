@@ -20,6 +20,7 @@ import {
   RefreshCwIcon,
 } from "lucide-react";
 import { issueStatePresentation } from "./IssueStateIcon";
+import { LiveIssueStateBadge } from "./LiveIssueStateBadge";
 import { useEffect, useRef, useState } from "react";
 
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -549,10 +550,11 @@ export function IssueDetailPanel({
             {issue.title || "Untitled issue"}
           </h1>
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge size="sm" variant={state.badgeVariant}>
-              <state.Icon aria-hidden className={state.toneClassName} />
-              {state.label}
-            </Badge>
+            <LiveIssueStateBadge
+              issue={issue}
+              reference={reference}
+              environmentId={environmentId}
+            />
             <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
               <PullRequestActorLabel
                 actor={issue.author === null ? null : { ...issue.author, name: null }}

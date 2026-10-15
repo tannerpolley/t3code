@@ -8,7 +8,12 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { useThreadShell } from "~/state/entities";
 import { issueEnvironment, useLiveIssueSummary } from "~/state/issues";
 import { IssueStateIcon } from "../issues/IssueStateIcon";
-import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import { IssueRow } from "../issues/IssueRow";
+import {
+  PULL_REQUEST_ROW_CLASS,
+  PULL_REQUEST_ROW_NUMBER_CLASS,
+  PullRequestRowLines,
+} from "../pullRequest/PullRequestListRow";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 /** The durable issue link remains reachable even when repository browsing is hidden or unavailable. */
@@ -24,30 +29,26 @@ export function ThreadLinkedIssueRow({
   if (!issue) return null;
   return (
     <ThreadDetailsSection headingId="thread-details-linked-issue-heading" title="Linked issue">
-      <ThreadDetailsControl
-        onClick={() =>
+      <LinkedIssueContent
+        environmentId={environmentId}
+        issue={issue}
+        onSelect={() =>
           useRightPanelStore.getState().openIssue(threadRef, { environmentId, ...issue })
         }
-      >
-        <LinkedIssueStateIcon environmentId={environmentId} issue={issue} />
-        <span className="min-w-0 flex-1 truncate text-left">
-          <span className="me-1 text-muted-foreground">
-            {issue.repository} #{issue.number}
-          </span>
-          {issue.title || "Untitled issue"}
-        </span>
-      </ThreadDetailsControl>
+      />
     </ThreadDetailsSection>
   );
 }
 
 /** The issue's state the way the Issues pane shows it; open until its detail has loaded. */
-function LinkedIssueStateIcon({
+function LinkedIssueContent({
   environmentId,
   issue,
+  onSelect,
 }: {
   readonly environmentId: EnvironmentId;
   readonly issue: ThreadLinkedIssue;
+  readonly onSelect: () => void;
 }) {
   const detail = useAtomValue(
     issueEnvironment.detail({
@@ -60,5 +61,24 @@ function LinkedIssueStateIcon({
     issue,
     environmentId,
   );
-  return <IssueStateIcon issue={summary ?? { state: "open" }} className="size-4" />;
+  const referenceLabel = `${issue.repository} #${issue.number}`;
+  return summary ? (
+    <IssueRow
+      issue={summary}
+      environmentId={environmentId}
+      selected={false}
+      onSelect={onSelect}
+      referenceLabel={referenceLabel}
+      className="px-2.5"
+    />
+  ) : (
+    <button type="button" className={`${PULL_REQUEST_ROW_CLASS} px-2.5`} onClick={onSelect}>
+      <IssueStateIcon issue={{ state: "open" }} />
+      <PullRequestRowLines
+        number={null}
+        title={issue.title || "Untitled issue"}
+        meta={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{referenceLabel}</span>}
+      />
+    </button>
+  );
 }

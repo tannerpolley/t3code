@@ -4,6 +4,7 @@ import type {
   IssueInboxEvent,
   IssueRepositoryRef,
   ScopedThreadRef,
+  IssueSummary,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import * as Option from "effect/Option";
@@ -17,6 +18,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { IssueStateIcon } from "./IssueStateIcon";
 
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 
@@ -81,6 +83,7 @@ function describe(event: IssueInboxEvent): string {
 export function IssueInboxSection(props: {
   readonly environmentId: EnvironmentId;
   readonly reference: IssueRepositoryRef;
+  readonly issues?: readonly IssueSummary[] | undefined;
 }) {
   const supported =
     useServerConfigs().get(props.environmentId)?.environment.capabilities.issueInbox === true;
@@ -90,14 +93,17 @@ export function IssueInboxSection(props: {
 function InboxList({
   environmentId,
   reference,
+  issues,
 }: {
   readonly environmentId: EnvironmentId;
   readonly reference: IssueRepositoryRef;
+  readonly issues?: readonly IssueSummary[] | undefined;
 }) {
   const { data } = useEnvironmentQuery(issueEnvironment.inbox({ environmentId, input: reference }));
   const markRead = useAtomCommand(issueEnvironment.markInboxRead);
   const canMark = useAtomValue(issueEnvironment.markInboxRead.permissionAtom(environmentId));
   const events = data?.events ?? [];
+  const issuesByNumber = new Map(issues?.map((issue) => [issue.number, issue]));
   if (events.length === 0) return null;
   const mark = (ids?: ReadonlyArray<number>) =>
     void markRead({
@@ -120,40 +126,44 @@ function InboxList({
         ) : null}
       </div>
       <ul className="mt-1 flex flex-col gap-1.5">
-        {events.map((event) => (
-          <li key={event.id} className="flex items-start gap-2 text-xs">
-            <div className="min-w-0 flex-1">
-              <a
-                className="font-medium underline-offset-2 hover:underline"
-                href={event.url}
-                rel="noopener noreferrer"
-                target="_blank"
-              >
-                {event.issueNumber > 0 ? `#${event.issueNumber} ` : ""}
-                {event.issueTitle}
-              </a>
-              <p className="text-muted-foreground">{describe(event)}</p>
-              {event.snippet !== "" ? (
-                <p className="truncate text-muted-foreground">{event.snippet}</p>
+        {events.map((event) => {
+          const issue = issuesByNumber.get(event.issueNumber);
+          return (
+            <li key={event.id} className="flex items-start gap-2 text-xs">
+              {issue ? <IssueStateIcon issue={issue} /> : null}
+              <div className="min-w-0 flex-1">
+                <a
+                  className="font-medium underline-offset-2 hover:underline"
+                  href={event.url}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  {event.issueNumber > 0 ? `#${event.issueNumber} ` : ""}
+                  {event.issueTitle}
+                </a>
+                <p className="text-muted-foreground">{describe(event)}</p>
+                {event.snippet !== "" ? (
+                  <p className="truncate text-muted-foreground">{event.snippet}</p>
+                ) : null}
+              </div>
+              {event.highPriority ? (
+                <Badge size="sm" variant="warning">
+                  High priority
+                </Badge>
               ) : null}
-            </div>
-            {event.highPriority ? (
-              <Badge size="sm" variant="warning">
-                High priority
-              </Badge>
-            ) : null}
-            {event.tagged ? (
-              <Badge size="sm" variant="info">
-                Tagged
-              </Badge>
-            ) : null}
-            {canMark ? (
-              <Button onClick={() => mark([event.id])} size="xs" variant="ghost">
-                Mark read
-              </Button>
-            ) : null}
-          </li>
-        ))}
+              {event.tagged ? (
+                <Badge size="sm" variant="info">
+                  Tagged
+                </Badge>
+              ) : null}
+              {canMark ? (
+                <Button onClick={() => mark([event.id])} size="xs" variant="ghost">
+                  Mark read
+                </Button>
+              ) : null}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

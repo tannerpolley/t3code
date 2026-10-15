@@ -10,7 +10,6 @@ import {
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
-import { ThreadStatusMark } from "../ThreadStatusMark";
 
 type IssueStateInput = Pick<IssueSummary, "state"> &
   Partial<
@@ -101,15 +100,11 @@ export function IssueStateIcon({
     <Tooltip>
       {/* A span trigger: rows are buttons, and a nested control would steal their click. */}
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        {issueProgress(issue) === "in_progress" ? (
-          <ThreadStatusMark status="working" />
-        ) : (
-          <presentation.Icon
-            role="img"
-            aria-label={presentation.label}
-            className={cn("size-4 shrink-0", presentation.toneClassName, className)}
-          />
-        )}
+        <presentation.Icon
+          role="img"
+          aria-label={presentation.label}
+          className={cn("size-4 shrink-0", presentation.toneClassName, className)}
+        />
       </TooltipTrigger>
       <TooltipPopup>{presentation.label}</TooltipPopup>
     </Tooltip>

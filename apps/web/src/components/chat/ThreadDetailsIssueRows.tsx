@@ -8,7 +8,7 @@ import type {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import { ListIcon, MinusIcon, PlusIcon } from "lucide-react";
-import { IssueStateIcon } from "../issues/IssueStateIcon";
+import { IssueRow } from "../issues/IssueRow";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -343,9 +343,13 @@ function IssueMilestoneGroup({
       </CollapsibleSectionHeader>
       {!collapsed
         ? group.issues.map((issue) => (
-            <ThreadDetailsControl
+            <IssueRow
               key={issue.number}
-              onClick={() =>
+              issue={issue}
+              environmentId={environmentId}
+              selected={false}
+              className="px-2.5"
+              onSelect={() =>
                 useRightPanelStore.getState().openIssue(scopeThreadRef(environmentId, threadId), {
                   environmentId,
                   host,
@@ -354,13 +358,7 @@ function IssueMilestoneGroup({
                   url: issue.url,
                 })
               }
-            >
-              <IssueStateIcon issue={issue} className="-mx-0.5 size-4" />
-              <span className="min-w-0 flex-1 truncate text-left">
-                <span className="me-1 text-muted-foreground">#{issue.number}</span>
-                {issue.title || "Untitled issue"}
-              </span>
-            </ThreadDetailsControl>
+            />
           ))
         : null}
     </div>

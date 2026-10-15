@@ -28,9 +28,8 @@ vi.mock("../../state/entities", async () => {
     useAllEnvironmentShellsBootstrapped: () => true,
   };
 });
-vi.mock("./ThreadDetailsControl", () => ({
-  ThreadDetailsControl: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-}));
+vi.mock("../issues/IssuePullRequests", () => ({ IssuePullRequests: () => null }));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -40,8 +39,9 @@ vi.mock("../ui/tooltip", () => ({
 import { appAtomRegistry, AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { makeThreadFixture } from "../../test-fixtures";
 import { ThreadLinkedIssueRow } from "./ThreadLinkedIssueRow";
+import { LiveIssueStateBadge } from "../issues/LiveIssueStateBadge";
 
-it("updates the Linked issue row from the shell stream while the cached issue detail stays idle", async () => {
+it("updates the linked row and detail glyph from the shell stream while cached detail stays idle", async () => {
   const linkedIssue = {
     host: "github.com",
     repository: "owner/repo",
@@ -71,6 +71,7 @@ it("updates the Linked issue row from the shell stream while the cached issue de
       createdAt: thread.updatedAt,
       updatedAt: thread.updatedAt,
       commentCount: 0,
+      closingPullRequests: [],
       liveWork: [
         {
           threadId: thread.id,
@@ -93,6 +94,11 @@ it("updates the Linked issue row from the shell stream while the cached issue de
       renderer = create(
         <AppAtomRegistryProvider>
           <ThreadLinkedIssueRow environmentId={thread.environmentId} threadId={thread.id} />
+          <LiveIssueStateBadge
+            issue={detail.issue}
+            reference={linkedIssue}
+            environmentId={thread.environmentId}
+          />
         </AppAtomRegistryProvider>,
       );
     });
@@ -112,7 +118,11 @@ it("updates the Linked issue row from the shell stream while the cached issue de
     await act(async () => {
       appAtomRegistry.set(state.shells!, [working]);
     });
-    expect(displayed()).toContain("In progress");
+    expect(
+      renderer!.root.findAll(
+        (node) => node.type === "svg" && node.props["aria-label"] === "In progress",
+      ),
+    ).toHaveLength(2);
     await act(async () => {
       appAtomRegistry.set(state.shells!, [{ ...working, hasPendingUserInput: true }]);
     });
