@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { searchSettings } from "./settingsSearch";
+import { getSettingsSearchTargetScope, searchSettings } from "./settingsSearch";
 
 describe("fork settings destinations", () => {
   it.each([
@@ -12,4 +12,10 @@ describe("fork settings destinations", () => {
   ])("finds %s on its settings page", (query, id, to) => {
     expect(searchSettings(query)).toContainEqual(expect.objectContaining({ id, to }));
   });
+  it.each(["branch-picker-groups", "version-control-issues", "issues-page"])(
+    "keeps %s client-scoped after moving it to Source Control",
+    (id) => {
+      expect(getSettingsSearchTargetScope(id)).toMatchObject({ scope: null });
+    },
+  );
 });

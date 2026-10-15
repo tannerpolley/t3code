@@ -159,6 +159,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     id: "branch-picker-groups",
     title: "Branch picker groups",
     to: "/settings/source-control",
+    scope: null,
     searchTerms: ["customization fork branch picker current local remote collapse"],
   },
   {
@@ -194,12 +195,14 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     id: "version-control-issues",
     title: "Issues in thread details",
     to: "/settings/source-control",
+    scope: null,
     searchTerms: ["customization fork github issues thread details version control milestones"],
   },
   {
     id: "issues-page",
     title: "Issues page",
     to: "/settings/source-control",
+    scope: null,
     searchTerms: ["customization fork github issues page browser sidebar repositories filters pin"],
   },
   {

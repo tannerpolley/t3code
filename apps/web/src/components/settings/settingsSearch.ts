@@ -50,7 +50,7 @@ export interface SettingsSearchItem {
   readonly targetId?: string;
   /** Descriptions, option labels, and aliases people may remember instead of the title. */
   readonly searchTerms?: ReadonlyArray<string>;
-  readonly scope?: SettingsSearchScope;
+  readonly scope?: SettingsSearchScope | null;
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
@@ -1029,7 +1029,7 @@ export function getSettingsSearchTargetScope(targetId: string) {
   return item
     ? {
         title: item.title,
-        scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to],
+        scope: item.scope === undefined ? SETTINGS_CATEGORY_SCOPES[item.to] : item.scope,
         ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
       }
     : null;
