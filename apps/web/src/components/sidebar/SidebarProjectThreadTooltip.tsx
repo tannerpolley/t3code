@@ -19,6 +19,8 @@ import { isThreadPreparingWorktree } from "../ThreadLocationIcon.logic";
 import { ThreadPullRequestsMiniList } from "../ThreadStatusIndicators";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { resolveSidebarThreadModelLabel } from "./SidebarBackgroundWork.logic";
+import { formatWeeklyLimitPercent } from "./SidebarTokenUsage.logic";
+import { sidebarUsedClass } from "./SidebarProjectUsage.logic";
 import {
   sidebarProjectThreadCheckout,
   sidebarProjectThreadPullRequests,
@@ -79,6 +81,8 @@ function SidebarProjectThreadTooltipPopup({ thread, provider }: ThreadTooltipPro
   const project = useProject(scopeProjectRef(thread.environmentId, thread.projectId));
   const identities = useEnvironmentIdentities();
   const machine = useAtomValue(remoteMachineAtom(thread.environmentId));
+  const weeklyUsed = thread.source.usageSummary?.weeklyLimitPercent;
+  const weeklyPercent = formatWeeklyLimitPercent(weeklyUsed);
   const checkout = sidebarProjectThreadCheckout({
     worktreePath: thread.worktreePath,
     projectPath: project?.workspaceRoot,
@@ -120,6 +124,12 @@ function SidebarProjectThreadTooltipPopup({ thread, provider }: ThreadTooltipPro
         Provider: {provider?.displayName ?? thread.providerInstanceId}
       </div>
       <div className="wrap-anywhere">Model: {resolveSidebarThreadModelLabel(thread, provider)}</div>
+      {weeklyPercent ? (
+        <div>
+          Weekly limit used (estimate):{" "}
+          <span className={sidebarUsedClass(weeklyUsed!)}>{weeklyPercent}</span>
+        </div>
+      ) : null}
       {isProviderNativeSubagentThread(thread.source) ? (
         <div>Native subagent · Runs on its own · Open parent to direct it</div>
       ) : null}

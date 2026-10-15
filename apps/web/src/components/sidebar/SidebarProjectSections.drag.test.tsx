@@ -8,6 +8,12 @@ import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { configureSidebarLayoutActions, useUiStateStore } from "../../uiStateStore";
 import { SidebarProjectSections } from "./SidebarProjectSections";
 
+// Usage reads and navigation are separate from the drag/permission handlers under test.
+vi.mock("./SidebarProjectUsage", () => ({
+  SidebarProjectUsage: () => null,
+  SidebarUsageColumns: "span",
+}));
+vi.mock("./SidebarUsageItem", () => ({ SidebarUsageItem: () => null }));
 vi.mock("../../hooks/useSidebarLayoutPermission", () => ({
   useSidebarLayoutPermission: () => true,
 }));
@@ -53,7 +59,7 @@ beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
     this: HTMLElement,
   ) {
-    const name = this.querySelector(":scope > div > button > span.truncate")?.textContent;
+    const name = this.querySelector(":scope > div > button > span > span.truncate")?.textContent;
     const index = names.indexOf(name ?? "");
     if (index >= 0) return new DOMRect(12, 28 + index * 32, 288, 32);
     const header =

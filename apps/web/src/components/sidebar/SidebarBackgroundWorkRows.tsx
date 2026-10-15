@@ -44,7 +44,6 @@ import { cn } from "../../lib/utils";
 import {
   SidebarCaretToggle,
   SidebarThreadColumns,
-  SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { ThreadStatusMark } from "../ThreadStatusMark";
@@ -266,14 +265,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             count={toggle && !toggle.open ? toggle.count : undefined}
             time={time}
             status={<ThreadStatusMark status={row.status ?? "working"} />}
-            usage={
-              row.kind === "subagent" && row.child ? (
-                <SidebarTokenUsage
-                  summary={row.child.source.usageSummary}
-                  driver={provider?.driver}
-                />
-              ) : undefined
-            }
           />
         ) : (
           <>

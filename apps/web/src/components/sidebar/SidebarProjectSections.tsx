@@ -66,9 +66,10 @@ import {
   SidebarTrailingColumns,
   SidebarThreadColumns,
   threadGroupHue,
-  SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
+import { SidebarProjectUsage, SidebarUsageColumns } from "./SidebarProjectUsage";
+import { SidebarUsageItem } from "./SidebarUsageItem";
 import { useServerConfigs } from "../../state/entities";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
@@ -358,6 +359,22 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     }
     return next;
   }, [otherProjectsExpanded, projectByKey, projects, sections]);
+  const listedProjectKeys = useMemo(() => {
+    const visible = renderedSections.filter(
+      (section) =>
+        !section.collapsed &&
+        (section.parentId === undefined ||
+          renderedSections.some((parent) => parent.id === section.parentId && !parent.collapsed)),
+    );
+    return visible.flatMap((section) =>
+      section.projectKeys.flatMap(
+        (key) =>
+          projectByKey
+            .get(key)
+            ?.memberProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`) ?? [],
+      ),
+    );
+  }, [projectByKey, renderedSections]);
 
   // Clears custom icons the same way the icon picker's Automatic choice does, on every checkout
   // of every project in the section and its subsections.
@@ -534,7 +551,17 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   );
 
   return (
-    <div className="group-data-[collapsible=icon]:hidden px-1 py-1">
+    <div
+      className="sidebar-columns-container group-data-[collapsible=icon]:hidden px-1 py-1"
+      style={{ "--sidebar-project-actions-width": codexStyle ? "1.5rem" : "3rem" } as CSSProperties}
+    >
+      <div className="sidebar-project-usage-row px-2 text-3xs text-sidebar-muted-foreground">
+        <span />
+        <SidebarUsageColumns>
+          <span>Codex</span>
+          <span>Claude</span>
+        </SidebarUsageColumns>
+      </div>
       {codexStyle ? null : (
         <div className="mb-1 px-2">
           <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
@@ -633,6 +660,11 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
           ) : null}
         </DragOverlay>
       </DndContext>
+      <div className="sidebar-project-usage-row px-2 py-1 text-2xs text-sidebar-muted-foreground">
+        <span className="truncate">Remaining projects</span>
+        <SidebarProjectUsage projectKeys={listedProjectKeys} remaining />
+      </div>
+      <SidebarUsageItem columns />
       {newProjectDialog ? (
         <NewSectionProjectDialog
           key={newProjectDialog.id}
@@ -1065,60 +1097,63 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           disabled={!canWrite}
           aria-expanded={props.isProjectExpanded}
           className={cn(
-            "flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-            // Codex style makes room for the actions menu only while it shows.
-            codexStyle
-              ? "group-hover/project-row:pe-8 group-focus-within/project-row:pe-8"
-              : "pe-12",
+            "sidebar-project-usage-row h-8 w-full min-w-0 cursor-pointer items-center rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
             props.selected && "bg-sidebar-row-selected text-sidebar-foreground",
           )}
           onClick={() => {
             if (canWrite) props.onToggleProject(project.projectKey, !props.isProjectExpanded);
           }}
         >
-          {codexStyle ? null : (
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 text-icon-muted transition-transform",
-                props.isProjectExpanded && "rotate-90",
-              )}
+          <span className="flex min-w-0 items-center gap-2">
+            {codexStyle ? null : (
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "size-3 shrink-0 text-icon-muted transition-transform",
+                  props.isProjectExpanded && "rotate-90",
+                )}
+              />
+            )}
+            <ProjectFavicon
+              className="size-4"
+              folderColor={folderColor}
+              forceFolder={forceFolder}
+              project={project}
+              {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
             />
-          )}
-          <ProjectFavicon
-            className="size-4"
-            folderColor={folderColor}
-            forceFolder={forceFolder}
-            project={project}
-            {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
-          />
-          <span className={cn("min-w-0 truncate", !codexStyle && "flex-1")}>
-            {project.displayName}
+            <span className={cn("min-w-0 truncate", !codexStyle && "flex-1")}>
+              {project.displayName}
+            </span>
+            {codexStyle ? (
+              <SidebarCaretSlot open={props.isProjectExpanded} className="text-icon-muted" />
+            ) : null}
+            {codexStyle ? (
+              <SidebarTrailingColumns
+                count={
+                  props.isProjectExpanded
+                    ? undefined
+                    : props.threads.length > 0
+                      ? props.threads.length
+                      : project.groupedProjectCount > 1
+                        ? project.groupedProjectCount
+                        : undefined
+                }
+              />
+            ) : props.threads.length > 0 ? (
+              <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
+                {props.threads.length}
+              </span>
+            ) : project.groupedProjectCount > 1 ? (
+              <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
+                {project.groupedProjectCount}
+              </span>
+            ) : null}
           </span>
-          {codexStyle ? (
-            <SidebarCaretSlot open={props.isProjectExpanded} className="text-icon-muted" />
-          ) : null}
-          {codexStyle ? (
-            <SidebarTrailingColumns
-              count={
-                props.isProjectExpanded
-                  ? undefined
-                  : props.threads.length > 0
-                    ? props.threads.length
-                    : project.groupedProjectCount > 1
-                      ? project.groupedProjectCount
-                      : undefined
-              }
-            />
-          ) : props.threads.length > 0 ? (
-            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
-              {props.threads.length}
-            </span>
-          ) : project.groupedProjectCount > 1 ? (
-            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
-              {project.groupedProjectCount}
-            </span>
-          ) : null}
+          <SidebarProjectUsage
+            projectKeys={project.memberProjectRefs.map(
+              (ref) => `${ref.environmentId}:${ref.projectId}`,
+            )}
+          />
         </button>
         <div className="pointer-events-none absolute inset-y-0 end-1 flex items-center gap-px">
           {codexStyle ? null : (
@@ -1400,12 +1435,6 @@ const SidebarProjectThreadRow = memo(
                   count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
                   time={<SidebarThreadTime thread={props.thread} status={status} />}
                   status={<ThreadStatusMark status={statusMark} />}
-                  usage={
-                    <SidebarTokenUsage
-                      summary={props.thread.source.usageSummary}
-                      driver={provider?.driver}
-                    />
-                  }
                 />
               ) : (
                 <>
