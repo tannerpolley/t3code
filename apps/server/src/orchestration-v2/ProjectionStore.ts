@@ -638,7 +638,7 @@ function needsRecovery(
   kind: ProjectionRecoveryKind,
   parent?: Pick<OrchestrationV2ThreadProjection, "subagents" | "contextTransfers">,
 ): boolean {
-  if (projection.thread.deletedAt !== null) return false;
+  if (projection.thread.deletedAt !== null && kind !== "subagent-results") return false;
   switch (kind) {
     case "queued-runs":
       return (
@@ -666,13 +666,18 @@ function needsRecovery(
             task.origin === "app_owned" &&
             task.result === null &&
             task.childThreadId === projection.thread.id &&
-            projection.runs.some(
-              (run) =>
-                run.delegatedTaskId === task.id &&
-                ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-                  run.status,
-                ),
-            ),
+            (projection.thread.archivedAt !== null ||
+              projection.thread.deletedAt !== null ||
+              !projection.runs.some((run) =>
+                ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+              ) ||
+              projection.runs.some(
+                (run) =>
+                  run.delegatedTaskId === task.id &&
+                  ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
+                    run.status,
+                  ),
+              )),
         ) ||
           ((["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
             latestUnheldRun(projection.runs)?.status ?? "idle",
@@ -752,6 +757,9 @@ function preserveRunRecordedFields(
   if (current === undefined) return next;
   return {
     ...next,
+    ...(next.delegatedTaskId === undefined && current.delegatedTaskId !== undefined
+      ? { delegatedTaskId: current.delegatedTaskId }
+      : {}),
     ...(next.delegatedCompletion === undefined && current.delegatedCompletion !== undefined
       ? { delegatedCompletion: current.delegatedCompletion }
       : {}),
@@ -2371,7 +2379,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
                 payload_json = ${keepRecordedRunField(
-                  keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                  keepRecordedRunField(
+                    keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedTaskId"),
+                    "$.delegatedCompletion",
+                  ),
                   "$.restartCancelledBackgroundWork",
                 )}
             `;
@@ -4177,7 +4188,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND task.child_thread_id = child.thread_id
                       AND json_extract(task.payload_json, '$.origin') = 'app_owned'
                       AND json_extract(task.payload_json, '$.result') IS NULL
-                  ) OR (
+                  ) OR (EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_subagents AS task
+                    WHERE task.child_thread_id = child.thread_id
+                      AND task.origin = 'app_owned'
+                      AND json_extract(task.payload_json, '$.result') IS NULL
+                  ) AND (
+                    child.archived_at IS NOT NULL OR child.deleted_at IS NOT NULL
+                    OR NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs AS active
+                      WHERE active.thread_id = child.thread_id
+                        AND active.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                    )
+                  )) OR (
                     -- An unstarted limit continuation cannot hide the original failure.
                     ((SELECT status FROM orchestration_v2_projection_runs
                      WHERE thread_id = child.thread_id
@@ -4292,8 +4315,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         })();
         const rows = yield* sql<{ readonly thread_id: string }>`
           SELECT thread_id FROM orchestration_v2_projection_threads
-          WHERE deleted_at IS NULL
-            AND thread_id IN (${candidates})
+          WHERE thread_id IN (${candidates})
+            ${kind === "subagent-results" ? sql`` : sql`AND deleted_at IS NULL`}
             ${kind === "queued-runs" ? sql`AND archived_at IS NULL` : sql``}
           ORDER BY updated_at ASC, thread_id ASC
         `;

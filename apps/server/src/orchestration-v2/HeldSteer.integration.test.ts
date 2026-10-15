@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -41,7 +42,7 @@ const runScenario = <E>(
   }) => Effect.Effect<
     void,
     E,
-    Orchestrator.OrchestratorV2 | OrchestrationEffectWorkerV2 | Scope.Scope
+    Orchestrator.OrchestratorV2 | OrchestrationEffectWorkerV2 | EventSink.EventSinkV2 | Scope.Scope
   >,
 ) =>
   Effect.scoped(
@@ -119,9 +120,10 @@ const runScenario = <E>(
 const threadId = ThreadId.make("thread:held-steer");
 const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
   Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    return yield* orchestrator.streamDomainEvents.pipe(
-      Stream.filter(predicate),
+    const sink = yield* EventSink.EventSinkV2;
+    const afterSequence = yield* sink.latestSequence();
+    return yield* sink.stream({ afterSequence }).pipe(
+      Stream.filter((stored) => predicate(stored.event)),
       Stream.take(1),
       Stream.runDrain,
       Effect.forkScoped,
@@ -316,4 +318,153 @@ it.effect("steers a live turn directly without holding it", () =>
       assert.equal(projection.runs.length, 1);
     }),
   ),
+);
+
+it.effect.each(["live", "held"] as const)(
+  "completes a delegated follow-up steered into a %s provider turn",
+  (timing) =>
+    runScenario(`delegated-${timing}`, ({ started, events, steered, cwd }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* OrchestrationEffectWorkerV2;
+        const parentRun = yield* startFirstRun(cwd);
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          commandId: CommandId.make("delegate"),
+          parentThreadId: threadId,
+          parentRunId: parentRun.id,
+          parentNodeId: parentRun.rootNodeId!,
+          task: "Check the implementation",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          completionWake: "always",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        yield* worker.drain();
+        const original = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!;
+        const childThreadId = original.childThreadId!;
+        const finish = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+          Effect.gen(function* () {
+            const now = yield* DateTime.now;
+            const waiting = yield* watch(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === turn.runId &&
+                event.payload.status === "waiting",
+            );
+            const completed = providerTurnFor(turn, "completed", now);
+            yield* Queue.offer(events, completed);
+            yield* Queue.offer(events, {
+              type: "turn.terminal",
+              driver,
+              providerThreadId: completed.providerTurn.providerThreadId,
+              providerTurnId: completed.providerTurn.id,
+              runOrdinal: turn.runOrdinal,
+              status: "completed",
+              failure: null,
+              threadDisposition: "reusable",
+            });
+            yield* Fiber.join(waiting);
+            yield* worker.drain();
+            yield* orchestrator.recoverDelegatedTasks;
+          });
+        yield* finish(started[1]!);
+        const published = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!;
+        assert.equal(published.status, "completed");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("child-resume"),
+          threadId: childThreadId,
+          messageId: MessageId.make("message:child-resume"),
+          text: "Continue the checks",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        const resumed = started[2]!;
+        const goLive = Effect.gen(function* () {
+          const live = yield* watch(
+            (event) =>
+              event.type === "provider-turn.updated" &&
+              event.payload.runAttemptId === resumed.attemptId &&
+              event.payload.status === "running",
+          );
+          yield* Queue.offer(events, providerTurnFor(resumed, "running", yield* DateTime.now));
+          yield* Fiber.join(live);
+        });
+        if (timing === "live") yield* goLive;
+        const messageId = MessageId.make("message:parent-answer");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("parent-answer"),
+          threadId: childThreadId,
+          senderThreadId: threadId,
+          messageId,
+          text: "Use the adaptive barrier setting",
+          attachments: [],
+          dispatchMode: { type: "steer_active", targetRunId: resumed.runId },
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+        const followup = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+          (task) => task.id !== original.id,
+        )!;
+        assert.isDefined(followup);
+        if (timing === "held") {
+          const promoted = yield* watch(
+            (event) =>
+              event.type === "message.updated" &&
+              event.payload.id === messageId &&
+              event.payload.runId === resumed.runId,
+          );
+          yield* goLive;
+          yield* Fiber.join(promoted);
+        }
+        yield* worker.drain();
+        assert.deepEqual(steered, [messageId]);
+        assert.isTrue(yield* orchestrator.delegatedTaskResultPending(childThreadId, followup.id));
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.isNull(
+          (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+            (task) => task.id === followup.id,
+          )!.result,
+          "steering into a live run must not publish the cancelled queue holder",
+        );
+        yield* finish(resumed);
+        const finished = yield* orchestrator.getThreadProjection(threadId);
+        const task = finished.subagents.find((row) => row.id === followup.id)!;
+        assert.equal(task.status, "completed");
+        assert.isFalse(yield* orchestrator.delegatedTaskResultPending(childThreadId, followup.id));
+        assert.isNotNull(task.completedAt);
+        assert.isNotNull(task.result);
+        assert.equal(task.completionDelivery?.state, "claimed");
+        assert.equal(finished.nodes.find((node) => node.id === task.id)?.status, "completed");
+        assert.equal(
+          finished.turnItems.find((item) => item.type === "subagent" && item.subagentId === task.id)
+            ?.status,
+          "completed",
+        );
+        assert.deepEqual(
+          finished.subagents.find((row) => row.id === original.id),
+          published,
+        );
+        yield* orchestrator.dispatch({
+          type: "delegated_task.completion-delivery.acknowledge",
+          commandId: CommandId.make("ack-followup"),
+          parentThreadId: threadId,
+          taskId: task.id,
+          observedByRunId: parentRun.id,
+        });
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+            (row) => row.id === task.id,
+          )?.completionDelivery?.state,
+          "acknowledged",
+        );
+      }),
+    ),
 );
