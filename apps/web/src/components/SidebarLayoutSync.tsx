@@ -82,6 +82,7 @@ export function SidebarLayoutSync() {
     [update],
   );
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const hasProjectedLayout = useRef(false);
   useEffect(() => () => controller.dispose(), [controller]);
   const layouts = useMemo(
     () => new Map([...configs.keys()].map((id) => [id, snapshot.get(id)])),
@@ -104,6 +105,17 @@ export function SidebarLayoutSync() {
   );
 
   useEffect(() => {
+    // Keep the startup display until a live source is ready, then never reuse it.
+    if (
+      !hasProjectedLayout.current &&
+      ![...configs].some(([id, config]) =>
+        usesServerSidebar(config.sidebarLayoutSync)
+          ? controller.record(id) !== null
+          : snapshot.has(id),
+      )
+    )
+      return;
+    hasProjectedLayout.current = true;
     const projected = projectSidebarLayout({ layouts, groups, primaryEnvironmentId });
     const current = useUiStateStore.getState();
     if (
@@ -116,7 +128,7 @@ export function SidebarLayoutSync() {
       })
     )
       useUiStateStore.setState(projected);
-  }, [layouts, groups, primaryEnvironmentId]);
+  }, [layouts, groups, primaryEnvironmentId, configs, controller, snapshot]);
 
   useEffect(() => {
     const refresh = () =>

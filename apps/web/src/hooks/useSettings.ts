@@ -62,6 +62,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
 import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { cacheSectionFolderColors, readCachedSectionFolderColors } from "~/sidebarLayoutCache";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -70,7 +71,11 @@ type UnifiedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 const clientSettingsListeners = new Set<() => void>();
 const clientSettingsHydrationListeners = new Set<() => void>();
 type ClientSettingsHydrationStatus = "pending" | "ready" | "failed" | "retrying";
-let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+const cachedSectionFolderColors = readCachedSectionFolderColors();
+let clientSettingsSnapshot =
+  cachedSectionFolderColors === undefined
+    ? DEFAULT_CLIENT_SETTINGS
+    : { ...DEFAULT_CLIENT_SETTINGS, sectionFolderColors: cachedSectionFolderColors };
 let clientSettingsHydrationStatus: ClientSettingsHydrationStatus = "pending";
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
@@ -95,6 +100,7 @@ function getClientSettingsSnapshot(): ClientSettings {
 
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
+  cacheSectionFolderColors(settings.sectionFolderColors);
   emitClientSettingsChange();
 }
 
@@ -150,9 +156,7 @@ async function hydrateClientSettings(): Promise<void> {
       if (hydrationGeneration !== clientSettingsHydrationGeneration) {
         return;
       }
-      if (persistedSettings) {
-        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
-      }
+      replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       setClientSettingsHydrationStatus("ready");
     } catch (error) {
       if (hydrationGeneration === clientSettingsHydrationGeneration) {

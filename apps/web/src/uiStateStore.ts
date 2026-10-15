@@ -20,6 +20,7 @@ import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 import { randomUUID } from "./lib/utils";
 import { type FolderOrganizedProject } from "./sidebarSectionFolders";
+import { cacheSidebarLayout, readCachedSidebarLayout } from "./sidebarLayoutCache";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 // Version 1 stored card visibility, not folder expansion.
@@ -368,6 +369,7 @@ export function persistState(state: UiState): void {
   if (typeof window === "undefined") {
     return;
   }
+  cacheSidebarLayout(state);
   try {
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
@@ -621,6 +623,7 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  ...readCachedSidebarLayout(),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
