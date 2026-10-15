@@ -100,9 +100,9 @@ each provider or model used. Providers do not report this, so it is estimated fr
 connected environments recorded, weighted by each model's API-equivalent price. Usage from other
 machines or apps on the same account is spread across the models shown. Redeem a banked reset credit
 from the **Reset credits** total. For the window cards described above, turn off **Settings →
-Customizations → Limits page like Cost and Tokens**.
+General → Limits page like Cost and Tokens**.
 
-Three optional sidebar readouts live in **Settings → Customizations → Usage**. Each one you turn
+Three optional sidebar readouts live in **Settings → General → Usage**. Each one you turn
 on replaces the Usage button's icon with a compact value per provider for Claude and Codex:
 **5-hour usage in the sidebar** (`5h 62%`) is the five-hour quota left, **Daily usage in the
 sidebar** (`1d 40%`) is the share of today's budget left, and **Weekly usage in the sidebar**

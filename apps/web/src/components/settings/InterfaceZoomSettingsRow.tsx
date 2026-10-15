@@ -1,9 +1,9 @@
+import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { INTERFACE_ZOOM_FACTORS, nearestInterfaceZoom } from "@t3tools/shared/interfaceZoom";
 import { useEffect, useState } from "react";
 
 import { isMacPlatform } from "~/lib/utils";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const percent = (factor: number) => `${Math.round(factor * 100)}%`;

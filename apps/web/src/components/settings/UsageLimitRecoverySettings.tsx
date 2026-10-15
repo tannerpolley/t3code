@@ -1,3 +1,4 @@
+import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { type ModelSelection, UsageLimitRecoveryMode } from "@t3tools/contracts";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
@@ -10,7 +11,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow } from "./settingsLayout";
+import { SETTINGS_PICKER_TRIGGER_CLASSNAME } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";

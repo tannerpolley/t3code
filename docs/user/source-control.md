@@ -297,7 +297,7 @@ still need review, publishing, or merge approval; T3 does not automatically clos
 
 Issue agents can create issues, split work into sub-issues, and move issues between milestones.
 To require approval for these too, turn on **Ask before agents create, split or move issues** in
-**Settings → Customizations → Version control & issues** for the server. This applies to new
+**Settings → Source Control → Version control & issues** for the server. This applies to new
 proposals; existing proposals keep their approval decision. Body edits, closing or reopening issues,
 and other parent changes also apply right away, unless the agent thread is in **Approval required**
 mode; then they wait for you. Review a waiting change in the issue's detail on
@@ -321,7 +321,7 @@ remains paused after the change. Use **Resume repository work** when you are rea
 
 A thread's details also list its repository's open issues in an **Issues** section, grouped by
 collapsible milestones, and open them beside the thread. For a fork checkout, these are the fork's
-issues. Turn either view off in **Settings → Customizations**.
+issues. Turn either view off in **Settings → Source Control**.
 
 To browse all of the repository's issues without leaving a thread, choose **Browse all issues** in
 that section, pick **Issues** (shortcut `I`) from the empty right panel or its **+** menu, or run

@@ -1,4 +1,5 @@
-import { UsageLimitRecoverySettings } from "./UsageLimitRecoverySettings";
+import { useForkSettingsRestore } from "./ForkSettingsRestore";
+import { ForkSettingsSlot } from "./ForkSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
@@ -48,7 +49,6 @@ import {
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
-  SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -58,7 +58,6 @@ import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import { IS_NIGHTLY_BUILD, NightlyMobileBetaRow } from "../NightlyMobileBeta";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
-import { InterfaceZoomSettingsRow } from "./InterfaceZoomSettingsRow";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -196,7 +195,6 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: "Manual",
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
-const isSidebarThreadSortOrder = Schema.is(SidebarThreadSortOrder);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -539,6 +537,8 @@ export function useSettingsRestore(onRestored?: () => void) {
   );
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
+  const forkRestore = useForkSettingsRestore(settings);
+
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
@@ -578,9 +578,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
         ? ["Project order"]
         : []),
-      ...(settings.sidebarThreadSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder
-        ? ["Thread order"]
-        : []),
+      ...forkRestore.changedSettingLabels.sidebarThreadSortOrder,
       ...(settings.sidebarWorkingShelfEnabled !==
       DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
         ? ["Working section"]
@@ -596,15 +594,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
         ? ["Auto-settle merged threads"]
         : []),
-      ...(settings.usageLimitRecovery !== DEFAULT_UNIFIED_SETTINGS.usageLimitRecovery
-        ? ["Usage limit recovery"]
-        : []),
-      ...(!Equal.equals(
-        settings.usageLimitFallbackModels,
-        DEFAULT_UNIFIED_SETTINGS.usageLimitFallbackModels,
-      )
-        ? ["Usage limit fallback models"]
-        : []),
+      ...forkRestore.changedSettingLabels.usageLimitRecovery,
+      ...forkRestore.changedSettingLabels.usageLimitFallbackModels,
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...(settings.persistComposerContextStrip !==
       DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
@@ -637,9 +628,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
-      ...(settings.idleAgentSessionMinutes !== DEFAULT_UNIFIED_SETTINGS.idleAgentSessionMinutes
-        ? ["Idle agent timeout"]
-        : []),
+      ...forkRestore.changedSettingLabels.idleAgentSessionMinutes,
       ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
         ? ["Response streaming"]
         : []),
@@ -672,9 +661,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
-      ...(settings.keepRunningInBackground !== DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground
-        ? ["Keep running in background"]
-        : []),
+      ...forkRestore.changedSettingLabels.keepRunningInBackground,
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
       ...getChangedBrowserSettingLabels(settings),
       ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
@@ -682,6 +669,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
     ],
     [
+      forkRestore.changedSettingLabels,
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
       settings.browserDefaultViewport,
@@ -697,7 +685,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.chatWidth,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
-      settings.keepRunningInBackground,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.confirmThreadUnpin,
@@ -725,18 +712,14 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.panelAnimationDurationMs,
       settings.responseStreamingMode,
-      settings.idleAgentSessionMinutes,
       settings.persistComposerContextStrip,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleKeepPullRequests,
       settings.sidebarAutoSettleOnMerge,
-      settings.usageLimitRecovery,
-      settings.usageLimitFallbackModels,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
-      settings.sidebarThreadSortOrder,
       settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -813,6 +796,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       return;
     }
     updateSettings({
+      ...forkRestore.defaults,
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
@@ -837,17 +821,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
-      sidebarThreadSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
-      usageLimitRecovery: DEFAULT_UNIFIED_SETTINGS.usageLimitRecovery,
-      usageLimitFallbackModels: DEFAULT_UNIFIED_SETTINGS.usageLimitFallbackModels,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
-      idleAgentSessionMinutes: DEFAULT_UNIFIED_SETTINGS.idleAgentSessionMinutes,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -861,7 +841,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
-      keepRunningInBackground: DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -886,6 +865,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     });
     onRestored?.();
   }, [
+    forkRestore.defaults,
     changedSettingLabels,
     clearThemeHalves,
     onRestored,
@@ -1241,8 +1221,6 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="appearance-interface" title="Interface">
-        <InterfaceZoomSettingsRow />
-
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
           description="Adjust the contrast of colors and borders across the interface."
@@ -1547,6 +1525,7 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <TypographySection />
+      <ForkSettingsSlot page="appearance" />
     </SettingsPageContainer>
   );
 }
@@ -2225,7 +2204,6 @@ export function GeneralSettingsPanel() {
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
-  const mixedIdleTimeout = useScopedSettingsMixed(["idleAgentSessionMinutes"]);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -2380,48 +2358,6 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
-
-        <SettingsRow
-          {...searchableSetting("thread-order")}
-          description="Order of threads under each project in the sidebar's Projects view. Activity keeps its own order."
-          resetAction={
-            settings.sidebarThreadSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder ? (
-              <SettingResetButton
-                label="thread order"
-                onClick={() =>
-                  updateSettings({
-                    sidebarThreadSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.sidebarThreadSortOrder}
-              onValueChange={(value) => {
-                if (isSidebarThreadSortOrder(value)) {
-                  updateSettings({ sidebarThreadSortOrder: value });
-                }
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Thread order">
-                <SelectValue>
-                  {SIDEBAR_PROJECT_SORT_ORDER_LABELS[settings.sidebarThreadSortOrder]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {SidebarThreadSortOrder.literals.map((sortOrder) => (
-                  <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
-                    {SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder]}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <UsageLimitRecoverySettings />
 
         <SettingsRow
           {...searchableSetting("working-shelf")}
@@ -2600,74 +2536,6 @@ export function GeneralSettingsPanel() {
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
                 </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        {isElectron && !isMacPlatform(navigator.platform) ? (
-          <SettingsRow
-            {...searchableSetting("keep-running-in-background")}
-            description="Closing the window leaves T3 Code in the system tray, so agents and remote connections keep working. Quit from the tray icon. Without a system tray, closing the window quits."
-            resetAction={
-              settings.keepRunningInBackground !==
-              DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground ? (
-                <SettingResetButton
-                  label="keep running in background"
-                  onClick={() =>
-                    updateSettings({
-                      keepRunningInBackground: DEFAULT_UNIFIED_SETTINGS.keepRunningInBackground,
-                    })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Switch
-                checked={settings.keepRunningInBackground}
-                onCheckedChange={(checked) =>
-                  updateSettings({ keepRunningInBackground: Boolean(checked) })
-                }
-                aria-label="Keep running in background"
-              />
-            }
-          />
-        ) : null}
-        <SettingsRow
-          serverScoped
-          settingKeys={["idleAgentSessionMinutes"]}
-          {...searchableSetting("idle-agent-session")}
-          description="Disconnect idle agents and unload their tools after this interval. The next message resumes the session. Working agents and questions stay connected."
-          resetAction={
-            settings.idleAgentSessionMinutes !== 0 ? (
-              <SettingResetButton
-                label="idle agent timeout"
-                onClick={() => updateSettings({ idleAgentSessionMinutes: 0 })}
-              />
-            ) : undefined
-          }
-          control={
-            <Select
-              value={mixedIdleTimeout ? null : String(settings.idleAgentSessionMinutes)}
-              onValueChange={(value) => {
-                if (value !== null) updateSettings({ idleAgentSessionMinutes: Number(value) });
-              }}
-              disabled={!hasServerTargets}
-            >
-              <SelectTrigger size="sm">
-                <SelectValue>
-                  {mixedIdleTimeout
-                    ? "Mixed"
-                    : settings.idleAgentSessionMinutes === 0
-                      ? "Off"
-                      : `${settings.idleAgentSessionMinutes} minutes`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {[0, 15, 30, 45, 60, 90, 120].map((minutes) => (
-                  <SelectItem key={minutes} hideIndicator value={String(minutes)}>
-                    {minutes === 0 ? "Off" : `${minutes} minutes`}
-                  </SelectItem>
-                ))}
               </SelectPopup>
             </Select>
           }
@@ -3540,6 +3408,7 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <LegacyFeaturesSection />
+      <ForkSettingsSlot page="general" />
     </SettingsPageContainer>
   );
 }

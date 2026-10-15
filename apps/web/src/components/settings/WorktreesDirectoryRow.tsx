@@ -1,10 +1,9 @@
-import { Link } from "@tanstack/react-router";
-import { Button } from "../ui/button";
+import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { PROJECT_LOCAL_WORKTREES } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { SettingResetButton, SettingsRow } from "./settingsLayout";
+import { SettingResetButton } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
 import {
@@ -114,39 +113,6 @@ export function WorktreesDirectoryRow() {
             />
           ) : null}
         </div>
-      }
-    />
-  );
-}
-
-export function WorktreeLocationLink() {
-  const { connectedEnvironments, search } = useSettingsScope();
-  // Same gate as the Storage row it links to.
-  if (
-    connectedEnvironments.some(
-      (environment) =>
-        environment.serverConfig?.environment.capabilities.worktreesDirectory !== true,
-    )
-  )
-    return null;
-  return (
-    <SettingsRow
-      title="Worktree location"
-      description="Choose the T3 home folder, one custom folder, or .worktrees inside each project in Storage settings."
-      control={
-        <Button
-          variant="outline"
-          size="sm"
-          render={
-            <Link
-              to="/settings/storage"
-              search={{ machine: search.machine }}
-              hash="storage-worktrees-location"
-            />
-          }
-        >
-          Open Storage
-        </Button>
       }
     />
   );

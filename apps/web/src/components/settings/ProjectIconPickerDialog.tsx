@@ -1,3 +1,9 @@
+import {
+  ForkProjectIconToggle,
+  ForkProjectFolderPreview,
+  forkProjectIconSelection,
+  isProjectIconMode,
+} from "./ForkProjectIconChoice";
 import * as Schema from "effect/Schema";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { ProjectMonogram } from "../ProjectMonogram";
@@ -6,7 +12,6 @@ import {
   type ProjectIconColor,
   type ProjectIconOverride,
 } from "@t3tools/contracts";
-import { FolderIcon } from "lucide-react";
 import { DynamicIcon, type IconName } from "lucide-react/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -94,9 +99,7 @@ export function ProjectIconPickerDialog({
         ? { kind: "monogram", text: monogram, color }
         : mode === "lucide"
           ? { kind: "lucide", name: iconName, color }
-          : mode === "folder"
-            ? { kind: "folder", color }
-            : { kind: "emoji", emoji },
+          : (forkProjectIconSelection(mode, color) ?? { kind: "emoji", emoji }),
     );
     onOpenChange(false);
   };
@@ -115,20 +118,13 @@ export function ProjectIconPickerDialog({
             value={[mode]}
             onValueChange={(next) => {
               const value = next[0];
-              if (
-                value === "lucide" ||
-                value === "emoji" ||
-                value === "monogram" ||
-                value === "folder"
-              ) {
-                setMode(value);
-              }
+              if (isProjectIconMode(value)) setMode(value);
             }}
           >
             <Toggle value="lucide">Icons</Toggle>
             <Toggle value="emoji">Emoji</Toggle>
             <Toggle value="monogram">Monogram</Toggle>
-            <Toggle value="folder">Folder</Toggle>
+            <ForkProjectIconToggle />
           </ToggleGroup>
 
           {mode !== "emoji" ? (
@@ -212,12 +208,7 @@ export function ProjectIconPickerDialog({
               </div>
             </div>
           ) : mode === "folder" ? (
-            <div className="flex items-center gap-4 py-2">
-              <FolderIcon className={cn("size-12", selectedColorClassName)} />
-              <p className="flex-1 text-sm text-muted-foreground">
-                The sidebar's folder icon opens while the project is expanded.
-              </p>
-            </div>
+            <ForkProjectFolderPreview color={color} />
           ) : (
             <>
               <ScrollArea scrollFade className="max-h-64">

@@ -1,3 +1,4 @@
+import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import { buildProjectGroups, selectProjectGroupingSettings } from "../../logicalProject";
 import {
@@ -10,7 +11,6 @@ import { useUiStateStore } from "../../uiStateStore";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { toastManager } from "../ui/toast";
-import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 /** The primary environment's folder root, shared by manual organization and new section projects. */

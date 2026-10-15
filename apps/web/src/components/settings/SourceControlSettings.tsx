@@ -1,3 +1,4 @@
+import { ForkSettingsSlot } from "./ForkSettings";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ChevronDownIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
@@ -642,6 +643,7 @@ export function SourceControlSettingsPanel() {
       )}
 
       <SourceControlWritingSettingsSection />
+      <ForkSettingsSlot page="source-control" />
     </SettingsPageContainer>
   );
 }

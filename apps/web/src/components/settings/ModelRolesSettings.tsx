@@ -1,3 +1,4 @@
+import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import {
   DEFAULT_MODEL_ROLES,
   MAX_MODEL_ROLE_DESCRIPTION_LENGTH,
@@ -29,7 +30,6 @@ import {
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
-  SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";

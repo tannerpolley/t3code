@@ -133,7 +133,7 @@ applies when the project and environment are both on **Inherit**.
 
 ## Worktree location
 
-Choose **T3 home**, **One custom folder** (such as `D:\worktrees` or `~/worktrees`), or **Inside each project** in **Settings → Storage → Worktree location**, also linked from Customizations; project-local worktrees use `.worktrees` at the Git repository root, even when the project is a subfolder. The setting is per machine; existing worktrees stay in place and remain eligible for cleanup, and T3 excludes `.worktrees` from Git and workspace scans (external tools must honor Git ignores or exclude it themselves).
+Choose **T3 home**, **One custom folder** (such as `D:\worktrees` or `~/worktrees`), or **Inside each project** in **Settings → Storage → Worktree location**; project-local worktrees use `.worktrees` at the Git repository root, even when the project is a subfolder. The setting is per machine; existing worktrees stay in place and remain eligible for cleanup, and T3 excludes `.worktrees` from Git and workspace scans (external tools must honor Git ignores or exclude it themselves).
 
 ## Storage cleanup
 

@@ -89,11 +89,11 @@ Agents can read section IDs from the environment and place a project when creati
 or updating it. Ask an agent to put a new project in a named section and expand it;
 placement is saved as part of creating the project.
 
-In **Settings → Customizations**, **Organize by folder** builds sections and subsections
+In **Settings → General**, **Organize by folder** builds sections and subsections
 from a root folder, and **Keep projects organized by folder** places new, unsorted
 projects there; projects you move by hand stay where you put them. The same page
-controls the Projects view, project row style, folder colors, default icons, the
-sidebar toggle position, and revealing the thread you open.
+controls the Projects view, project row style, and revealing the thread you open.
+Folder colors, default icons, and the sidebar toggle position live in **Settings → Appearance**.
 
 Drag a thread from Projects onto the composer to add it as context for your next
 message; subagent rows in Projects and rows in **Lineage** drag the same way.
@@ -183,7 +183,7 @@ To retitle a thread after what it is working on now, open its menu and choose
 current title still fits, and makes a title you typed automatic again. The action is unavailable
 while title generation is in progress or when the connected environment needs a server update.
 
-**Keep thread titles current** in **Settings → Customizations** (on by default) does the same about
+**Keep thread titles current** in **Settings → General** (on by default) does the same about
 every ten minutes for top-level threads with new messages. Titles you typed are never changed
 automatically, and nothing runs when the server has no Codex provider.
 
@@ -317,7 +317,7 @@ You can stop a running native Codex or Claude subagent from its row while its
 parent keeps working. Codex Stop interrupts the child's current turn and its
 descendants; Claude Stop uses its native task control.
 Use **Clear** under **Previous agents** to hide finished agents, and **Show** to restore
-them. To clear them automatically, set **Settings → Customizations → Clear finished agents
+them. To clear them automatically, set **Settings → General → Clear finished agents
 automatically** to 30 minutes or 1 hour. Turn off **Redesigned Lineage** there for the
 original rows.
 
@@ -326,7 +326,7 @@ beside it with its command, whether it is still running, a Stop control and its 
 output, which follows new lines until you scroll up. When the task ends, the popup
 stays open and says so; click outside it or press Escape to close it. In Lineage and the
 background-work line above the composer, **Show output** opens the output in place.
-Turn off **Settings → Customizations → Background process output** to disable this.
+Turn off **Settings → General → Background process output** to disable this.
 
 With the experimental **Show running commands and processes** setting on, a working
 thread in Projects also lists the commands its agent is running now, and the processes
@@ -392,7 +392,7 @@ name. Expand a thread to follow
 its child agents. Child rows keep the same columns as their parent. A thread with
 child agents and everything under it share one tint color, so each group stands out;
 deeper rows take a slightly stronger shade. A thread without children has no tint.
-Turn it off in **Settings → Customizations** to use the classic rows and flat child list.
+Turn it off in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 
 Rows are titled by what each thread does rather than its task name: a thread working

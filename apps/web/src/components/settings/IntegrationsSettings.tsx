@@ -1,3 +1,4 @@
+import { ForkSettingsSlot } from "./ForkSettings";
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -1547,6 +1548,7 @@ export function IntegrationsSettingsPanel() {
         )}
       </SettingsSection>
       <DeviceIntegrationSettings />
+      <ForkSettingsSlot page="integrations" />
     </SettingsPageContainer>
   );
 }

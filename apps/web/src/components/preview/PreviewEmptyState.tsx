@@ -121,7 +121,7 @@ export function PreviewEmptyState({
             <p className="px-1 text-xs text-muted-foreground">
               Select a live local server to open it in this browser tab.
               {hideRules.length > 0
-                ? " Servers you hid can be restored in Settings → Customizations → Browser & preview."
+                ? " Servers you hid can be restored in Settings → Integrations → Browser & preview."
                 : ""}
             </p>
           </div>

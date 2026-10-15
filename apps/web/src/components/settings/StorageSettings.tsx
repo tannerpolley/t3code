@@ -18,7 +18,7 @@ import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
-import { WorktreesDirectoryRow } from "./WorktreesDirectoryRow";
+import { ForkSettingsSlot } from "./ForkSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import {
@@ -410,7 +410,7 @@ export function StorageSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="storage-worktrees" title="Worktrees">
-        {!isProjectScope && <WorktreesDirectoryRow />}
+        {!isProjectScope && <ForkSettingsSlot page="storage" />}
         {isProjectScope && (
           <SettingsRow
             title="Automatic worktree cleanup"

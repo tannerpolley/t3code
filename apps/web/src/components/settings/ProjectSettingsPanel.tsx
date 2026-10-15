@@ -1,3 +1,4 @@
+import { forkProjectIconDescription } from "./ForkProjectIconChoice";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -22,8 +23,7 @@ import type {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
 import { useRemoveProjectMembers } from "../../hooks/useRemoveProjectMembers";
-import { ProjectFavicon } from "../ProjectFavicon";
-import { useProjectFolderAppearance } from "../../projectFolderAppearance";
+import { ForkSettingsProjectFavicon as ProjectFavicon } from "./ForkSettingsProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -160,7 +160,6 @@ function ProjectDetail({
   hasOtherMembers: boolean;
 }) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const { folderColor, forceFolder } = useProjectFolderAppearance(group.projectKey);
   const { environments } = useEnvironments();
   const environmentById = useMemo(
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
@@ -397,9 +396,7 @@ function ProjectDetail({
                   ? `${projectIcon.text} · ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
-                    : projectIcon?.kind === "folder"
-                      ? `Folder · ${projectIcon.color}`
-                      : (faviconPath ?? "Automatic")
+                    : (forkProjectIconDescription(projectIcon) ?? faviconPath ?? "Automatic")
             }
             resetAction={
               group.memberProjects.some(
@@ -417,8 +414,7 @@ function ProjectDetail({
                 <ProjectFavicon
                   project={representative}
                   className="size-6"
-                  folderColor={folderColor}
-                  forceFolder={forceFolder}
+                  projectKey={group.projectKey}
                 />
                 <Button
                   size="sm"
