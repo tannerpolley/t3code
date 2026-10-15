@@ -4,6 +4,7 @@ import type {
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
+import { canWakeDelegatedRequest } from "./DelegatedRequestWake.ts";
 import { supportsManagedIssueWork, managedIssueProviderError } from "../issues/IssueEligibility.ts";
 import { deriveIssueWorkStatus } from "../issues/IssueWorkStatus.ts";
 import { issueCloseoutEffect } from "../issues/IssueCommentEffects.ts";
@@ -48,6 +49,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2StoredEvent,
@@ -328,6 +330,12 @@ export interface OrchestratorV2Shape {
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  /** Routed question wakes validate and dispatch under the same parent lock as Stop. */
+  readonly dispatchDelegatedRequestWake: (
+    task: OrchestrationV2Subagent,
+    request: OrchestrationV2RuntimeRequest,
+    command: Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>,
+  ) => Effect.Effect<void, OrchestratorV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, OrchestratorV2Error>;
@@ -12654,6 +12662,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     awaitRestartContinuation: (run) =>
       effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore),
     dispatch: dispatchWithReceipt,
+    dispatchDelegatedRequestWake: (task, request, command) =>
+      threadDispatch.withLock(
+        task.threadId,
+        Effect.gen(function* () {
+          const allowed = yield* canWakeDelegatedRequest(projectionStore, task, request).pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: task.threadId, cause }),
+            ),
+          );
+          if (allowed) yield* dispatchWithReceipt(command);
+        }),
+      ),
     searchThreadStream: (input) =>
       projectionStore
         .searchThreadStream(input)
@@ -12803,6 +12823,14 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
     delegatedTaskResultPending: () => Effect.succeed(false),
     restartContinuationPending: () => Effect.succeed(false),
     awaitRestartContinuation: () => Effect.void,
+    dispatchDelegatedRequestWake: (_task, _request, command) =>
+      Effect.fail(
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
     dispatch: (command) =>
       Effect.fail(
         new OrchestratorDispatchError({

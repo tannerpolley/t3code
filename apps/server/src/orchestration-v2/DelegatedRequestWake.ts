@@ -11,41 +11,14 @@ import {
   delegatedRequestResponseInstructions,
 } from "./DelegatedRequestRouting.ts";
 
-/** Keep routed requests with their parent and carry their full prompt through the upstream wake. */
+/** Load the routed prompt before the parent lock; admission is rechecked at dispatch. */
 export const prepareDelegatedRequestWake = Effect.fn("prepareDelegatedRequestWake")(function* (
   projections: ProjectionStore.ProjectionStoreV2["Service"],
   task: OrchestrationV2Subagent,
   request: OrchestrationV2RuntimeRequest,
   command: Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>,
 ) {
-  if (
-    task.childThreadId === null ||
-    request.routedTo !== task.threadId ||
-    task.completionDelivery?.state === "disposed" ||
-    ["completed", "failed", "cancelled", "interrupted"].includes(task.status)
-  )
-    return;
-  const current = yield* projections.getRuntimeRequest(task.childThreadId, request.id);
-  if (current?.status !== "pending") return;
-  const parent = yield* projections.getThreadRecords(task.threadId, ["runs", "turnItems"], {
-    turnItemTypes: ["run_interrupt_request"],
-  });
-  const latestRun = latestExecutedRun(parent.runs);
-  if (
-    parent.runs.some((run) => run.status === "queued" && run.queueHeld === true) ||
-    parent.turnItems.some(
-      (item) => item.runId === latestRun?.id && item.type === "run_interrupt_request",
-    )
-  )
-    return;
-  const ownerRun = parent.runs.find((run) => run.id === task.runId);
-  if (
-    task.completionWake === "settled_only" &&
-    request.responseCapability.type !== "message" &&
-    ownerRun !== undefined &&
-    ["preparing", "starting", "running", "waiting"].includes(ownerRun.status)
-  )
-    return;
+  if (task.childThreadId === null) return;
   const child = yield* projections.getThreadRecords(task.childThreadId, ["turnItems"], {
     turnItemTypes: ["user_input_request", "approval_request"],
   });
@@ -63,6 +36,46 @@ export const prepareDelegatedRequestWake = Effect.fn("prepareDelegatedRequestWak
     ...command,
     text: `${title} is waiting on you, its orchestrator (task ${task.id}).\n\n${delegatedRequestDetails(request, child.turnItems)}\n\n${delegatedRequestResponseInstructions(task.childThreadId, request)}`,
   };
+});
+
+/** Recheck routed wake admission while holding the parent's dispatch lock. */
+export const canWakeDelegatedRequest = Effect.fn("canWakeDelegatedRequest")(function* (
+  projections: ProjectionStore.ProjectionStoreV2["Service"],
+  task: OrchestrationV2Subagent,
+  request: OrchestrationV2RuntimeRequest,
+) {
+  if (task.childThreadId === null || request.routedTo !== task.threadId) return false;
+  const current = yield* projections.getRuntimeRequest(task.childThreadId, request.id);
+  if (current?.status !== "pending") return false;
+  const parent = yield* projections.getThreadRecords(
+    task.threadId,
+    ["runs", "turnItems", "subagents"],
+    {
+      turnItemTypes: ["run_interrupt_request"],
+    },
+  );
+  const currentTask = parent.subagents.find((candidate) => candidate.id === task.id);
+  if (
+    currentTask === undefined ||
+    currentTask.completionDelivery?.state === "disposed" ||
+    ["completed", "failed", "cancelled", "interrupted"].includes(currentTask.status)
+  )
+    return false;
+  const latestRun = latestExecutedRun(parent.runs);
+  if (
+    parent.runs.some((run) => run.status === "queued" && run.queueHeld === true) ||
+    parent.turnItems.some(
+      (item) => item.runId === latestRun?.id && item.type === "run_interrupt_request",
+    )
+  )
+    return false;
+  const ownerRun = parent.runs.find((run) => run.id === currentTask.runId);
+  return !(
+    currentTask.completionWake === "settled_only" &&
+    current.responseCapability.type !== "message" &&
+    ownerRun !== undefined &&
+    ["preparing", "starting", "running", "waiting"].includes(ownerRun.status)
+  );
 });
 
 /** A native approval's prompt can arrive after its request. Retry when the prompt is persisted. */

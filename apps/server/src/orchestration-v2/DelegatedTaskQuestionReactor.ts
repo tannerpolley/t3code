@@ -76,7 +76,10 @@ const make = Effect.gen(function* () {
           ? command
           : undefined
         : yield* prepareDelegatedRequestWake(projections, task, request, command);
-    if (wake !== undefined) yield* engine.dispatch(wake);
+    if (wake !== undefined) {
+      if (request.routedTo === undefined) yield* engine.dispatch(wake);
+      else yield* engine.dispatchDelegatedRequestWake(task, request, wake);
+    }
   });
 
   const handle: DelegatedTaskQuestionReactor["Service"]["handle"] = (event) =>

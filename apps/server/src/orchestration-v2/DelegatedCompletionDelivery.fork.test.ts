@@ -1,6 +1,6 @@
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import { runtimeRequestIsOwnerVisible } from "@t3tools/shared/delegatedRequestVisibility";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointScopeId,
   CommandId,
@@ -14,9 +14,10 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { vi } from "vitest";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -132,7 +133,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               text: "Issue worker finished.",
               attachments: [],
               dispatchMode: { type: "queue_after_active" },
-              delegatedCompletion: { parentRunId: null, generation: 1 },
+              delegatedCompletion: { parentRunId: null, generation: 1, taskIds: [taskId] },
               createdBy: "agent",
               creationSource: "server",
             });
@@ -855,6 +856,60 @@ it.layer(
 });
 
 it.layer(layerTest)("child question wake admission", (it) => {
+  it.effect("Stop during child prompt loading prevents a subsequent parent wake", () =>
+    Effect.gen(function* () {
+      const engine = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const child = yield* seedChildWaitingOnUser({
+        name: "stop-during-question",
+        requestKind: "user_input",
+        answeredByMessage: true,
+      });
+      yield* endParentRuns(child.parentThreadId, "completed");
+      const promptRead = yield* Deferred.make<void>();
+      const releasePrompt = yield* Deferred.make<void>();
+      const getThreadRecords = projections.getThreadRecords;
+      const read = vi
+        .spyOn(projections, "getThreadRecords")
+        .mockImplementation((threadId, fields, filter) =>
+          getThreadRecords(threadId, fields, filter).pipe(
+            Effect.tap(() =>
+              threadId === child.childThreadId &&
+              filter?.turnItemTypes?.includes("user_input_request")
+                ? Deferred.succeed(promptRead, undefined).pipe(
+                    Effect.andThen(Deferred.await(releasePrompt)),
+                  )
+                : Effect.void,
+            ),
+          ),
+        );
+      yield* Effect.gen(function* () {
+        const waking = yield* wakeChildQuestion(child).pipe(Effect.forkChild);
+        // Hold prompt loading so Stop commits before wake admission.
+        yield* Deferred.await(promptRead);
+        yield* engine.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-during-question"),
+          threadId: child.parentThreadId,
+        });
+        yield* Deferred.succeed(releasePrompt, undefined);
+        yield* Fiber.join(waking);
+        assert.equal((yield* childQuestionNotices(child.parentThreadId)).length, 0);
+        const parent = yield* engine.getThreadProjection(child.parentThreadId);
+        assert.isFalse(
+          parent.runs.some((run) => ["preparing", "starting", "running"].includes(run.status)),
+        );
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(releasePrompt, undefined);
+            read.mockRestore();
+          }),
+        ),
+      );
+    }),
+  );
+
   it.effect("a held parent queue admits no fresh child wake and stays owner-visible", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
