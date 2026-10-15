@@ -91,13 +91,14 @@ export function ThreadDetailsCard({
     if (!element || density === "essential") return;
     // Measure the single content tree before the scroll viewport clips it. Retain each
     // observed height so increasing available space restores the detail it can hold.
-    // Lists the user can grow (issues, lineage) scroll instead: counting them would fold
+    // Lists the user can grow (PRs, issues, lineage) scroll instead: counting them would fold
     // the card the moment one expands, and the folded card never measures them again.
     const measure = () => {
       const frame = element.closest<HTMLElement>("[data-thread-details-card]");
       const next = element.offsetHeight + (frame ? frame.offsetHeight - frame.clientHeight : 0);
-      const lists = element.querySelector<HTMLElement>("[data-thread-details-lists]");
-      const fittingHeight = next - (lists?.offsetHeight ?? 0);
+      const lists = element.querySelectorAll<HTMLElement>("[data-thread-details-lists]");
+      const fittingHeight =
+        next - Array.from(lists).reduce((sum, list) => sum + list.offsetHeight, 0);
       setMeasurements((current) => {
         const heights = current.key === measurementKey ? current.heights : { full: 0, compact: 0 };
         const fullContentHeight =
