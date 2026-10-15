@@ -18,6 +18,11 @@ class ForkStagedUpdateChangedError extends Schema.TaggedError<ForkStagedUpdateCh
   {},
 ) {}
 
+class ForkLauncherNotExecutableError extends Schema.TaggedError<ForkLauncherNotExecutableError>()(
+  "ForkLauncherNotExecutableError",
+  { launcher: Schema.String },
+) {}
+
 /** sort -V ordering for the dotted numeric versions used by fork releases. */
 export function compareForkVersions(left: string, right: string): number {
   const leftParts = left.split(".").map(BigInt);
@@ -99,7 +104,12 @@ export const make = Effect.gen(function* () {
         if (version === null || version !== expectedVersion) {
           return yield* new ForkStagedUpdateChangedError();
         }
-        yield* fileSystem.access(launcher);
+        // Electron runs the launcher only after this process exits, too late to recover from a
+        // launcher it cannot execute, so check it is an executable file first.
+        const info = yield* fileSystem.stat(launcher);
+        if (info.type !== "File" || (info.mode & 0o111) === 0) {
+          return yield* new ForkLauncherNotExecutableError({ launcher });
+        }
         // Electron starts the launcher after exit; it waits for the database and installs pending/.
         yield* app.relaunch({ execPath: launcher, args: [] });
         yield* app.quit;

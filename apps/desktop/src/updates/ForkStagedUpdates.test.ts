@@ -25,6 +25,7 @@ const withForkHarness = <E>(
     home: string;
     stage: (version: string) => Effect.Effect<void, PlatformError.PlatformError>;
     clear: () => Effect.Effect<void, PlatformError.PlatformError>;
+    chmodLauncher: (mode: number) => Effect.Effect<void, PlatformError.PlatformError>;
     harness: ReturnType<typeof makeHarness>;
   }) => Effect.Effect<
     void,
@@ -69,6 +70,7 @@ const withForkHarness = <E>(
               ),
             ),
         clear: () => fileSystem.remove(pending, { recursive: true, force: true }),
+        chmodLauncher: (mode) => fileSystem.chmod(launcher, mode),
       }).pipe(Effect.provide(harness.layer));
     }),
   ).pipe(Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer())));
@@ -220,6 +222,23 @@ describe("ForkStagedUpdates", () => {
       },
     );
   });
+
+  it.effect("recovers instead of quitting when the launcher cannot be executed", () =>
+    withForkHarness(({ stage, chmodLauncher, harness }) =>
+      Effect.gen(function* () {
+        yield* stage("2.12.15");
+        yield* chmodLauncher(0o644);
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("manual");
+        const result = yield* updates.installPrepared("0.0.45-v2.12.15");
+        assert.isTrue(result.failed);
+        assert.deepEqual(harness.relaunches, []);
+        const state = yield* DesktopState.DesktopState;
+        assert.isFalse(yield* Ref.get(state.quitting));
+      }),
+    ),
+  );
 
   it.effect("recovers instead of quitting when the confirmed staged build disappears", () =>
     withForkHarness(({ stage, clear, harness }) =>
