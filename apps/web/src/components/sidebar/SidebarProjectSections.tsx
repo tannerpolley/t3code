@@ -58,7 +58,7 @@ import {
 } from "./SidebarProjectThreadTooltip";
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
 import { SidebarThreadTime } from "./SidebarThreadTime";
-import { SidebarBackgroundWorkRows } from "./SidebarBackgroundWorkRows";
+import { SidebarBackgroundWorkRows, type NestedWork } from "./SidebarBackgroundWorkRows";
 import {
   SidebarProcessGroupRows,
   SidebarProcessSummaryRow,
@@ -95,6 +95,7 @@ import {
   type CSSProperties,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 
 import {
@@ -1316,7 +1317,7 @@ const SidebarProjectThreadRow = memo(
       ),
     );
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
-    const hasWork = workCount > 0 || processRows.count > 0;
+    const hasWork = workCount > 0;
     const caretInLocation =
       props.codexStyle && hasWork && effectiveThreadRole(props.thread.source) !== "orchestrator";
     // Running work shows by default, even while the thread itself works; a collapse wins for this row.
@@ -1578,29 +1579,23 @@ function SidebarSubagentTree(props: {
       onChildClick={props.onChildClick}
       onChildContextMenu={props.onChildContextMenu}
       rows={props.rows}
-      nestedToggle={(row) => {
+      renderAgent={(row, render) => {
         const work = childWork(row);
-        if (work === null || work.rows.length === 0) return null;
-        const id = work.child.id;
-        return {
-          count: work.rows.length,
-          open: !collapsed.has(id),
-          onToggle: () =>
-            setCollapsed((current) => {
-              const next = new Set(current);
-              if (next.has(id)) next.delete(id);
-              else next.add(id);
-              return next;
-            }),
-        };
-      }}
-      renderNested={(row) => {
-        const work = childWork(row);
-        if (work === null) return null;
+        if (work === null) return render(null);
         const { child, grandchildren, rows } = work;
         return (
-          <SidebarSubagentWork
+          <SidebarSubagentRow
             thread={child}
+            render={render}
+            open={!collapsed.has(child.id)}
+            onToggle={() =>
+              setCollapsed((current) => {
+                const next = new Set(current);
+                if (next.has(child.id)) next.delete(child.id);
+                else next.add(child.id);
+                return next;
+              })
+            }
             depth={(props.depth ?? 1) + 1}
             environmentId={props.environmentId}
             threadId={child.id}
@@ -1620,27 +1615,32 @@ function SidebarSubagentTree(props: {
 }
 
 /**
- * A subagent's work under its row: its tasks, the commands it is running and the processes they
- * spawned (see `useSidebarThreadProcesses`), and its own subagents.
+ * A subagent's row with its work: its tasks, the commands it is running and the processes they
+ * spawned (see `useSidebarThreadProcesses`), and its own subagents. The row holds the work's
+ * queries, so its caret and count know all of it even while collapsed.
  */
-function SidebarSubagentWork(
+function SidebarSubagentRow(
   props: Omit<ComponentProps<typeof SidebarSubagentTree>, "processRows"> & {
     readonly thread: SidebarThreadSummary;
+    readonly render: (nested: NestedWork | null) => ReactNode;
+    readonly open: boolean;
+    readonly onToggle: () => void;
   },
 ) {
-  const { thread, rows, ...tree } = props;
+  const { thread, rows, render, open, onToggle, ...tree } = props;
   const { watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
     thread,
     resolveSidebarThreadStatus(thread) === "working" || thread.pendingBackgroundTasks.length > 0,
     rows,
   );
-  return (
-    <div ref={watchRow}>
-      {workCount > 0 || processRows.count > 0 ? (
+  return render({
+    ref: watchRow,
+    toggle: workCount > 0 ? { count: workCount, open, onToggle } : null,
+    children:
+      workCount > 0 ? (
         <SidebarSubagentTree {...tree} rows={workRows} processRows={processRows} />
-      ) : null}
-    </div>
-  );
+      ) : null,
+  });
 }
 
 /** What the section name dialog is doing: creating a section or renaming one. */

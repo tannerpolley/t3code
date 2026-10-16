@@ -51,6 +51,8 @@ export type BackgroundWorkTaskRow =
       readonly command?: string;
       /** False when its output cannot be followed or it cannot be stopped alone. */
       readonly followable?: boolean;
+      /** How many running rows of the same program this one stands for in the sidebar. */
+      readonly sameProgram?: number;
     });
 
 /** Where a work list's `afterTasks` (an open summary's processes) goes: before the thread's agents; -1 puts it last. */

@@ -332,8 +332,9 @@ subagents. It starts collapsed; click it to list them, each named by its program
 `uv`), with the full command on hover and in its output popup. With the experimental
 **Show running commands and processes** setting on, the list also includes the commands the
 thread's agent is running now and the processes those commands and background tasks
-started. Processes of the same program share one row, such as `python ×10`, and a program
-already listed as a command is not listed again; each thread shows up to five such rows.
+started. Each program gets one row: commands of the same program share it, such as `npm ×2`,
+as do processes, such as `python ×10`, and a program already listed as a command is not
+listed again. Each thread shows up to five process rows.
 Claude shows a foreground command's output only when it finishes, and cannot stop it on its
 own; Codex streams it and can.
 

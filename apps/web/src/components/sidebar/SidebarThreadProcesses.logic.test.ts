@@ -22,15 +22,20 @@ const agent: BackgroundWorkTaskRow = {
   childThreadId: ThreadId.make("child"),
 };
 
-it("folds tasks and each running command once under the summary, leaving agents listed", () => {
+it("folds commands under Processes one row per program, leaving agents listed", () => {
+  const run = (taskId: string, command: string) => ({ ...task(taskId), command });
   // A Codex background command is both a pending task and a running command item.
-  const rows = [task("dev-server"), agent];
-  const commands = [task("dev-server"), task("pytest")];
+  const rows = [run("dev", "npm run dev"), agent];
+  const commands = [run("dev", "npm run dev"), run("build", "npm run build"), run("t", "pytest")];
   const open = foldThreadWork(rows, commands, true);
-  expect(open.rows.map((row) => row.taskId)).toEqual(["dev-server", "pytest", "agent"]);
-  const collapsed = foldThreadWork(rows, commands, false);
-  expect(collapsed.rows.map((row) => row.taskId)).toEqual(["agent"]);
-  expect(collapsed.total).toBe(3);
+  expect(
+    open.rows.map((row) => [row.taskId, row.kind === "subagent" ? 0 : row.sameProgram]),
+  ).toEqual([
+    ["dev", 2],
+    ["t", undefined],
+    ["agent", 0],
+  ]);
+  expect(foldThreadWork(rows, commands, false).rows.map((row) => row.taskId)).toEqual(["agent"]);
 });
 
 it("lists each program once: a spawned group a command already names is dropped", () => {

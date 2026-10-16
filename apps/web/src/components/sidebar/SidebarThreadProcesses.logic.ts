@@ -3,9 +3,12 @@ import { shellProgramName } from "@t3tools/shared/shellCommand";
 
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
 
+type BackgroundTaskRow = Exclude<BackgroundWorkTaskRow, { readonly kind: "subagent" }>;
+
 /**
- * A thread's work rows: its own tasks, the running commands they don't already list, then its
- * agents. All but the agents fold into the thread's summary row, so collapsed only agents show.
+ * A thread's work rows: its own tasks and the running commands they don't already list, one row
+ * per program, then its agents. All but the agents fold into the thread's Processes row, so
+ * collapsed only agents show.
  */
 export function foldThreadWork(
   rows: ReadonlyArray<BackgroundWorkTaskRow>,
@@ -14,9 +17,17 @@ export function foldThreadWork(
 ) {
   // A Codex background command is both a pending task and a running command item.
   const added = commandRows.filter((row) => !rows.some((listed) => listed.taskId === row.taskId));
-  const work = [...rows.filter((row) => row.kind !== "subagent"), ...added];
+  // The first row of a program stands for it; later ones only raise its count.
+  const byProgram = new Map<string, BackgroundTaskRow>();
+  for (const row of [...rows, ...added]) {
+    if (row.kind === "subagent") continue;
+    const key = workRowProgram(row) ?? `${row.kind}:${row.commandKind ?? ""}`;
+    const first = byProgram.get(key);
+    byProgram.set(key, first ? { ...first, sameProgram: (first.sameProgram ?? 1) + 1 } : row);
+  }
+  const work = [...byProgram.values()];
   const agents = rows.filter((row) => row.kind === "subagent");
-  return { work, rows: open ? [...work, ...agents] : agents, total: work.length + agents.length };
+  return { work, agents, rows: open ? [...work, ...agents] : agents };
 }
 
 /** A command or task row's program, which is its whole name in the sidebar; null without a command. */

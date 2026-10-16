@@ -62,17 +62,18 @@ export function useSidebarThreadProcesses(
   const work = foldThreadWork(rows, commandRows, open);
   const processGroups = unlistedProcessGroups(work.work, data?.processGroups ?? NO_GROUPS);
   const hiddenProcessGroups = data?.hiddenProcessGroupCount ?? 0;
+  const processCount = work.work.length + processGroups.length + hiddenProcessGroups;
   return {
     // Only rows that would poll watch their visibility.
     watchRow: wanted ? listRef : undefined,
     workRows: work.rows,
-    /** Every work row, folded ones included. */
-    workCount: work.total,
+    /** The agents and Processes entries under the thread, folded ones included. */
+    workCount: work.agents.length + processCount,
     processRows: {
       groups: processGroups,
       hiddenGroupCount: hiddenProcessGroups,
       /** Rows the Processes row opens into; none means no Processes row. */
-      count: work.work.length + processGroups.length + hiddenProcessGroups,
+      count: processCount,
       open,
       onToggle: () => setExpanded([openKey], !open),
     },
