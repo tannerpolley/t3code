@@ -7,7 +7,7 @@ import type {
   IssueRef,
   IssuePullRequest,
 } from "@t3tools/contracts";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubApi from "./IssueGitHubApi.ts";
 
 const PageInfo = Schema.Struct({
   hasNextPage: Schema.Boolean,

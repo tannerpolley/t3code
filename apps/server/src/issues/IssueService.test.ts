@@ -8,9 +8,10 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { IssueReadError } from "@t3tools/contracts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
 
 import * as IssueService from "./IssueService.ts";
@@ -146,6 +147,7 @@ function makeHarness(input: {
     recordSuccess: () => Effect.void,
   });
   const api = GitHubApi.layer.pipe(
+    Layer.provide(GitHubRest.layer),
     Layer.provide(Layer.mergeAll(http, credentials, rateLimits)),
     Layer.provide(GitHubQuota.layer),
   );

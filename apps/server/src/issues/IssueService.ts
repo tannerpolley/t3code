@@ -29,7 +29,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import { readIssueListMetadata } from "./IssueProjects.ts";
 
@@ -1878,8 +1878,4 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
   });
 });
 
-export const layer: Layer.Layer<
-  IssueService,
-  never,
-  GitHubApi.GitHubApi | GitHubPullRequestApi.GitHubPullRequestApi
-> = Layer.effect(IssueService, make());
+export const layer = Layer.effect(IssueService, make()).pipe(Layer.provide(GitHubApi.layer));
