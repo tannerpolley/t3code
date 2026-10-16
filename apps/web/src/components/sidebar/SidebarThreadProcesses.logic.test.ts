@@ -2,7 +2,11 @@ import { ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
-import { foldThreadWork, summarizeProcessWork } from "./SidebarThreadProcesses.logic";
+import {
+  foldThreadWork,
+  unlistedProcessGroups,
+  workRowProgram,
+} from "./SidebarThreadProcesses.logic";
 
 const task = (taskId: string, kind: "command" | "monitor" = "command"): BackgroundWorkTaskRow => ({
   taskId,
@@ -29,17 +33,18 @@ it("folds tasks and each running command once under the summary, leaving agents 
   expect(collapsed.total).toBe(3);
 });
 
-it("summarizes tasks, commands and process groups, and is empty with none", () => {
-  const group = (count: number) => ({
-    label: "python",
-    commandLine: "python x.py",
-    count,
+it("lists each program once: a spawned group a command already names is dropped", () => {
+  const group = (label: string) => ({
+    label,
+    commandLine: label,
+    count: 2,
     cpuPercent: 0,
     residentBytes: 0,
   });
-  expect(summarizeProcessWork([], [], 0)).toBeNull();
-  expect(summarizeProcessWork([task("watch", "monitor")], [], 0)).toBe("1 task");
-  expect(summarizeProcessWork([task("a"), task("b"), task("c")], [group(4), group(1)], 2)).toBe(
-    "3 commands · 5+ processes",
-  );
+  const work = [{ ...task("dev"), command: "cd web && npm run dev -- --port 5173" }, task("watch")];
+  expect(workRowProgram(work[0]!)).toBe("npm");
+  expect(workRowProgram(task("watch"))).toBeNull();
+  expect(unlistedProcessGroups(work, [group("npm"), group("node")]).map((g) => g.label)).toEqual([
+    "node",
+  ]);
 });

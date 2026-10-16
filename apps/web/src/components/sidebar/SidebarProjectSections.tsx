@@ -97,7 +97,12 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
-import type { EnvironmentId, ProjectIconColor, ThreadId } from "@t3tools/contracts";
+import {
+  effectiveThreadRole,
+  type EnvironmentId,
+  type ProjectIconColor,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 import {
   inheritedSectionFolderAppearance,
@@ -1311,7 +1316,9 @@ const SidebarProjectThreadRow = memo(
       ),
     );
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
-    const hasWork = workCount > 0 || processRows.summary !== null;
+    const hasWork = workCount > 0 || processRows.count > 0;
+    const caretInLocation =
+      props.codexStyle && hasWork && effectiveThreadRole(props.thread.source) !== "orchestrator";
     // Running work shows by default, even while the thread itself works; a collapse wins for this row.
     const [workOpen, setWorkOpen] = useState(true);
     const contextDrag = useThreadContextPointerDrag(() => ({
@@ -1378,12 +1385,16 @@ const SidebarProjectThreadRow = memo(
             >
               {props.codexStyle ? (
                 <SidebarThreadColumns
-                  location={threadLocationCell(
-                    props.thread.source,
-                    props.locationLeadKeys?.has(activeThreadKey) === false ? undefined : (
-                      <ThreadLocationIcon thread={props.thread} tooltip={false} />
-                    ),
-                  )}
+                  location={
+                    caretInLocation
+                      ? undefined
+                      : threadLocationCell(
+                          props.thread.source,
+                          props.locationLeadKeys?.has(activeThreadKey) === false ? undefined : (
+                            <ThreadLocationIcon thread={props.thread} tooltip={false} />
+                          ),
+                        )
+                  }
                   role={<ThreadRoleIcon thread={props.thread.source} nativeMark={false} />}
                   provider={
                     <ThreadRelationshipIcon
@@ -1431,12 +1442,13 @@ const SidebarProjectThreadRow = memo(
             </button>
           }
         />
-        {workCount > 0 && props.codexStyle ? (
+        {hasWork && props.codexStyle ? (
           <SidebarCaretToggle
             open={workOpen}
-            label={`${workOpen ? "Hide" : "Show"} ${workCount} running background ${workCount === 1 ? "task" : "tasks"}`}
+            label={`${workOpen ? "Hide" : "Show"} running work`}
             onToggle={() => setWorkOpen(!workOpen)}
             className="top-0.5 h-5"
+            inLocationColumn={caretInLocation}
           />
         ) : workCount > 0 ? (
           <button
@@ -1624,7 +1636,7 @@ function SidebarSubagentWork(
   );
   return (
     <div ref={watchRow}>
-      {workCount > 0 || processRows.summary !== null ? (
+      {workCount > 0 || processRows.count > 0 ? (
         <SidebarSubagentTree {...tree} rows={workRows} processRows={processRows} />
       ) : null}
     </div>

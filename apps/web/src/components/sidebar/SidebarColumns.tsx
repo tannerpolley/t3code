@@ -45,19 +45,23 @@ export function SidebarCaretSlot(props: {
  * A caret toggle over a row's empty caret slot, for rows that are buttons themselves (buttons
  * cannot nest), so it renders as the row's sibling inside a `relative` parent whose padding box
  * starts at the row. `start-0.5` plus `px-1.5` is the row's 8px padding, which widens the hit area.
- * `className` places it vertically to match the row's height.
+ * `className` places it vertically to match the row's height. A non-orchestrator's caret sits one
+ * column in, over its row's emptied location cell (`inLocationColumn`), so carets step in with
+ * depth: orchestrator, then its agents, then their processes.
  */
 export function SidebarCaretToggle(props: {
   readonly open: boolean;
   readonly label: string;
   readonly onToggle: () => void;
   readonly className: string;
+  readonly inLocationColumn?: boolean | undefined;
 }) {
   return (
     <button
       type="button"
       aria-expanded={props.open}
       aria-label={props.label}
+      data-location-column={props.inLocationColumn ? "" : undefined}
       className={cn(
         "sidebar-caret-toggle absolute flex cursor-pointer items-center rounded px-1.5 text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         props.className,

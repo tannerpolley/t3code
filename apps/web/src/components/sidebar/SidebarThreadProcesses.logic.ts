@@ -1,4 +1,5 @@
 import type { ThreadProcessGroup } from "@t3tools/contracts";
+import { shellProgramName } from "@t3tools/shared/shellCommand";
 
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
 
@@ -18,25 +19,16 @@ export function foldThreadWork(
   return { work, rows: open ? [...work, ...agents] : agents, total: work.length + agents.length };
 }
 
-/**
- * The summary row's text: how many tasks, commands and spawned processes it folds. Null when there
- * is nothing to show. Processes count the listed groups only, so "+" marks a total that hidden
- * groups would raise.
- */
-export function summarizeProcessWork(
+/** A command or task row's program, which is its whole name in the sidebar; null without a command. */
+export function workRowProgram(row: BackgroundWorkTaskRow): string | null {
+  return row.kind === "subagent" || !row.command ? null : shellProgramName(row.command);
+}
+
+/** Spawned process groups whose program no listed command already names, so each program shows once. */
+export function unlistedProcessGroups(
   work: ReadonlyArray<BackgroundWorkTaskRow>,
   groups: ReadonlyArray<ThreadProcessGroup>,
-  hiddenGroupCount: number,
-): string | null {
-  const commands = work.filter((row) => row.kind === "command").length;
-  const tasks = work.length - commands;
-  const processes = groups.reduce((total, group) => total + group.count, 0);
-  const parts = [
-    tasks > 0 ? `${tasks} ${tasks === 1 ? "task" : "tasks"}` : null,
-    commands > 0 ? `${commands} ${commands === 1 ? "command" : "commands"}` : null,
-    processes > 0
-      ? `${processes}${hiddenGroupCount > 0 ? "+" : ""} ${processes === 1 ? "process" : "processes"}`
-      : null,
-  ].filter((part) => part !== null);
-  return parts.length === 0 ? null : parts.join(" · ");
+): ReadonlyArray<ThreadProcessGroup> {
+  const listed = new Set(work.map(workRowProgram));
+  return groups.filter((group) => !listed.has(group.label));
 }

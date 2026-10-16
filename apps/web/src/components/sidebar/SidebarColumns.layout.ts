@@ -62,7 +62,7 @@ export function generateSidebarColumnLayoutCss() {
     )
     .join(
       "\n",
-    )}\n  --sidebar-model-name-width: ${modelPartsCh.name}ch;\n  --sidebar-model-version-width: ${modelPartsCh.version}ch;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template(full)};\n  column-gap: ${gapPx}px;\n}\n`;
+    )}\n  --sidebar-model-name-width: ${modelPartsCh.name}ch;\n  --sidebar-model-version-width: ${modelPartsCh.version}ch;\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template(full)};\n  column-gap: var(--sidebar-column-gap);\n}\n`;
   const hidden = new Set<string>();
   for (const column of dropOrder) {
     const boundary = threshold(hidden);

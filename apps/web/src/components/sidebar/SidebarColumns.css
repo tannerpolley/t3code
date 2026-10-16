@@ -11,6 +11,9 @@
 @utility sidebar-caret-toggle {
   inset-inline-start: 0.125rem;
 }
+.sidebar-caret-toggle[data-location-column] {
+  inset-inline-start: calc(0.125rem + var(--sidebar-caret-width) + var(--sidebar-column-gap));
+}
 /*
  * A thread group (a top-level thread and its descendants) tints its rows with the group's hue, set
  * on the group; deeper rows tint a little stronger. Without a hue the declaration drops out, so

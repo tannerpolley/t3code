@@ -26,6 +26,7 @@
   --sidebar-work-width: 0.875rem;
   --sidebar-model-name-width: 5.65ch;
   --sidebar-model-version-width: 2.35ch;
+  --sidebar-column-gap: 3px;
   container: sidebar-columns / inline-size;
   min-width: 0;
   font-size: 0.75rem;
@@ -37,7 +38,7 @@
       0,
       1fr
     ) var(--sidebar-count-width) var(--sidebar-time-width) var(--sidebar-work-width);
-  column-gap: 3px;
+  column-gap: var(--sidebar-column-gap);
 }
 @container sidebar-columns (width < calc(13.0625rem + 27px + 18ch)) {
   .sidebar-thread-columns {

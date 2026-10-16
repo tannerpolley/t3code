@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  effectiveThreadRole,
   isProviderNativeSubagentThread,
   type EnvironmentId,
   type ThreadId,
@@ -57,6 +58,7 @@ import {
 } from "./SidebarBackgroundWork.logic";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
+import { workRowProgram } from "./SidebarThreadProcesses.logic";
 import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -176,11 +178,16 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           );
         const toggle =
           props.columns && row.kind === "subagent" ? (props.nestedToggle?.(row) ?? null) : null;
+        const caretInLocation =
+          toggle !== null &&
+          row.kind === "subagent" &&
+          row.child !== undefined &&
+          effectiveThreadRole(row.child.source) !== "orchestrator";
         const worktree =
           row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
         // In Projects only each location's lead carries the icon; other cells stay empty.
         const locationIcon =
-          row.kind === "subagent" && row.child
+          row.kind === "subagent" && row.child && !caretInLocation
             ? threadLocationCell(
                 row.child.source,
                 props.locationLeadKeys?.has(
@@ -194,6 +201,12 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           row.kind === "subagent" && row.child ? (
             <ThreadRoleIcon thread={row.child.source} nativeMark={false} />
           ) : null;
+        // Commands and tasks go by their program only; the full command is on hover and in the popup.
+        const name =
+          row.kind === "subagent"
+            ? row.label
+            : (workRowProgram(row) ?? backgroundProcessKindLabel(row.kind, row.commandKind));
+        const nameDetail = row.kind === "subagent" ? undefined : (row.command ?? row.label);
         const modelLabel =
           row.kind === "subagent" && row.child
             ? resolveSidebarThreadModelLabel(row.child, provider, shortModelNames)
@@ -231,16 +244,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 : undefined
             }
             name={
-              <RowLabel
-                className="fork-sidebar-title block truncate"
-                command={row.kind === "subagent" ? undefined : row.command}
-              >
+              <RowLabel className="fork-sidebar-title block truncate" command={nameDetail}>
                 {row.kind === "subagent" && row.child ? (
                   <SidebarProjectThreadName thread={row.child}>
                     {sidebarThreadTitle(row.child.source)}
                   </SidebarProjectThreadName>
                 ) : (
-                  row.label
+                  name
                 )}
               </RowLabel>
             }
@@ -255,9 +265,9 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             {icon}
             <RowLabel
               className="fork-sidebar-title min-w-0 flex-1 truncate text-foreground/85"
-              command={row.kind === "subagent" ? undefined : row.command}
+              command={nameDetail}
             >
-              {row.label}
+              {name}
             </RowLabel>
             {props.compact ? null : (
               <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
@@ -407,6 +417,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 label={`${toggle.open ? "Hide" : "Show"} ${toggle.count} running ${toggle.count === 1 ? "task" : "tasks"} under ${row.label}`}
                 onToggle={toggle.onToggle}
                 className="top-0.5 h-5"
+                inLocationColumn={caretInLocation}
               />
             ) : null}
             {toggle === null || toggle.open ? props.renderNested?.(row) : null}

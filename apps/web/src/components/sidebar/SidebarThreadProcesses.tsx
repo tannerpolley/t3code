@@ -16,14 +16,14 @@ import { useBackgroundTaskListVisibility } from "../chat/BackgroundTaskUsage";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROJECTS_WORK_ROW_HEIGHT, SidebarCaret, SidebarThreadColumns } from "./SidebarColumns";
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
-import { foldThreadWork, summarizeProcessWork } from "./SidebarThreadProcesses.logic";
+import { foldThreadWork, unlistedProcessGroups } from "./SidebarThreadProcesses.logic";
 
 const NO_COMMAND_ROWS: ReadonlyArray<BackgroundWorkTaskRow> = [];
 const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
 
 /**
  * A thread's work rows, with its tasks, running commands and spawned processes folded into one
- * summary row that starts collapsed. Commands and processes are experimental ("Show running
+ * Processes row that starts collapsed. Commands and processes are experimental ("Show running
  * commands and processes"): they poll with task usage's cadence, only while the setting is on,
  * `working` says the thread has work running, and the element given `watchRow` as its ref (the
  * thread's row) is on screen.
@@ -60,7 +60,7 @@ export function useSidebarThreadProcesses(
       ownerThreadId: thread.id,
     })) ?? NO_COMMAND_ROWS;
   const work = foldThreadWork(rows, commandRows, open);
-  const processGroups = data?.processGroups ?? NO_GROUPS;
+  const processGroups = unlistedProcessGroups(work.work, data?.processGroups ?? NO_GROUPS);
   const hiddenProcessGroups = data?.hiddenProcessGroupCount ?? 0;
   return {
     // Only rows that would poll watch their visibility.
@@ -71,7 +71,8 @@ export function useSidebarThreadProcesses(
     processRows: {
       groups: processGroups,
       hiddenGroupCount: hiddenProcessGroups,
-      summary: summarizeProcessWork(work.work, processGroups, hiddenProcessGroups),
+      /** Rows the Processes row opens into; none means no Processes row. */
+      count: work.work.length + processGroups.length + hiddenProcessGroups,
       open,
       onToggle: () => setExpanded([openKey], !open),
     },
@@ -101,13 +102,14 @@ function processRowLayout(props: ProcessRowsProps) {
 }
 
 /**
- * The list item a thread's tasks, commands and processes fold into, first in its work list. In
- * the columns its caret sits one column left of the icons of the rows it opens.
+ * The Processes row a thread's tasks, commands and processes fold into, first in its work list.
+ * In the columns its caret sits one column left of the icons of the rows it opens.
  */
 export function SidebarProcessSummaryRow(props: ProcessRowsProps) {
-  if (props.summary === null) return null;
+  if (props.count === 0) return null;
   const { className, style } = processRowLayout(props);
-  const name = <span className="fork-sidebar-title block truncate">{props.summary}</span>;
+  const name = <span className="fork-sidebar-title block truncate">Processes</span>;
+  const count = props.open ? undefined : props.count;
   return (
     <li style={style}>
       <button
@@ -117,7 +119,11 @@ export function SidebarProcessSummaryRow(props: ProcessRowsProps) {
         onClick={props.onToggle}
       >
         {props.columns ? (
-          <SidebarThreadColumns role={<SidebarCaret open={props.open} />} name={name} />
+          <SidebarThreadColumns
+            role={<SidebarCaret open={props.open} />}
+            name={name}
+            count={count}
+          />
         ) : (
           <>
             <ChevronRightIcon
@@ -125,6 +131,7 @@ export function SidebarProcessSummaryRow(props: ProcessRowsProps) {
               className={cn("size-3.5 shrink-0 transition-transform", props.open && "rotate-90")}
             />
             {name}
+            <span className="ms-auto text-2xs tabular-nums">{count}</span>
           </>
         )}
       </button>
@@ -133,11 +140,12 @@ export function SidebarProcessSummaryRow(props: ProcessRowsProps) {
 }
 
 /**
- * List items for an open summary: one row per program kind of spawned process, then how many
- * groups are not shown. They follow the thread's tasks and commands, ahead of its agents.
+ * List items for an open Processes row: one row per program of spawned process that no command
+ * already names, then how many groups are not shown. They follow the thread's tasks and commands,
+ * ahead of its agents.
  */
 export function SidebarProcessGroupRows(props: ProcessRowsProps) {
-  if (props.summary === null || !props.open) return null;
+  if (!props.open) return null;
   const { className, style } = processRowLayout(props);
   return (
     <>
