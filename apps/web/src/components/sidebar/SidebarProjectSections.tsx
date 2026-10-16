@@ -67,7 +67,6 @@ import {
   SidebarTrailingColumns,
   SidebarThreadColumns,
   threadGroupHue,
-  SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { useServerConfigs } from "../../state/entities";
@@ -1405,12 +1404,6 @@ const SidebarProjectThreadRow = memo(
                   count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
                   time={<SidebarThreadTime thread={props.thread} status={status} />}
                   status={<ThreadStatusMark status={statusMark} />}
-                  usage={
-                    <SidebarTokenUsage
-                      summary={props.thread.source.usageSummary}
-                      driver={provider?.driver}
-                    />
-                  }
                 />
               ) : (
                 <>

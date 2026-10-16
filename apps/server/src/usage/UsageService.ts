@@ -10,7 +10,6 @@ import {
   type UsagePricing,
   type UsageSummary,
   type UsageSummaryInput,
-  type UsageTokenTotals,
   UsageReadError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -40,15 +39,9 @@ import type {
   ProviderUsageInstance,
   TranscriptUsageFormat,
   UsageRecord,
-  UsageSpeed,
 } from "@t3tools/provider-core/server/usage";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
-import {
-  createOverrideRateTable,
-  parseRateTable,
-  priceUsage,
-  type RateTable,
-} from "./usagePricing.ts";
+import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -161,19 +154,8 @@ export class UsageService extends Context.Service<
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
-    /**
-     * A pricer over the current rates, overrides and model aliases, as scans price records: the
-     * dollars a model's tokens cost, or null for a model without rates.
-     */
-    readonly tokenPricer: Effect.Effect<TokenPricer, UsageReadError>;
   }
 >()("t3/usage/UsageService") {}
-
-export type TokenPricer = (
-  model: string,
-  totals: UsageTokenTotals,
-  speed?: UsageSpeed,
-) => number | null;
 
 const EMPTY_PRICING: UsagePricing = {
   status: "unavailable",
@@ -198,7 +180,6 @@ const layerTest = Layer.succeed(
         scanDurationMs: 0,
       }),
     refreshRates: Effect.succeed(EMPTY_PRICING),
-    tokenPricer: Effect.succeed(() => null),
   }),
 );
 
@@ -845,24 +826,7 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  const tokenPricer = Effect.gen(function* () {
-    const settings = yield* readSettings;
-    yield* ensureRates(false);
-    const table = rates;
-    const overrides = createOverrideRateTable(settings.usagePriceOverrides);
-    const aliases = resolveModelAliases(settings.usageModelAliases);
-    const pricer: TokenPricer = (model, totals, speed = "standard") => {
-      const priced = priceUsage(
-        table,
-        { model: aliases.get(model) ?? model, totals, speed, reportedCostUsd: null },
-        overrides,
-      );
-      return priced.costSource === "unpriced" ? null : priced.costUsd;
-    };
-    return pricer;
-  });
-
-  return { readSummary, refreshRates, tokenPricer, awaitPersisted } as const;
+  return { readSummary, refreshRates, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

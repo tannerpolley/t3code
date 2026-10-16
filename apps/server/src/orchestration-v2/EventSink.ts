@@ -36,7 +36,6 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { routeDelegatedRequests } from "./DelegatedRequestRouting.ts";
 import { endTurnItemsOfEndedRuns } from "./EndedRunTurnItems.ts";
-import { withThreadUsagePricer } from "./ThreadUsageSummary.ts";
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
@@ -256,38 +255,30 @@ const layerBase: Layer.Layer<
     // commit. If a writer is descheduled in between, a later commit reaches
     // subscribers first, and clients drop any event at or below the newest
 
-    //
-    // Nothing inside the transaction may wait on another fiber that could need
-    // the writer, so inputs that can wait, such as usage pricing for `events`,
-    // are resolved before it opens.
     const publishLane = yield* Semaphore.make(1);
     const commitThenPublish = <A, E, R>(
-      events: ReadonlyArray<OrchestrationV2DomainEvent>,
       transaction: Effect.Effect<A, E, R>,
       publish: (committed: A) => Effect.Effect<void>,
     ) =>
-      withThreadUsagePricer(
-        events,
-        Effect.suspend(() => {
-          let holdsLane = false;
-          const takeLane = publishLane.take(1).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                holdsLane = true;
-              }),
+      Effect.suspend(() => {
+        let holdsLane = false;
+        const takeLane = publishLane.take(1).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              holdsLane = true;
+            }),
+          ),
+          Effect.uninterruptible,
+        );
+        return sql
+          .withTransaction(Effect.tap(transaction, () => takeLane))
+          .pipe(
+            Effect.tap(publish),
+            Effect.ensuring(
+              Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void)),
             ),
-            Effect.uninterruptible,
           );
-          return sql
-            .withTransaction(Effect.tap(transaction, () => takeLane))
-            .pipe(
-              Effect.tap(publish),
-              Effect.ensuring(
-                Effect.suspend(() => (holdsLane ? publishLane.release(1) : Effect.void)),
-              ),
-            );
-        }),
-      );
+      });
 
     // A user can answer after terminal normalization reads the pending request.
     // Recheck inside the write transaction so stale cleanup cannot erase answers.
@@ -408,7 +399,6 @@ const layerBase: Layer.Layer<
       });
 
       const result = yield* commitThenPublish(
-        input.events,
         Effect.gen(function* () {
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
@@ -444,7 +434,6 @@ const layerBase: Layer.Layer<
         });
 
         const result = yield* commitThenPublish(
-          input.events,
           Effect.gen(function* () {
             const rows = yield* sql<{
               readonly status: string;
@@ -510,7 +499,6 @@ const layerBase: Layer.Layer<
       });
 
       const result = yield* commitThenPublish(
-        input.events,
         Effect.gen(function* () {
           const rows = yield* sql<{
             readonly active_attempt_id: string | null;
@@ -569,7 +557,6 @@ const layerBase: Layer.Layer<
       const expectedJson = yield* ProjectionStore.encodeProviderThreadPayload(input.expected);
 
       return yield* commitThenPublish(
-        input.events,
         Effect.gen(function* () {
           const rows = yield* sql<{ readonly payload_json: string }>`
             SELECT payload_json
@@ -612,7 +599,6 @@ const layerBase: Layer.Layer<
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
       const result = yield* commitThenPublish(
-        input.events,
         Effect.gen(function* () {
           const reserved = yield* commandReceipts.insertIfAbsent({
             commandId: input.commandId,
@@ -728,7 +714,6 @@ const layerBase: Layer.Layer<
     const commitProjectCommandEffect = Effect.fn("orchestrationV2.EventSink.commitProjectCommand")(
       function* (input: Parameters<EventSinkV2Shape["commitProjectCommand"]>[0]) {
         const result = yield* commitThenPublish(
-          [],
           Effect.gen(function* () {
             const reserved: CommandReceiptStore.ProjectCommandReceiptV2 = {
               commandId: input.commandId,

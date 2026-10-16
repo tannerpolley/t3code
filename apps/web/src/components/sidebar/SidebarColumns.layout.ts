@@ -12,8 +12,6 @@ export const sidebarColumnLayout = {
     model: { ch: 8 },
     effort: 2.5,
     name: 0,
-    // A thread's share of its weekly limit, up to "100%".
-    usage: 2.125,
     count: 1,
     time: 4.4375,
     work: 0.875,
@@ -25,7 +23,7 @@ export const sidebarColumnLayout = {
    */
   modelPartsCh: { name: 5.65, version: 2.35 },
   /** Optional columns in the order a narrowing sidebar drops them. */
-  dropOrder: ["usage", "effort", "model"],
+  dropOrder: ["effort", "model"],
   rowPaddingRem: 1,
   titleCh: 10,
   titleFontRem: 0.75,

@@ -1,11 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   EventId,
-  RunId,
-  RunAttemptId,
-  MessageId,
-  type OrchestrationV2Run,
-  type OrchestrationV2Subagent,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -14,14 +9,12 @@ import {
   ProviderTurnId,
   ThreadId,
   type OrchestrationV2AppThread,
-  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import ThreadUsageMigration from "../persistence/ForkMigrations/011_ThreadUsageSummary.ts";
@@ -29,15 +22,9 @@ import {
   DeferThreadUsageSummary,
   refreshAllThreadUsageSummaries,
   deriveThreadUsageSummary,
-  backfillThreadUsageCosts,
-  refreshThreadUsageSummary,
-  ThreadUsagePricer,
 } from "./ThreadUsageSummary.ts";
-import * as EventSink from "./EventSink.ts";
-import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { UsageService, type TokenPricer } from "../usage/UsageService.ts";
 
 const now = DateTime.makeUnsafe("2026-10-13T12:00:00.000Z");
 const threadId = ThreadId.make("usage-summary-thread");
@@ -153,7 +140,7 @@ describe("thread usage summary", () => {
 const layer = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 it.layer(layer)("persisted sidebar usage", (it) => {
   it.effect(
-    "agrees across SQL/memory shell reads, survives reload and backfill, and excludes nested agents",
+    "agrees across SQL/memory shell reads, ignores legacy estimates, survives reload and backfill, and excludes nested agents",
     () =>
       Effect.gen(function* () {
         const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -294,6 +281,11 @@ it.layer(layer)("persisted sidebar usage", (it) => {
           48_000,
         );
         assert.equal((yield* store.getThreadShell(childId))?.usageSummary?.threadTokens, 48_000);
+        assert.deepEqual((yield* store.getThreadShell(threadId))?.usageSummary, shell.usageSummary);
+        yield* sql`UPDATE orchestration_v2_projection_thread_usage
+          SET payload_json = json_set(payload_json, '$.weeklyLimitPercent', 81,
+            '$.costUsd', 12, '$.costProviderInstanceId', 'codex', '$.costVersion', 1)
+          WHERE thread_id = ${threadId}`;
         assert.deepEqual((yield* store.getThreadShell(threadId))?.usageSummary, shell.usageSummary);
         const snapshot = yield* store.getShellSnapshot();
         assert.deepEqual(
@@ -548,301 +540,6 @@ it.layer(layer)("usage recovery and agreement", (it) => {
         (yield* store.getThreadShell(replayThreadId))?.usageSummary?.threadTokens,
         20 * 48_000,
       );
-    }),
-  );
-});
-
-const usageEvents = (
-  appThread = thread,
-  providerThread = provider,
-  providerTurn = turn,
-): ReadonlyArray<OrchestrationV2DomainEvent> => [
-  {
-    id: EventId.make(`${appThread.id}-created`),
-    type: "thread.created",
-    threadId: appThread.id,
-    occurredAt: now,
-    payload: appThread,
-  },
-  {
-    id: EventId.make(`${appThread.id}-provider`),
-    type: "provider-thread.updated",
-    driver: providerThread.driver,
-    threadId: appThread.id,
-    occurredAt: now,
-    payload: providerThread,
-  },
-  {
-    id: EventId.make(`${appThread.id}-turn`),
-    type: "provider-turn.updated",
-    driver: providerThread.driver,
-    threadId: appThread.id,
-    occurredAt: now,
-    payload: providerTurn,
-  },
-];
-const seedUsage = (appThread = thread, providerThread = provider, providerTurn = turn) =>
-  Effect.gen(function* () {
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    for (const event of usageEvents(appThread, providerThread, providerTurn))
-      yield* store.apply(event);
-  });
-const usageServiceWith = (tokenPricer: UsageService["Service"]["tokenPricer"]) =>
-  UsageService.of({
-    tokenPricer,
-    refreshRates: Effect.die("unused"),
-    readSummary: () => Effect.die("unused"),
-  });
-// Direct refreshes get the pricer an event write resolves; the backfill resolves its own from UsageService.
-const withPricer = (pricer: TokenPricer) => Effect.provideService(ThreadUsagePricer, pricer);
-const withUsageService = (pricer: TokenPricer) =>
-  Effect.provideService(UsageService, usageServiceWith(Effect.succeed(pricer)));
-
-const sinkLayer = EventSink.layer.pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-      Layer.provideMerge(SqlitePersistence.layerMemory),
-    ),
-  ),
-);
-it.layer(sinkLayer)("event writes that refresh usage", (it) => {
-  // Pricing reads settings, whose reload queries the database writer; waiting
-  // for it inside a write transaction deadlocked every write on 2026-10-14.
-  it.effect("price outside the write transaction", () =>
-    Effect.gen(function* () {
-      const sink = yield* EventSink.EventSinkV2;
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      const sql = yield* SqlClient.SqlClient;
-      const pricedInTransaction: Array<boolean> = [];
-      const tokenPricer = Effect.serviceOption(sql.transactionService).pipe(
-        Effect.map((transaction): TokenPricer => {
-          pricedInTransaction.push(Option.isSome(transaction));
-          return (_model, totals) => totals.outputTokens / 1000;
-        }),
-      );
-      yield* sink
-        .write({ events: usageEvents(thread, provider, { ...turn, status: "completed" }) })
-        .pipe(Effect.provideService(UsageService, usageServiceWith(tokenPricer)));
-      assert.deepEqual(pricedInTransaction, [false]);
-      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 8);
-    }),
-  );
-});
-
-it.layer(layer)("thread cost estimates", (it) => {
-  it.effect("backfills a completed thread without a new turn and does not persist a percent", () =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      const sql = yield* SqlClient.SqlClient;
-      yield* seedUsage(thread, provider, { ...turn, status: "completed", completedAt: now });
-      assert.isUndefined((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd);
-      yield* sql`UPDATE orchestration_v2_projection_thread_usage SET payload_json = json_set(payload_json, '$.weeklyLimitPercent', 81) WHERE thread_id = ${threadId}`;
-      let calls = 0;
-      const price: TokenPricer = (_model, totals) => {
-        calls++;
-        return totals.outputTokens / 1000;
-      };
-      yield* backfillThreadUsageCosts.pipe(withUsageService(price));
-      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 8);
-      assert.isUndefined((yield* store.getThreadShell(threadId))?.usageSummary?.weeklyLimitPercent);
-      const stored = (yield* sql<{
-        payload_json: string;
-      }>`SELECT payload_json FROM orchestration_v2_projection_thread_usage WHERE thread_id = ${threadId}`)[0]!
-        .payload_json;
-      assert.notInclude(stored, "weeklyLimitPercent");
-      const before = calls;
-      yield* backfillThreadUsageCosts.pipe(withUsageService(price));
-      assert.equal(calls, before, "already priced threads are not rescanned on restart");
-    }),
-  );
-
-  it.effect("does not rescan a thread whose model has no price on every restart", () =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      yield* seedUsage(thread, provider, { ...turn, status: "completed", completedAt: now });
-      let calls = 0;
-      const unpriced: TokenPricer = () => {
-        calls++;
-        return null;
-      };
-      yield* backfillThreadUsageCosts.pipe(withUsageService(unpriced));
-      assert.equal(calls, 1);
-      assert.isUndefined((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd);
-      yield* backfillThreadUsageCosts.pipe(withUsageService(unpriced));
-      assert.equal(calls, 1);
-    }),
-  );
-
-  it.effect("prices native Codex child turns with no run attempt using their own metadata", () =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      const owner = NodeId.make("cost-native-node");
-      const childProvider = {
-        ...provider,
-        ownerNodeId: owner,
-        nativeMetadata: {
-          modelSelection: {
-            instanceId: providerInstanceId,
-            model: "native-model",
-            options: [{ id: "serviceTier", value: "priority" }],
-          },
-        },
-      };
-      yield* seedUsage(thread, childProvider, { ...turn, runAttemptId: null });
-      const observed: unknown[] = [];
-      yield* refreshThreadUsageSummary(threadId).pipe(
-        withPricer((model, totals, speed) => {
-          observed.push([model, totals, speed]);
-          return totals.outputTokens / 1000;
-        }),
-      );
-      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 8);
-      assert.deepEqual(observed, [
-        [
-          "native-model",
-          {
-            uncachedInputTokens: 10_000,
-            cachedInputTokens: 30_000,
-            cacheCreationTokens: 0,
-            outputTokens: 8_000,
-            reasoningTokens: 0,
-          },
-          "fast",
-        ],
-      ]);
-      // Older native records carry only the subagent model. They must still be priced.
-      const task: OrchestrationV2Subagent = {
-        id: owner,
-        threadId,
-        runId: null,
-        parentNodeId: NodeId.make("parent"),
-        origin: "provider_native",
-        createdBy: "agent",
-        driver: provider.driver,
-        providerInstanceId,
-        providerThreadId: provider.id,
-        childThreadId: threadId,
-        nativeTaskRef: null,
-        prompt: "child",
-        title: null,
-        model: "task-model",
-        status: "completed",
-        result: null,
-        startedAt: now,
-        completedAt: now,
-        updatedAt: now,
-      };
-      yield* store.apply({
-        id: EventId.make("native-task-model"),
-        type: "subagent.updated",
-        threadId,
-        driver: provider.driver,
-        occurredAt: now,
-        payload: task,
-      });
-      yield* store.apply({
-        id: EventId.make("native-no-metadata"),
-        type: "provider-thread.updated",
-        threadId,
-        driver: provider.driver,
-        occurredAt: now,
-        payload: { ...childProvider, nativeMetadata: null },
-      });
-      yield* refreshThreadUsageSummary(threadId).pipe(
-        withPricer((model) => (model === "task-model" ? 12 : null)),
-      );
-      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 12);
-    }),
-  );
-
-  it.effect("uses each run's recorded speed instead of the thread's current options", () =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      yield* seedUsage();
-      const runId = RunId.make("speed-run");
-      const attemptId = RunAttemptId.make("speed-attempt");
-      const run: OrchestrationV2Run = {
-        id: runId,
-        threadId,
-        ordinal: 1,
-        providerInstanceId,
-        modelSelection: {
-          instanceId: providerInstanceId,
-          model: "priced",
-          options: [{ id: "serviceTier", value: "priority" }],
-        },
-        providerThreadId: provider.id,
-        userMessageId: MessageId.make("speed-message"),
-        rootNodeId: turn.nodeId,
-        activeAttemptId: attemptId,
-        status: "completed",
-        requestedAt: now,
-        startedAt: now,
-        completedAt: now,
-        checkpointId: null,
-        contextHandoffId: null,
-      };
-      yield* store.apply({
-        id: EventId.make("speed-run"),
-        type: "run.updated",
-        threadId,
-        occurredAt: now,
-        payload: run,
-      });
-      yield* store.apply({
-        id: EventId.make("speed-attempt"),
-        type: "run-attempt.updated",
-        threadId,
-        occurredAt: now,
-        payload: {
-          id: attemptId,
-          runId,
-          attemptOrdinal: 1,
-          rootNodeId: turn.nodeId,
-          providerInstanceId,
-          providerThreadId: provider.id,
-          providerTurnId: turn.id,
-          reason: "initial",
-          status: "completed",
-          startedAt: now,
-          completedAt: now,
-        },
-      });
-      yield* store
-        .apply({
-          id: EventId.make("speed-turn"),
-          type: "provider-turn.updated",
-          threadId,
-          driver: provider.driver,
-          occurredAt: now,
-          payload: { ...turn, runAttemptId: attemptId },
-        })
-        .pipe(
-          withPricer(
-            (_model, totals, speed) => (totals.outputTokens / 1000) * (speed === "fast" ? 2 : 1),
-          ),
-        );
-      assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, 16);
-      for (const [options, expected] of [
-        [[{ id: "serviceTier", value: "priority" }], 16],
-        [[{ id: "serviceTier", value: "ultrafast" }], 48],
-        [[{ id: "fastMode", value: true }], 16],
-      ] as const) {
-        yield* store.apply({
-          id: EventId.make(`speed-${expected}-${options[0].id}`),
-          type: "run.updated",
-          threadId,
-          occurredAt: now,
-          payload: { ...run, modelSelection: { ...run.modelSelection, options } },
-        });
-        yield* refreshThreadUsageSummary(threadId).pipe(
-          withPricer(
-            (_model, totals, speed) =>
-              (totals.outputTokens / 1000) * (speed === "ultrafast" ? 6 : speed === "fast" ? 2 : 1),
-          ),
-        );
-        assert.equal((yield* store.getThreadShell(threadId))?.usageSummary?.costUsd, expected);
-      }
     }),
   );
 });

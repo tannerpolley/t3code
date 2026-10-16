@@ -102,30 +102,3 @@ export function weighLimitWindow(input: {
   });
   return { entries, total, priced: costPerToken > 0 };
 }
-
-/**
- * Percent of a weekly limit one dollar of API-equivalent usage spends: the window's reported use
- * over what the scanned usage inside it cost. Null when the window has no clock or no priced usage.
- */
-export function weeklyLimitPercentPerUsd(input: {
-  readonly window: ServerProviderUsageWindow;
-  readonly buckets: readonly UsageBucket[];
-  readonly provider: UsageProviderKind;
-  readonly nowMs: number;
-  readonly timeZone: string;
-}): number | null {
-  const { window } = input;
-  if (
-    window.resetsAt === undefined ||
-    window.windowDurationMins === undefined ||
-    isUsageWindowStale(window, input.nowMs)
-  )
-    return null;
-  const startMs = Math.min(
-    Date.parse(window.resetsAt) - window.windowDurationMins * 60_000,
-    input.nowMs,
-  );
-  if (!Number.isFinite(startMs)) return null;
-  const { total, priced } = weighLimitWindow({ ...input, startMs });
-  return priced && total > 0 ? window.usedPercent / total : null;
-}

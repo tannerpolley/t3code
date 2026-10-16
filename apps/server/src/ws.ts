@@ -233,7 +233,6 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageService from "./usage/UsageService.ts";
-import * as WeeklyLimitEstimates from "./usage/WeeklyLimitEstimates.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as IssueLinks from "./issues/IssueLinks.ts";
@@ -1264,7 +1263,6 @@ const layerWsRpc = (
         const previewManager = yield* PreviewManager.PreviewManager;
         const portDiscovery = yield* PortScanner.PortDiscovery;
         const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
-        const weeklyLimitEstimates = yield* WeeklyLimitEstimates.WeeklyLimitEstimates;
         const modelManifest = yield* ModelManifest.ModelManifest;
         const providerLatestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
         const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -1681,7 +1679,7 @@ const layerWsRpc = (
         const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
           Effect.gen(function* () {
             const keybindingsConfig = yield* keybindings.loadConfigState;
-            const currentProviders = yield* weeklyLimitEstimates.getProviders;
+            const currentProviders = yield* providerRegistry.getProviders;
             const providers = options.usageLimitsCommand
               ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
               : currentProviders;
@@ -3000,8 +2998,8 @@ const layerWsRpc = (
                   // providers so a source refresh that lands before any provider change
                   // still pairs up and reaches the client.
                   Stream.concat(
-                    Stream.fromEffect(weeklyLimitEstimates.getProviders),
-                    weeklyLimitEstimates.streamChanges,
+                    Stream.fromEffect(providerRegistry.getProviders),
+                    providerRegistry.streamChanges,
                   ),
                   usageLimitSources.streamChanges.pipe(
                     Stream.changesWith(

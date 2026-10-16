@@ -172,7 +172,6 @@ import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAcco
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
-import * as WeeklyLimitEstimates from "./usage/WeeklyLimitEstimates.ts";
 import * as ThreadWorkspaceService from "./orchestration-v2/ThreadWorkspaceService.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -557,8 +556,6 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
-  // Fork: publish current weekly-limit factors with provider snapshots.
-  WeeklyLimitEstimates.layer,
 
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,

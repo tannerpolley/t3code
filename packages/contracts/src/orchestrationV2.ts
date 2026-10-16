@@ -1902,11 +1902,6 @@ export const OrchestrationV2ThreadUsageSummary = Schema.Struct({
   threadTokens: Schema.optional(NonNegativeInt),
   contextTokens: Schema.optional(NonNegativeInt),
   contextWindow: Schema.optional(NonNegativeInt),
-  /** The thread's API-equivalent cost on its current provider instance, in US dollars. */
-  costUsd: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
-  costProviderInstanceId: Schema.optional(ProviderInstanceId),
-  /** Derived by clients from cost and the current factor; legacy servers may send a stored estimate. */
-  weeklyLimitPercent: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type OrchestrationV2ThreadUsageSummary = typeof OrchestrationV2ThreadUsageSummary.Type;
 

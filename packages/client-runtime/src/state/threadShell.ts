@@ -7,7 +7,6 @@ import type {
   ScopedProjectRef,
   ScopedThreadRef,
   ThreadId,
-  ServerProvider,
 } from "@t3tools/contracts";
 import { isProviderNativeSubagentThread } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -105,9 +104,6 @@ export function childThreadInputsTitle(
 
 export function createEnvironmentThreadShellAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
-  readonly providersAtom?: (
-    environmentId: EnvironmentId,
-  ) => Atom.Atom<ReadonlyArray<ServerProvider> | null>;
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
@@ -144,53 +140,11 @@ export function createEnvironmentThreadShellAtoms(input: {
     return value;
   };
 
-  const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) => {
-    let previous = EMPTY_THREADS;
-    const estimates = new WeakMap<
-      OrchestrationV2ThreadShell,
-      { readonly percent: number | undefined; readonly thread: OrchestrationV2ThreadShell }
-    >();
-    return Atom.make((get): ReadonlyArray<OrchestrationV2ThreadShell> => {
-      const threads = get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS;
-      const providers = new Map(
-        (input.providersAtom === undefined
-          ? []
-          : (get(input.providersAtom(environmentId)) ?? [])
-        ).map((provider) => [provider.instanceId, provider]),
-      );
-      const next = threads.map((thread) => {
-        const usage = thread.usageSummary;
-        if (usage === undefined) return thread;
-        const factor = providers
-          .get(thread.providerInstanceId)
-          ?.usageLimits?.windows.find(
-            (window) => window.kind === "weekly",
-          )?.weeklyLimitPercentPerUsd;
-        const percent =
-          usage.costUsd === undefined ||
-          usage.costProviderInstanceId !== thread.providerInstanceId ||
-          factor === undefined
-            ? undefined
-            : usage.costUsd * factor;
-        if (percent === usage.weeklyLimitPercent) return thread;
-        const cached = estimates.get(thread);
-        if (cached !== undefined && cached.percent === percent) return cached.thread;
-        const { weeklyLimitPercent: _storedPercent, ...summary } = usage;
-        const derived = {
-          ...thread,
-          usageSummary: {
-            ...summary,
-            ...(percent === undefined ? {} : { weeklyLimitPercent: percent }),
-          },
-        };
-        estimates.set(thread, { percent, thread: derived });
-        return derived;
-      });
-      if (arrayElementsEqual(previous, next)) return previous;
-      previous = next;
-      return next;
-    }).pipe(Atom.withLabel(`environment-threads:${environmentId}`));
-  });
+  const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(input.snapshotAtom(environmentId))?.threads ?? EMPTY_THREADS).pipe(
+      Atom.withLabel(`environment-threads:${environmentId}`),
+    ),
+  );
 
   const environmentThreadIndexAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get): ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> => {

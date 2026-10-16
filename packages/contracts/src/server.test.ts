@@ -32,19 +32,16 @@ const baseProviderSnapshot = {
 };
 
 describe("ServerProvider", () => {
-  it("accepts weekly estimates as optional fields alongside older snapshots", () => {
+  it("ignores removed weekly estimates in older snapshots", () => {
     const window = { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 10 };
     const decode = (entry: object) =>
       decodeServerProvider({
         ...baseProviderSnapshot,
         usageLimits: { checkedAt: baseProviderSnapshot.checkedAt, windows: [entry] },
       }).usageLimits!.windows[0];
-    expect(decode(window)?.weeklyLimitPercentPerUsd).toBeUndefined();
-    expect(decode({ ...window, weeklyLimitPercentPerUsd: 0.5 })?.weeklyLimitPercentPerUsd).toBe(
-      0.5,
-    );
-    expect(() => decode({ ...window, weeklyLimitPercentPerUsd: -1 })).not.toThrow();
-    expect(decode({ ...window, weeklyLimitPercentPerUsd: -1 })).toBeUndefined();
+    expect(decode(window)).toEqual(window);
+    expect(decode({ ...window, weeklyLimitPercentPerUsd: 0.5 })).toEqual(window);
+    expect(decode({ ...window, weeklyLimitPercentPerUsd: -1 })).toEqual(window);
   });
 
   it.each([undefined, true, false])("decodes workspace command discovery pending=%s", (pending) => {

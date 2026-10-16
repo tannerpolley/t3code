@@ -3,12 +3,10 @@ import {
   ProjectId,
   RunId,
   RuntimeRequestId,
-  ServerProvider,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -18,8 +16,6 @@ import { applyShellStreamEvent } from "./shellReducer.ts";
 import { isThreadWorking } from "./threadInbox.ts";
 import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
-const decodeProvider = Schema.decodeUnknownSync(ServerProvider);
-
 const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
@@ -27,9 +23,6 @@ const otherProjectId = ProjectId.make("other-project");
 function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
-  );
-  const providersAtom = Atom.family((_id: EnvironmentId) =>
-    Atom.make<ReadonlyArray<ServerProvider>>([]),
   );
   const catalogValueAtom = Atom.make({
     isReady: true,
@@ -53,8 +46,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
     registry: AtomRegistry.make(),
     snapshotAtom,
     catalogValueAtom,
-    providersAtom,
-    threads: createEnvironmentThreadShellAtoms({ catalogValueAtom, snapshotAtom, providersAtom }),
+    threads: createEnvironmentThreadShellAtoms({ catalogValueAtom, snapshotAtom }),
   };
 }
 
@@ -385,66 +377,6 @@ it("hides routed questions and approvals from owner attention and child-input ba
     registry.get(threads.threadShellAtom({ environmentId, threadId: children[1]!.id }))
       ?.hasPendingApprovals,
   ).toBe(true);
-  dispose();
-  registry.dispose();
-});
-
-it("recomputes completed-thread estimates from live factors, without a new thread snapshot", () => {
-  const { registry, threads, snapshotAtom, providersAtom } = makeHarness([
-    environmentId,
-    remoteEnvironmentId,
-  ]);
-  const source = {
-    ...v2ThreadShell,
-    usageSummary: {
-      partial: false,
-      costUsd: 10,
-      costProviderInstanceId: v2ThreadShell.providerInstanceId,
-      weeklyLimitPercent: 81,
-    },
-  };
-  const snapshot = { ...v2ShellSnapshot, threads: [source] };
-  registry.set(snapshotAtom(environmentId), snapshot);
-  registry.set(snapshotAtom(remoteEnvironmentId), snapshot);
-  const current = (id = environmentId) =>
-    registry.get(threads.threadShellAtom({ environmentId: id, threadId: source.id }))!.source;
-  const dispose = registry.mount(threads.threadShellsAtom);
-  const provider = (factor: number | undefined) =>
-    decodeProvider({
-      instanceId: source.providerInstanceId,
-      driver: "codex",
-      enabled: true,
-      installed: true,
-      version: "1",
-      status: "ready",
-      auth: { status: "authenticated" },
-      checkedAt: "2026-10-14T00:00:00Z",
-      models: [],
-      usageLimits: {
-        checkedAt: "2026-10-14T00:00:00Z",
-        windows: [
-          {
-            id: "weekly",
-            kind: "weekly",
-            label: "Weekly",
-            usedPercent: 10,
-            weeklyLimitPercentPerUsd: factor,
-          },
-        ],
-      },
-    });
-  expect(current().usageSummary?.weeklyLimitPercent).toBeUndefined();
-  registry.set(providersAtom(environmentId), [provider(0.5)]);
-  expect(current().usageSummary?.weeklyLimitPercent).toBe(5);
-  const stable = current();
-  registry.set(providersAtom(environmentId), [provider(0.5)]);
-  expect(current()).toBe(stable);
-  registry.set(providersAtom(environmentId), [provider(0.2)]);
-  expect(current().usageSummary?.weeklyLimitPercent).toBe(2);
-  expect(current(remoteEnvironmentId).usageSummary?.weeklyLimitPercent).toBeUndefined();
-  registry.set(providersAtom(environmentId), [provider(undefined)]);
-  expect(current().usageSummary?.weeklyLimitPercent).toBeUndefined();
-  expect(registry.get(snapshotAtom(environmentId))).toBe(snapshot);
   dispose();
   registry.dispose();
 });

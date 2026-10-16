@@ -17,7 +17,7 @@ const optionalColumns = (sidebarRem: number) => {
     const budget = sidebarColumnBudget(hidden);
     if (container < budget.rem * 16 + budget.px + budget.ch * ch) hidden.add(column);
   }
-  return ["model", "effort", "usage"].filter((column) => !hidden.has(column));
+  return ["model", "effort"].filter((column) => !hidden.has(column));
 };
 
 describe("sidebar width budget", () => {
@@ -25,7 +25,6 @@ describe("sidebar width budget", () => {
     expect(optionalColumns(16)).toEqual([]);
     expect(optionalColumns(25)).toEqual(["model"]);
     expect(optionalColumns(27.5)).toEqual(["model", "effort"]);
-    expect(optionalColumns(30)).toEqual(["model", "effort", "usage"]);
   });
 });
 
@@ -44,7 +43,6 @@ it("keeps the committed CSS equal to generated CSS apart from formatter whitespa
 const ADVANCES = new Map(
   Object.entries({
     " ": 801,
-    "%": 2020,
     ".": 603,
     A: 1710,
     G: 1614,
@@ -97,8 +95,4 @@ it("fits six-character model names, their versions and every effort label", () =
   fits(["Opus", "Sonnet", "Haiku", "Sol", "Luna", "Astra", "GPT"], 11, modelPartsCh.name * ch);
   fits(["5.5", "6.1", "8.8"], 11, modelPartsCh.version * ch);
   fits(["Low", "Med", "High", "XHigh", "Max"], 11, tracks.effort * 16);
-});
-
-it("fits a whole weekly-limit percent inside the usage track", () => {
-  fits(["1%", "99%", "100%"], 11, tracks.usage * 16);
 });
