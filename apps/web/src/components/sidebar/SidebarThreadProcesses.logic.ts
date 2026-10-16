@@ -2,42 +2,41 @@ import type { ThreadProcessGroup } from "@t3tools/contracts";
 
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
 
-/** Adds running commands the list does not already show, after its tasks and before its agents. */
-export function withRunningCommandRows(
+/**
+ * A thread's work rows: its own tasks, the running commands they don't already list, then its
+ * agents. All but the agents fold into the thread's summary row, so collapsed only agents show.
+ */
+export function foldThreadWork(
   rows: ReadonlyArray<BackgroundWorkTaskRow>,
   commandRows: ReadonlyArray<BackgroundWorkTaskRow>,
-): ReadonlyArray<BackgroundWorkTaskRow> {
+  open: boolean,
+) {
+  // A Codex background command is both a pending task and a running command item.
   const added = commandRows.filter((row) => !rows.some((listed) => listed.taskId === row.taskId));
-  if (added.length === 0) return rows;
-  const firstAgent = rows.findIndex((row) => row.kind === "subagent");
-  const at = firstAgent === -1 ? rows.length : firstAgent;
-  return [...rows.slice(0, at), ...added, ...rows.slice(at)];
+  const work = [...rows.filter((row) => row.kind !== "subagent"), ...added];
+  const agents = rows.filter((row) => row.kind === "subagent");
+  return { work, rows: open ? [...work, ...agents] : agents, total: work.length + agents.length };
 }
 
 /**
- * The collapsed row for a thread's running commands and spawned processes: how many of each, and
- * their combined usage. Null when there is nothing to show. Processes count the listed groups
- * only, so `moreProcesses` marks a total that hidden groups would raise.
+ * The summary row's text: how many tasks, commands and spawned processes it folds. Null when there
+ * is nothing to show. Processes count the listed groups only, so "+" marks a total that hidden
+ * groups would raise.
  */
 export function summarizeProcessWork(
-  commandCount: number,
+  work: ReadonlyArray<BackgroundWorkTaskRow>,
   groups: ReadonlyArray<ThreadProcessGroup>,
   hiddenGroupCount: number,
-  usage?: { readonly cpuPercent: number; readonly residentBytes: number },
-) {
+): string | null {
+  const commands = work.filter((row) => row.kind === "command").length;
+  const tasks = work.length - commands;
   const processes = groups.reduce((total, group) => total + group.count, 0);
-  if (commandCount === 0 && processes === 0) return null;
   const parts = [
-    commandCount > 0 ? `${commandCount} ${commandCount === 1 ? "command" : "commands"}` : null,
+    tasks > 0 ? `${tasks} ${tasks === 1 ? "task" : "tasks"}` : null,
+    commands > 0 ? `${commands} ${commands === 1 ? "command" : "commands"}` : null,
     processes > 0
       ? `${processes}${hiddenGroupCount > 0 ? "+" : ""} ${processes === 1 ? "process" : "processes"}`
       : null,
-  ];
-  return {
-    text: parts.filter((part) => part !== null).join(" · "),
-    // The server's total also counts the commands' own processes and the groups past the cap.
-    cpuPercent: usage?.cpuPercent ?? groups.reduce((total, group) => total + group.cpuPercent, 0),
-    residentBytes:
-      usage?.residentBytes ?? groups.reduce((total, group) => total + group.residentBytes, 0),
-  };
+  ].filter((part) => part !== null);
+  return parts.length === 0 ? null : parts.join(" · ");
 }

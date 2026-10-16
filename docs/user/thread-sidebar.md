@@ -327,15 +327,17 @@ stays open and says so; click outside it or press Escape to close it. In Lineage
 background-work line above the composer, **Show output** opens the output in place.
 Turn off **Settings → General → Background process output** to disable this.
 
-With the experimental **Show running commands and processes** setting on, a working
-thread in Projects also lists the commands its agent is running now, and the processes
-those commands and background tasks started, such as `python ×10`, with
-their combined CPU and memory, after the thread's own background tasks and ahead of its
-subagents. Running commands and processes fold into one summary row (such as `3 commands · 5 processes`) that opens on click; when open, processes of the same program share one row, named by the program (`python`, `node`, `npm`), with hover showing the full command, and each thread shows up to five such
-rows. Claude shows a foreground command's output only when it
-finishes, and cannot stop it on its own; Codex streams it and can.
+In Projects, a thread's background tasks fold into one summary row above its subagents,
+such as `1 task · 3 commands · 5 processes`. It starts collapsed; click it to list them.
+With the experimental **Show running commands and processes** setting on, the row also
+counts the commands the thread's agent is running now and the processes those commands and
+background tasks started. When open, processes of the same program share one row, such as
+`python ×10`, with hover showing the full command, and each thread shows up to five such
+rows. Claude shows a foreground command's output only when it finishes, and cannot stop it
+on its own; Codex streams it and can.
 
-To stop one background task, hover its row and use its Stop control. **Stop** above
+To stop one background task, open its thread's summary row, hover the task's row and use
+its Stop control. **Stop** above
 the composer stops all the thread's background work. Finished and stopped tasks
 leave the running list; stopped commands keep their stopped state in the conversation.
 Claude can also report background monitors, while Codex reports terminal commands.

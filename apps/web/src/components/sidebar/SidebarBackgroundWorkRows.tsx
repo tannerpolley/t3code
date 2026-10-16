@@ -30,12 +30,6 @@ import {
   BackgroundProcessKindIcon,
   backgroundProcessKindLabel,
 } from "../chat/BackgroundProcessKind";
-import {
-  BackgroundTaskResourceUsageLabel,
-  backgroundTaskResourceUsageKey,
-  useBackgroundTaskListVisibility,
-  useBackgroundTaskResourceUsage,
-} from "../chat/BackgroundTaskUsage";
 import { useServerConfigs, useThreadShell } from "../../state/entities";
 import type { SidebarThreadSummary } from "../../types";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
@@ -57,7 +51,6 @@ import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
   afterTasksIndex,
   childWorktreeLabel,
-  groupBackgroundWorkTaskRows,
   resolveSidebarThreadModelLabel,
   sidebarThreadTitle,
   type BackgroundWorkTaskRow,
@@ -101,6 +94,8 @@ export type SidebarBackgroundWorkRowsProps = {
   /** Nesting level of these rows below their top-level thread, which sets their tint's shade. */
   readonly depth?: number;
   readonly renderNested?: (row: BackgroundWorkTaskRow) => ReactNode;
+  /** The list item the thread's tasks and commands fold into, first in the list. */
+  readonly summary?: ReactNode;
   /** List items placed after the thread's own tasks and commands, ahead of its agents. */
   readonly afterTasks?: ReactNode;
   readonly nestedToggle?: (row: BackgroundWorkTaskRow) => NestedWorkToggle | null;
@@ -126,18 +121,11 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
     title: draggedChild.current?.title ?? "Thread",
   }));
   // Rows keep describeSidebarBackgroundWork's order: the thread's own tasks, then its agents.
-  // `afterTasks` goes between them, above the commands its summary row opens into.
+  // `afterTasks` goes between them.
   const rows = props.rows;
   const afterTasksAt = afterTasksIndex(rows);
-  const { backgroundTasks } = groupBackgroundWorkTaskRows(rows);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
-  const { listRef, isVisible } = useBackgroundTaskListVisibility(backgroundTasks.length > 0);
-  const resourceUsage = useBackgroundTaskResourceUsage({
-    environmentId: props.environmentId,
-    threadIds: backgroundTasks.map((row) => row.ownerThreadId ?? props.threadId),
-    enabled: isVisible,
-  });
   // Column rows take their group's tint, at their depth.
   const rowClass = cn(
     "fork-sidebar-agent",
@@ -146,7 +134,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
 
   return (
     <ul
-      ref={listRef}
       className={
         props.columns
           ? "text-2xs"
@@ -155,6 +142,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             : "max-h-48 space-y-0.5 overflow-y-auto pb-1 text-xs"
       }
     >
+      {props.summary}
       {rows.flatMap((row, index) => {
         const kindLabel =
           row.kind === "subagent"
@@ -166,12 +154,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             : backgroundProcessKindLabel(row.kind, row.commandKind);
         const taskThreadId =
           row.kind === "subagent" ? props.threadId : (row.ownerThreadId ?? props.threadId);
-        const usage =
-          row.kind === "subagent" ? null : (
-            <BackgroundTaskResourceUsageLabel
-              usage={resourceUsage.get(backgroundTaskResourceUsageKey(taskThreadId, row.taskId))}
-            />
-          );
         const childThreadId = row.kind === "subagent" ? row.childThreadId : null;
         const provider =
           row.kind === "subagent" && row.child
@@ -249,21 +231,18 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 : undefined
             }
             name={
-              <span className="flex min-w-0 items-center gap-2">
-                <RowLabel
-                  className="fork-sidebar-title min-w-0 flex-1 truncate"
-                  command={row.kind === "subagent" ? undefined : row.command}
-                >
-                  {row.kind === "subagent" && row.child ? (
-                    <SidebarProjectThreadName thread={row.child}>
-                      {sidebarThreadTitle(row.child.source)}
-                    </SidebarProjectThreadName>
-                  ) : (
-                    row.label
-                  )}
-                </RowLabel>
-                {row.kind === "subagent" ? null : usage}
-              </span>
+              <RowLabel
+                className="fork-sidebar-title block truncate"
+                command={row.kind === "subagent" ? undefined : row.command}
+              >
+                {row.kind === "subagent" && row.child ? (
+                  <SidebarProjectThreadName thread={row.child}>
+                    {sidebarThreadTitle(row.child.source)}
+                  </SidebarProjectThreadName>
+                ) : (
+                  row.label
+                )}
+              </RowLabel>
             }
             count={toggle && !toggle.open ? toggle.count : undefined}
             time={time}
@@ -280,7 +259,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             >
               {row.label}
             </RowLabel>
-            {usage}
             {props.compact ? null : (
               <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
             )}

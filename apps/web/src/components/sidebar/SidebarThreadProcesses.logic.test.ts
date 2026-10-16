@@ -1,13 +1,13 @@
 import { ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
-import { afterTasksIndex, type BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
-import { summarizeProcessWork, withRunningCommandRows } from "./SidebarThreadProcesses.logic";
+import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
+import { foldThreadWork, summarizeProcessWork } from "./SidebarThreadProcesses.logic";
 
-const task = (taskId: string): BackgroundWorkTaskRow => ({
+const task = (taskId: string, kind: "command" | "monitor" = "command"): BackgroundWorkTaskRow => ({
   taskId,
   label: taskId,
-  kind: "command",
+  kind,
   startedAt: null,
 });
 const agent: BackgroundWorkTaskRow = {
@@ -18,44 +18,28 @@ const agent: BackgroundWorkTaskRow = {
   childThreadId: ThreadId.make("child"),
 };
 
-it("lists each running command once, after the thread's tasks and before its agents", () => {
+it("folds tasks and each running command once under the summary, leaving agents listed", () => {
   // A Codex background command is both a pending task and a running command item.
-  const rows = withRunningCommandRows(
-    [task("dev-server"), agent],
-    [task("dev-server"), task("pytest")],
-  );
-  expect(rows.map((row) => row.taskId)).toEqual(["dev-server", "pytest", "agent"]);
+  const rows = [task("dev-server"), agent];
+  const commands = [task("dev-server"), task("pytest")];
+  const open = foldThreadWork(rows, commands, true);
+  expect(open.rows.map((row) => row.taskId)).toEqual(["dev-server", "pytest", "agent"]);
+  const collapsed = foldThreadWork(rows, commands, false);
+  expect(collapsed.rows.map((row) => row.taskId)).toEqual(["agent"]);
+  expect(collapsed.total).toBe(3);
 });
 
-it("opens the summary row above the commands it folds, else before the agents", () => {
-  const folded = { ...task("pytest"), underSummary: true };
-  // Open: a pending task stays above the summary; the folded command goes below it.
-  const open = withRunningCommandRows([task("dev-server"), agent], [folded]);
-  expect(open[afterTasksIndex(open)]?.taskId).toBe("pytest");
-  // Collapsed: no folded commands, so the summary sits right above the agents.
-  const collapsed = withRunningCommandRows([task("dev-server"), agent], []);
-  expect(collapsed[afterTasksIndex(collapsed)]?.taskId).toBe("agent");
-  expect(afterTasksIndex([task("dev-server")])).toBe(-1);
-});
-
-it("summarizes commands and process groups, and is empty with neither", () => {
-  const group = (count: number, cpuPercent: number, residentBytes: number) => ({
+it("summarizes tasks, commands and process groups, and is empty with none", () => {
+  const group = (count: number) => ({
     label: "python",
     commandLine: "python x.py",
     count,
-    cpuPercent,
-    residentBytes,
+    cpuPercent: 0,
+    residentBytes: 0,
   });
-  expect(summarizeProcessWork(0, [], 0)).toBeNull();
-  expect(summarizeProcessWork(1, [], 0)?.text).toBe("1 command");
-  // The server's total wins: it counts a command's own processes and groups past the cap.
-  expect(summarizeProcessWork(1, [], 0, { cpuPercent: 40, residentBytes: 900 })).toMatchObject({
-    cpuPercent: 40,
-    residentBytes: 900,
-  });
-  expect(summarizeProcessWork(3, [group(4, 10, 100), group(1, 5, 50)], 2)).toEqual({
-    text: "3 commands · 5+ processes",
-    cpuPercent: 15,
-    residentBytes: 150,
-  });
+  expect(summarizeProcessWork([], [], 0)).toBeNull();
+  expect(summarizeProcessWork([task("watch", "monitor")], [], 0)).toBe("1 task");
+  expect(summarizeProcessWork([task("a"), task("b"), task("c")], [group(4), group(1)], 2)).toBe(
+    "3 commands · 5+ processes",
+  );
 });

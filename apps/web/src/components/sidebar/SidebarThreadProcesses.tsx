@@ -12,25 +12,27 @@ import { useUiStateStore } from "../../uiStateStore";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import type { SidebarThreadSummary } from "../../types";
-import {
-  BackgroundTaskResourceUsageLabel,
-  useBackgroundTaskListVisibility,
-} from "../chat/BackgroundTaskUsage";
+import { useBackgroundTaskListVisibility } from "../chat/BackgroundTaskUsage";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PROJECTS_WORK_ROW_HEIGHT, SidebarThreadColumns } from "./SidebarColumns";
+import { PROJECTS_WORK_ROW_HEIGHT, SidebarCaret, SidebarThreadColumns } from "./SidebarColumns";
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
-import { summarizeProcessWork } from "./SidebarThreadProcesses.logic";
+import { foldThreadWork, summarizeProcessWork } from "./SidebarThreadProcesses.logic";
 
 const NO_COMMAND_ROWS: ReadonlyArray<BackgroundWorkTaskRow> = [];
 const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
 
 /**
- * Experimental ("Show running commands and processes"): the commands a thread's agent is running
- * now, as background-work rows, and the processes its commands and tasks spawned. Polls with task
- * usage's cadence, only while the setting is on, `working` says the thread has work running, and
- * the element given `watchRow` as its ref (the thread's row) is on screen.
+ * A thread's work rows, with its tasks, running commands and spawned processes folded into one
+ * summary row that starts collapsed. Commands and processes are experimental ("Show running
+ * commands and processes"): they poll with task usage's cadence, only while the setting is on,
+ * `working` says the thread has work running, and the element given `watchRow` as its ref (the
+ * thread's row) is on screen.
  */
-export function useSidebarThreadProcesses(thread: SidebarThreadSummary, working: boolean) {
+export function useSidebarThreadProcesses(
+  thread: SidebarThreadSummary,
+  working: boolean,
+  rows: ReadonlyArray<BackgroundWorkTaskRow>,
+) {
   const wanted = useClientSettings((settings) => settings.runningCommandsAndProcesses) && working;
   const { listRef, isVisible: enabled } = useBackgroundTaskListVisibility(wanted);
   const query = useEnvironmentQuery(
@@ -46,7 +48,7 @@ export function useSidebarThreadProcesses(thread: SidebarThreadSummary, working:
   const openKey = `processes:${scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))}`;
   const open = useUiStateStore((state) => state.lineageDetailsExpandedById[openKey] === true);
   const setExpanded = useUiStateStore((state) => state.setLineageDetailsExpanded);
-  const allCommandRows =
+  const commandRows =
     data?.commands.map((command): BackgroundWorkTaskRow => ({
       taskId: command.taskId,
       label: shellProgramName(command.command) ?? commandDisplayText(command.command),
@@ -56,87 +58,90 @@ export function useSidebarThreadProcesses(thread: SidebarThreadSummary, working:
       command: command.command,
       followable: command.followable,
       ownerThreadId: thread.id,
-      underSummary: true,
     })) ?? NO_COMMAND_ROWS;
+  const work = foldThreadWork(rows, commandRows, open);
   const processGroups = data?.processGroups ?? NO_GROUPS;
   const hiddenProcessGroups = data?.hiddenProcessGroupCount ?? 0;
   return {
     // Only rows that would poll watch their visibility.
     watchRow: wanted ? listRef : undefined,
-    // Collapsed, the commands fold into the summary row so starting and stopping them moves nothing.
-    commandRows: open ? allCommandRows : NO_COMMAND_ROWS,
+    workRows: work.rows,
+    /** Every work row, folded ones included. */
+    workCount: work.total,
     processRows: {
       groups: processGroups,
       hiddenGroupCount: hiddenProcessGroups,
-      summary: summarizeProcessWork(
-        allCommandRows.length,
-        processGroups,
-        hiddenProcessGroups,
-        data?.usage,
-      ),
+      summary: summarizeProcessWork(work.work, processGroups, hiddenProcessGroups),
       open,
       onToggle: () => setExpanded([openKey], !open),
     },
   };
 }
 
-/**
- * List items for a work list's `afterTasks`: one summary row (commands and processes, with their
- * combined usage) that opens into one row per program kind of spawned process, then how many
- * groups are not shown. The commands themselves are the work list's rows.
- */
-export function SidebarProcessGroupRows(props: {
-  readonly groups: ReadonlyArray<ThreadProcessGroup>;
-  readonly hiddenGroupCount: number;
-  readonly summary: ReturnType<typeof summarizeProcessWork>;
-  readonly open: boolean;
-  readonly onToggle: () => void;
+export type SidebarProcessRows = ReturnType<typeof useSidebarThreadProcesses>["processRows"];
+
+type ProcessRowsProps = SidebarProcessRows & {
   /** The Projects tree's aligned columns; otherwise the compact list. */
   readonly columns: boolean;
   /** Nesting level below the top-level thread, for the columns' tint. */
   readonly depth?: number | undefined;
-}) {
+};
+
+function processRowLayout(props: ProcessRowsProps) {
+  return {
+    className: cn(
+      "fork-sidebar-process flex min-w-0 items-center gap-2 text-muted-foreground",
+      PROJECTS_WORK_ROW_HEIGHT,
+      props.columns ? "rounded-md px-2 sidebar-thread-tint" : "px-1.5",
+    ),
+    style: props.columns
+      ? ({ "--sidebar-thread-depth": props.depth ?? 1 } as CSSProperties)
+      : undefined,
+  };
+}
+
+/**
+ * The list item a thread's tasks, commands and processes fold into, first in its work list. In
+ * the columns its caret sits one column left of the icons of the rows it opens.
+ */
+export function SidebarProcessSummaryRow(props: ProcessRowsProps) {
   if (props.summary === null) return null;
-  const rowClass = cn(
-    "fork-sidebar-process flex min-w-0 items-center gap-2 text-muted-foreground",
-    PROJECTS_WORK_ROW_HEIGHT,
-    props.columns ? "rounded-md px-2 sidebar-thread-tint" : "px-1.5",
+  const { className, style } = processRowLayout(props);
+  const name = <span className="fork-sidebar-title block truncate">{props.summary}</span>;
+  return (
+    <li style={style}>
+      <button
+        type="button"
+        aria-expanded={props.open}
+        className={cn(className, "w-full cursor-pointer text-left hover:bg-accent")}
+        onClick={props.onToggle}
+      >
+        {props.columns ? (
+          <SidebarThreadColumns role={<SidebarCaret open={props.open} />} name={name} />
+        ) : (
+          <>
+            <ChevronRightIcon
+              aria-hidden
+              className={cn("size-3.5 shrink-0 transition-transform", props.open && "rotate-90")}
+            />
+            {name}
+          </>
+        )}
+      </button>
+    </li>
   );
-  const depth = props.columns
-    ? ({ "--sidebar-thread-depth": props.depth ?? 1 } as CSSProperties)
-    : undefined;
-  const chevron = (
-    <ChevronRightIcon
-      aria-hidden
-      className={cn("size-3.5 shrink-0 transition-transform", props.open && "rotate-90")}
-    />
-  );
-  const summaryName = (
-    <span className="flex min-w-0 items-center gap-2">
-      <span className="fork-sidebar-title min-w-0 flex-1 truncate">{props.summary.text}</span>
-      <BackgroundTaskResourceUsageLabel usage={props.summary} />
-    </span>
-  );
+}
+
+/**
+ * List items for an open summary: one row per program kind of spawned process, then how many
+ * groups are not shown. They follow the thread's tasks and commands, ahead of its agents.
+ */
+export function SidebarProcessGroupRows(props: ProcessRowsProps) {
+  if (props.summary === null || !props.open) return null;
+  const { className, style } = processRowLayout(props);
   return (
     <>
-      <li style={depth}>
-        <button
-          type="button"
-          aria-expanded={props.open}
-          className={cn(rowClass, "w-full cursor-pointer text-left hover:bg-accent")}
-          onClick={props.onToggle}
-        >
-          {props.columns ? (
-            <SidebarThreadColumns provider={chevron} name={summaryName} />
-          ) : (
-            <>
-              {chevron}
-              {summaryName}
-            </>
-          )}
-        </button>
-      </li>
-      {(props.open ? props.groups : []).map((group) => {
+      {props.groups.map((group) => {
         const name = (
           <span className="flex min-w-0 items-center gap-2">
             <Tooltip>
@@ -152,7 +157,6 @@ export function SidebarProcessGroupRows(props: {
               </TooltipPopup>
             </Tooltip>
             {group.count > 1 ? <span className="shrink-0 text-2xs">×{group.count}</span> : null}
-            <BackgroundTaskResourceUsageLabel usage={group} />
           </span>
         );
         const iconClassName = props.columns ? "size-4" : "size-3.5";
@@ -165,8 +169,8 @@ export function SidebarProcessGroupRows(props: {
           />
         );
         return (
-          <li key={`process:${group.label}`} style={depth}>
-            <div className={rowClass}>
+          <li key={`process:${group.label}`} style={style}>
+            <div className={className}>
               {props.columns ? (
                 <SidebarThreadColumns provider={icon} name={name} />
               ) : (
@@ -179,9 +183,9 @@ export function SidebarProcessGroupRows(props: {
           </li>
         );
       })}
-      {props.open && props.hiddenGroupCount > 0 ? (
-        <li style={depth}>
-          <div className={rowClass}>
+      {props.hiddenGroupCount > 0 ? (
+        <li style={style}>
+          <div className={className}>
             {props.columns ? (
               <SidebarThreadColumns
                 name={<span className="fork-sidebar-title">+{props.hiddenGroupCount} more</span>}

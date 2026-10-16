@@ -16,7 +16,7 @@ export const PROJECTS_WORK_ROW_HEIGHT = "h-6";
 
 const CARET_SLOT_CLASS = "flex w-4 shrink-0 items-center justify-center";
 
-function Caret(props: { readonly open: boolean }) {
+export function SidebarCaret(props: { readonly open: boolean }) {
   return (
     <ChevronRightIcon
       aria-hidden
@@ -36,7 +36,7 @@ export function SidebarCaretSlot(props: {
 }) {
   return (
     <span aria-hidden className={cn(CARET_SLOT_CLASS, props.className)}>
-      {props.open === undefined ? props.children : <Caret open={props.open} />}
+      {props.open === undefined ? props.children : <SidebarCaret open={props.open} />}
     </span>
   );
 }
@@ -65,7 +65,7 @@ export function SidebarCaretToggle(props: {
       onClick={props.onToggle}
     >
       <span className={CARET_SLOT_CLASS}>
-        <Caret open={props.open} />
+        <SidebarCaret open={props.open} />
       </span>
     </button>
   );

@@ -59,8 +59,12 @@ import {
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
 import { SidebarThreadTime } from "./SidebarThreadTime";
 import { SidebarBackgroundWorkRows } from "./SidebarBackgroundWorkRows";
-import { SidebarProcessGroupRows, useSidebarThreadProcesses } from "./SidebarThreadProcesses";
-import { withRunningCommandRows } from "./SidebarThreadProcesses.logic";
+import {
+  SidebarProcessGroupRows,
+  SidebarProcessSummaryRow,
+  useSidebarThreadProcesses,
+  type SidebarProcessRows,
+} from "./SidebarThreadProcesses";
 import {
   SidebarCaretSlot,
   SidebarCaretToggle,
@@ -91,7 +95,6 @@ import {
   type CSSProperties,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
-  type ReactNode,
 } from "react";
 
 import type { EnvironmentId, ProjectIconColor, ThreadId } from "@t3tools/contracts";
@@ -1295,11 +1298,9 @@ const SidebarProjectThreadRow = memo(
     );
     // Finished while you were away and not opened since: a green dot where the spinner was.
     const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
-    const { watchRow, commandRows, processRows } = useSidebarThreadProcesses(
+    const { watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
       props.thread,
       status === "working" || props.thread.pendingBackgroundTasks.length > 0,
-    );
-    const workRows = withRunningCommandRows(
       describeSidebarBackgroundWork(
         props.thread.pendingBackgroundTasks,
         props.codexStyle
@@ -1308,10 +1309,9 @@ const SidebarProjectThreadRow = memo(
         undefined,
         props.relocatedThreadKeys,
       ),
-      commandRows,
     );
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
-    const hasWork = workRows.length > 0 || processRows.summary !== null;
+    const hasWork = workCount > 0 || processRows.summary !== null;
     // Running work shows by default, even while the thread itself works; a collapse wins for this row.
     const [workOpen, setWorkOpen] = useState(true);
     const contextDrag = useThreadContextPointerDrag(() => ({
@@ -1401,7 +1401,7 @@ const SidebarProjectThreadRow = memo(
                       {sidebarThreadTitle(props.thread.source)}
                     </SidebarProjectThreadName>
                   }
-                  count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
+                  count={workCount > 0 && !workOpen ? workCount : undefined}
                   time={<SidebarThreadTime thread={props.thread} status={status} />}
                   status={<ThreadStatusMark status={statusMark} />}
                 />
@@ -1421,7 +1421,7 @@ const SidebarProjectThreadRow = memo(
                       {props.thread.title}
                     </SidebarProjectThreadName>
                   </span>
-                  {workRows.length > 0 ? (
+                  {workCount > 0 ? (
                     <span aria-hidden className="w-8 shrink-0" />
                   ) : (
                     <SidebarThreadTime thread={props.thread} status={status} />
@@ -1431,22 +1431,22 @@ const SidebarProjectThreadRow = memo(
             </button>
           }
         />
-        {workRows.length > 0 && props.codexStyle ? (
+        {workCount > 0 && props.codexStyle ? (
           <SidebarCaretToggle
             open={workOpen}
-            label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background ${workRows.length === 1 ? "task" : "tasks"}`}
+            label={`${workOpen ? "Hide" : "Show"} ${workCount} running background ${workCount === 1 ? "task" : "tasks"}`}
             onToggle={() => setWorkOpen(!workOpen)}
             className="top-0.5 h-5"
           />
-        ) : workRows.length > 0 ? (
+        ) : workCount > 0 ? (
           <button
             type="button"
             aria-expanded={workOpen}
-            aria-label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background tasks`}
+            aria-label={`${workOpen ? "Hide" : "Show"} ${workCount} running background tasks`}
             className="fork-sidebar-work-toggle absolute top-0.5 right-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-3xs text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover"
             onClick={() => setWorkOpen(!workOpen)}
           >
-            {workRows.length}
+            {workCount}
             {workOpen ? (
               <ChevronDownIcon className="size-3" />
             ) : (
@@ -1460,7 +1460,7 @@ const SidebarProjectThreadRow = memo(
               environmentId={props.thread.environmentId}
               threadId={props.thread.id}
               rows={workRows}
-              afterTasks={<SidebarProcessGroupRows columns {...processRows} />}
+              processRows={processRows}
               parentTasks={props.thread.pendingBackgroundTasks}
               runningChildren={runningSubagents}
               onChildClick={props.onClick}
@@ -1477,6 +1477,7 @@ const SidebarProjectThreadRow = memo(
               environmentId={props.thread.environmentId}
               threadId={props.thread.id}
               rows={workRows}
+              summary={<SidebarProcessSummaryRow columns={false} {...processRows} />}
               afterTasks={<SidebarProcessGroupRows columns={false} {...processRows} />}
               onChildClick={props.onClick}
               onChildContextMenu={props.onContextMenu}
@@ -1522,8 +1523,8 @@ function SidebarSubagentTree(props: {
   readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
   readonly locationLeadKeys?: ReadonlySet<string> | undefined;
   readonly depth?: number;
-  /** This level's `SidebarBackgroundWorkRows.afterTasks`. */
-  readonly afterTasks?: ReactNode;
+  /** This level's summary row and the processes it opens into. */
+  readonly processRows?: SidebarProcessRows;
 }) {
   // Children open by default, like a thread's own work; a collapse is remembered for this view.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -1549,7 +1550,16 @@ function SidebarSubagentTree(props: {
       compact
       columns
       depth={props.depth ?? 1}
-      afterTasks={props.afterTasks}
+      summary={
+        props.processRows ? (
+          <SidebarProcessSummaryRow columns depth={props.depth ?? 1} {...props.processRows} />
+        ) : null
+      }
+      afterTasks={
+        props.processRows ? (
+          <SidebarProcessGroupRows columns depth={props.depth ?? 1} {...props.processRows} />
+        ) : null
+      }
       locationLeadKeys={props.locationLeadKeys}
       environmentId={props.environmentId}
       threadId={props.threadId}
@@ -1602,24 +1612,20 @@ function SidebarSubagentTree(props: {
  * spawned (see `useSidebarThreadProcesses`), and its own subagents.
  */
 function SidebarSubagentWork(
-  props: Omit<ComponentProps<typeof SidebarSubagentTree>, "afterTasks"> & {
+  props: Omit<ComponentProps<typeof SidebarSubagentTree>, "processRows"> & {
     readonly thread: SidebarThreadSummary;
   },
 ) {
   const { thread, rows, ...tree } = props;
-  const { watchRow, commandRows, processRows } = useSidebarThreadProcesses(
+  const { watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
     thread,
     resolveSidebarThreadStatus(thread) === "working" || thread.pendingBackgroundTasks.length > 0,
+    rows,
   );
-  const workRows = withRunningCommandRows(rows, commandRows);
   return (
     <div ref={watchRow}>
-      {workRows.length > 0 || processRows.summary !== null ? (
-        <SidebarSubagentTree
-          {...tree}
-          rows={workRows}
-          afterTasks={<SidebarProcessGroupRows columns depth={tree.depth} {...processRows} />}
-        />
+      {workCount > 0 || processRows.summary !== null ? (
+        <SidebarSubagentTree {...tree} rows={workRows} processRows={processRows} />
       ) : null}
     </div>
   );
