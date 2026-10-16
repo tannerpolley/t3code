@@ -60,7 +60,7 @@ The dock icon's **Build & install update** action runs `~/.local/bin/t3-update`.
 
 1. pushes `main` if GitHub is behind;
 2. picks the next patch version after the newest `release/v*` tag (`v2.12.10` → `v2.12.11`) when `main` has moved since that tag; otherwise it offers the existing build;
-3. builds in `.worktrees/release-build`: setup, a migration check on a copy of the owner's database, then the AppImage (`T3CODE_DESKTOP_VERSION=0.0.45-vX.Y.Z`);
+3. builds in `.worktrees/release-build`: setup, a migration check on a copy of the owner's database, then the AppImage (`T3CODE_DESKTOP_VERSION=<apps/desktop version>-vX.Y.Z`, such as `0.1.0-v2.12.19`);
 4. stages the AppImage in `~/.local/opt/t3-code/pending/`, replacing any older staged build;
 5. tags `release/vX.Y.Z` and pushes the tag;
 6. offers to restart T3.
