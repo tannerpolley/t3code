@@ -170,7 +170,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
         const usage =
           row.kind === "subagent" ? null : (
             <BackgroundTaskResourceUsageLabel
-              className="fork-sidebar-resource"
               usage={resourceUsage.get(backgroundTaskResourceUsageKey(taskThreadId, row.taskId))}
             />
           );
@@ -253,7 +252,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             name={
               <span className="flex min-w-0 items-center gap-2">
                 <RowLabel
-                  className="min-w-0 flex-1 truncate"
+                  className="fork-sidebar-title min-w-0 flex-1 truncate"
                   command={row.kind === "subagent" ? undefined : row.command}
                 >
                   {row.kind === "subagent" && row.child ? (
@@ -285,7 +284,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             {roleIcon}
             {icon}
             <RowLabel
-              className="min-w-0 flex-1 truncate text-foreground/85"
+              className="fork-sidebar-title min-w-0 flex-1 truncate text-foreground/85"
               command={row.kind === "subagent" ? undefined : row.command}
             >
               {row.label}
@@ -299,13 +298,9 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 <ThreadStatusMark status={row.status} />
               </span>
             ) : row.kind === "subagent" && row.child ? (
-              <span className="fork-sidebar-time w-12 shrink-0 text-right text-muted-foreground">
-                {time}
-              </span>
+              <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
             ) : row.startedAt ? (
-              <span className="fork-sidebar-time w-12 shrink-0 text-right text-muted-foreground">
-                {time}
-              </span>
+              <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
             ) : null}
           </>
         );

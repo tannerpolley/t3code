@@ -108,14 +108,6 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
-    id: "sidebar-detail-text-size",
-    title: "Detail columns text size",
-    to: "/settings/general",
-    searchTerms: [
-      "customization fork projects view sidebar font size larger smaller detail columns count time model effort usage",
-    ],
-  },
-  {
     id: "codex-style-sidebar",
     title: "Codex-style project sidebar",
     to: "/settings/general",

@@ -197,7 +197,6 @@ it("defaults sidebar text sizes for old settings and validates saved sizes and p
     "sidebarThreadTextSize",
     "sidebarAgentTextSize",
     "sidebarProcessTextSize",
-    "sidebarDetailTextSize",
   ] as const;
   const oldSettings = decodeClientSettingsFile("{}");
   for (const key of keys) {

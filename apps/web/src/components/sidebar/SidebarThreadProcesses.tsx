@@ -113,8 +113,8 @@ export function SidebarProcessGroupRows(props: {
   );
   const summaryName = (
     <span className="flex min-w-0 items-center gap-2">
-      <span className="min-w-0 flex-1 truncate">{props.summary.text}</span>
-      <BackgroundTaskResourceUsageLabel className="fork-sidebar-resource" usage={props.summary} />
+      <span className="fork-sidebar-title min-w-0 flex-1 truncate">{props.summary.text}</span>
+      <BackgroundTaskResourceUsageLabel usage={props.summary} />
     </span>
   );
   return (
@@ -140,7 +140,9 @@ export function SidebarProcessGroupRows(props: {
         const name = (
           <span className="flex min-w-0 items-center gap-2">
             <Tooltip>
-              <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+              <TooltipTrigger
+                render={<span className="fork-sidebar-title min-w-0 flex-1 truncate" />}
+              >
                 {group.label}
               </TooltipTrigger>
               <TooltipPopup side="right">
@@ -149,10 +151,8 @@ export function SidebarProcessGroupRows(props: {
                   : group.commandLine}
               </TooltipPopup>
             </Tooltip>
-            {group.count > 1 ? (
-              <span className="fork-sidebar-inline-count shrink-0">×{group.count}</span>
-            ) : null}
-            <BackgroundTaskResourceUsageLabel className="fork-sidebar-resource" usage={group} />
+            {group.count > 1 ? <span className="shrink-0 text-2xs">×{group.count}</span> : null}
+            <BackgroundTaskResourceUsageLabel usage={group} />
           </span>
         );
         const iconClassName = props.columns ? "size-4" : "size-3.5";
@@ -183,9 +183,11 @@ export function SidebarProcessGroupRows(props: {
         <li style={depth}>
           <div className={rowClass}>
             {props.columns ? (
-              <SidebarThreadColumns name={`+${props.hiddenGroupCount} more`} />
+              <SidebarThreadColumns
+                name={<span className="fork-sidebar-title">+{props.hiddenGroupCount} more</span>}
+              />
             ) : (
-              `+${props.hiddenGroupCount} more`
+              <span className="fork-sidebar-title">+{props.hiddenGroupCount} more</span>
             )}
           </div>
         </li>

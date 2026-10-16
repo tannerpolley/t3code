@@ -53,7 +53,7 @@ export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(p
   const pr = sidebarProjectThreadPullRequests(props.thread.pullRequests);
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <span className="min-w-0 flex-1 truncate">{props.children}</span>
+      <span className="fork-sidebar-title min-w-0 flex-1 truncate">{props.children}</span>
       <SidebarProjectThreadMachine environmentId={props.thread.environmentId} />
       {pr ? (
         <span
@@ -62,9 +62,7 @@ export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(p
           className={`inline-flex shrink-0 items-center gap-0.5 ${pr.toneClassName}`}
         >
           <pr.Icon aria-hidden className="size-3" />
-          {pr.count > 1 ? (
-            <span className="fork-sidebar-inline-count text-3xs tabular-nums">{pr.count}</span>
-          ) : null}
+          {pr.count > 1 ? <span className="text-3xs tabular-nums">{pr.count}</span> : null}
         </span>
       ) : null}
     </span>

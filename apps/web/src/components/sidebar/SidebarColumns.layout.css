@@ -20,16 +20,16 @@
   --sidebar-role-width: 0.75rem;
   --sidebar-provider-width: 1rem;
   --sidebar-model-width: 8ch;
-  --sidebar-effort-width: calc(var(--fork-sidebar-detail-size, 0.625rem) * 4);
-  --sidebar-usage-width: calc(var(--fork-sidebar-detail-size, 0.625rem) * 3.4);
-  --sidebar-count-width: calc(var(--fork-sidebar-detail-size, 0.625rem) * 1.6);
-  --sidebar-time-width: calc(var(--fork-sidebar-detail-size, 0.625rem) * 7.1);
+  --sidebar-effort-width: 2.5rem;
+  --sidebar-usage-width: 2.125rem;
+  --sidebar-count-width: 1rem;
+  --sidebar-time-width: 4.4375rem;
   --sidebar-work-width: 0.875rem;
   --sidebar-model-name-width: 5.65ch;
   --sidebar-model-version-width: 2.35ch;
   container: sidebar-columns / inline-size;
   min-width: 0;
-  font-size: calc(var(--fork-sidebar-detail-size, 0.625rem) * 1.2);
+  font-size: 0.75rem;
 }
 @utility sidebar-thread-columns {
   grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
@@ -42,7 +42,7 @@
     );
   column-gap: 3px;
 }
-@container sidebar-columns (width < calc(5.125rem + 13.416666666666668em + 30px + 18ch)) {
+@container sidebar-columns (width < calc(15.1875rem + 30px + 18ch)) {
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
         --sidebar-role-width
@@ -55,7 +55,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(5.125rem + 10.583333333333334em + 27px + 18ch)) {
+@container sidebar-columns (width < calc(13.0625rem + 27px + 18ch)) {
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
         --sidebar-role-width
@@ -67,7 +67,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(5.125rem + 7.25em + 24px + 18ch)) {
+@container sidebar-columns (width < calc(10.5625rem + 24px + 18ch)) {
   .sidebar-thread-columns {
     grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
         --sidebar-role-width
@@ -76,28 +76,6 @@
       ) var(--sidebar-work-width);
   }
   .sidebar-thread-model {
-    display: none;
-  }
-}
-@container sidebar-columns (width < calc(5.125rem + 7.25em + 21px + 10ch)) {
-  .fork-sidebar-text-sizes .sidebar-thread-columns {
-    grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
-        --sidebar-role-width
-      ) var(--sidebar-provider-width) minmax(0, 1fr) var(--sidebar-time-width) var(
-        --sidebar-work-width
-      );
-  }
-  .fork-sidebar-text-sizes .sidebar-thread-count {
-    display: none;
-  }
-}
-@container sidebar-columns (width < calc(5.125rem + 5.916666666666667em + 18px + 10ch)) {
-  .fork-sidebar-text-sizes .sidebar-thread-columns {
-    grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
-        --sidebar-role-width
-      ) var(--sidebar-provider-width) minmax(0, 1fr) var(--sidebar-work-width);
-  }
-  .fork-sidebar-text-sizes .sidebar-thread-time {
     display: none;
   }
 }

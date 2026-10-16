@@ -16,7 +16,6 @@ const TEXT_SIZE_ROWS = [
   { key: "sidebarThreadTextSize", searchId: "sidebar-thread-text-size" },
   { key: "sidebarAgentTextSize", searchId: "sidebar-agent-text-size" },
   { key: "sidebarProcessTextSize", searchId: "sidebar-process-text-size" },
-  { key: "sidebarDetailTextSize", searchId: "sidebar-detail-text-size" },
 ] as const;
 const SIZES = Array.from(
   { length: MAX_SIDEBAR_TEXT_SIZE - MIN_SIDEBAR_TEXT_SIZE + 1 },

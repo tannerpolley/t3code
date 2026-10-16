@@ -35,9 +35,7 @@ export function SidebarThreadTime(props: {
   return (
     <Tooltip>
       <TooltipTrigger
-        render={
-          <span className="fork-sidebar-time pointer-events-auto tabular-nums whitespace-nowrap" />
-        }
+        render={<span className="pointer-events-auto tabular-nums whitespace-nowrap" />}
       >
         {duration}
       </TooltipTrigger>

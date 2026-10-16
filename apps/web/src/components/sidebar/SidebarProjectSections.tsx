@@ -851,7 +851,7 @@ function SortableSectionHeader(props: {
             className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")}
           />
         )}
-        <span className="min-w-0 truncate">{projectSectionName(section)}</span>
+        <span className="fork-sidebar-title min-w-0 truncate">{projectSectionName(section)}</span>
         {/* Codex style: the caret follows the name, so flat rows keep the left edge for names. */}
         {codexStyle ? (
           <SidebarCaretSlot
@@ -863,7 +863,7 @@ function SortableSectionHeader(props: {
           // Counts show only while collapsed: they stand in for the hidden rows.
           <SidebarTrailingColumns count={expanded ? undefined : section.projectKeys.length} />
         ) : (
-          <span className="fork-sidebar-detail ms-auto shrink-0 text-2xs text-sidebar-muted-foreground/55">
+          <span className="ms-auto shrink-0 text-2xs text-sidebar-muted-foreground/55">
             {section.projectKeys.length}
           </span>
         )}
@@ -1093,7 +1093,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             project={project}
             {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
           />
-          <span className={cn("min-w-0 truncate", !codexStyle && "flex-1")}>
+          <span className={cn("fork-sidebar-title min-w-0 truncate", !codexStyle && "flex-1")}>
             {project.displayName}
           </span>
           {codexStyle ? (
@@ -1112,11 +1112,11 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               }
             />
           ) : props.threads.length > 0 ? (
-            <span className="fork-sidebar-detail shrink-0 text-2xs text-sidebar-muted-foreground/55">
+            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
               {props.threads.length}
             </span>
           ) : project.groupedProjectCount > 1 ? (
-            <span className="fork-sidebar-detail shrink-0 text-2xs text-sidebar-muted-foreground/55">
+            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
               {project.groupedProjectCount}
             </span>
           ) : null}
@@ -1240,7 +1240,9 @@ function ProjectDragPreview(props: { readonly project: SidebarProjectSnapshot | 
   return (
     <div className="fork-sidebar-project-preview flex h-7 w-[min(20rem,calc(100vw-2rem))] min-w-0 items-center gap-2 rounded-md border border-sidebar-border bg-sidebar px-2 text-sm text-sidebar-foreground shadow-lg">
       <ProjectFavicon className="size-4 shrink-0" project={props.project} />
-      <span className="min-w-0 flex-1 truncate font-medium">{props.project.displayName}</span>
+      <span className="fork-sidebar-title min-w-0 flex-1 truncate font-medium">
+        {props.project.displayName}
+      </span>
     </div>
   );
 }
@@ -1427,7 +1429,7 @@ const SidebarProjectThreadRow = memo(
                     </SidebarProjectThreadName>
                   </span>
                   {workRows.length > 0 ? (
-                    <span aria-hidden className="fork-sidebar-work-placeholder w-8 shrink-0" />
+                    <span aria-hidden className="w-8 shrink-0" />
                   ) : (
                     <SidebarThreadTime thread={props.thread} status={status} />
                   )}
