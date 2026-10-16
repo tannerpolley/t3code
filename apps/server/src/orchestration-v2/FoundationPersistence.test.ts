@@ -74,7 +74,6 @@ const layerEffectOutboxProvided = EffectOutbox.layer.pipe(Layer.provide(layerDat
 const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
   Layer.provide(layerDatabase),
 );
-// Its own database, for tests that act on every row in the outbox table.
 const layerIsolatedOutbox = Layer.fresh(EffectOutbox.layer.pipe(Layer.provideMerge(layerDatabase)));
 const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
   Layer.provide(layerStoresProvided),
@@ -331,7 +330,6 @@ it.effect("keeps other database work runnable while discovering compaction candi
 
       const summary = yield* maintenance.compactEventStore.pipe(
         Effect.withTracer(tracer),
-        // Exercise the explicit page yields, independent of Effect's operation budget.
         Effect.provideService(Scheduler.MaxOpsBeforeYield, Number.POSITIVE_INFINITY),
         Effect.tap(() =>
           Effect.sync(() => {
@@ -469,7 +467,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         })
         .pipe(Effect.withTracer(tracer));
 
-      // These two spans time a slow commit; the statements inside are not traced.
       assert.deepEqual(names, ["orchestrationV2.EventSink.write", "sql.transaction"]);
     }),
   );
@@ -628,8 +625,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             }),
           ],
         });
-        // Unrelated payloads must be skipped in SQL, before decoding or
-        // allocating their bodies, even when a retained row is unreadable.
         const original = yield* sql<{ readonly payload_json: string }>`
           SELECT payload_json FROM orchestration_events
           WHERE sequence = ${history[0]!.sequence}
@@ -652,8 +647,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           (yield* pull).map((stored) => stored.sequence),
           [history[2]!.sequence],
         );
-        // The worker is occupied with the previous batch while the thread
-        // publishes output. Its live queue must receive just run updates.
         yield* sink.write({
           events: Array.from({ length: LIVE_STREAM_MAX_ITEMS + 1 }, (_, index) => ({
             id: EventId.make(`event:filtered-worker:output:${index}`),
@@ -979,8 +972,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         "PR snapshot pr-sync-latest",
       );
 
-      // A fully imported legacy thread: its v1 events and pre-migration
-      // receipts are dead weight; a still-pending import keeps its rows.
       const importedV1ThreadId = "thread:foundation-compact-v1-imported";
       const pendingV1ThreadId = "thread:foundation-compact-v1-pending";
       const insertV1Event = (threadIdValue: string, version: number) => sql`
@@ -1034,14 +1025,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         remaining.map((row) => row.event_id),
         [
           "event:foundation-compact:create",
-          "event:foundation-compact:meta",
           "event:foundation-compact:message-1",
           "event:foundation-compact:node-1",
           "event:foundation-compact:item-a-1",
           "event:foundation-compact:item-b-1",
           "event:foundation-compact:pr-sync-latest",
           "event:foundation-compact:item-b-2",
-          "event:foundation-compact:visit-2",
           "event:foundation-compact:message-2",
           "event:foundation-compact:node-2",
           "event:foundation-compact:item-a-3",
@@ -1069,7 +1058,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ["command:foundation-compact:pending"],
       );
 
-      // Replay across the deletion gaps must still produce a valid projection.
       assert.isTrue((yield* maintenance.verify).valid);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* projections.getThreadProjection(threadId), beforeCompaction);
@@ -2203,7 +2191,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
       yield* outbox.succeed({ effectId, workerId: "settle-worker" });
       yield* Fiber.join(waiter);
-      // A settled effect does not wait.
       yield* outbox.awaitSettled(effectId);
     }),
   );
@@ -2416,7 +2403,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       };
       const old = Duration.sum(EffectOutbox.SETTLED_EFFECT_RETENTION, Duration.minutes(1));
       const recent = Duration.subtract(EffectOutbox.SETTLED_EFFECT_RETENTION, Duration.minutes(1));
-      // More expired rows than one delete batch.
       yield* insert("succeeded-old:", 1_201, "succeeded", old);
       yield* insert("cancelled-old:", 2, "cancelled", old);
       yield* insert("succeeded-recent:", 1, "succeeded", recent);
@@ -2448,7 +2434,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       yield* outbox.claimNext({ workerId, leaseDurationMs: 30_000 });
       assert.isTrue(yield* outbox.succeed({ effectId: "effect:prune-worker:done", workerId }));
       yield* outbox.enqueue([{ id: "effect:prune-worker:pending", commandId, threadId, request }]);
-      // Observe each run so the test waits for it instead of racing the clock.
       const runs = yield* Queue.unbounded<number>();
       const observed = EffectOutbox.EffectOutboxV2.of({
         ...outbox,
@@ -2587,8 +2572,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         delayMs: 60_000,
       });
 
-      // A turn the user starts during the rollback's backoff must not run first,
-      // even when its timestamp ties and its id sorts first.
       yield* outbox.enqueue([
         {
           id: "effect:foundation-retry-order:a-start",
@@ -2737,7 +2720,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
       yield* Effect.gen(function* () {
         yield* EffectWorker.runDaemonWithOptions({ concurrency: 2 }).pipe(Effect.forkScoped);
-        // Let both slots reach the idle wait before work becomes available.
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         yield* outbox.enqueue([
@@ -2929,7 +2911,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           type: "provider-runtime.continue",
           sourceRunId: runId,
         });
-        // This fixture shares the database; settle its intent before later claim tests.
         yield* outbox.cancelUnsettled({
           threadId,
           effectTypes: ["provider-runtime.continue"],
@@ -3180,10 +3161,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         startedAt: now,
         completedAt: null,
       });
-      // The parent run settled while its background subagent kept working,
-      // Stop ended the subagent's item, then the server died. Recovery cancels
-      // the parent's subagent entity and node; the child's runless root turn
-      // lives on another thread and must be settled too.
       yield* eventSink.commitCommand({
         commandId: CommandId.make("command:foundation-native-subagent"),
         threadId: parentId,
@@ -3240,7 +3217,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             payload: node({ id: childRootId, threadId: childId, runId: null, kind: "root_turn" }),
           },
           {
-            // The subagent's live thinking in the child, still streaming.
             id: EventId.make("event:foundation-native-subagent:child-progress"),
             type: "turn-item.updated",
             threadId: childId,
@@ -3362,7 +3338,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const childRoot = childProjection.nodes.find((candidate) => candidate.id === childRootId);
       assert.equal(childRoot?.status, "cancelled");
       assert.isNotNull(childRoot?.completedAt ?? null);
-      // Nothing inside the child keeps reading as live work either.
       const progress = childProjection.turnItems.find((item) => item.type === "reasoning");
       assert.equal(progress?.status, "cancelled");
       assert.isFalse(progress?.type === "reasoning" && progress.streaming);
@@ -3564,8 +3539,6 @@ it.effect("publishes live events in commit order across concurrent writers", () 
   Effect.gen(function* () {
     const firstCommitted = yield* Deferred.make<void>();
     const releaseFirst = yield* Deferred.make<void>();
-    // The first writer's post-commit wakeup stands in for any scheduler yield
-    // between its commit and its publish.
     const layerPausingOutbox = Layer.effect(
       EffectOutbox.EffectOutboxV2,
       Effect.gen(function* () {
@@ -3617,8 +3590,6 @@ it.effect("publishes live events in commit order across concurrent writers", () 
         })
         .pipe(Effect.forkScoped);
       yield* Deferred.await(firstCommitted);
-      // The second writer commits after the first. It may run as far as it can
-      // before the first writer resumes.
       const secondWrite = yield* eventSink
         .write({
           events: [
@@ -3736,7 +3707,7 @@ it.effect.each([true, false])(
       const events = yield* sql<{
         event_type: string;
       }>`SELECT event_type FROM orchestration_events WHERE stream_id = ${rootId}`;
-      assert.isFalse(events.some((event) => event.event_type === "thread.metadata-updated"));
+      assert.isTrue(events.some((event) => event.event_type === "thread.metadata-updated"));
       assert.isTrue((yield* maintenance.rebuild).valid);
       const owner = yield* sql<{
         paused: number;

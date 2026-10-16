@@ -136,8 +136,6 @@ function EnvironmentNotifications({
   onRetract: (tag: string) => void;
 }) {
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  // The shell reducer keeps the thread list and unchanged thread objects
-  // stable, so this only rescans when a thread actually changed.
   const threads =
     shell.status === "live" && Option.isSome(shell.snapshot) ? shell.snapshot.value.threads : null;
   const mode = useClientSettings((settings) => settings.notificationMode);
@@ -163,7 +161,7 @@ function EnvironmentNotifications({
     const now = Math.max(Date.now(), alertTime);
     let nextAlertDelay = Infinity;
     const index = new Map(threads.map((thread) => [thread.id, thread]));
-    // Subagents are skipped below, so their requests notify through the thread above them.
+
     const subagentRequests = pendingSubagentRequestsByThread(
       threads.filter((thread) => thread.pendingRuntimeRequest?.routedTo === undefined),
     );
@@ -227,7 +225,6 @@ function EnvironmentNotifications({
           ? `${rawThread.pendingRuntimeRequest?.id ?? thread.latestRun?.runId ?? ""}:${status}`
           : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-      // Commands left running (a dev server) read as ready; subagents and monitors wait.
       const completion =
         !child &&
         status === "ready" &&

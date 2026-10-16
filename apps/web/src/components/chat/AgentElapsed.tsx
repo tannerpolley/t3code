@@ -7,11 +7,6 @@ import { formatCompactElapsedSeconds, formatElapsedSeconds } from "../../timesta
 
 export { formatCompactElapsedSeconds } from "../../timestampFormat";
 
-/**
- * Elapsed time for the current activation. Live agents self-tick via DOM
- * writes (zero React commits per tick); settled agents freeze at completedAt.
- * `compact` drops the smaller unit for narrow rows such as Lineage.
- */
 export function AgentElapsed({
   agent,
   compact = false,

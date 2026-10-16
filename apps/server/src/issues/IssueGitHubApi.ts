@@ -12,50 +12,117 @@ export type GitHubApiError = GitHubRequestPolicy.GitHubApiError;
 
 const Response = Schema.Struct({
   data: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown))),
-  errors: Schema.optional(Schema.Array(Schema.Struct({
-    type: Schema.optional(Schema.String),
-    message: Schema.optional(Schema.String),
-  }))),
+  errors: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        type: Schema.optional(Schema.String),
+        message: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
 });
 const decode = Schema.decodeEffect(Schema.fromJsonString(Response));
 
 // Fork issue queries return their envelope so optional metadata can inspect per-field errors.
-export class GitHubApi extends Context.Service<GitHubApi, GitHubRest.GitHubRest["Service"] & {
-  readonly graphql: (input: {
-    readonly host: string;
-    readonly operation: string;
-    readonly query: string;
-    readonly variables?: Readonly<Record<string, unknown>>;
-    readonly maxResponseBytes?: number;
-    readonly acceptPartialData?: boolean;
-  }) => Effect.Effect<string, GitHubApiError>;
-}>()("t3/issues/IssueGitHubApi") {}
+export class GitHubApi extends Context.Service<
+  GitHubApi,
+  GitHubRest.GitHubRest["Service"] & {
+    readonly graphql: (input: {
+      readonly host: string;
+      readonly operation: string;
+      readonly query: string;
+      readonly variables?: Readonly<Record<string, unknown>>;
+      readonly maxResponseBytes?: number;
+      readonly acceptPartialData?: boolean;
+    }) => Effect.Effect<string, GitHubApiError>;
+  }
+>()("t3/issues/IssueGitHubApi/GitHubApi") {}
 
-export const layer = Layer.effect(GitHubApi, Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const rest = yield* GitHubRest.GitHubRest;
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
   const http = yield* HttpClient.HttpClient;
-  return GitHubApi.of({ ...rest, graphql: (input) => Effect.gen(function* () {
-    const host = GitHubRequestPolicy.normalizeHost(input.host);
-    return yield* policy.request({ host, operation: input.operation, resource: "graphql", allowReserve: yield* SourceControlRateLimit.Interactive },
-      (headers) => Effect.gen(function* () {
-        const request = yield* HttpClientRequest.post(GitHubRequestPolicy.gitHubApiUrls(host).graphql).pipe(
-          HttpClientRequest.setHeaders(headers),
-          HttpClientRequest.bodyJson({ query: input.query, variables: input.variables ?? {} }),
+  return GitHubApi.of({
+    ...rest,
+    graphql: (input) =>
+      Effect.gen(function* () {
+        const host = GitHubRequestPolicy.normalizeHost(input.host);
+        return yield* policy.request(
+          {
+            host,
+            operation: input.operation,
+            resource: "graphql",
+            allowReserve: yield* SourceControlRateLimit.Interactive,
+          },
+          (headers) =>
+            Effect.gen(function* () {
+              const request = yield* HttpClientRequest.post(
+                GitHubRequestPolicy.gitHubApiUrls(host).graphql,
+              ).pipe(
+                HttpClientRequest.setHeaders(headers),
+                HttpClientRequest.bodyJson({
+                  query: input.query,
+                  variables: input.variables ?? {},
+                }),
+              );
+              const answer = yield* http
+                .execute(request)
+                .pipe(Effect.provideService(HttpClient.TracerDisabledWhen, () => true));
+              const collected = yield* collectUint8StreamText({
+                stream: answer.stream,
+                maxBytes: input.maxResponseBytes ?? 8 * 1024 * 1024,
+              });
+              const meta = { status: answer.status, headers: answer.headers };
+              if (collected.truncated) return { ...meta, _tag: "Failed" as const };
+              const decoded = yield* decode(collected.text).pipe(Effect.orElseSucceed(() => null));
+              const errors = decoded?.errors;
+              if (
+                GitHubRequestPolicy.isRateLimited({
+                  ...meta,
+                  body: collected.text,
+                  ...(errors === undefined ? {} : { graphqlErrors: errors }),
+                })
+              )
+                return { ...meta, _tag: "RateLimited" as const };
+              if (answer.status === 401) return { ...meta, _tag: "Unauthorized" as const };
+              const partial =
+                input.acceptPartialData === true &&
+                decoded?.data != null &&
+                !errors?.some((error) => error.type === "INSUFFICIENT_SCOPES");
+              if (
+                answer.status >= 200 &&
+                answer.status < 300 &&
+                decoded !== null &&
+                (!errors?.length || partial)
+              )
+                return { ...meta, _tag: "Ok" as const, value: collected.text };
+              if (
+                answer.status === 404 ||
+                (errors !== undefined &&
+                  errors.length > 0 &&
+                  errors.every((error) => error.type === "NOT_FOUND"))
+              )
+                return { ...meta, _tag: "NotFound" as const };
+              return {
+                ...meta,
+                _tag: "Failed" as const,
+                messages: errors?.flatMap((error) =>
+                  error.message === undefined ? [] : [error.message],
+                ),
+              };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitHubRequestPolicy.GitHubApiRequestError({
+                    host,
+                    operation: input.operation,
+                    cause,
+                  }),
+              ),
+            ),
         );
-        const answer = yield* http.execute(request).pipe(Effect.provideService(HttpClient.TracerDisabledWhen, () => true));
-        const collected = yield* collectUint8StreamText({ stream: answer.stream, maxBytes: input.maxResponseBytes ?? 8 * 1024 * 1024 });
-        const meta = { status: answer.status, headers: answer.headers };
-        if (collected.truncated) return { ...meta, _tag: "Failed" as const };
-        const decoded = yield* decode(collected.text).pipe(Effect.orElseSucceed(() => null));
-        const errors = decoded?.errors;
-        if (GitHubRequestPolicy.isRateLimited({ ...meta, body: collected.text, ...(errors === undefined ? {} : { graphqlErrors: errors }) })) return { ...meta, _tag: "RateLimited" as const };
-        if (answer.status === 401) return { ...meta, _tag: "Unauthorized" as const };
-        const partial = input.acceptPartialData === true && decoded?.data != null && !errors?.some((error) => error.type === "INSUFFICIENT_SCOPES");
-        if (answer.status >= 200 && answer.status < 300 && decoded !== null && (!errors?.length || partial)) return { ...meta, _tag: "Ok" as const, value: collected.text };
-        if (answer.status === 404 || (errors !== undefined && errors.length > 0 && errors.every((error) => error.type === "NOT_FOUND"))) return { ...meta, _tag: "NotFound" as const };
-        return { ...meta, _tag: "Failed" as const, messages: errors?.flatMap((error) => error.message === undefined ? [] : [error.message]) };
-      }).pipe(Effect.mapError((cause) => new GitHubRequestPolicy.GitHubApiRequestError({ host, operation: input.operation, cause }))),
-    );
-  }) });
-}));
+      }),
+  });
+});
+
+export const layer = Layer.effect(GitHubApi, make);

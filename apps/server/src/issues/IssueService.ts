@@ -1878,4 +1878,4 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
   });
 });
 
-export const layer = Layer.effect(IssueService, make()).pipe(Layer.provide(GitHubApi.layer));
+export const layer = Layer.effect(IssueService, make());

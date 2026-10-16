@@ -26,16 +26,12 @@ import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 export interface EnvironmentProject extends OrchestrationProjectShell {
   readonly environmentId: EnvironmentId;
-  /** Derived from the environment's configured scratch root, never persisted. */
   readonly isScratch?: true;
 }
 
 /**
- * A pristine V2 thread projection paired with the environment that produced it.
- *
  * The projection stays nested so the server projection and all structurally
- * shared collections retain their identities. Rich consumers read V2 state
- * directly instead of a second presentation-shaped thread graph.
+ * shared collections retain their identities.
  */
 export interface EnvironmentThread {
   readonly environmentId: EnvironmentId;
@@ -71,8 +67,6 @@ export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | und
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
-/** Archiving may discard queued work, but it must not detach a provider that
- * is preparing, starting, or running a turn. */
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
   if (runtime?.status === "queued") return runtime.activeRunId === null;
   return (
@@ -109,20 +103,15 @@ export interface EnvironmentThreadShell {
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
   readonly latestUserMessageAt: string | null;
-  /** The last message the user wrote. `undefined` means the server predates it. */
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
-  /** What a live subagent below this thread waits on the user for. Subagent
-      rows are hidden, so the threads above them carry it. */
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   readonly hasActionableProposedPlan: boolean;
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
   >;
-  /** Provider instances that have owned the root conversation, oldest first. */
   readonly providerInstanceHistory: ReadonlyArray<ProviderInstanceId>;
-  /** Native `/goal` on the active provider thread. */
   readonly goal: OrchestrationV2ProviderGoal | null;
   readonly itemCount: number;
   readonly visibleItemCount: number;
@@ -140,9 +129,7 @@ export interface EnvironmentThreadShell {
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
   readonly autoSettleDisabledAt?: string | null;
-  /** Slot in the user-arranged pinned order; null for keyless (legacy) pins. */
   readonly pinOrderKey: string | null;
-  /** Slot in the user-arranged active order; null for keyless active threads. */
   readonly activeOrderKey: string | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedIssue?: import("@t3tools/contracts").ThreadLinkedIssue;
@@ -154,7 +141,6 @@ export interface EnvironmentThreadShell {
    * local visited state they keep.
    */
   readonly lastVisitedAt?: string | null;
-  /** Pending title regeneration marker; null when no request is in flight. */
   readonly titleRegeneration?: { readonly requestId: string; readonly startedAt: string } | null;
   readonly deletedAt: string | null;
   readonly source: OrchestrationV2ThreadShell;
@@ -178,14 +164,10 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
   );
 }
 
-// Park runtime at idle when the post-settlement background roster holds the
-// run's completion, so #4415 waiting-presentation Waiting (session.idle) can
-// consume CTM runtime. Only work that wakes the agent holds it: commands it
-// left running, such as a dev server, present the run's own status (#14872).
-// The server suppresses the roster while an interruptible activity run exists,
-// so a remaining roster is stronger than checkpoint-oriented waiting.
-// latestRun keeps the latest run's status for history presentation.
-// A failed latest run outranks the roster, so the failure stays visible.
+// Only work that wakes the agent holds it: commands it left running, such as a
+// dev server, present the run's own status (#14872). The server suppresses the
+// roster while an interruptible activity run exists, so a remaining roster is
+// stronger than checkpoint-oriented waiting.
 function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary | null {
   const parkAtIdle =
     backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) &&
@@ -328,11 +310,6 @@ export function scopeThreadShell(
 
 const THREAD_PROVIDER_STACK_LIMIT = 3;
 
-/**
- * Provider instances to draw in a thread row's trailing stack, back to front:
- * the current one is always last, earlier owners precede it oldest first.
- * Newest history wins when the thread has been handed off more times than fit.
- */
 export function resolveThreadProviderStack(
   thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
 ): ReadonlyArray<ProviderInstanceId> {
@@ -361,8 +338,7 @@ export function resolveThreadWorkingStartedAt(input: {
   const working =
     input.runtime?.activityStartedAt !== undefined
       ? valid(input.runtime.activityStartedAt)
-      : // Older servers can supply a timestamp only if the newest run owns the work.
-        run?.completedAt === null && run.runId === input.runtime?.activeRunId
+      : run?.completedAt === null && run.runId === input.runtime?.activeRunId
         ? runStartedAt
         : null;
   return working ?? (input.waiting ? runStartedAt : null);

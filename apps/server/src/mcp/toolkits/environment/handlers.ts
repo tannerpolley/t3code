@@ -91,7 +91,6 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
           .pipe(Effect.mapError(unavailable));
         return preferences(updated);
       });
-      // A thread caller serializes with its own turn; a client has no thread to lock.
       return yield* scope.thread === undefined
         ? update
         : executor.withLock(scope.thread.threadId, update);

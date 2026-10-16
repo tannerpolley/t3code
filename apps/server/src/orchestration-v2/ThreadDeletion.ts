@@ -33,7 +33,6 @@ export class RegisteredRepositoryRootDeletionError extends Schema.TaggedError<Re
   }
 }
 
-/** Plan the same durable cleanup for direct thread deletion and project removal. */
 export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")(function* (input: {
   readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.delete" }>;
   readonly projection: Pick<

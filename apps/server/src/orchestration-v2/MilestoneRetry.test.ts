@@ -5,7 +5,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubApi from "../issues/IssueGitHubApi.ts";
+import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 
 import * as IssueService from "../issues/IssueService.ts";
@@ -34,7 +35,7 @@ function milestoneReads(statuses: ReadonlyMap<number, number>, calls: number[]) 
             if (lookup !== null)
               return statuses.get(Number(lookup[1])) === 422
                 ? Effect.fail(
-                    new GitHubApi.GitHubApiNotFoundError({
+                    new GitHubRequestPolicy.GitHubApiNotFoundError({
                       host: input.host,
                       operation: input.operation,
                     }),
@@ -60,7 +61,7 @@ function milestoneReads(statuses: ReadonlyMap<number, number>, calls: number[]) 
                   invalidUtf8: false,
                 })
               : Effect.fail(
-                  new GitHubApi.GitHubApiResponseError({
+                  new GitHubRequestPolicy.GitHubApiResponseError({
                     host: input.host,
                     operation: input.operation,
                     status,

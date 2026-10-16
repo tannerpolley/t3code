@@ -47,16 +47,6 @@ export function makeUnavailableUsageLimits(input: {
   };
 }
 
-/**
- * Fold a sparse runtime update into the limits a provider currently
- * publishes. Windows upsert by `id`; a window the update omits keeps its
- * previous values, and a window that arrives without `resetsAt` or
- * `windowDurationMins` keeps whatever the last probe resolved for it. An
- * update with no windows leaves `previous` untouched.
- *
- * An `unsupported` snapshot stays unsupported: an account that cannot have
- * subscription windows will not start reporting them mid-turn.
- */
 export function applyUsageLimitsUpdate(input: {
   readonly previous: ServerProviderUsageLimits | undefined;
   readonly update: ProviderUsageLimitsUpdate;

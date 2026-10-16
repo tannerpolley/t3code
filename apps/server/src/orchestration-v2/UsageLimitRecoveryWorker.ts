@@ -15,7 +15,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
-/** The persisted run and reset form the identity of one recovery opportunity. */
 export function limitRecoveryCommand(
   thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
   autoResume: boolean,
@@ -140,8 +139,6 @@ const makeSweep = Effect.gen(function* () {
 
 export const serviceLayer = Layer.effect(UsageLimitRecoveryWorker, makeSweep);
 
-// The shared scheduler derives due work from persisted failures and recovery
-// choices, so restarts need no timer restoration or connected client.
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const { sweep } = yield* makeSweep;

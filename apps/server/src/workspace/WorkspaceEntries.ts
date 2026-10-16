@@ -314,7 +314,12 @@ export const make = Effect.gen(function* () {
             const children = await NodeFSP.readdir(directory, { withFileTypes: true });
             return {
               entries: children.flatMap((child): ProjectEntry[] => {
-                if (child.name === ".git" || isProjectLocalWorktreePath(child.name) || (!child.isDirectory() && !child.isFile())) return [];
+                if (
+                  child.name === ".git" ||
+                  isProjectLocalWorktreePath(child.name) ||
+                  (!child.isDirectory() && !child.isFile())
+                )
+                  return [];
                 return [
                   {
                     path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
