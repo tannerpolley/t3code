@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -32,7 +33,7 @@ const decodeProjectRequest = Schema.decodeEffect(
   ),
 );
 interface MockResponse {
-  readonly body: string;
+  readonly body: string | null;
   readonly headers?: Readonly<Record<string, string>>;
   readonly status?: number;
 }
@@ -99,6 +100,7 @@ function makeHarness(input: {
   const responses = [...input.responses];
   const calls: Array<ApiCall> = [];
   const rateLimitRecords: Array<unknown> = [];
+  const invalidatedHosts: Array<string> = [];
   const http = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
@@ -135,7 +137,10 @@ function makeHarness(input: {
           source: "gh" as const,
           fingerprint: `${host}:token`,
         }),
-      invalidate: () => Effect.void,
+      invalidate: (host) =>
+        Effect.sync(() => {
+          invalidatedHosts.push(host);
+        }),
     }),
   );
   const rateLimits = Layer.mock(SourceControlRateLimit.SourceControlRateLimit)({
@@ -165,7 +170,7 @@ function makeHarness(input: {
           withVerifiedCredential: () => Effect.fail(input.verificationError!),
         });
   const layer = Layer.mergeAll(api, verifier);
-  return { layer, calls, rateLimitRecords };
+  return { layer, calls, rateLimitRecords, invalidatedHosts };
 }
 
 function service(harness: ReturnType<typeof makeHarness>) {
@@ -1203,6 +1208,44 @@ it.effect("maps a missing issue to inaccessible and a GraphQL rate limit to rate
     assert.equal(limitedError.code, "rate-limited");
     assert.equal(limited.rateLimitRecords.length, 1);
   }),
+);
+
+it.effect.each([
+  [401, "GitHubApiAuthenticationError", "unauthenticated"],
+  [429, "GitHubApiRateLimitError", "rate-limited"],
+  [404, "GitHubApiNotFoundError", "inaccessible"],
+] as const)(
+  "classifies an empty GraphQL %i and applies the request policy",
+  ([status, tag, code]) => {
+    const harness = makeHarness({
+      responses: Array.from({ length: 2 }, () => ({
+        body: null,
+        status,
+        headers: status === 429 ? { "retry-after": "10" } : {},
+      })),
+    });
+    return Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const api = yield* GitHubApi.GitHubApi;
+      const error = yield* api
+        .graphql({ host: HOST, operation: "fixture", query: "query { viewer { login } }" })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, tag);
+      if (error._tag === "GitHubApiRateLimitError") {
+        assert.equal(error.retryAt, now + 10_000);
+      }
+      assert.deepEqual(harness.invalidatedHosts, status === 401 ? [HOST] : []);
+      const backoff = { provider: "github", host: HOST, lease: 0, retryAt: now + 10_000 };
+      assert.deepEqual(harness.rateLimitRecords, status === 429 ? [backoff] : []);
+
+      const issues = yield* IssueService.make();
+      const issueError = yield* issues.detail({ ...listInput, number: 7 }).pipe(Effect.flip);
+      assert.equal(issueError.code, code);
+      assert.deepEqual(harness.invalidatedHosts, status === 401 ? [HOST, HOST] : []);
+      assert.deepEqual(harness.rateLimitRecords, status === 429 ? [backoff, backoff] : []);
+      assert.equal(harness.calls.length, 2);
+    }).pipe(Effect.provide(harness.layer));
+  },
 );
 
 it.effect("rejects pull request detail responses", () =>

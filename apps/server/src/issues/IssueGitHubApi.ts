@@ -71,7 +71,13 @@ const make = Effect.gen(function* () {
               const collected = yield* collectUint8StreamText({
                 stream: answer.stream,
                 maxBytes: input.maxResponseBytes ?? 8 * 1024 * 1024,
-              });
+              }).pipe(
+                // Body-less refusals still need status classification by the request policy.
+                Effect.catchIf(
+                  (error) => error.reason._tag === "EmptyBodyError",
+                  () => Effect.succeed({ text: "", truncated: false, invalidUtf8: false }),
+                ),
+              );
               const meta = { status: answer.status, headers: answer.headers };
               if (collected.truncated) return { ...meta, _tag: "Failed" as const };
               const decoded = yield* decode(collected.text).pipe(Effect.orElseSucceed(() => null));
