@@ -10,16 +10,52 @@ import {
 
 // Local OpenDyslexic font metrics: zero advances 1337 of 2048 units.
 const ch = (1337 / 2048) * sidebarColumnLayout.titleFontRem * 16;
-const optionalColumns = (sidebarRem: number, rowFontPx = sidebarColumnLayout.titleFontRem * 16) => {
-  const container = sidebarRem * 16 - 40;
+const containerFontPx = (detailPx: number | null) =>
+  detailPx === null
+    ? sidebarColumnLayout.titleFontRem * 16
+    : detailPx * (sidebarColumnLayout.titleFontRem / sidebarColumnLayout.detailFontRem);
+const budgetPx = (hidden: ReadonlySet<string>, detailPx: number | null) => {
+  const budget = sidebarColumnBudget(hidden);
+  const fontPx = containerFontPx(detailPx);
+  return budget.rem * 16 + budget.em * fontPx + budget.px + budget.ch * (1337 / 2048) * fontPx;
+};
+const hiddenColumns = (containerPx: number, detailPx: number | null) => {
   const hidden = new Set<string>();
   for (const column of sidebarColumnLayout.dropOrder) {
-    const budget = sidebarColumnBudget(hidden);
-    const rowCh = ch * (rowFontPx / (sidebarColumnLayout.titleFontRem * 16));
-    if (container < budget.rem * 16 + budget.em * rowFontPx + budget.px + budget.ch * rowCh)
-      hidden.add(column);
+    if (containerPx < budgetPx(hidden, detailPx)) hidden.add(column);
   }
+  return hidden;
+};
+const optionalColumns = (sidebarRem: number, detailPx: number | null = null) => {
+  const hidden = hiddenColumns(sidebarRem * 16 - 40, detailPx);
   return ["model", "effort", "usage"].filter((column) => !hidden.has(column));
+};
+
+// Resolve the emitted track lengths independently of the query budget, including the detail
+// fallback. This catches a threshold that drops columns later than their actual widths require.
+const cssTrackWidths = (detailPx: number | null) =>
+  new Map(
+    [...generateSidebarColumnLayoutCss().matchAll(/  --sidebar-([\w-]+)-width: (.*);/g)].map(
+      ([, name, value]) => {
+        const scaled = value!.match(
+          /^calc\(var\(--fork-sidebar-detail-size, ([\d.]+)rem\) \* ([\d.]+)\)$/,
+        );
+        const width = scaled
+          ? (detailPx ?? Number(scaled[1]) * 16) * Number(scaled[2])
+          : Number.parseFloat(value!) *
+            (value!.endsWith("ch") ? (1337 / 2048) * containerFontPx(detailPx) : 16);
+        return [name!, width] as const;
+      },
+    ),
+  );
+const remainingTracksPx = (hidden: ReadonlySet<string>, detailPx: number | null) => {
+  const widths = cssTrackWidths(detailPx);
+  const visible = Object.keys(sidebarColumnLayout.tracks).filter((name) => !hidden.has(name));
+  return (
+    sidebarColumnLayout.rowPaddingRem * 16 +
+    (visible.length - 1) * sidebarColumnLayout.gapPx +
+    visible.reduce((total, name) => total + (name === "name" ? 0 : widths.get(name)!), 0)
+  );
 };
 
 describe("sidebar width budget", () => {
@@ -29,8 +65,34 @@ describe("sidebar width budget", () => {
     expect(optionalColumns(27.5)).toEqual(["model", "effort"]);
     expect(optionalColumns(30)).toEqual(["model", "effort", "usage"]);
     expect(optionalColumns(30, 20)).toEqual([]);
-    expect(optionalColumns(40, 20)).toEqual(["model", "effort"]);
-    expect(optionalColumns(43, 20)).toEqual(["model", "effort", "usage"]);
+    expect(optionalColumns(40, 20)).toEqual(["model"]);
+    expect(optionalColumns(43, 20)).toEqual(["model", "effort"]);
+    expect(optionalColumns(48, 20)).toEqual(["model", "effort", "usage"]);
+  });
+
+  it.each([null, 20])(
+    "fits the emitted tracks and title at each threshold (Detail %s)",
+    (detailPx) => {
+      const hidden = new Set<string>();
+      const titlePx = sidebarColumnLayout.titleCh * (1337 / 2048) * containerFontPx(detailPx);
+      for (const column of sidebarColumnLayout.dropOrder) {
+        const boundaryPx = budgetPx(hidden, detailPx);
+        expect(hiddenColumns(boundaryPx, detailPx)).toEqual(hidden);
+        expect(remainingTracksPx(hidden, detailPx) + titlePx).toBeCloseTo(boundaryPx, 8);
+        const narrowerPx = boundaryPx - 0.01;
+        hidden.add(column);
+        expect(hiddenColumns(narrowerPx, detailPx)).toEqual(hidden);
+        expect(remainingTracksPx(hidden, detailPx) + titlePx).toBeLessThan(narrowerPx);
+      }
+    },
+  );
+
+  it("drops count and time before squeezing titles in a 256px sidebar at Detail 20px", () => {
+    const containerPx = 256 - 40;
+    const hidden = hiddenColumns(containerPx, 20);
+    expect(hidden).toEqual(new Set(sidebarColumnLayout.dropOrder));
+    const titlePx = containerPx - remainingTracksPx(hidden, 20);
+    expect(titlePx).toBeGreaterThanOrEqual(sidebarColumnLayout.titleCh * ch);
   });
 });
 

@@ -12,6 +12,12 @@ export function ForkSidebarTextSizes(props: {
     <div
       className={`fork-sidebar-text-sizes ${props.className}`}
       data-sidebar-style={settings.codexStyleSidebar ? "codex" : "classic"}
+      data-custom-section-size={settings.sidebarSectionTextSize !== null || undefined}
+      data-custom-project-size={settings.sidebarProjectTextSize !== null || undefined}
+      data-custom-thread-size={settings.sidebarThreadTextSize !== null || undefined}
+      data-custom-agent-size={settings.sidebarAgentTextSize !== null || undefined}
+      data-custom-process-size={settings.sidebarProcessTextSize !== null || undefined}
+      data-custom-detail-size={settings.sidebarDetailTextSize !== null || undefined}
       style={
         {
           "--fork-sidebar-section-size": rem(settings.sidebarSectionTextSize),

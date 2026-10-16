@@ -1,6 +1,6 @@
 /**
- * Track budgets at the default 12px row font. Computed em and ch lengths share the container's
- * font so larger Projects text keeps every row aligned.
+ * Detail tracks scale from the default 10px time font. The container's 12px font keeps
+ * ch widths and query thresholds aligned without depending on individual row title sizes.
  */
 export const sidebarColumnLayout = {
   tracks: {
@@ -25,16 +25,18 @@ export const sidebarColumnLayout = {
    */
   modelPartsCh: { name: 5.65, version: 2.35 },
   /** Optional columns in the order a narrowing sidebar drops them. */
-  dropOrder: ["usage", "effort", "model"],
+  dropOrder: ["usage", "effort", "model", "count", "time"],
   rowPaddingRem: 1,
   titleCh: 10,
   titleFontRem: 0.75,
+  detailFontRem: 0.625,
 } as const;
 
 const TEXT_TRACKS = new Set(["effort", "usage", "count", "time"]);
 
 export function generateSidebarColumnLayoutCss() {
-  const { tracks, gapPx, titleFontRem, dropOrder, modelPartsCh } = sidebarColumnLayout;
+  const { tracks, gapPx, titleFontRem, detailFontRem, dropOrder, modelPartsCh } =
+    sidebarColumnLayout;
   const entries = Object.entries(tracks);
   const visible = (hidden: ReadonlySet<string>) => entries.filter(([name]) => !hidden.has(name));
   const template = (hidden: ReadonlySet<string>) =>
@@ -45,12 +47,9 @@ export function generateSidebarColumnLayoutCss() {
     const budget = sidebarColumnBudget(hidden);
     return `calc(${budget.rem}rem + ${budget.em}em + ${budget.px}px + ${budget.ch}ch)`;
   };
-  // Registered lengths compute once in the container font; em and ch must not resolve again in
-  // each row's title font, otherwise differently sized rows would have drifting columns.
+  // Only ch lengths need registration to resolve in the container's font rather than each row's.
   const computedWidths = [
-    ...entries.flatMap(([name, width]) =>
-      TEXT_TRACKS.has(name) || typeof width !== "number" ? [name] : [],
-    ),
+    ...entries.flatMap(([name, width]) => (typeof width === "number" ? [] : [name])),
     "model-name",
     "model-version",
   ];
@@ -64,16 +63,17 @@ export function generateSidebarColumnLayoutCss() {
     .filter(([name]) => name !== "name")
     .map(
       ([name, width]) =>
-        `  --sidebar-${name}-width: ${typeof width === "number" ? (TEXT_TRACKS.has(name) ? `${width / titleFontRem}em` : `${width}rem`) : `${width.ch}ch`};`,
+        `  --sidebar-${name}-width: ${typeof width === "number" ? (TEXT_TRACKS.has(name) ? `calc(var(--fork-sidebar-detail-size, ${detailFontRem}rem) * ${width / detailFontRem})` : `${width}rem`) : `${width.ch}ch`};`,
     )
     .join(
       "\n",
-    )}\n  --sidebar-model-name-width: ${modelPartsCh.name}ch;\n  --sidebar-model-version-width: ${modelPartsCh.version}ch;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: var(--fork-sidebar-column-font, ${titleFontRem}rem);\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template(full)};\n  column-gap: ${gapPx}px;\n}\n`;
+    )}\n  --sidebar-model-name-width: ${modelPartsCh.name}ch;\n  --sidebar-model-version-width: ${modelPartsCh.version}ch;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: calc(var(--fork-sidebar-detail-size, ${detailFontRem}rem) * ${titleFontRem / detailFontRem});\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template(full)};\n  column-gap: ${gapPx}px;\n}\n`;
   const hidden = new Set<string>();
   for (const column of dropOrder) {
     const boundary = threshold(hidden);
     hidden.add(column);
-    css += `@container sidebar-columns (width < ${boundary}) {\n  .sidebar-thread-columns { grid-template-columns: ${template(hidden)}; }\n  .sidebar-thread-${column} { display: none; }\n}\n`;
+    const scope = column === "count" || column === "time" ? ".fork-sidebar-text-sizes " : "";
+    css += `@container sidebar-columns (width < ${boundary}) {\n  ${scope}.sidebar-thread-columns { grid-template-columns: ${template(hidden)}; }\n  ${scope}.sidebar-thread-${column} { display: none; }\n}\n`;
   }
   return css;
 }

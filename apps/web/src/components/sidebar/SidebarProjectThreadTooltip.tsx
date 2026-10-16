@@ -62,7 +62,9 @@ export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(p
           className={`inline-flex shrink-0 items-center gap-0.5 ${pr.toneClassName}`}
         >
           <pr.Icon aria-hidden className="size-3" />
-          {pr.count > 1 ? <span className="text-3xs tabular-nums">{pr.count}</span> : null}
+          {pr.count > 1 ? (
+            <span className="fork-sidebar-inline-count text-3xs tabular-nums">{pr.count}</span>
+          ) : null}
         </span>
       ) : null}
     </span>

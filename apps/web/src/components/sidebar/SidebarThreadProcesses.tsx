@@ -149,7 +149,9 @@ export function SidebarProcessGroupRows(props: {
                   : group.commandLine}
               </TooltipPopup>
             </Tooltip>
-            {group.count > 1 ? <span className="shrink-0">×{group.count}</span> : null}
+            {group.count > 1 ? (
+              <span className="fork-sidebar-inline-count shrink-0">×{group.count}</span>
+            ) : null}
             <BackgroundTaskResourceUsageLabel className="fork-sidebar-resource" usage={group} />
           </span>
         );

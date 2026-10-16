@@ -1225,7 +1225,9 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             />
           ))}
           {props.threads.length === 0 ? (
-            <li className="px-2 py-1 text-2xs text-sidebar-muted-foreground/55">No threads yet</li>
+            <li className="fork-sidebar-empty px-2 py-1 text-2xs text-sidebar-muted-foreground/55">
+              No threads yet
+            </li>
           ) : null}
         </ul>
       ) : null}
