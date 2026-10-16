@@ -39,6 +39,8 @@ export const ThreadProcesses = Schema.Struct({
   runningTaskIds: Schema.Array(Schema.String),
   /** Every group, largest first; the sidebar lists the first few. */
   processGroups: Schema.Array(ThreadProcessGroup),
+  /** Always 0: web tabs loaded before the sidebar capped groups itself still require it. */
+  hiddenProcessGroupCount: NonNegativeInt,
   /** Usage of every process the commands and tasks run or spawned, listed or not. */
   usage: Schema.optionalKey(
     Schema.Struct({ cpuPercent: Schema.Number, residentBytes: NonNegativeInt }),

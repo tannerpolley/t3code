@@ -449,6 +449,7 @@ const NO_THREAD_PROCESSES: ThreadProcesses = {
   commands: [],
   runningTaskIds: [],
   processGroups: [],
+  hiddenProcessGroupCount: 0,
 };
 
 const make = Effect.gen(function* () {
@@ -506,6 +507,7 @@ const make = Effect.gen(function* () {
       commands: work.commands,
       runningTaskIds: work.tasks.map((task) => task.taskId),
       processGroups: groups,
+      hiddenProcessGroupCount: 0,
       usage,
     };
   });
