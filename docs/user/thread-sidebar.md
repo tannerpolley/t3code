@@ -398,10 +398,12 @@ deeper rows take a slightly stronger shade. A thread without children has no tin
 Turn it off in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 
-Rows are titled by what each thread does rather than its task name: a thread working
-on an issue shows the issue, such as **#42 Fix login**; every other thread shows its
-role (Orchestrator, Implementor, Reviewer, Investigator, Checker), matching its role
-icon. Hover a title to see the thread's name.
+Rows are titled by what each thread does rather than its task name: its role
+(Orchestrator, Implementor, Reviewer, Investigator, Checker), matching its role icon.
+A thread working on an issue adds an issue icon with the issue's number, and a thread
+with pull requests adds a pull request icon in the color of their state; on an
+orchestrator's row that icon shows the state itself, such as a merge. Hover a title to
+see the thread's name.
 
 Widen the sidebar to compare all columns. As it narrows, effort disappears
 first, followed by model. The caret, name, and work status remain.

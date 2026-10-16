@@ -332,7 +332,7 @@ describe("background task metadata", () => {
 });
 
 describe("sidebarThreadTitle", () => {
-  it("titles issue workers by issue, else by the role the thread works as", () => {
+  it("titles every thread by the role it works as, issue workers included", () => {
     const top = { relationshipToParent: null } as const;
     const child = { relationshipToParent: "subagent" } as const;
     const issue = { number: 42, title: "Fix login" } as ThreadLinkedIssue;
@@ -341,15 +341,19 @@ describe("sidebarThreadTitle", () => {
       lineage: { readonly relationshipToParent: "subagent" | "fork" | null },
       worktreePath: string | null = null,
       linkedIssue?: ThreadLinkedIssue,
-    ) =>
-      sidebarThreadTitle({
+    ) => {
+      // A full shell carries its linked issue too; the title must not read it.
+      const thread = {
         role,
         lineage,
         branch: worktreePath === null ? null : "t3/x",
         worktreePath,
         linkedIssue,
-      });
-    expect(title("implementor", child, "/wt/x", issue)).toBe("#42 Fix login");
+      };
+      return sidebarThreadTitle(thread);
+    };
+    // The issue shows as its own badge, so it never replaces the role.
+    expect(title("implementor", child, "/wt/x", issue)).toBe("Implementor");
     expect(title("checker", child)).toBe("Checker");
     // A role-less thread the user starts outside a worktree, or forks there, is an Orchestrator.
     expect(title(undefined, top)).toBe("Orchestrator");

@@ -103,11 +103,10 @@ export function resolveSidebarThreadModelLabel(
  * works as, the same one its role icon shows. The name shows on hover.
  */
 export function sidebarThreadTitle(
-  thread: Pick<OrchestrationV2ThreadShell, "role" | "linkedIssue" | "branch" | "worktreePath"> & {
+  thread: Pick<OrchestrationV2ThreadShell, "role" | "branch" | "worktreePath"> & {
     readonly lineage: Pick<OrchestrationV2ThreadShell["lineage"], "relationshipToParent">;
   },
 ): string {
-  if (thread.linkedIssue) return `#${thread.linkedIssue.number} ${thread.linkedIssue.title}`;
   return THREAD_ROLE_LABELS[effectiveThreadRole(thread)];
 }
 

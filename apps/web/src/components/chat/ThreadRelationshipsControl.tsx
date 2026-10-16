@@ -15,6 +15,7 @@ import {
   describeSidebarBackgroundWork,
   sidebarThreadTitle,
 } from "../sidebar/SidebarBackgroundWork.logic";
+import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -785,6 +786,7 @@ export function ThreadRelationshipsPanel(props: {
                               ? sidebarThreadName(threadTitle, sidebarThreadTitle(node.thread))
                               : threadTitle}
                           </span>
+                          <ThreadIssueBadge issue={node?.thread?.linkedIssue} />
                           {!elapsedAgent ? (
                             <span className="shrink-0 text-2xs text-muted-foreground">
                               {threadRelationshipStatusLabel(rowStatus)}

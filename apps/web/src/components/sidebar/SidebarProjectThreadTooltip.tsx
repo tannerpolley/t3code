@@ -1,12 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
+  effectiveThreadRole,
   isProviderNativeSubagentThread,
   type EnvironmentId,
   type ServerProvider,
+  type ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { GitBranchIcon } from "lucide-react";
+import { CircleDotIcon, GitBranchIcon } from "lucide-react";
 import { memo, type ReactElement, type ReactNode } from "react";
 import { useProject } from "../../state/entities";
 import { useEnvironmentIdentities } from "../../state/environments";
@@ -17,6 +19,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { isThreadPreparingWorktree } from "../ThreadLocationIcon.logic";
 import { ThreadPullRequestsMiniList } from "../ThreadStatusIndicators";
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { resolveSidebarThreadModelLabel } from "./SidebarBackgroundWork.logic";
 import {
@@ -45,23 +48,48 @@ const SidebarProjectThreadMachine = memo(function SidebarProjectThreadMachine(pr
   );
 });
 
+/**
+ * The issue a thread works on, beside its role title. Neutral: rows read no live GitHub state, so
+ * the icon claims nothing about whether the issue is open.
+ */
+export function ThreadIssueBadge(props: { readonly issue: ThreadLinkedIssue | undefined }) {
+  if (props.issue === undefined) return null;
+  return (
+    <span
+      role="img"
+      aria-label={`Issue #${props.issue.number}: ${props.issue.title}`}
+      className="inline-flex shrink-0 items-center gap-0.5 text-muted-foreground"
+    >
+      <CircleDotIcon aria-hidden className="size-3" />
+      <span className="text-3xs tabular-nums">{props.issue.number}</span>
+    </span>
+  );
+}
+
 /** Metadata stays inside the flexible name cell, leaving every existing column in place. */
 export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(props: {
   readonly thread: SidebarThreadSummary;
   readonly children: ReactNode;
 }) {
   const pr = sidebarProjectThreadPullRequests(props.thread.pullRequests);
+  // Workers opened their pull requests, so they keep the request glyph in its state's color;
+  // orchestrators show the state's own glyph, such as the merge they made.
+  const PrIcon =
+    pr && effectiveThreadRole(props.thread.source) !== "orchestrator"
+      ? PullRequestGlyph.pullRequest
+      : pr?.Icon;
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <span className="fork-sidebar-title min-w-0 flex-1 truncate">{props.children}</span>
       <SidebarProjectThreadMachine environmentId={props.thread.environmentId} />
-      {pr ? (
+      <ThreadIssueBadge issue={props.thread.source.linkedIssue} />
+      {pr && PrIcon ? (
         <span
           role="img"
           aria-label={pr.label}
           className={`inline-flex shrink-0 items-center gap-0.5 ${pr.toneClassName}`}
         >
-          <pr.Icon aria-hidden className="size-3" />
+          <PrIcon aria-hidden className="size-3" />
           {pr.count > 1 ? <span className="text-3xs tabular-nums">{pr.count}</span> : null}
         </span>
       ) : null}

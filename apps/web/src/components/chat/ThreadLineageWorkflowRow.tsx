@@ -4,6 +4,7 @@ import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
 import { SidebarThreadColumns, sidebarThreadName } from "../sidebar/SidebarColumns";
 import { sidebarThreadTitle } from "../sidebar/SidebarBackgroundWork.logic";
+import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
 import { shortModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { shortModelName } from "./providerIconUtils";
 import { lineageStatusMark, ThreadStatusMark } from "../ThreadStatusMark";
@@ -110,10 +111,13 @@ function WorkflowMemberRow({
             model={shortModelName(member.model ?? thread?.modelSelection.model ?? "")}
             effort={shortModelSelectionEffort(member.effort ?? null)}
             name={
-              <span>
-                {thread
-                  ? sidebarThreadName(member.title, sidebarThreadTitle(thread.source))
-                  : member.title}
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1 truncate">
+                  {thread
+                    ? sidebarThreadName(member.title, sidebarThreadTitle(thread.source))
+                    : member.title}
+                </span>
+                <ThreadIssueBadge issue={thread?.source.linkedIssue} />
                 <span className="sr-only">
                   Status: {threadRelationshipStatusLabel(member.status)}
                 </span>
