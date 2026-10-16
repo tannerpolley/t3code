@@ -177,13 +177,7 @@ it.effect(
         )
         .pipe(Effect.result);
       assert.isTrue(attempted._tag === "Failure");
-      yield* sql`INSERT INTO orchestration_v2_projection_thread_usage (thread_id, payload_json) VALUES ('orphan-summary', '{}')`;
       assert.isTrue((yield* maintenance.rebuild).valid);
-      assert.equal(
-        (yield* sql`SELECT * FROM orchestration_v2_projection_thread_usage WHERE thread_id = 'orphan-summary'`)
-          .length,
-        0,
-      );
       const replayed = yield* projections.getThreadProjection(threadId);
       assert.equal(
         replayed.turnItems[0]?.type === "assistant_message" ? replayed.turnItems[0].text : null,

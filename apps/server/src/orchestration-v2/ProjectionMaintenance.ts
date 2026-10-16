@@ -1,4 +1,3 @@
-import { DeferThreadUsageSummary, refreshAllThreadUsageSummaries } from "./ThreadUsageSummary.ts";
 import { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -125,7 +124,6 @@ export const layer: Layer.Layer<
           yield* sql`DELETE FROM orchestration_v2_projection_plans`;
           yield* sql`DELETE FROM orchestration_v2_projection_messages`;
           yield* sql`DELETE FROM orchestration_v2_projection_runtime_requests`;
-          yield* sql`DELETE FROM orchestration_v2_projection_thread_usage`;
           yield* sql`DELETE FROM orchestration_v2_projection_provider_turns`;
           yield* sql`DELETE FROM orchestration_v2_projection_provider_threads`;
           yield* sql`DELETE FROM orchestration_v2_projection_provider_session_bindings`;
@@ -148,9 +146,7 @@ export const layer: Layer.Layer<
               .read({ afterSequence: lastSequence, throughSequence, limit: pageSize })
               .pipe(Stream.runCollect);
             for (const stored of page) {
-              yield* projectionStore
-                .apply(stored.event)
-                .pipe(Effect.provideService(DeferThreadUsageSummary, true));
+              yield* projectionStore.apply(stored.event);
               if (stored.event.type === "turn-item.updated") {
                 yield* sql`
                 INSERT INTO orchestration_v2_turn_item_positions (
@@ -172,9 +168,6 @@ export const layer: Layer.Layer<
             if (page.length < pageSize) break;
             yield* Effect.yieldNow;
           }
-          yield* refreshAllThreadUsageSummaries.pipe(
-            Effect.provideService(SqlClient.SqlClient, sql),
-          );
           const now = DateTime.formatIso(yield* DateTime.now);
           yield* sql`
             INSERT INTO orchestration_v2_projection_metadata (

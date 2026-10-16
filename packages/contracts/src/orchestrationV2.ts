@@ -1892,22 +1892,7 @@ export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
 export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
-/** Compact sidebar usage; cache reads are already included in input tokens. */
-export const OrchestrationV2ThreadUsageSummary = Schema.Struct({
-  partial: Schema.Boolean,
-  latestTurnTokens: Schema.optional(NonNegativeInt),
-  inputTokens: Schema.optional(NonNegativeInt),
-  cachedInputTokens: Schema.optional(NonNegativeInt),
-  outputTokens: Schema.optional(NonNegativeInt),
-  threadTokens: Schema.optional(NonNegativeInt),
-  contextTokens: Schema.optional(NonNegativeInt),
-  contextWindow: Schema.optional(NonNegativeInt),
-});
-export type OrchestrationV2ThreadUsageSummary = typeof OrchestrationV2ThreadUsageSummary.Type;
-
 export const OrchestrationV2ThreadShell = Schema.Struct({
-  /** Omitted by older servers and providers without token reporting. */
-  usageSummary: Schema.optional(OrchestrationV2ThreadUsageSummary),
   role: OrchestrationV2AppThread.fields.role,
   ...OrchestrationV2ThreadTitleFields,
   ...OrchestrationV2CreationFields,

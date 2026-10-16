@@ -1,4 +1,3 @@
-import { threadUsageThrottleState } from "./ThreadUsageSummary.ts";
 import type {
   ApplicationStoredEvent,
   OrchestrationProjectShell,
@@ -246,51 +245,26 @@ export function skipUnchangedThreadShells<A extends OrchestrationV2ShellStreamIt
       OrchestrationV2ThreadShell["id"],
       { readonly thread: OrchestrationV2ThreadShell; readonly sentAt: number }
     >();
-    const lastUsageSent = new Map<
-      OrchestrationV2ThreadShell["id"],
-      {
-        readonly summary: OrchestrationV2ThreadShell["usageSummary"];
-        readonly key: ReturnType<typeof threadUsageThrottleState>;
-        readonly sentAt: number;
-      }
-    >();
     return stream.pipe(
       Stream.mapEffect((item) =>
         Effect.map(Clock.currentTimeMillis, (now): A | null => {
           if (item.kind === "thread.removed") {
             lastSent.delete(item.threadId);
-            lastUsageSent.delete(item.threadId);
             return item;
           }
           if (item.kind !== "thread.updated") return item;
           const previous = lastSent.get(item.thread.id);
-          const usagePrevious = lastUsageSent.get(item.thread.id);
-          const usage = item.thread.usageSummary;
-          const key = threadUsageThrottleState(item.thread);
-          // Completion and a different turn flush immediately; streaming usage waits five seconds.
-          const holdUsage =
-            usagePrevious !== undefined &&
-            usage !== undefined &&
-            key !== undefined &&
-            key.turnId === usagePrevious.key?.turnId &&
-            !(key.completed && !usagePrevious.key.completed) &&
-            !(
-              usage.latestTurnTokens !== undefined &&
-              usagePrevious.summary?.latestTurnTokens === undefined
-            ) &&
-            now - usagePrevious.sentAt < UNCHANGED_THREAD_SHELL_RESEND_MS;
-          const thread = holdUsage
-            ? { ...item.thread, usageSummary: usagePrevious.summary }
-            : item.thread;
           if (
             previous !== undefined &&
             now - previous.sentAt < UNCHANGED_THREAD_SHELL_RESEND_MS &&
-            sameThreadShell({ ...thread, updatedAt: previous.thread.updatedAt }, previous.thread)
+            sameThreadShell(
+              { ...item.thread, updatedAt: previous.thread.updatedAt },
+              previous.thread,
+            )
           )
             return null;
-          if (!holdUsage) lastUsageSent.set(thread.id, { summary: usage, key, sentAt: now });
-          lastSent.set(thread.id, { thread, sentAt: now });
-          return thread === item.thread ? item : ({ ...item, thread } as A);
+          lastSent.set(item.thread.id, { thread: item.thread, sentAt: now });
+          return item;
         }),
       ),
       Stream.filter((item): item is A => item !== null),
