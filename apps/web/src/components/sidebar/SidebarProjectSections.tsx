@@ -66,11 +66,9 @@ import {
   SidebarTrailingColumns,
   SidebarThreadColumns,
   threadGroupHue,
+  SidebarTokenUsage,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
-import { SidebarProjectUsage, SidebarUsageColumns } from "./SidebarProjectUsage";
-import { sidebarSectionUsageKeys } from "./SidebarProjectUsage.logic";
-import { SidebarUsageItem } from "./SidebarUsageItem";
 import { useServerConfigs } from "../../state/entities";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
@@ -360,10 +358,6 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     }
     return next;
   }, [otherProjectsExpanded, projectByKey, projects, sections]);
-  const listedProjectKeys = useMemo(
-    () => sidebarSectionUsageKeys(renderedSections, projectByKey),
-    [projectByKey, renderedSections],
-  );
 
   // Clears custom icons the same way the icon picker's Automatic choice does, on every checkout
   // of every project in the section and its subsections.
@@ -540,17 +534,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   );
 
   return (
-    <div
-      className="sidebar-columns-container group-data-[collapsible=icon]:hidden px-1 py-1"
-      style={{ "--sidebar-project-actions-width": codexStyle ? "1.5rem" : "3rem" } as CSSProperties}
-    >
-      <div className="sidebar-project-usage-row px-2 text-3xs text-sidebar-muted-foreground">
-        <span />
-        <SidebarUsageColumns>
-          <span>Codex</span>
-          <span>Claude</span>
-        </SidebarUsageColumns>
-      </div>
+    <div className="group-data-[collapsible=icon]:hidden px-1 py-1">
       {codexStyle ? null : (
         <div className="mb-1 px-2">
           <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
@@ -649,11 +633,6 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
           ) : null}
         </DragOverlay>
       </DndContext>
-      <div className="sidebar-project-usage-row px-2 py-1 text-2xs text-sidebar-muted-foreground">
-        <span className="truncate">Remaining projects</span>
-        <SidebarProjectUsage projectKeys={listedProjectKeys} remaining />
-      </div>
-      <SidebarUsageItem columns />
       {newProjectDialog ? (
         <NewSectionProjectDialog
           key={newProjectDialog.id}
@@ -735,14 +714,6 @@ const ProjectSection = memo(function ProjectSection(props: {
         onOpenRename={props.onOpenRename}
         onSetExpanded={props.onSetExpanded}
         section={props.section}
-        usageProjectKeys={sidebarSectionUsageKeys(
-          [props.section, ...props.subsections],
-          props.projectByKey,
-        )}
-        projectCount={[props.section, ...props.subsections].reduce(
-          (count, section) => count + section.projectKeys.length,
-          0,
-        )}
       />
       {expanded ? (
         <ul
@@ -794,8 +765,6 @@ const ProjectSection = memo(function ProjectSection(props: {
 });
 
 function SortableSectionHeader(props: {
-  readonly usageProjectKeys: readonly string[];
-  readonly projectCount: number;
   readonly section: SidebarProjectSectionRender;
   readonly codexStyle: boolean;
   readonly folderColors: boolean;
@@ -845,7 +814,7 @@ function SortableSectionHeader(props: {
     <div
       ref={setNodeRef}
       className={cn(
-        "sidebar-project-usage-row group/project-section relative h-7 rounded-md px-2",
+        "group/project-section relative flex h-7 items-center rounded-md px-1",
         isDragging && "z-10 opacity-70",
       )}
       data-testid={`sidebar-project-section-${section.id}`}
@@ -862,9 +831,13 @@ function SortableSectionHeader(props: {
         disabled={!canWrite}
         aria-expanded={expanded}
         className={cn(
-          "flex min-w-0 cursor-pointer items-center rounded-md text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          "flex min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           // Codex style sets sections apart from the project rows under them: a small uppercase label.
           codexStyle ? "gap-2 text-2xs font-semibold uppercase tracking-wide" : "gap-1.5 text-xs",
+          // Its actions menu overlays the row end, so the count moves aside while the menu shows.
+          codexStyle &&
+            section.custom &&
+            "group-hover/project-section:pe-7 group-focus-within/project-section:pe-7",
         )}
         onClick={() => {
           if (canWrite) props.onSetExpanded(section.id, !expanded);
@@ -887,16 +860,15 @@ function SortableSectionHeader(props: {
         ) : null}
         {codexStyle ? (
           // Counts show only while collapsed: they stand in for the hidden rows.
-          <SidebarTrailingColumns count={expanded ? undefined : props.projectCount} />
+          <SidebarTrailingColumns count={expanded ? undefined : section.projectKeys.length} />
         ) : (
           <span className="ms-auto shrink-0 text-2xs text-sidebar-muted-foreground/55">
-            {props.projectCount}
+            {section.projectKeys.length}
           </span>
         )}
       </button>
-      {expanded ? <span /> : <SidebarProjectUsage projectKeys={props.usageProjectKeys} />}
       {section.custom ? (
-        <div className="flex items-center justify-end">
+        <>
           {codexStyle || !draggable ? null : (
             <button
               aria-label={`Reorder ${section.name} section`}
@@ -915,7 +887,11 @@ function SortableSectionHeader(props: {
                 <button
                   disabled={!canWrite}
                   aria-label={`Actions for ${section.name}`}
-                  className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100"
+                  className={cn(
+                    "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-icon-muted opacity-0 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover/project-section:opacity-100 group-focus-within/project-section:opacity-100",
+                    // Codex style overlays the empty time and status slots, as on project rows.
+                    codexStyle && "absolute end-1 top-0.5",
+                  )}
                   type="button"
                 />
               }
@@ -1004,7 +980,7 @@ function SortableSectionHeader(props: {
               </MenuItem>
             </MenuPopup>
           </Menu>
-        </div>
+        </>
       ) : null}
     </div>
   );
@@ -1089,63 +1065,60 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           disabled={!canWrite}
           aria-expanded={props.isProjectExpanded}
           className={cn(
-            "sidebar-project-usage-row h-8 w-full min-w-0 cursor-pointer items-center rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            "flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            // Codex style makes room for the actions menu only while it shows.
+            codexStyle
+              ? "group-hover/project-row:pe-8 group-focus-within/project-row:pe-8"
+              : "pe-12",
             props.selected && "bg-sidebar-row-selected text-sidebar-foreground",
           )}
           onClick={() => {
             if (canWrite) props.onToggleProject(project.projectKey, !props.isProjectExpanded);
           }}
         >
-          <span className="flex min-w-0 items-center gap-2">
-            {codexStyle ? null : (
-              <ChevronRightIcon
-                aria-hidden
-                className={cn(
-                  "size-3 shrink-0 text-icon-muted transition-transform",
-                  props.isProjectExpanded && "rotate-90",
-                )}
-              />
-            )}
-            <ProjectFavicon
-              className="size-4"
-              folderColor={folderColor}
-              forceFolder={forceFolder}
-              project={project}
-              {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
+          {codexStyle ? null : (
+            <ChevronRightIcon
+              aria-hidden
+              className={cn(
+                "size-3 shrink-0 text-icon-muted transition-transform",
+                props.isProjectExpanded && "rotate-90",
+              )}
             />
-            <span className={cn("min-w-0 truncate", !codexStyle && "flex-1")}>
-              {project.displayName}
-            </span>
-            {codexStyle ? (
-              <SidebarCaretSlot open={props.isProjectExpanded} className="text-icon-muted" />
-            ) : null}
-            {codexStyle ? (
-              <SidebarTrailingColumns
-                count={
-                  props.isProjectExpanded
-                    ? undefined
-                    : props.threads.length > 0
-                      ? props.threads.length
-                      : project.groupedProjectCount > 1
-                        ? project.groupedProjectCount
-                        : undefined
-                }
-              />
-            ) : props.threads.length > 0 ? (
-              <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
-                {props.threads.length}
-              </span>
-            ) : project.groupedProjectCount > 1 ? (
-              <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
-                {project.groupedProjectCount}
-              </span>
-            ) : null}
-          </span>
-          <SidebarProjectUsage
-            projectKeys={project.memberProjectRefs.map(
-              (ref) => `${ref.environmentId}:${ref.projectId}`,
-            )}
+          )}
+          <ProjectFavicon
+            className="size-4"
+            folderColor={folderColor}
+            forceFolder={forceFolder}
+            project={project}
+            {...(codexStyle && props.isProjectExpanded ? { fallbackIcon: FolderOpenIcon } : {})}
           />
+          <span className={cn("min-w-0 truncate", !codexStyle && "flex-1")}>
+            {project.displayName}
+          </span>
+          {codexStyle ? (
+            <SidebarCaretSlot open={props.isProjectExpanded} className="text-icon-muted" />
+          ) : null}
+          {codexStyle ? (
+            <SidebarTrailingColumns
+              count={
+                props.isProjectExpanded
+                  ? undefined
+                  : props.threads.length > 0
+                    ? props.threads.length
+                    : project.groupedProjectCount > 1
+                      ? project.groupedProjectCount
+                      : undefined
+              }
+            />
+          ) : props.threads.length > 0 ? (
+            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
+              {props.threads.length}
+            </span>
+          ) : project.groupedProjectCount > 1 ? (
+            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
+              {project.groupedProjectCount}
+            </span>
+          ) : null}
         </button>
         <div className="pointer-events-none absolute inset-y-0 end-1 flex items-center gap-px">
           {codexStyle ? null : (
@@ -1427,6 +1400,12 @@ const SidebarProjectThreadRow = memo(
                   count={workRows.length > 0 && !workOpen ? workRows.length : undefined}
                   time={<SidebarThreadTime thread={props.thread} status={status} />}
                   status={<ThreadStatusMark status={statusMark} />}
+                  usage={
+                    <SidebarTokenUsage
+                      summary={props.thread.source.usageSummary}
+                      driver={provider?.driver}
+                    />
+                  }
                 />
               ) : (
                 <>

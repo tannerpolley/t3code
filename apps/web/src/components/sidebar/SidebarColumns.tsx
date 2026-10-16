@@ -1,7 +1,9 @@
 import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
+import { formatWeeklyLimitPercent } from "./SidebarTokenUsage.logic";
 
 import { cn } from "~/lib/utils";
 
@@ -110,6 +112,7 @@ export function SidebarThreadColumns(props: {
   readonly trailingClassName?: string | undefined;
   readonly time?: ReactNode;
   readonly status?: ReactNode;
+  readonly usage?: ReactNode;
 }) {
   return (
     <span className="sidebar-thread-columns">
@@ -120,6 +123,7 @@ export function SidebarThreadColumns(props: {
       <SidebarThreadModel label={props.model} />
       <span className="sidebar-thread-effort">{props.effort}</span>
       <span className="sidebar-thread-name">{props.name}</span>
+      <span className="sidebar-thread-usage">{props.usage}</span>
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       <span className={cn("sidebar-thread-time", props.trailingClassName)}>{props.time}</span>
       <span className={cn("sidebar-thread-icon", props.trailingClassName)}>{props.status}</span>
@@ -161,6 +165,43 @@ function SidebarThreadModel(props: { readonly label: string | undefined }) {
         <span className="sidebar-thread-model-part">{version}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+const WEEKLY_LIMIT_PROVIDER_LABELS: Partial<Record<string, string>> = {
+  codex: "Codex",
+  claudeAgent: "Claude",
+};
+
+/**
+ * The usage cell: the thread's estimated share of its provider's weekly limit, from 1%, with the
+ * exact tokens and cost on hover. Empty while there is no estimate.
+ */
+export function SidebarTokenUsage(props: {
+  readonly summary: OrchestrationV2ThreadShell["usageSummary"];
+  readonly driver: string | undefined;
+}) {
+  const usage = props.summary;
+  const percent = formatWeeklyLimitPercent(usage?.weeklyLimitPercent);
+  if (!usage || percent === null) return null;
+  const tokens = (value: number | undefined) =>
+    value === undefined ? "Unavailable" : `${value.toLocaleString()} tokens`;
+  const provider = WEEKLY_LIMIT_PROVIDER_LABELS[props.driver ?? ""] ?? "provider";
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span />}>{percent}</TooltipTrigger>
+      <TooltipPopup side="right">
+        <div>Estimate of your weekly {provider} limit</div>
+        {usage.costUsd === undefined ? null : (
+          <div>Cost estimate: ${usage.costUsd.toFixed(2)} at API prices</div>
+        )}
+        <div>
+          Latest turn: {tokens(usage.latestTurnTokens)}
+          {usage.partial ? " (partial)" : ""}
+        </div>
+        <div>Thread total: {tokens(usage.threadTokens)}</div>
+      </TooltipPopup>
     </Tooltip>
   );
 }

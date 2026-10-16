@@ -21,6 +21,7 @@
   --sidebar-provider-width: 1rem;
   --sidebar-model-width: 8ch;
   --sidebar-effort-width: 2.5rem;
+  --sidebar-usage-width: 2.125rem;
   --sidebar-count-width: 1rem;
   --sidebar-time-width: 4.4375rem;
   --sidebar-work-width: 0.875rem;
@@ -36,8 +37,23 @@
     ) var(--sidebar-provider-width) var(--sidebar-model-width) var(--sidebar-effort-width) minmax(
       0,
       1fr
-    ) var(--sidebar-count-width) var(--sidebar-time-width) var(--sidebar-work-width);
+    ) var(--sidebar-usage-width) var(--sidebar-count-width) var(--sidebar-time-width) var(
+      --sidebar-work-width
+    );
   column-gap: 3px;
+}
+@container sidebar-columns (width < calc(15.1875rem + 30px + 18ch)) {
+  .sidebar-thread-columns {
+    grid-template-columns: var(--sidebar-caret-width) var(--sidebar-location-width) var(
+        --sidebar-role-width
+      ) var(--sidebar-provider-width) var(--sidebar-model-width) var(--sidebar-effort-width) minmax(
+        0,
+        1fr
+      ) var(--sidebar-count-width) var(--sidebar-time-width) var(--sidebar-work-width);
+  }
+  .sidebar-thread-usage {
+    display: none;
+  }
 }
 @container sidebar-columns (width < calc(13.0625rem + 27px + 18ch)) {
   .sidebar-thread-columns {

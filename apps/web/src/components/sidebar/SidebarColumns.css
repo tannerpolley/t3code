@@ -1,21 +1,4 @@
 @import "./SidebarColumns.layout.css";
-/* Project headers, the remainder and totals share the same two right-aligned provider tracks. */
-@utility sidebar-project-usage-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 5.4375rem var(--sidebar-project-actions-width, 1.5rem);
-  column-gap: 3px;
-  align-items: center;
-}
-@utility sidebar-project-usage-columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 3px;
-  font-size: 0.6875rem;
-  font-weight: normal;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
 @utility sidebar-thread-columns {
   display: grid;
   width: 100%;
@@ -79,6 +62,14 @@
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
+@utility sidebar-thread-usage {
+  font-size: 0.6875rem;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
 @utility sidebar-thread-count {
   font-size: 0.6875rem;
   text-align: right;

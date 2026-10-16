@@ -22,16 +22,7 @@ import { useForkUsageRefresh } from "./useForkUsageRefresh";
 import { limitReadouts, memberWindowSpan, poolWindowSpan } from "../usage/usageLimitModels";
 import { readUsagePagePreferences, saveUsagePagePreferences } from "../usage/usagePagePreferences";
 
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useUiStateStore } from "../../uiStateStore";
-import { SidebarUsageColumns } from "./SidebarProjectUsage";
-import {
-  remainingToUsedPercent,
-  SIDEBAR_USAGE_DRIVERS,
-  sidebarUsedClass,
-} from "./SidebarProjectUsage.logic";
-
-const READOUT_DRIVERS = SIDEBAR_USAGE_DRIVERS;
+const READOUT_DRIVERS = ["claudeAgent", "codex"] as const;
 
 interface ReadoutRow {
   readonly driver: ServerProvider["driver"];
@@ -46,19 +37,15 @@ interface ReadoutRow {
  * Claude's and Codex's five-hour and general weekly limits, pooled across accounts, with today's
  * pace budget, keeping only the readouts that are switched on.
  */
-function useLimitReadoutRows(
-  enabled: {
-    readonly session: boolean;
-    readonly daily: boolean;
-    readonly weekly: boolean;
-  },
-  hidden = false,
-): { readonly rows: readonly ReadoutRow[]; readonly now: number } {
+function useLimitReadoutRows(enabled: {
+  readonly session: boolean;
+  readonly daily: boolean;
+  readonly weekly: boolean;
+}): { readonly rows: readonly ReadoutRow[]; readonly now: number } {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   // The minute clock moves the budget across midnight; no timer of its own.
   const now = Date.parse(`${useNowMinute()}:00Z`);
   const rows = useMemo(() => {
-    if (hidden) return [];
     const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
     const pools = collectLimitPools(collectLimitAccounts(presentations), now);
     return READOUT_DRIVERS.flatMap((driver): ReadoutRow[] => {
@@ -133,7 +120,7 @@ function useLimitReadoutRows(
         },
       ];
     });
-  }, [enabled.daily, enabled.session, enabled.weekly, hidden, now, presentations]);
+  }, [enabled.daily, enabled.session, enabled.weekly, now, presentations]);
   return { rows, now };
 }
 
@@ -148,31 +135,34 @@ function useOpenUsageLimits() {
   };
 }
 
-/** Provider usage in the utility footer, or weekly totals below the Projects breakdown. */
-export function SidebarUsageItem(props: { readonly columns?: boolean }) {
-  const projectsView = useClientSettings((settings) => settings.projectsView);
-  const sidebarMode = useUiStateStore((store) => store.sidebarMode);
+/** Quota left, colored like the desktop status bar: green from 70%, amber from 30%. */
+function leftClass(leftPercent: number): string {
+  if (leftPercent >= 70) return "text-emerald-500";
+  if (leftPercent >= 30) return "text-amber-500";
+  return "text-red-500";
+}
+
+/**
+ * The footer's Usage readouts, each provider's quota left (`5h 62%`, `1d 40%`, `7d 75%`) for the
+ * readouts that are switched on. They take their own row above the footer's icon buttons, one
+ * button per provider that wraps when the sidebar is too narrow for both. Renders nothing when none
+ * is on and until a limit is known; the footer's Usage icon button is separate and always shown.
+ */
+export function SidebarUsageItem() {
   const session = useClientSettings((settings) => settings.sidebarFiveHourUsage);
   const daily = useClientSettings((settings) => settings.dailyUsageMeter);
   const weekly = useClientSettings((settings) => settings.sidebarWeeklyUsage);
-  if (props.columns) return <SidebarWeeklyUsageTotals />;
   return session || daily || weekly ? (
-    <UsageReadoutItem
-      hidden={projectsView && sidebarMode === "projects"}
-      enabled={{ session, daily, weekly }}
-    />
+    <UsageReadoutItem enabled={{ session, daily, weekly }} />
   ) : null;
 }
 
-function UsageReadoutItem(props: {
-  readonly enabled: Parameters<typeof useLimitReadoutRows>[0];
-  readonly hidden: boolean;
-}) {
-  const { rows, now } = useLimitReadoutRows(props.enabled, props.hidden);
+function UsageReadoutItem(props: { readonly enabled: Parameters<typeof useLimitReadoutRows>[0] }) {
+  const { rows, now } = useLimitReadoutRows(props.enabled);
   const { refresh, refreshing, failed } = useForkUsageRefresh();
   const openLimits = useOpenUsageLimits();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
-  if (rows.length === 0 || props.hidden) return null;
+  if (rows.length === 0) return null;
   const when = (at: number) =>
     `${formatUpcomingTimestamp(new Date(at).toISOString(), timestampFormat, now)}${
       at > now ? ` · in ${formatDuration(at - now)}` : ""
@@ -184,17 +174,17 @@ function UsageReadoutItem(props: {
       {rows.map(
         ({ driver, label, stale, scoped, checkedAt, readouts: { session, daily, weekly } }) => {
           const summary = [
-            session ? `${session.usedPercent}% of 5 hours used` : null,
+            session ? `${session.leftPercent}% of 5 hours left` : null,
             daily
               ? daily.leftPercent === null
                 ? "day off"
-                : `${remainingToUsedPercent(daily.leftPercent)}% of today's budget used`
+                : `${daily.leftPercent}% of today's budget left`
               : null,
-            weekly ? `${weekly.usedPercent}% of weekly used` : null,
+            weekly ? `${weekly.leftPercent}% of weekly left` : null,
             ...stale.map((kind) => `${kind} usage stale`),
             ...scoped.map(
               (window) =>
-                `${window.label}: ${window.left === null ? "stale" : `${remainingToUsedPercent(window.left)}% used`}`,
+                `${window.label}: ${window.left === null ? "stale" : `${window.left}% left`}`,
             ),
           ]
             .filter(Boolean)
@@ -226,25 +216,19 @@ function UsageReadoutItem(props: {
                     <span>7d · model limits</span>
                   ) : null}
                   {session ? (
-                    <span className={sidebarUsedClass(session.usedPercent)}>
-                      5h {session.usedPercent}%
+                    <span className={leftClass(session.leftPercent)}>
+                      5h {session.leftPercent}%
                     </span>
                   ) : null}
                   {daily ? (
                     daily.leftPercent === null ? (
                       <span className="text-sidebar-muted-foreground">1d off</span>
                     ) : (
-                      <span
-                        className={sidebarUsedClass(remainingToUsedPercent(daily.leftPercent)!)}
-                      >
-                        1d {remainingToUsedPercent(daily.leftPercent)}%
-                      </span>
+                      <span className={leftClass(daily.leftPercent)}>1d {daily.leftPercent}%</span>
                     )
                   ) : null}
                   {weekly ? (
-                    <span className={sidebarUsedClass(weekly.usedPercent)}>
-                      7d {weekly.usedPercent}%
-                    </span>
+                    <span className={leftClass(weekly.leftPercent)}>7d {weekly.leftPercent}%</span>
                   ) : null}
                 </span>
               </PopoverTrigger>
@@ -264,7 +248,7 @@ function UsageReadoutItem(props: {
                       {window.label}:{" "}
                       {window.left === null
                         ? "reset passed · usage unknown"
-                        : `${remainingToUsedPercent(window.left)}% used`}
+                        : `${window.left}% left`}
                       {window.left !== null && window.resetsAt
                         ? resets(Date.parse(window.resetsAt))
                         : ""}
@@ -272,7 +256,7 @@ function UsageReadoutItem(props: {
                   ))}
                   {session ? (
                     <span className="text-muted-foreground">
-                      5 hours: {session.usedPercent}% used
+                      5 hours: {session.usedPercent}% used, {session.leftPercent}% left
                       {resets(session.resetsAt)}
                     </span>
                   ) : null}
@@ -280,14 +264,20 @@ function UsageReadoutItem(props: {
                     <span className="text-muted-foreground">
                       {daily.leftPercent === null
                         ? `Today: day off, no budget · ${daily.usedPercent}% of weekly used`
-                        : `Today's budget ${daily.budgetPercent}% of weekly (rolling, Mon–Fri): ${remainingToUsedPercent(daily.leftPercent)}% used (${daily.usedPercent}% of weekly)`}
+                        : `Today's budget ${daily.budgetPercent}% of weekly (rolling, Mon–Fri): ${
+                            daily.usedPercent
+                          }% used, ${
+                            daily.leftPercent >= 0
+                              ? `${daily.budgetPercent - daily.usedPercent}% left`
+                              : `${daily.usedPercent - daily.budgetPercent}% over pace`
+                          }`}
                       {daily.nextStepAt === null ? "" : ` · budget grows ${when(daily.nextStepAt)}`}
                       {` · usage restarts when the weekly limit resets ${when(daily.resetsAt)}`}
                     </span>
                   ) : null}
                   {weekly ? (
                     <span className="text-muted-foreground">
-                      Weekly: {weekly.usedPercent}% used
+                      Weekly: {weekly.usedPercent}% used, {weekly.leftPercent}% left
                       {resets(weekly.resetsAt)}
                     </span>
                   ) : null}
@@ -316,73 +306,5 @@ function UsageReadoutItem(props: {
         },
       )}
     </SidebarMenuItem>
-  );
-}
-
-/** Reads the existing provider snapshots without mounting another refresh hook. */
-function SidebarWeeklyUsageTotals() {
-  const { rows, now } = useLimitReadoutRows({ session: true, daily: false, weekly: true });
-  const openLimits = useOpenUsageLimits();
-  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
-  const resets = (at: number | null) =>
-    at === null
-      ? ""
-      : ` · resets ${formatUpcomingTimestamp(new Date(at).toISOString(), timestampFormat, now)}`;
-  return (
-    <div className="sidebar-project-usage-row border-t border-sidebar-border px-2 py-1 text-2xs text-sidebar-muted-foreground">
-      <span>Weekly used</span>
-      <SidebarUsageColumns>
-        {READOUT_DRIVERS.map((driver) => {
-          const row = rows.find((row) => row.driver === driver);
-          const weekly = row?.readouts.weekly;
-          const session = row?.readouts.session;
-          const label = driver === "codex" ? "Codex" : "Claude";
-          return (
-            <Tooltip key={driver}>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    onClick={openLimits}
-                    aria-label={`${label} weekly usage: ${weekly ? `${weekly.usedPercent}% used` : "unknown"}`}
-                    className={
-                      weekly ? `text-right ${sidebarUsedClass(weekly.usedPercent)}` : "text-right"
-                    }
-                  />
-                }
-              >
-                {weekly ? `${weekly.usedPercent}%` : "—"}
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                <div>
-                  {label}:{" "}
-                  {weekly
-                    ? `${weekly.usedPercent}% of weekly limit used${resets(weekly.resetsAt)}`
-                    : "Weekly usage unavailable or stale"}
-                </div>
-                {driver === "claudeAgent" ? (
-                  <div>
-                    5 hours:{" "}
-                    {session
-                      ? `${session.usedPercent}% used${resets(session.resetsAt)}`
-                      : "unavailable or stale"}
-                  </div>
-                ) : null}
-                <div>
-                  Rows are a partial breakdown of estimated thread usage. Provider totals include
-                  usage outside T3 and threads not in this breakdown.
-                </div>
-                {row ? (
-                  <div>
-                    Last reading: {formatUpcomingTimestamp(row.checkedAt, timestampFormat, now)}
-                  </div>
-                ) : null}
-                <div>Click to open Usage.</div>
-              </TooltipPopup>
-            </Tooltip>
-          );
-        })}
-      </SidebarUsageColumns>
-    </div>
   );
 }

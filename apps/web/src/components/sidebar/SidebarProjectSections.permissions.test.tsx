@@ -4,12 +4,6 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
 const commands = vi.hoisted(() => ({ update: vi.fn() }));
-// Usage reads and navigation are separate from the drag/permission handlers under test.
-vi.mock("./SidebarProjectUsage", () => ({
-  SidebarProjectUsage: () => null,
-  SidebarUsageColumns: "span",
-}));
-vi.mock("./SidebarUsageItem", () => ({ SidebarUsageItem: () => null }));
 vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "local" }));
 vi.mock("../../state/entities", () => ({ useServerConfigs: () => new Map() }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { update: "update" } }));

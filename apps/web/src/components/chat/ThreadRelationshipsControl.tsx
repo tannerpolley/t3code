@@ -3,6 +3,7 @@ import {
   SidebarCaretToggle,
   SidebarThreadColumns,
   sidebarThreadName,
+  SidebarTokenUsage,
 } from "../sidebar/SidebarColumns";
 import { shortModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import { useAtomValue } from "@effect/atom-react";
@@ -821,6 +822,12 @@ export function ThreadRelationshipsPanel(props: {
                         elapsedAgent && !failed ? <AgentElapsed agent={elapsedAgent} /> : undefined
                       }
                       status={<ThreadStatusMark status={lineageStatusMark(rowStatus)} />}
+                      usage={
+                        <SidebarTokenUsage
+                          summary={node?.thread?.usageSummary}
+                          driver={providerDriver}
+                        />
+                      }
                     />
                   ) : (
                     <>
