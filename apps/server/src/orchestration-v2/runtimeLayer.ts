@@ -3,7 +3,6 @@ import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as IssueInbox from "../issues/IssueInbox.ts";
-import * as EventStoreCompaction from "./EventStoreCompaction.ts";
 import * as DontAskModeWorker from "./DontAskModeWorker.ts";
 import * as UsageLimitProviderSwitchWorker from "./UsageLimitProviderSwitchWorker.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
@@ -432,7 +431,6 @@ export const layerProduction = Layer.mergeAll(
   ThreadTitleRefreshWorker.workerLive.pipe(
     Layer.provide(Layer.merge(ProjectionStore.layer, layerThreadManagementProvided)),
   ),
-  EventStoreCompaction.workerLive.pipe(Layer.provide(layerProjectionMaintenanceProvided)),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),

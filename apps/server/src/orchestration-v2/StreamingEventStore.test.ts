@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
@@ -14,8 +15,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ServerConfig from "../config.ts";
+import * as DatabaseStorage from "../persistence/DatabaseStorage.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
 import { EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
@@ -263,7 +267,7 @@ it.effect(
     }).pipe(Effect.provide(services)),
 );
 
-it.effect("compaction trims ordinary items and leaves subagent rows whole", () =>
+it.effect("scheduled compaction trims ordinary items and leaves subagent rows whole", () =>
   Effect.gen(function* () {
     const sink = yield* EventSinkV2;
     const events = yield* EventStoreV2;
@@ -319,7 +323,12 @@ it.effect("compaction trims ordinary items and leaves subagent rows whole", () =
     ].entries()) {
       yield* sink.write({ events: [subagentItem(index, prompt)] });
     }
-    yield* maintenance.compactEventStore;
+    const countItems = sql<{ count: number }>`
+      SELECT COUNT(*) AS count FROM orchestration_events
+      WHERE event_type = 'turn-item.updated' AND stream_id = ${threadId}
+    `;
+    assert.equal((yield* countItems)[0]?.count, 8);
+    yield* TestClock.adjust("1 minute");
 
     const retained = yield* sql<{ id: string; count: number }>`
       SELECT json_extract(payload_json, '$.id') AS id, COUNT(*) AS count
@@ -343,5 +352,13 @@ it.effect("compaction trims ordinary items and leaves subagent rows whole", () =
         latest.payload.progress === "step 4",
     );
     assert.isTrue((yield* maintenance.rebuild).valid);
-  }).pipe(Effect.provide(services)),
+  }).pipe(
+    Effect.provide(
+      DatabaseStorage.layer.pipe(
+        Layer.provideMerge(services),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scheduled-compaction-" })),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
 );
