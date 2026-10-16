@@ -1354,11 +1354,13 @@ const SidebarProjectThreadRow = memo(
             <button
               type="button"
               aria-current={active ? "page" : undefined}
-              aria-label={sidebarProjectThreadAccessibleName(
-                props.thread.title,
+              aria-label={sidebarProjectThreadAccessibleName({
+                role: props.codexStyle ? sidebarThreadTitle(props.thread.source) : undefined,
+                title: props.thread.title,
+                issueNumber: props.thread.source.linkedIssue?.number,
                 status,
-                props.thread.pullRequests,
-              )}
+                links: props.thread.pullRequests,
+              })}
               className={cn(
                 "fork-sidebar-thread group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
                 PROJECTS_WORK_ROW_HEIGHT,

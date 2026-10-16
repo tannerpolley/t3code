@@ -31,12 +31,25 @@ export function sidebarProjectThreadPullRequests(links: ReadonlyArray<ThreadPull
   };
 }
 
-/** A row's accessible name: the button's label hides its glyphs' labels, so it carries PR state. */
-export function sidebarProjectThreadAccessibleName(
-  title: string,
-  status: string,
-  links: ReadonlyArray<ThreadPullRequestLink>,
-) {
-  const pullRequests = sidebarProjectThreadPullRequests(links);
-  return pullRequests ? `${title}, ${status}, ${pullRequests.label}` : `${title}, ${status}`;
+/**
+ * A row's accessible name: the button's label hides its glyphs' labels, so it carries what they
+ * show (the role title the row shows instead of the thread's name, the issue, PR state).
+ */
+export function sidebarProjectThreadAccessibleName(input: {
+  readonly role?: string | undefined;
+  readonly title: string;
+  readonly issueNumber?: number | undefined;
+  readonly status: string;
+  readonly links: ReadonlyArray<ThreadPullRequestLink>;
+}) {
+  const pullRequests = sidebarProjectThreadPullRequests(input.links);
+  return [
+    input.role,
+    input.title,
+    input.issueNumber === undefined ? undefined : `issue #${input.issueNumber}`,
+    input.status,
+    pullRequests?.label,
+  ]
+    .filter((part) => part !== undefined)
+    .join(", ");
 }

@@ -133,10 +133,18 @@ describe("Projects persisted PR glyph", () => {
 });
 
 describe("Projects thread row name", () => {
-  it("announces the recorded PR state with the title and status", () => {
-    expect(sidebarProjectThreadAccessibleName("Fix solver", "ready", [link(7, "merged")])).toBe(
-      "Fix solver, ready, 1 pull request, merged (last recorded)",
-    );
-    expect(sidebarProjectThreadAccessibleName("Fix solver", "ready", [])).toBe("Fix solver, ready");
+  it("announces the role, issue and recorded PR state with the title and status", () => {
+    expect(
+      sidebarProjectThreadAccessibleName({
+        role: "Implementor",
+        title: "Fix solver",
+        issueNumber: 42,
+        status: "ready",
+        links: [link(7, "merged")],
+      }),
+    ).toBe("Implementor, Fix solver, issue #42, ready, 1 pull request, merged (last recorded)");
+    expect(
+      sidebarProjectThreadAccessibleName({ title: "Fix solver", status: "ready", links: [] }),
+    ).toBe("Fix solver, ready");
   });
 });
