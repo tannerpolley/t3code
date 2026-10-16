@@ -35,11 +35,21 @@ export function workRowProgram(row: BackgroundWorkTaskRow): string | null {
   return row.kind === "subagent" || !row.command ? null : shellProgramName(row.command);
 }
 
-/** Spawned process groups whose program no listed command already names, so each program shows once. */
-export function unlistedProcessGroups(
+/** Most spawned process groups listed under one Processes row; the rest are counted. */
+const VISIBLE_PROCESS_GROUPS = 5;
+
+/**
+ * The spawned process groups to list, largest first, and how many more there are. A program a
+ * listed command already runs is that command's row, so its group is skipped before the cap.
+ */
+export function visibleProcessGroups(
   work: ReadonlyArray<BackgroundWorkTaskRow>,
   groups: ReadonlyArray<ThreadProcessGroup>,
-): ReadonlyArray<ThreadProcessGroup> {
+) {
   const listed = new Set(work.map(workRowProgram));
-  return groups.filter((group) => !listed.has(group.label));
+  const unlisted = groups.filter((group) => !listed.has(group.label));
+  return {
+    groups: unlisted.slice(0, VISIBLE_PROCESS_GROUPS),
+    hiddenCount: Math.max(0, unlisted.length - VISIBLE_PROCESS_GROUPS),
+  };
 }

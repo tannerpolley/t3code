@@ -449,7 +449,6 @@ const NO_THREAD_PROCESSES: ThreadProcesses = {
   commands: [],
   runningTaskIds: [],
   processGroups: [],
-  hiddenProcessGroupCount: 0,
 };
 
 const make = Effect.gen(function* () {
@@ -495,7 +494,7 @@ const make = Effect.gen(function* () {
         : yield* withTaskCommands(
             work.tasks.map((task) => ({ threadId: input.threadId, task })),
           ).pipe(Effect.provide(context));
-    const { groups, hiddenCount, usage } = groupSpawnedProcesses({
+    const { groups, usage } = groupSpawnedProcesses({
       processes: sampled ?? [],
       serverPid: process.pid,
       commands: commands.map(({ task, command }) => ({
@@ -507,7 +506,6 @@ const make = Effect.gen(function* () {
       commands: work.commands,
       runningTaskIds: work.tasks.map((task) => task.taskId),
       processGroups: groups,
-      hiddenProcessGroupCount: hiddenCount,
       usage,
     };
   });

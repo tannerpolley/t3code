@@ -184,16 +184,14 @@ export function attributeCommandProcesses(input: {
   return { matched, tree };
 }
 
-/** Most process groups listed under one thread; the rest are counted. */
-export const VISIBLE_PROCESS_GROUPS = 5;
-
 // Wait loops start one of these every few seconds; listing them would only add churn.
 const UNLISTED_PROGRAMS = new Set(["sleep"]);
 
 /**
  * The processes the given commands spawned, beyond the command lines themselves, grouped by the
  * kind of program they run (`shellProgramName`): ten `python worker.py --shard N` are one
- * `python ×10` row. Largest groups first, `limit` of them.
+ * `python ×10` row. Every group, largest first: the sidebar drops a program it already lists as a
+ * command before it caps them, and only it knows which commands it lists.
  */
 export function groupSpawnedProcesses(input: {
   readonly processes: ReadonlyArray<SampledProcess>;
@@ -202,11 +200,9 @@ export function groupSpawnedProcesses(input: {
     readonly command: string | null;
     readonly commandKind?: string;
   }>;
-  readonly limit?: number;
 }): {
   readonly groups: ReadonlyArray<ThreadProcessGroup>;
-  readonly hiddenCount: number;
-  /** Everything the commands run or spawned, each process once, before exclusions and the cap. */
+  /** Everything the commands run or spawned, each process once, before exclusions. */
   readonly usage: { readonly cpuPercent: number; readonly residentBytes: number };
 } {
   const commandPids = new Set<number>();
@@ -250,6 +246,5 @@ export function groupSpawnedProcesses(input: {
   }
   const listed = [...groups].map(([label, group]) => ({ label, ...group }));
   listed.sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
-  const limit = input.limit ?? VISIBLE_PROCESS_GROUPS;
-  return { groups: listed.slice(0, limit), hiddenCount: Math.max(0, listed.length - limit), usage };
+  return { groups: listed, usage };
 }

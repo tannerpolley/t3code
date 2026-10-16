@@ -126,7 +126,7 @@ describe("attributeCommandProcesses", () => {
 
 describe("groupSpawnedProcesses", () => {
   it("groups same-shaped workers under a Codex command into one row with their total usage", () => {
-    const { groups, hiddenCount } = groupSpawnedProcesses({
+    const { groups } = groupSpawnedProcesses({
       processes: [
         process(1, 0, "node server"),
         process(10, 1, "codex app-server"),
@@ -151,18 +151,16 @@ describe("groupSpawnedProcesses", () => {
         residentBytes: 300,
       },
     ]);
-    assert.equal(hiddenCount, 0);
   });
 
-  it("lists the largest groups first and counts the rest past the cap", () => {
+  it("lists every group, largest first", () => {
     const children = ["a", "a", "a", "b", "b", "c", "d", "e", "f"].map((name, index) =>
       process(100 + index, 20, `tool-${name}`),
     );
-    const { groups, hiddenCount } = groupSpawnedProcesses({
+    const { groups } = groupSpawnedProcesses({
       processes: [process(20, 1, "make all"), ...children],
       serverPid: 1,
       commands: [{ command: "make all" }],
-      limit: 3,
     });
     assert.deepEqual(
       groups.map((group) => [group.label, group.count]),
@@ -170,12 +168,14 @@ describe("groupSpawnedProcesses", () => {
         ["tool-a", 3],
         ["tool-b", 2],
         ["tool-c", 1],
+        ["tool-d", 1],
+        ["tool-e", 1],
+        ["tool-f", 1],
       ],
     );
-    assert.equal(hiddenCount, 3);
   });
 
-  it("totals usage over every attributed process, command's own and past the cap", () => {
+  it("totals usage over every attributed process, the command's own included", () => {
     const { groups, usage } = groupSpawnedProcesses({
       processes: [
         process(20, 1, "python worker.py"),
@@ -184,10 +184,9 @@ describe("groupSpawnedProcesses", () => {
       ],
       serverPid: 1,
       commands: [{ command: "python worker.py" }],
-      limit: 1,
     });
-    // The command (10 cpu, 100 bytes) and all three children count; the cap lists one group.
-    assert.equal(groups.length, 1);
+    // The command (10 cpu, 100 bytes) and all three children count; the command is no group.
+    assert.equal(groups.length, 3);
     assert.deepEqual(usage, { cpuPercent: 40, residentBytes: 400 });
     // A command with no children is still its own process.
     assert.deepEqual(

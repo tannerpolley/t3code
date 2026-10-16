@@ -2,11 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
-import {
-  foldThreadWork,
-  unlistedProcessGroups,
-  workRowProgram,
-} from "./SidebarThreadProcesses.logic";
+import { foldThreadWork, visibleProcessGroups } from "./SidebarThreadProcesses.logic";
 
 const task = (taskId: string, kind: "command" | "monitor" = "command"): BackgroundWorkTaskRow => ({
   taskId,
@@ -38,18 +34,17 @@ it("folds commands under Processes one row per program, leaving agents listed", 
   expect(foldThreadWork(rows, commands, false).rows.map((row) => row.taskId)).toEqual(["agent"]);
 });
 
-it("lists each program once: a spawned group a command already names is dropped", () => {
+it("lists each program once, skipping a command's program before capping the groups", () => {
   const group = (label: string) => ({
     label,
     commandLine: label,
-    count: 2,
+    count: 1,
     cpuPercent: 0,
     residentBytes: 0,
   });
-  const work = [{ ...task("dev"), command: "cd web && npm run dev -- --port 5173" }, task("watch")];
-  expect(workRowProgram(work[0]!)).toBe("npm");
-  expect(workRowProgram(task("watch"))).toBeNull();
-  expect(unlistedProcessGroups(work, [group("npm"), group("node")]).map((g) => g.label)).toEqual([
-    "node",
-  ]);
+  const work = [{ ...task("dev"), command: "cd web && npm run dev" }];
+  const groups = ["npm", "a", "b", "c", "d", "e", "f"].map(group);
+  const visible = visibleProcessGroups(work, groups);
+  expect(visible.groups.map((g) => g.label)).toEqual(["a", "b", "c", "d", "e"]);
+  expect(visible.hiddenCount).toBe(1);
 });

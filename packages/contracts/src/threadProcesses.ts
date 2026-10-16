@@ -37,9 +37,8 @@ export const ThreadProcesses = Schema.Struct({
   commands: Schema.Array(ThreadRunningCommand),
   /** Every background task and command of the thread that is still running. */
   runningTaskIds: Schema.Array(Schema.String),
-  /** The largest groups first, capped; `hiddenProcessGroupCount` counts the rest. */
+  /** Every group, largest first; the sidebar lists the first few. */
   processGroups: Schema.Array(ThreadProcessGroup),
-  hiddenProcessGroupCount: NonNegativeInt,
   /** Usage of every process the commands and tasks run or spawned, listed or not. */
   usage: Schema.optionalKey(
     Schema.Struct({ cpuPercent: Schema.Number, residentBytes: NonNegativeInt }),

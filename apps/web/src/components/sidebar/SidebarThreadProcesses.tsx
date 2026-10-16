@@ -16,7 +16,7 @@ import { useBackgroundTaskListVisibility } from "../chat/BackgroundTaskUsage";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROJECTS_WORK_ROW_HEIGHT, SidebarCaret, SidebarThreadColumns } from "./SidebarColumns";
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
-import { foldThreadWork, unlistedProcessGroups } from "./SidebarThreadProcesses.logic";
+import { foldThreadWork, visibleProcessGroups } from "./SidebarThreadProcesses.logic";
 
 const NO_COMMAND_ROWS: ReadonlyArray<BackgroundWorkTaskRow> = [];
 const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
@@ -60,8 +60,10 @@ export function useSidebarThreadProcesses(
       ownerThreadId: thread.id,
     })) ?? NO_COMMAND_ROWS;
   const work = foldThreadWork(rows, commandRows, open);
-  const processGroups = unlistedProcessGroups(work.work, data?.processGroups ?? NO_GROUPS);
-  const hiddenProcessGroups = data?.hiddenProcessGroupCount ?? 0;
+  const { groups: processGroups, hiddenCount: hiddenProcessGroups } = visibleProcessGroups(
+    work.work,
+    data?.processGroups ?? NO_GROUPS,
+  );
   const processCount = work.work.length + processGroups.length + hiddenProcessGroups;
   return {
     // Only rows that would poll watch their visibility.
