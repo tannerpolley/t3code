@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "./components/sidebar/SidebarColumns.css";
+@import "./components/sidebar/ForkSidebarTextSizes.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));

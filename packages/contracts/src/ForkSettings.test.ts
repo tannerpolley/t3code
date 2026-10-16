@@ -189,3 +189,28 @@ describe("stored fork settings compatibility", () => {
     });
   });
 });
+
+it("defaults sidebar text sizes for old settings and validates saved sizes and patches", () => {
+  const keys = [
+    "sidebarSectionTextSize",
+    "sidebarProjectTextSize",
+    "sidebarThreadTextSize",
+    "sidebarAgentTextSize",
+    "sidebarProcessTextSize",
+    "sidebarDetailTextSize",
+  ] as const;
+  const oldSettings = decodeClientSettingsFile("{}");
+  for (const key of keys) {
+    expect(oldSettings[key]).toBeNull();
+    expect(DEFAULT_CLIENT_SETTINGS[key]).toBeNull();
+    for (const size of [null, 9, 12, 20]) {
+      const saved = { [key]: size };
+      expect(encodeClientSettings(decodeClientSettingsFile(JSON.stringify(saved)))[key]).toBe(size);
+      expect(decodeClientPatch(saved)).toEqual(saved);
+    }
+    for (const size of [8, 21, 12.5, "12"]) {
+      expect(() => decodeClientSettingsFile(JSON.stringify({ [key]: size }))).toThrow();
+      expect(() => decodeClientPatch({ [key]: size })).toThrow();
+    }
+  }
+});

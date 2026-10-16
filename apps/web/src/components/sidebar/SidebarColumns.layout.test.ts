@@ -10,12 +10,14 @@ import {
 
 // Local OpenDyslexic font metrics: zero advances 1337 of 2048 units.
 const ch = (1337 / 2048) * sidebarColumnLayout.titleFontRem * 16;
-const optionalColumns = (sidebarRem: number) => {
+const optionalColumns = (sidebarRem: number, rowFontPx = sidebarColumnLayout.titleFontRem * 16) => {
   const container = sidebarRem * 16 - 40;
   const hidden = new Set<string>();
   for (const column of sidebarColumnLayout.dropOrder) {
     const budget = sidebarColumnBudget(hidden);
-    if (container < budget.rem * 16 + budget.px + budget.ch * ch) hidden.add(column);
+    const rowCh = ch * (rowFontPx / (sidebarColumnLayout.titleFontRem * 16));
+    if (container < budget.rem * 16 + budget.em * rowFontPx + budget.px + budget.ch * rowCh)
+      hidden.add(column);
   }
   return ["model", "effort", "usage"].filter((column) => !hidden.has(column));
 };
@@ -26,6 +28,9 @@ describe("sidebar width budget", () => {
     expect(optionalColumns(25)).toEqual(["model"]);
     expect(optionalColumns(27.5)).toEqual(["model", "effort"]);
     expect(optionalColumns(30)).toEqual(["model", "effort", "usage"]);
+    expect(optionalColumns(30, 20)).toEqual([]);
+    expect(optionalColumns(40, 20)).toEqual(["model", "effort"]);
+    expect(optionalColumns(43, 20)).toEqual(["model", "effort", "usage"]);
   });
 });
 

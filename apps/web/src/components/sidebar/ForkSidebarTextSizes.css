@@ -1,0 +1,116 @@
+.fork-sidebar-text-sizes {
+  /* One shared font for computed ch tracks, even when individual row titles differ. The time
+     column normally uses 10px, so it needs the largest ratio when details are customized. */
+  --fork-sidebar-column-font: max(
+    0.75rem,
+    var(--fork-sidebar-thread-size, 0.75rem),
+    var(--fork-sidebar-agent-size, 0.75rem),
+    var(--fork-sidebar-process-size, 0.75rem),
+    calc(var(--fork-sidebar-detail-size, 0.625rem) * 1.2)
+  );
+}
+
+.fork-sidebar-text-sizes .fork-sidebar-section {
+  height: auto;
+  min-height: 1.75rem;
+}
+.fork-sidebar-text-sizes .fork-sidebar-section > button:first-child {
+  padding-block: 0.25rem;
+  font-size: var(--fork-sidebar-section-size, 0.75rem);
+  line-height: 1.25;
+}
+.fork-sidebar-text-sizes .fork-sidebar-project {
+  height: auto;
+  min-height: 2rem;
+  padding-block: 0.375rem;
+  font-size: var(--fork-sidebar-project-size, 0.875rem);
+  line-height: 1.25;
+}
+.fork-sidebar-text-sizes .fork-sidebar-thread {
+  font-size: var(--fork-sidebar-thread-size, 0.75rem);
+}
+.fork-sidebar-text-sizes .fork-sidebar-agent {
+  font-size: var(--fork-sidebar-agent-size, inherit);
+}
+.fork-sidebar-text-sizes .fork-sidebar-process {
+  font-size: var(--fork-sidebar-process-size, inherit);
+}
+.fork-sidebar-text-sizes :is(.fork-sidebar-thread, .fork-sidebar-agent, .fork-sidebar-process) {
+  height: auto;
+  min-height: 1.5rem;
+  padding-block: 0.125rem;
+  line-height: 1.25;
+}
+.fork-sidebar-text-sizes
+  :is(
+    .sidebar-thread-model-part,
+    .sidebar-thread-effort,
+    .sidebar-thread-count,
+    .sidebar-thread-usage,
+    .fork-sidebar-detail
+  ) {
+  font-size: var(--fork-sidebar-detail-size, 0.6875rem);
+}
+.fork-sidebar-text-sizes .sidebar-thread-time {
+  font-size: var(--fork-sidebar-detail-size, 0.625rem);
+}
+
+.fork-sidebar-text-sizes .fork-sidebar-time {
+  font-size: var(--fork-sidebar-detail-size, inherit);
+}
+.fork-sidebar-text-sizes .fork-sidebar-resource {
+  font-size: var(--fork-sidebar-detail-size, 0.625rem);
+}
+
+.fork-sidebar-text-sizes[data-sidebar-style="classic"] .fork-sidebar-thread {
+  font-size: var(--fork-sidebar-thread-size, 0.875rem);
+}
+.fork-sidebar-text-sizes .fork-sidebar-thread-item {
+  --fork-sidebar-work-font: var(--fork-sidebar-thread-size, 0.75rem);
+}
+.fork-sidebar-text-sizes[data-sidebar-style="classic"] .fork-sidebar-thread-item {
+  --fork-sidebar-work-font: var(--fork-sidebar-thread-size, 0.875rem);
+}
+.fork-sidebar-text-sizes .fork-sidebar-agent-item {
+  --fork-sidebar-work-font: var(--fork-sidebar-agent-size, 0.6875rem);
+}
+.fork-sidebar-text-sizes :is(.fork-sidebar-thread-item, .fork-sidebar-agent-item) {
+  --fork-sidebar-work-height: max(
+    1.5rem,
+    calc(
+      max(var(--fork-sidebar-work-font), var(--fork-sidebar-detail-size, 0.6875rem)) * 1.25 +
+        0.25rem
+    )
+  );
+}
+.fork-sidebar-text-sizes
+  :is(.fork-sidebar-thread-item, .fork-sidebar-agent-item)
+  > :is(.sidebar-caret-toggle, .fork-sidebar-work-toggle) {
+  top: 0.125rem;
+  height: calc(var(--fork-sidebar-work-height) - 0.25rem);
+}
+.fork-sidebar-text-sizes .fork-sidebar-section > button.absolute {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.fork-sidebar-text-sizes[data-sidebar-style="classic"] .fork-sidebar-agent .fork-sidebar-time {
+  width: max(3rem, calc(var(--fork-sidebar-detail-size, 0rem) * 7.1));
+}
+
+.fork-sidebar-text-sizes .fork-sidebar-project-preview {
+  height: auto;
+  min-height: 1.75rem;
+  padding-block: 0.25rem;
+  font-size: var(--fork-sidebar-project-size, 0.875rem);
+  line-height: 1.25;
+}
+.fork-sidebar-text-sizes .fork-sidebar-work-toggle {
+  font-size: var(--fork-sidebar-detail-size, 0.625rem);
+}
+.fork-sidebar-text-sizes :is(.fork-sidebar-work-toggle, .fork-sidebar-work-placeholder) {
+  width: max(2rem, calc(var(--fork-sidebar-detail-size, 0rem) * 3));
+}
+.fork-sidebar-text-sizes .fork-sidebar-agent-item > .fork-sidebar-stop {
+  top: calc((var(--fork-sidebar-work-height) - 1.25rem) / 2);
+}

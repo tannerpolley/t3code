@@ -85,7 +85,7 @@ export function SidebarTrailingColumns(props: {
 }) {
   if (props.count === undefined && !props.time && !props.status) return null;
   return (
-    <span className="ms-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-2xs font-normal tabular-nums">
+    <span className="fork-sidebar-detail ms-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-2xs font-normal tabular-nums">
       {props.count === undefined ? null : (
         <span className="text-sidebar-muted-foreground/55">{props.count}</span>
       )}

@@ -1,3 +1,4 @@
+import { ForkSidebarTextSizeSettings } from "./ForkSidebarTextSizeSettings";
 import * as Schema from "effect/Schema";
 import { DEFAULT_UNIFIED_SETTINGS, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { isElectron } from "../../env";
@@ -511,6 +512,7 @@ function ForkGeneralSettings() {
           }
         />
 
+        <ForkSidebarTextSizeSettings />
         <SidebarProjectSettings />
         <ServerSwitchRow
           settingKey="autoOrganizeByFolder"

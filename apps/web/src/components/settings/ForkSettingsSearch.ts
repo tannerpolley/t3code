@@ -68,6 +68,54 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork projects view sections activity sidebar mode"],
   },
   {
+    id: "sidebar-section-text-size",
+    title: "Section names text size",
+    to: "/settings/general",
+    searchTerms: [
+      "customization fork projects view sidebar font size larger smaller section names headers",
+    ],
+  },
+  {
+    id: "sidebar-project-text-size",
+    title: "Project names text size",
+    to: "/settings/general",
+    searchTerms: [
+      "customization fork projects view sidebar font size larger smaller project names repository",
+    ],
+  },
+  {
+    id: "sidebar-thread-text-size",
+    title: "Thread rows text size",
+    to: "/settings/general",
+    searchTerms: [
+      "customization fork projects view sidebar font size larger smaller thread rows titles",
+    ],
+  },
+  {
+    id: "sidebar-agent-text-size",
+    title: "Agent rows text size",
+    to: "/settings/general",
+    searchTerms: [
+      "customization fork projects view sidebar font size larger smaller agent work rows workers tasks subagents",
+    ],
+  },
+  {
+    id: "sidebar-process-text-size",
+    title: "Process rows text size",
+    to: "/settings/general",
+    searchTerms: [
+      "customization fork projects view sidebar font size larger smaller process rows commands shell",
+    ],
+  },
+  {
+    id: "sidebar-detail-text-size",
+    title: "Detail columns text size",
+    to: "/settings/general",
+    searchTerms: [
+      "customization fork projects view sidebar font size larger smaller detail columns count time model effort usage",
+    ],
+  },
+  {
     id: "codex-style-sidebar",
     title: "Codex-style project sidebar",
     to: "/settings/general",

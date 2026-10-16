@@ -98,7 +98,7 @@ export function SidebarProcessGroupRows(props: {
 }) {
   if (props.summary === null) return null;
   const rowClass = cn(
-    "flex min-w-0 items-center gap-2 text-muted-foreground",
+    "fork-sidebar-process flex min-w-0 items-center gap-2 text-muted-foreground",
     PROJECTS_WORK_ROW_HEIGHT,
     props.columns ? "rounded-md px-2 sidebar-thread-tint" : "px-1.5",
   );
@@ -114,7 +114,7 @@ export function SidebarProcessGroupRows(props: {
   const summaryName = (
     <span className="flex min-w-0 items-center gap-2">
       <span className="min-w-0 flex-1 truncate">{props.summary.text}</span>
-      <BackgroundTaskResourceUsageLabel usage={props.summary} />
+      <BackgroundTaskResourceUsageLabel className="fork-sidebar-resource" usage={props.summary} />
     </span>
   );
   return (
@@ -150,7 +150,7 @@ export function SidebarProcessGroupRows(props: {
               </TooltipPopup>
             </Tooltip>
             {group.count > 1 ? <span className="shrink-0">×{group.count}</span> : null}
-            <BackgroundTaskResourceUsageLabel usage={group} />
+            <BackgroundTaskResourceUsageLabel className="fork-sidebar-resource" usage={group} />
           </span>
         );
         const iconClassName = props.columns ? "size-4" : "size-3.5";

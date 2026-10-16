@@ -140,7 +140,10 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
     enabled: isVisible,
   });
   // Column rows take their group's tint, at their depth.
-  const rowClass = props.columns ? "rounded-md px-2 sidebar-thread-tint" : "px-1.5";
+  const rowClass = cn(
+    "fork-sidebar-agent",
+    props.columns ? "rounded-md px-2 sidebar-thread-tint" : "px-1.5",
+  );
 
   return (
     <ul
@@ -167,6 +170,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
         const usage =
           row.kind === "subagent" ? null : (
             <BackgroundTaskResourceUsageLabel
+              className="fork-sidebar-resource"
               usage={resourceUsage.get(backgroundTaskResourceUsageKey(taskThreadId, row.taskId))}
             />
           );
@@ -295,9 +299,13 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 <ThreadStatusMark status={row.status} />
               </span>
             ) : row.kind === "subagent" && row.child ? (
-              <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
+              <span className="fork-sidebar-time w-12 shrink-0 text-right text-muted-foreground">
+                {time}
+              </span>
             ) : row.startedAt ? (
-              <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
+              <span className="fork-sidebar-time w-12 shrink-0 text-right text-muted-foreground">
+                {time}
+              </span>
             ) : null}
           </>
         );
@@ -380,7 +388,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 row.kind === "subagent" &&
                 rows[index - 1]!.kind !== "subagent" &&
                 "border-t border-sidebar-border/40",
-              "relative",
+              "fork-sidebar-agent-item relative",
             )}
             style={
               props.columns
@@ -422,7 +430,11 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 threadId={taskThreadId}
                 taskId={row.taskId}
                 label={row.label}
-                className={cn(STOP_SHELL_ON_ROW_HOVER_CLASS, props.columns ? "end-1.5" : "end-0.5")}
+                className={cn(
+                  "fork-sidebar-stop",
+                  STOP_SHELL_ON_ROW_HOVER_CLASS,
+                  props.columns ? "end-1.5" : "end-0.5",
+                )}
               />
             ) : null}
             {toggle ? (

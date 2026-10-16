@@ -241,6 +241,15 @@ export const PROJECT_WORKTREES_FOLDER = ".worktrees";
 export const UsageLimitRecoveryMode = Schema.Literals(["off", "wait", "switch"]);
 export type UsageLimitRecoveryMode = typeof UsageLimitRecoveryMode.Type;
 
+export const MIN_SIDEBAR_TEXT_SIZE = 9;
+export const MAX_SIDEBAR_TEXT_SIZE = 20;
+// Null keeps the row's style-specific default; numbers are pixels at a 16px interface font.
+export const SidebarTextSize = Schema.NullOr(
+  Schema.Int.check(
+    Schema.isBetween({ minimum: MIN_SIDEBAR_TEXT_SIZE, maximum: MAX_SIDEBAR_TEXT_SIZE }),
+  ),
+);
+
 export const ForkClientSettingsFields = {
   // Desktop-only, Linux and Windows: closing the window leaves the app in the
   // system tray so its built-in server and agents keep running.
@@ -253,6 +262,12 @@ export const ForkClientSettingsFields = {
   ),
   projectsView: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   codexStyleSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarSectionTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  sidebarProjectTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  sidebarThreadTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  sidebarAgentTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  sidebarProcessTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  sidebarDetailTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   sectionFolderColors: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   topBackButton: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   lineageDetailsExpanded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -353,6 +368,12 @@ export const ForkClientSettingsPatchFields = {
   sidebarTogglePosition: Schema.optionalKey(SidebarTogglePosition),
   projectsView: Schema.optionalKey(Schema.Boolean),
   codexStyleSidebar: Schema.optionalKey(Schema.Boolean),
+  sidebarSectionTextSize: Schema.optionalKey(SidebarTextSize),
+  sidebarProjectTextSize: Schema.optionalKey(SidebarTextSize),
+  sidebarThreadTextSize: Schema.optionalKey(SidebarTextSize),
+  sidebarAgentTextSize: Schema.optionalKey(SidebarTextSize),
+  sidebarProcessTextSize: Schema.optionalKey(SidebarTextSize),
+  sidebarDetailTextSize: Schema.optionalKey(SidebarTextSize),
   sectionFolderColors: Schema.optionalKey(Schema.Boolean),
   topBackButton: Schema.optionalKey(Schema.Boolean),
   lineageDetailsExpanded: Schema.optionalKey(Schema.Boolean),

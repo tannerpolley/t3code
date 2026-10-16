@@ -94,6 +94,7 @@ from a root folder, and **Keep projects organized by folder** places new, unsort
 projects there; projects you move by hand stay where you put them. The same page
 controls the Projects view, project row style, and revealing the thread you open.
 Folder colors, default icons, and the sidebar toggle position live in **Settings → Appearance**.
+Adjust each Projects view row type and its detail columns under **Settings → General → Sidebar & projects**; choose **Default** to restore that row’s text size.
 
 Drag a thread from Projects onto the composer to add it as context for your next
 message; subagent rows in Projects and rows in **Lineage** drag the same way.

@@ -1,3 +1,4 @@
+import { ForkSidebarTextSizes } from "./ForkSidebarTextSizes";
 import { sectionTarget, useProjectSectionPlacementReady } from "../../projectSectionPlacement";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
 import {
@@ -534,7 +535,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   );
 
   return (
-    <div className="group-data-[collapsible=icon]:hidden px-1 py-1">
+    <ForkSidebarTextSizes className="group-data-[collapsible=icon]:hidden px-1 py-1">
       {codexStyle ? null : (
         <div className="mb-1 px-2">
           <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
@@ -643,7 +644,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
           }
         />
       ) : null}
-    </div>
+    </ForkSidebarTextSizes>
   );
 }
 
@@ -814,7 +815,7 @@ function SortableSectionHeader(props: {
     <div
       ref={setNodeRef}
       className={cn(
-        "group/project-section relative flex h-7 items-center rounded-md px-1",
+        "fork-sidebar-section group/project-section relative flex h-7 items-center rounded-md px-1",
         isDragging && "z-10 opacity-70",
       )}
       data-testid={`sidebar-project-section-${section.id}`}
@@ -862,7 +863,7 @@ function SortableSectionHeader(props: {
           // Counts show only while collapsed: they stand in for the hidden rows.
           <SidebarTrailingColumns count={expanded ? undefined : section.projectKeys.length} />
         ) : (
-          <span className="ms-auto shrink-0 text-2xs text-sidebar-muted-foreground/55">
+          <span className="fork-sidebar-detail ms-auto shrink-0 text-2xs text-sidebar-muted-foreground/55">
             {section.projectKeys.length}
           </span>
         )}
@@ -1065,7 +1066,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
           disabled={!canWrite}
           aria-expanded={props.isProjectExpanded}
           className={cn(
-            "flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+            "fork-sidebar-project flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
             // Codex style makes room for the actions menu only while it shows.
             codexStyle
               ? "group-hover/project-row:pe-8 group-focus-within/project-row:pe-8"
@@ -1111,11 +1112,11 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               }
             />
           ) : props.threads.length > 0 ? (
-            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
+            <span className="fork-sidebar-detail shrink-0 text-2xs text-sidebar-muted-foreground/55">
               {props.threads.length}
             </span>
           ) : project.groupedProjectCount > 1 ? (
-            <span className="shrink-0 text-2xs text-sidebar-muted-foreground/55">
+            <span className="fork-sidebar-detail shrink-0 text-2xs text-sidebar-muted-foreground/55">
               {project.groupedProjectCount}
             </span>
           ) : null}
@@ -1235,7 +1236,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
 function ProjectDragPreview(props: { readonly project: SidebarProjectSnapshot | null }) {
   if (props.project === null) return null;
   return (
-    <div className="flex h-7 w-[min(20rem,calc(100vw-2rem))] min-w-0 items-center gap-2 rounded-md border border-sidebar-border bg-sidebar px-2 text-sm text-sidebar-foreground shadow-lg">
+    <div className="fork-sidebar-project-preview flex h-7 w-[min(20rem,calc(100vw-2rem))] min-w-0 items-center gap-2 rounded-md border border-sidebar-border bg-sidebar px-2 text-sm text-sidebar-foreground shadow-lg">
       <ProjectFavicon className="size-4 shrink-0" project={props.project} />
       <span className="min-w-0 flex-1 truncate font-medium">{props.project.displayName}</span>
     </div>
@@ -1319,7 +1320,7 @@ const SidebarProjectThreadRow = memo(
       ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
     return (
       <li
-        className="relative list-none"
+        className="fork-sidebar-thread-item relative list-none"
         // A family of threads shares one hue, from its root: a thread with listed descendants, and a
         // subagent listed with its own location away from its parent.
         style={
@@ -1348,7 +1349,7 @@ const SidebarProjectThreadRow = memo(
                 props.thread.pullRequests,
               )}
               className={cn(
-                "group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
+                "fork-sidebar-thread group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
                 PROJECTS_WORK_ROW_HEIGHT,
                 props.codexStyle ? "sidebar-thread-tint text-xs" : "text-sm",
                 active
@@ -1424,7 +1425,7 @@ const SidebarProjectThreadRow = memo(
                     </SidebarProjectThreadName>
                   </span>
                   {workRows.length > 0 ? (
-                    <span aria-hidden className="w-8 shrink-0" />
+                    <span aria-hidden className="fork-sidebar-work-placeholder w-8 shrink-0" />
                   ) : (
                     <SidebarThreadTime thread={props.thread} status={status} />
                   )}
@@ -1445,7 +1446,7 @@ const SidebarProjectThreadRow = memo(
             type="button"
             aria-expanded={workOpen}
             aria-label={`${workOpen ? "Hide" : "Show"} ${workRows.length} running background tasks`}
-            className="absolute top-0.5 right-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-3xs text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover"
+            className="fork-sidebar-work-toggle absolute top-0.5 right-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-3xs text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover"
             onClick={() => setWorkOpen(!workOpen)}
           >
             {workRows.length}
