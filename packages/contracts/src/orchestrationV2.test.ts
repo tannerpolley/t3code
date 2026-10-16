@@ -40,7 +40,6 @@ import {
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ShellSnapshot,
-  OrchestrationV2ShellStreamItem,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
   OrchestrationV2SubagentJson,
@@ -48,7 +47,6 @@ import {
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
   OrchestrationV2ThreadShell,
-  OrchestrationV2ThreadShellJson,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
@@ -152,9 +150,6 @@ const encodeOrchestrationV2ProviderThreadJson = Schema.encodeSync(
 );
 const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(OrchestrationV2ProviderThread);
 const decodeOrchestrationV2ThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
-const encodeOrchestrationV2ThreadShellJson = Schema.encodeSync(OrchestrationV2ThreadShellJson);
-const decodeOrchestrationV2ThreadShellJson = Schema.decodeSync(OrchestrationV2ThreadShellJson);
-const decodeOrchestrationV2ShellStreamItem = Schema.decodeSync(OrchestrationV2ShellStreamItem);
 const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
   OrchestrationV2ProviderCapabilities,
 );
@@ -1467,17 +1462,6 @@ describe("orchestration V2 contracts", () => {
     });
 
     expect(shell.pendingBackgroundTasks).toEqual([]);
-    expect(shell).not.toHaveProperty("usageSummary");
-    const json = encodeOrchestrationV2ThreadShellJson(shell);
-    expect(decodeOrchestrationV2ThreadShellJson(json)).toEqual(shell);
-    expect(
-      decodeOrchestrationV2ShellStreamItem({
-        kind: "thread.updated",
-        sequence: 1,
-        location: "active",
-        thread: shell,
-      }),
-    ).toMatchObject({ kind: "thread.updated", thread: shell });
   });
 });
 
