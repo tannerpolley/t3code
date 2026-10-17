@@ -851,6 +851,7 @@ function pendingBackgroundTaskSchema<
 >(startedAt: StartedAt) {
   const fields = {
     taskId: TrimmedNonEmptyString,
+    parentTaskId: Schema.optional(TrimmedNonEmptyString),
     description: Schema.optional(TrimmedNonEmptyString),
     // Retained fork metadata; classification remains the adapter's `kind`.
     taskType: Schema.optional(TrimmedNonEmptyString),
@@ -864,7 +865,11 @@ function pendingBackgroundTaskSchema<
   const encodeFields = Schema.encodeSync(Schema.Struct(fields));
   return kindUnionWithFallback(
     [
-      Schema.Struct({ ...fields, kind: Schema.Literal("subagent") }),
+      Schema.Struct({
+        ...fields,
+        kind: Schema.Literal("subagent"),
+        providerInstanceId: Schema.optional(ProviderInstanceId),
+      }),
       Schema.Struct({ ...fields, kind: Schema.Literal("command") }),
       Schema.Struct({ ...fields, kind: Schema.Literal("monitor") }),
       Schema.Struct({ ...fields, kind: Schema.Literal("background_task") }),

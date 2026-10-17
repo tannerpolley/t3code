@@ -1,6 +1,5 @@
 import type { DiscoveredLocalServer, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
-import { useMemo } from "react";
 
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useDiscoveredPortsState } from "~/portDiscoveryState";
@@ -38,20 +37,16 @@ export function useDiscoveredLocalServers(
   const activeProjectId = input.active?.projectId ?? null;
   const activeThreadId = input.active?.threadId ?? null;
 
-  return useMemo(
-    () =>
-      mergeServers({
-        scanner: scannerState.servers.map((server) => ({
-          ...server,
-          url: resolveDiscoveredServerUrl(input.environmentId, server.url),
-          requestedUrl: server.url,
-        })),
-        configuredUrls: input.configuredUrls ?? [],
-        configuredUrlProbing: scannerState.configuredUrlProbing,
-        active: { projectId: activeProjectId, threadId: activeThreadId },
-      }),
-    [input.environmentId, scannerState, input.configuredUrls, activeProjectId, activeThreadId],
-  );
+  return mergeServers({
+    scanner: scannerState.servers.map((server) => ({
+      ...server,
+      url: resolveDiscoveredServerUrl(input.environmentId, server.url),
+      requestedUrl: server.url,
+    })),
+    configuredUrls: input.configuredUrls ?? [],
+    configuredUrlProbing: scannerState.configuredUrlProbing,
+    active: { projectId: activeProjectId, threadId: activeThreadId },
+  });
 }
 
 export function mergeServers(input: {

@@ -1,6 +1,7 @@
 import { applyRoutedRequestParent } from "./routedRequestParent.ts";
 import {
   OrchestrationV2ThreadShell,
+  RepositoryIdentity,
   ThreadPullRequestLink,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
@@ -10,6 +11,9 @@ import * as Schema from "effect/Schema";
 
 const sameThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);
 const sameLinks = Schema.toEquivalence(Schema.UndefinedOr(Schema.Array(ThreadPullRequestLink)));
+const sameRepositoryIdentity = Schema.toEquivalence(
+  Schema.UndefinedOr(Schema.NullOr(RepositoryIdentity)),
+);
 
 export function sameThreadPullRequests(
   left: OrchestrationV2ThreadShell["pullRequests"],
@@ -97,6 +101,13 @@ export function mergeShellSnapshotProjects(
           return project;
         }
         if (resolvedRootSet?.has(project.workspaceRoot) === true) {
+          if (
+            sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity) &&
+            (candidate.repositoryIdentityResolved === undefined ||
+              candidate.repositoryIdentityResolved === project.repositoryIdentityResolved)
+          ) {
+            return project;
+          }
           return {
             ...project,
             repositoryIdentity: candidate.repositoryIdentity,

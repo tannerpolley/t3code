@@ -1,3 +1,5 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizeSettings } from "./ForkSidebarTextSizeSettings";
 import * as Schema from "effect/Schema";
 import { DEFAULT_UNIFIED_SETTINGS, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
@@ -357,7 +359,9 @@ function UnavailablePlugins({
 /** Read-only: each enabled provider's plugins, as its latest snapshot reports them. */
 function ProviderPluginsSection() {
   const { environment } = useSettingsScope();
-  const groups = groupProviderPlugins(environment?.serverConfig?.providers ?? []);
+  const groups = groupProviderPlugins(
+    useEnvironmentProviders().get(environment?.environmentId as EnvironmentId) ?? [],
+  );
   if (groups === null) return null;
   if (groups.length === 0) {
     return (

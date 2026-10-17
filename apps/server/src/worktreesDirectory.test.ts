@@ -27,6 +27,9 @@ it.layer(NodeServices.layer)("worktree locations", (it) => {
         );
       expect(resolve("")).toBe(path.join(defaultDir, "repo", "feature-nested-branch"));
       expect(resolve(custom)).toBe(path.join(custom, "repo", "feature-nested-branch"));
+      expect(resolve("", `${repository}/sub/..`)).toBe(
+        path.join(defaultDir, "repo", "feature-nested-branch"),
+      );
       expect(resolve("~/custom")).toBe(path.join(root, "custom", "repo", "feature-nested-branch"));
       expect(resolve(PROJECT_LOCAL_WORKTREES)).toBe(
         path.join(repository, ".worktrees", "feature-nested-branch"),

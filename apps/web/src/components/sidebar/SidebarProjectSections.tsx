@@ -1,3 +1,4 @@
+import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizes } from "./ForkSidebarTextSizes";
 import { sectionTarget, useProjectSectionPlacementReady } from "../../projectSectionPlacement";
 import { useSidebarLayoutPermission } from "../../hooks/useSidebarLayoutPermission";
@@ -73,7 +74,6 @@ import {
   threadGroupHue,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
-import { useServerConfigs } from "../../state/entities";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
@@ -88,8 +88,6 @@ import { useThreadContextPointerDrag } from "../chat/threadContextDrag";
 import {
   Fragment,
   memo,
-  useCallback,
-  useMemo,
   useState,
   type ComponentProps,
   type CSSProperties,
@@ -299,29 +297,23 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     readonly open: boolean;
     readonly id: number;
   } | null>(null);
-  const openNewProjectDialog = useCallback(
-    (section: {
-      readonly id: string;
-      readonly name: string;
-      readonly parentId: string | undefined;
-    }) => {
-      const parentName =
-        section.parentId === undefined
-          ? undefined
-          : sections.find((candidate) => candidate.id === section.parentId)?.name;
-      setNewProjectDialog((current) => ({
-        target: { sectionId: section.id, sectionName: section.name, parentName },
-        open: true,
-        id: (current?.id ?? 0) + 1,
-      }));
-    },
-    [sections],
-  );
-  const projectByKey = useMemo(
-    () => new Map(projects.map((project) => [project.projectKey, project] as const)),
-    [projects],
-  );
-  const renderedSections = useMemo<SidebarProjectSectionRender[]>(() => {
+  const openNewProjectDialog = (section: {
+    readonly id: string;
+    readonly name: string;
+    readonly parentId: string | undefined;
+  }) => {
+    const parentName =
+      section.parentId === undefined
+        ? undefined
+        : sections.find((candidate) => candidate.id === section.parentId)?.name;
+    setNewProjectDialog((current) => ({
+      target: { sectionId: section.id, sectionName: section.name, parentName },
+      open: true,
+      id: (current?.id ?? 0) + 1,
+    }));
+  };
+  const projectByKey = new Map(projects.map((project) => [project.projectKey, project] as const));
+  const renderedSections = (() => {
     const claimed = new Set<string>();
     const next: SidebarProjectSectionRender[] = [];
     for (const section of sections) {
@@ -366,65 +358,59 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       });
     }
     return next;
-  }, [otherProjectsExpanded, projectByKey, projects, sections]);
+  })() satisfies SidebarProjectSectionRender[];
 
   // Clears custom icons the same way the icon picker's Automatic choice does, on every checkout
   // of every project in the section and its subsections.
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
-  const resetSectionIcons = useCallback(
-    async (section: SidebarProjectSectionRender) => {
-      if (!canWrite || useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
-      const sectionIds = new Set([
-        section.id,
-        ...renderedSections.filter((s) => s.parentId === section.id).map((s) => s.id),
-      ]);
-      const members = renderedSections
-        .filter((candidate) => sectionIds.has(candidate.id))
-        .flatMap((candidate) => candidate.projectKeys)
-        .flatMap((key) => projectByKey.get(key)?.memberProjects ?? [])
-        .filter((member) => member.projectIcon != null || member.faviconPath != null);
-      if (members.length === 0) {
-        toastManager.add({ type: "info", title: "These projects already use automatic icons" });
-        return;
-      }
-      if (
-        !window.confirm(
-          `Reset the icons of ${members.length} project checkout${members.length === 1 ? "" : "s"} in ${section.name} to automatic? Their custom icons will be cleared.`,
-        )
-      ) {
-        return;
-      }
-      let failed = 0;
-      for (const member of members) {
-        const result = await updateProject({
-          environmentId: member.environmentId,
-          input: { projectId: member.id, faviconPath: null, projectIcon: null },
-        });
-        if (result._tag === "Failure") failed += 1;
-      }
-      toastManager.add(
-        failed === 0
-          ? { type: "success", title: `Reset ${members.length} project icons in ${section.name}` }
-          : {
-              type: "error",
-              title: `Couldn't reset ${failed} of ${members.length} project icons`,
-              description: "Connect the project's environment and try again.",
-            },
-      );
-    },
-    [canWrite, projectByKey, renderedSections, updateProject],
-  );
+  const resetSectionIcons = async (section: SidebarProjectSectionRender) => {
+    if (!canWrite || useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
+    const sectionIds = new Set([
+      section.id,
+      ...renderedSections.filter((s) => s.parentId === section.id).map((s) => s.id),
+    ]);
+    const members = renderedSections
+      .filter((candidate) => sectionIds.has(candidate.id))
+      .flatMap((candidate) => candidate.projectKeys)
+      .flatMap((key) => projectByKey.get(key)?.memberProjects ?? [])
+      .filter((member) => member.projectIcon != null || member.faviconPath != null);
+    if (members.length === 0) {
+      toastManager.add({ type: "info", title: "These projects already use automatic icons" });
+      return;
+    }
+    if (
+      !window.confirm(
+        `Reset the icons of ${members.length} project checkout${members.length === 1 ? "" : "s"} in ${section.name} to automatic? Their custom icons will be cleared.`,
+      )
+    ) {
+      return;
+    }
+    let failed = 0;
+    for (const member of members) {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, faviconPath: null, projectIcon: null },
+      });
+      if (result._tag === "Failure") failed += 1;
+    }
+    toastManager.add(
+      failed === 0
+        ? { type: "success", title: `Reset ${members.length} project icons in ${section.name}` }
+        : {
+            type: "error",
+            title: `Couldn't reset ${failed} of ${members.length} project icons`,
+            description: "Connect the project's environment and try again.",
+          },
+    );
+  };
 
-  const setSectionExpanded = useCallback(
-    (sectionId: string, expanded: boolean) => {
-      if (sectionId === UNGROUPED_SECTION_ID) {
-        setOtherProjectsExpanded(expanded);
-        return;
-      }
-      setCustomSectionExpanded(sectionId, expanded);
-    },
-    [setCustomSectionExpanded, setOtherProjectsExpanded],
-  );
+  const setSectionExpanded = (sectionId: string, expanded: boolean) => {
+    if (sectionId === UNGROUPED_SECTION_ID) {
+      setOtherProjectsExpanded(expanded);
+      return;
+    }
+    setCustomSectionExpanded(sectionId, expanded);
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -438,7 +424,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     }),
   );
   // The pointer sits over a project and its section at once; the project is the precise target.
-  const collisionDetection = useCallback<CollisionDetection>((args) => {
+  const collisionDetection = ((args) => {
     const pointerCollisions = pointerWithin(args);
     if (pointerCollisions.length === 0) return closestCorners(args);
     const typeOf = (collision: (typeof pointerCollisions)[number]) =>
@@ -457,90 +443,79 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       pointerCollisions.find((collision) => typeOf(collision) === "section") ??
       innermostContainer;
     return preferred ? [preferred] : pointerCollisions;
-  }, []);
+  }) satisfies CollisionDetection;
 
-  const openRenameDialog = useCallback(
-    (section: SidebarProjectSectionRender) => {
-      if (section.custom) onRenameSection(section);
-    },
-    [onRenameSection],
-  );
+  const openRenameDialog = (section: SidebarProjectSectionRender) => {
+    if (section.custom) onRenameSection(section);
+  };
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
+  const handleDragStart = (event: DragStartEvent) => {
     const activeData = event.active.data.current as SidebarProjectDragData | undefined;
     setActiveProjectKey(activeData?.type === "project" ? String(event.active.id) : null);
-  }, []);
+  };
 
-  const handleDragOver = useCallback(
-    (event: DragOverEvent) => {
-      const activeData = event.active.data.current as SidebarProjectDragData | undefined;
-      const over = projectDropOverOf(event.over);
-      setProjectDrop(
-        activeData?.type === "project" && over
-          ? resolveProjectDrop({
-              projectKey: String(event.active.id),
-              over,
-              sections: renderedSections,
-            })
-          : null,
-      );
-    },
-    [renderedSections],
-  );
+  const handleDragOver = (event: DragOverEvent) => {
+    const activeData = event.active.data.current as SidebarProjectDragData | undefined;
+    const over = projectDropOverOf(event.over);
+    setProjectDrop(
+      activeData?.type === "project" && over
+        ? resolveProjectDrop({
+            projectKey: String(event.active.id),
+            over,
+            sections: renderedSections,
+          })
+        : null,
+    );
+  };
 
-  const handleDragCancel = useCallback((_event: DragCancelEvent) => {
+  const handleDragCancel = (_event: DragCancelEvent) => {
     setActiveProjectKey(null);
     setProjectDrop(null);
-  }, []);
+  };
 
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      setActiveProjectKey(null);
-      setProjectDrop(null);
-      const activeData = event.active.data.current as SidebarProjectDragData | undefined;
-      const overData = event.over?.data.current as SidebarProjectDragData | undefined;
+  const handleDragEnd = (event: DragEndEvent) => {
+    setActiveProjectKey(null);
+    setProjectDrop(null);
+    const activeData = event.active.data.current as SidebarProjectDragData | undefined;
+    const overData = event.over?.data.current as SidebarProjectDragData | undefined;
+    if (
+      !canWrite ||
+      useUiStateStore.getState().sidebarDisplaySnapshot !== null ||
+      !activeData ||
+      !event.over
+    )
+      return;
+
+    if (activeData.type === "section") {
+      const targetSectionId = sectionIdFromDragData(overData);
       if (
-        !canWrite ||
-        useUiStateStore.getState().sidebarDisplaySnapshot !== null ||
-        !activeData ||
-        !event.over
-      )
-        return;
-
-      if (activeData.type === "section") {
-        const targetSectionId = sectionIdFromDragData(overData);
-        if (
-          targetSectionId === null ||
-          targetSectionId === undefined ||
-          targetSectionId === activeData.sectionId
-        ) {
-          return;
-        }
-        const currentIds = sections.map((section) => section.id);
-        const fromIndex = currentIds.indexOf(activeData.sectionId);
-        const toIndex = currentIds.indexOf(targetSectionId);
-        if (fromIndex >= 0 && toIndex >= 0) {
-          reorderSections(arrayMove(currentIds, fromIndex, toIndex));
-        }
+        targetSectionId === null ||
+        targetSectionId === undefined ||
+        targetSectionId === activeData.sectionId
+      ) {
         return;
       }
-
-      if (activeData.type !== "project") return;
-      const projectKey = String(event.active.id);
-      const over = projectDropOverOf(event.over);
-      const drop = over
-        ? resolveProjectDrop({ projectKey, over, sections: renderedSections })
-        : null;
-      if (drop === null) return;
-      if (drop.projectKeys === null) {
-        moveProject(projectKey, null);
-        return;
+      const currentIds = sections.map((section) => section.id);
+      const fromIndex = currentIds.indexOf(activeData.sectionId);
+      const toIndex = currentIds.indexOf(targetSectionId);
+      if (fromIndex >= 0 && toIndex >= 0) {
+        reorderSections(arrayMove(currentIds, fromIndex, toIndex));
       }
-      if (activeData.sectionId !== drop.sectionId) moveProject(projectKey, drop.sectionId);
-      reorderSectionProjects(drop.sectionId, [...drop.projectKeys]);
-    },
-    [canWrite, moveProject, reorderSectionProjects, reorderSections, renderedSections, sections],
-  );
+      return;
+    }
+
+    if (activeData.type !== "project") return;
+    const projectKey = String(event.active.id);
+    const over = projectDropOverOf(event.over);
+    const drop = over ? resolveProjectDrop({ projectKey, over, sections: renderedSections }) : null;
+    if (drop === null) return;
+    if (drop.projectKeys === null) {
+      moveProject(projectKey, null);
+      return;
+    }
+    if (activeData.sectionId !== drop.sectionId) moveProject(projectKey, drop.sectionId);
+    reorderSectionProjects(drop.sectionId, [...drop.projectKeys]);
+  };
 
   return (
     <ForkSidebarTextSizes className="group-data-[collapsible=icon]:hidden px-1 py-1">
@@ -1033,7 +1008,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   );
   const { folderColor, forceFolder } = useProjectFolderAppearance(project.projectKey);
   // Each location's lead thread, over every shown row: threads and their running subagents.
-  const locationLeads = useMemo(() => {
+  const locationLeads = (() => {
     if (!codexStyle) return null;
     const keyOf = (thread: SidebarThreadSummary) =>
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
@@ -1049,7 +1024,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
     return resolveLocationLeads(
       props.threads.flatMap((thread) => [{ thread, topLevel: true }, ...descendants(thread)]),
     );
-  }, [codexStyle, props.threads, props.runningSubagentsByParentKey, props.relocatedThreadKeys]);
+  })();
   // One set per distinct list of leads, so rows re-render only when a lead changes.
   const leadKeyList =
     locationLeads === null
@@ -1057,10 +1032,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
       : [...locationLeads.values()]
           .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
           .join("\n");
-  const locationLeadKeys = useMemo(
-    () => (leadKeyList === null ? undefined : new Set(leadKeyList.split("\n"))),
-    [leadKeyList],
-  );
+  const locationLeadKeys = leadKeyList === null ? undefined : new Set(leadKeyList.split("\n"));
 
   return (
     // Rows stay put while dragging; the drop line shows where this one lands.
@@ -1326,9 +1298,9 @@ const SidebarProjectThreadRow = memo(
       threads: [scopeThreadRef(props.thread.environmentId, props.thread.id)],
       title: props.thread.title,
     }));
-    const provider = useServerConfigs()
+    const provider = useEnvironmentProviders()
       .get(props.thread.environmentId)
-      ?.providers.find((entry) => entry.instanceId === props.thread.providerInstanceId);
+      ?.find((entry) => entry.instanceId === props.thread.providerInstanceId);
     return (
       <li
         className="fork-sidebar-thread-item relative list-none"

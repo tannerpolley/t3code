@@ -6,7 +6,6 @@ import {
   collectLimitPools,
   formatDuration,
 } from "@t3tools/shared/usageLimits";
-import { useMemo } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -42,10 +41,10 @@ function useLimitReadoutRows(enabled: {
   readonly daily: boolean;
   readonly weekly: boolean;
 }): { readonly rows: readonly ReadoutRow[]; readonly now: number } {
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   // The minute clock moves the budget across midnight; no timer of its own.
   const now = Date.parse(`${useNowMinute()}:00Z`);
-  const rows = useMemo(() => {
+  const rows = (() => {
     const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
     const pools = collectLimitPools(collectLimitAccounts(presentations), now);
     return READOUT_DRIVERS.flatMap((driver): ReadoutRow[] => {
@@ -120,7 +119,7 @@ function useLimitReadoutRows(enabled: {
         },
       ];
     });
-  }, [enabled.daily, enabled.session, enabled.weekly, now, presentations]);
+  })();
   return { rows, now };
 }
 

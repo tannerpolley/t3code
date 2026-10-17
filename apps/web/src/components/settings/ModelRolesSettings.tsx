@@ -1,3 +1,5 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import {
   DEFAULT_MODEL_ROLES,
@@ -43,7 +45,9 @@ export function ModelRolesSection() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { environment } = useSettingsScope();
-  const providers = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
+  const providers =
+    useEnvironmentProviders().get(environment?.environmentId as EnvironmentId) ??
+    EMPTY_SERVER_PROVIDERS;
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
   );

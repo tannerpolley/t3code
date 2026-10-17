@@ -14,7 +14,7 @@ import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { InfoIcon, Trash2Icon } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import type {
   SidebarProjectGroupMember,
@@ -67,15 +67,12 @@ export function ProjectSettingsPanel({
   const pathname = useLocation({ select: (location) => location.pathname });
 
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
-  const members = useMemo(
-    () =>
-      selected?.memberProjects.filter(
-        (member) =>
-          (environmentId === null || member.environmentId === environmentId) &&
-          (checkoutKey === null || member.physicalProjectKey === checkoutKey),
-      ) ?? [],
-    [selected, environmentId, checkoutKey],
-  );
+  const members =
+    selected?.memberProjects.filter(
+      (member) =>
+        (environmentId === null || member.environmentId === environmentId) &&
+        (checkoutKey === null || member.physicalProjectKey === checkoutKey),
+    ) ?? [];
 
   // Remember the members of the last rendered group so a grouping-rule change
   // (which changes the group key) can follow the project to its new group.
@@ -160,9 +157,8 @@ function ProjectDetail({
 }) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
-  const environmentById = useMemo(
-    () => new Map(environments.map((environment) => [environment.environmentId, environment])),
-    [environments],
+  const environmentById = new Map(
+    environments.map((environment) => [environment.environmentId, environment]),
   );
   const editableIds = useEnvironmentsWithScope(group.memberProjects, AuthOrchestrationOperateScope);
   const canEditGroup = group.memberProjects.every((member) =>
@@ -189,7 +185,7 @@ function ProjectDetail({
       ? window.desktopBridge?.pickProjectFavicon
       : undefined;
 
-  const reportFailure = useCallback((title: string, result: AtomCommandResult<void, unknown>) => {
+  const reportFailure = (title: string, result: AtomCommandResult<void, unknown>) => {
     if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
     const error = squashAtomCommandFailure(result);
     toastManager.add(
@@ -199,122 +195,110 @@ function ProjectDetail({
         description: error instanceof Error ? error.message : "An error occurred.",
       }),
     );
-  }, []);
+  };
 
-  const checkProjectAccess = useCallback(
-    (members: ReadonlyArray<SidebarProjectGroupMember>, failureTitle: string) => {
-      const denied = members.find(
-        (member) => !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
-      );
-      if (!denied) return null;
-      const result = AsyncResult.failure<void, Error>(
-        Cause.fail(
-          new Error(
-            `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
-          ),
+  const checkProjectAccess = (
+    members: ReadonlyArray<SidebarProjectGroupMember>,
+    failureTitle: string,
+  ) => {
+    const denied = members.find(
+      (member) => !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
+    );
+    if (!denied) return null;
+    const result = AsyncResult.failure<void, Error>(
+      Cause.fail(
+        new Error(
+          `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
         ),
+      ),
+    );
+    reportFailure(failureTitle, result);
+    return result;
+  };
+
+  const updateAllMembers = async (
+    input: Partial<{
+      title: string;
+      faviconPath: string | null;
+      projectIcon: ProjectIconOverride | null;
+    }>,
+    failureTitle: string,
+  ): Promise<AtomCommandResult<void, unknown>> => {
+    const denied = checkProjectAccess(group.memberProjects, failureTitle);
+    if (denied) return denied;
+    const unavailable = group.memberProjects.find((member) => {
+      const environment = environmentById.get(member.environmentId);
+      return environment?.connection.phase !== "connected" || !environment.serverConfig;
+    });
+    if (unavailable) {
+      const error = new Error(
+        `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
       );
+      const result: AtomCommandResult<void, unknown> = AsyncResult.failure(Cause.fail(error));
       reportFailure(failureTitle, result);
       return result;
-    },
-    [reportFailure],
-  );
-
-  const updateAllMembers = useCallback(
-    async (
-      input: Partial<{
-        title: string;
-        faviconPath: string | null;
-        projectIcon: ProjectIconOverride | null;
-      }>,
-      failureTitle: string,
-    ): Promise<AtomCommandResult<void, unknown>> => {
-      const denied = checkProjectAccess(group.memberProjects, failureTitle);
-      if (denied) return denied;
-      const unavailable = group.memberProjects.find((member) => {
-        const environment = environmentById.get(member.environmentId);
-        return environment?.connection.phase !== "connected" || !environment.serverConfig;
-      });
-      if (unavailable) {
-        const error = new Error(
-          `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
+    }
+    for (const member of group.memberProjects) {
+      const revoked = checkProjectAccess([member], failureTitle);
+      if (revoked) return revoked;
+      const result = mapAtomCommandResult(
+        await updateProject({
+          environmentId: member.environmentId,
+          input: { projectId: member.id, ...input },
+        }),
+        () => undefined,
+      );
+      if (result._tag === "Failure") {
+        reportFailure(
+          group.memberProjects.length > 1
+            ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
+            : failureTitle,
+          result,
         );
-        const result: AtomCommandResult<void, unknown> = AsyncResult.failure(Cause.fail(error));
-        reportFailure(failureTitle, result);
         return result;
       }
-      for (const member of group.memberProjects) {
-        const revoked = checkProjectAccess([member], failureTitle);
-        if (revoked) return revoked;
-        const result = mapAtomCommandResult(
-          await updateProject({
-            environmentId: member.environmentId,
-            input: { projectId: member.id, ...input },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          reportFailure(
-            group.memberProjects.length > 1
-              ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
-              : failureTitle,
-            result,
-          );
-          return result;
-        }
-      }
-      return AsyncResult.success(undefined);
-    },
-    [checkProjectAccess, environmentById, group.memberProjects, reportFailure, updateProject],
-  );
+    }
+    return AsyncResult.success(undefined);
+  };
 
-  const renameGroup = useCallback(
-    async (nextTitle: string, wasEdited: boolean) => {
-      const title = nextTitle.trim();
-      if (!title) {
-        toastManager.add({ type: "warning", title: "Project title cannot be empty" });
-        return;
-      }
-      if (
-        !projectGroupTitleNeedsUpdate(
-          group.memberProjects.map((member) => member.title),
-          title,
-          wasEdited,
-        )
-      ) {
-        return;
-      }
-      await updateAllMembers({ title }, "Failed to rename project");
-    },
-    [group.memberProjects, updateAllMembers],
-  );
+  const renameGroup = async (nextTitle: string, wasEdited: boolean) => {
+    const title = nextTitle.trim();
+    if (!title) {
+      toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+      return;
+    }
+    if (
+      !projectGroupTitleNeedsUpdate(
+        group.memberProjects.map((member) => member.title),
+        title,
+        wasEdited,
+      )
+    ) {
+      return;
+    }
+    await updateAllMembers({ title }, "Failed to rename project");
+  };
 
   const [faviconPickerOpen, setFaviconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
   const savingFaviconRef = useRef(false);
-  const setProjectIcon = useCallback(
-    async (input: { faviconPath: string | null; projectIcon: ProjectIconOverride | null }) => {
-      if (savingFaviconRef.current) return;
-      savingFaviconRef.current = true;
-      setIsSavingFavicon(true);
-      try {
-        await updateAllMembers(input, "Failed to update project icon");
-      } finally {
-        savingFaviconRef.current = false;
-        setIsSavingFavicon(false);
-      }
-    },
-    [updateAllMembers],
-  );
+  const setProjectIcon = async (input: {
+    faviconPath: string | null;
+    projectIcon: ProjectIconOverride | null;
+  }) => {
+    if (savingFaviconRef.current) return;
+    savingFaviconRef.current = true;
+    setIsSavingFavicon(true);
+    await updateAllMembers(input, "Failed to update project icon");
+    savingFaviconRef.current = false;
+    setIsSavingFavicon(false);
+  };
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
   const removeProjectMembers = useRemoveProjectMembers();
-  const removeMembers = useCallback(
-    (members: SidebarProjectSnapshot["memberProjects"]) =>
-      removeProjectMembers({ group, hasOtherMembers, members }),
-    [group, hasOtherMembers, removeProjectMembers],
-  );
+  const removeMembers = (members: SidebarProjectSnapshot["memberProjects"]) =>
+    removeProjectMembers({ group, hasOtherMembers, members });
 
   const checkoutsByEnvironment = new Map<EnvironmentId, SidebarProjectGroupMember[]>();
   for (const member of group.memberProjects) {

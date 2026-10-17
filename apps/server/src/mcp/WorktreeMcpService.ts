@@ -16,7 +16,6 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadWorkspaceService from "../orchestration-v2/ThreadWorkspaceService.ts";
@@ -63,7 +62,6 @@ const asOperationFailed = (prefix: string) =>
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
-  const path = yield* Path.Path;
   const workspace = yield* ThreadWorkspaceService.ThreadWorkspaceService;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
@@ -174,13 +172,6 @@ const make = Effect.gen(function* () {
     const project = yield* loadProject(scope, projection.thread.projectId);
     const projectCwd = project.workspaceRoot;
 
-    if (input.path !== undefined && !path.isAbsolute(input.path)) {
-      return yield* failure(
-        "invalid_request",
-        `path must be an absolute filesystem path, got '${input.path}'. A relative path would be created relative to the project workspace but stored verbatim as the thread's worktree binding.`,
-      );
-    }
-
     const localStatus = yield* gitWorkflow
       .localStatus({ cwd: projectCwd })
       .pipe(asOperationFailed("Unable to read git status"));
@@ -261,7 +252,7 @@ const make = Effect.gen(function* () {
               refName: worktreeBaseRef,
               newRefName: input.branch,
               baseRefName: baseRef,
-              path: input.path ?? null,
+              path: null,
             })
             .pipe(asOperationFailed("Unable to create the worktree")),
         );
@@ -452,7 +443,6 @@ export const layer: Layer.Layer<
   never,
   | ThreadWorkspaceService.ThreadWorkspaceService
   | Crypto.Crypto
-  | Path.Path
   | ThreadManagementService.ThreadManagementService
   | ProjectService.ProjectService
   | ServerSettings.ServerSettingsService

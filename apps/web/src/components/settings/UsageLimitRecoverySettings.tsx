@@ -1,3 +1,5 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSettingsRow as SettingsRow } from "./ForkSettingsRow";
 import { type ModelSelection, UsageLimitRecoveryMode } from "@t3tools/contracts";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -22,7 +24,9 @@ export function UsageLimitRecoverySettings() {
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const { environment } = useSettingsScope();
-  const providers = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
+  const providers =
+    useEnvironmentProviders().get(environment?.environmentId as EnvironmentId) ??
+    EMPTY_SERVER_PROVIDERS;
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, null),
   ).filter(

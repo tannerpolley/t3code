@@ -1,3 +1,4 @@
+import { useEnvironmentProviders } from "../../state/environments";
 import {
   formatModelSelectionEffort,
   shortModelSelectionEffort,
@@ -31,7 +32,7 @@ import {
   BackgroundProcessKindIcon,
   backgroundProcessKindLabel,
 } from "../chat/BackgroundProcessKind";
-import { useServerConfigs, useThreadShell } from "../../state/entities";
+import { useThreadShell } from "../../state/entities";
 import type { SidebarThreadSummary } from "../../types";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -121,7 +122,7 @@ export type SidebarBackgroundWorkRowsProps = {
 /** Subagent and background task rows in the sidebar's shared thread columns. */
 export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps) {
   const navigate = useNavigate();
-  const providers = useServerConfigs().get(props.environmentId)?.providers;
+  const providers = useEnvironmentProviders().get(props.environmentId);
   const owner = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
   const ownerProvider = providers?.find((entry) => entry.instanceId === owner?.providerInstanceId);
   // One drag at a time, so the list shares one drag and notes which subagent row started it.

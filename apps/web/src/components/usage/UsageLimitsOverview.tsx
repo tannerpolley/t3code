@@ -29,7 +29,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { InfoIcon } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
@@ -184,16 +184,14 @@ export function useLimitsOverview({
   readonly savedWindow: LimitWindowKind | undefined;
 }) {
   const enabled = useClientSettings((settings) => settings.usageLimitModelBreakdown);
-  const allPresentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const presentations = useMemo(
-    () => visibleLimitPresentations(allPresentations, selectedEnvironmentIds, hiddenProviders),
-    [allPresentations, hiddenProviders, selectedEnvironmentIds],
+  const allPresentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const presentations = visibleLimitPresentations(
+    allPresentations,
+    selectedEnvironmentIds,
+    hiddenProviders,
   );
-  const pools = useMemo(
-    () =>
-      showingLimits && enabled ? collectLimitPools(collectLimitAccounts(presentations), now) : [],
-    [enabled, now, presentations, showingLimits],
-  );
+  const pools =
+    showingLimits && enabled ? collectLimitPools(collectLimitAccounts(presentations), now) : [];
   const windows = limitWindowOptions(pools);
   const window = windows.find((option) => option.value === savedWindow) ?? windows[0];
   return { enabled, presentations, pools, windows, window };
@@ -264,11 +262,11 @@ function useLimitModelUsage(
     .flatMap((pool) => pool.windows)
     .reduce((oldest, window) => Math.min(oldest, poolWindowSpan(window, now)?.start ?? now), now);
   const days = Math.min(MAX_DAILY_DAYS, Math.ceil((now - oldestStart) / DAY_MS) + 1);
-  const hourInput = useMemo(() => makeWindow(1, new Date(now), "hour"), [now]);
-  const dayInput = useMemo(
-    () => ({ ...makeWindow(days, new Date(now), "day"), untilTime: new Date(now).toISOString() }),
-    [days, now],
-  );
+  const hourInput = makeWindow(1, new Date(now), "hour");
+  const dayInput = {
+    ...makeWindow(days, new Date(now), "day"),
+    untilTime: new Date(now).toISOString(),
+  };
   const hourly = useUsage(hourInput, selectedEnvironmentIds);
   const daily = useUsage(dayInput, selectedEnvironmentIds);
   return {
@@ -394,24 +392,24 @@ export function UsageLimitsOverview({
   const usage = useLimitModelUsage(pools, selectedEnvironmentIds, now);
   const [chartBy, setChartBy] = useState<"provider" | "model">("provider");
   const [breakdown, setBreakdown] = useState<UsageBreakdownMode>("model");
-  const rows = useMemo(
-    () =>
-      pools.flatMap((pool): LimitRow[] => {
-        const windows = pool.windows.filter((window) => window.kind === kind);
-        const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
-        return windows.map((window) => ({
-          key: `${pool.driver}:${window.id}`,
-          provider: { driverKind: pool.driver, label },
-          label: windows.length > 1 ? window.label : label,
-          color: barColor(pool.driver),
-          window,
-        }));
-      }),
-    [kind, pools],
-  );
-  const estimate = useMemo(
-    () => estimateRows(rows, usage.hourly, usage.daily, usage.hourInput, usage.dayInput, now),
-    [now, rows, usage.daily, usage.dayInput, usage.hourInput, usage.hourly],
+  const rows = pools.flatMap((pool): LimitRow[] => {
+    const windows = pool.windows.filter((window) => window.kind === kind);
+    const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
+    return windows.map((window) => ({
+      key: `${pool.driver}:${window.id}`,
+      provider: { driverKind: pool.driver, label },
+      label: windows.length > 1 ? window.label : label,
+      color: barColor(pool.driver),
+      window,
+    }));
+  });
+  const estimate = estimateRows(
+    rows,
+    usage.hourly,
+    usage.daily,
+    usage.hourInput,
+    usage.dayInput,
+    now,
   );
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);

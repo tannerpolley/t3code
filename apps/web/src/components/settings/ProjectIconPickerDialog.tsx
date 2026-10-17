@@ -12,7 +12,7 @@ import {
   type ProjectIconColor,
   type ProjectIconOverride,
 } from "@t3tools/contracts";
-import { createElement, useEffect, useMemo, useRef, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
@@ -93,7 +93,7 @@ export function ProjectIconPickerDialog({
     previousOpenRef.current = open;
   }, [current, open, automatic.color, automatic.monogram]);
 
-  const icons = useMemo(() => filterProjectIconNames(query), [query]);
+  const icons = filterProjectIconNames(query);
   const selectedColorClassName = projectIconColorClassName(color);
   const monogram = letters.normalize("NFKC").trim().toUpperCase();
   const validMonogram = isMonogramText(monogram);

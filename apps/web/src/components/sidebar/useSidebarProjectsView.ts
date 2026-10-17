@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { resolveProjectExpanded, useUiStateStore } from "../../uiStateStore";
@@ -23,37 +23,24 @@ export function useSidebarProjectsView() {
     readonly open: boolean;
     readonly id: number;
   } | null>(null);
-  const openSectionDialog = useCallback((target: ProjectSectionDialogTarget) => {
+  const openSectionDialog = (target: ProjectSectionDialogTarget) => {
     if (useUiStateStore.getState().sidebarDisplaySnapshot !== null) return;
     setSectionDialog((current) => ({ target, open: true, id: (current?.id ?? 0) + 1 }));
-  }, []);
-  const setSectionDialogOpen = useCallback((open: boolean) => {
+  };
+  const setSectionDialogOpen = (open: boolean) => {
     setSectionDialog((current) => (current ? { ...current, open } : current));
-  }, []);
-  const openCreateSectionDialog = useCallback(
-    () => openSectionDialog({ kind: "create" }),
-    [openSectionDialog],
-  );
-  const openCreateSubsectionDialog = useCallback(
-    (parent: { readonly id: string; readonly name: string }) =>
-      openSectionDialog({ kind: "create", parent: { id: parent.id, name: parent.name } }),
-    [openSectionDialog],
-  );
-  const openRenameSectionDialog = useCallback(
-    (section: { readonly id: string; readonly name: string }) =>
-      openSectionDialog({ kind: "rename", id: section.id, name: section.name }),
-    [openSectionDialog],
-  );
+  };
+  const openCreateSectionDialog = () => openSectionDialog({ kind: "create" });
+  const openCreateSubsectionDialog = (parent: { readonly id: string; readonly name: string }) =>
+    openSectionDialog({ kind: "create", parent: { id: parent.id, name: parent.name } });
+  const openRenameSectionDialog = (section: { readonly id: string; readonly name: string }) =>
+    openSectionDialog({ kind: "rename", id: section.id, name: section.name });
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
-  const isProjectExpanded = useCallback(
-    (projectKey: string) => resolveProjectExpanded(projectExpandedById, [projectKey]),
-    [projectExpandedById],
-  );
-  const toggleProjectExpanded = useCallback(
-    (projectKey: string, expanded: boolean) => setProjectExpanded(projectKey, expanded),
-    [setProjectExpanded],
-  );
+  const isProjectExpanded = (projectKey: string) =>
+    resolveProjectExpanded(projectExpandedById, [projectKey]);
+  const toggleProjectExpanded = (projectKey: string, expanded: boolean) =>
+    setProjectExpanded(projectKey, expanded);
   return {
     projectsViewEnabled,
     sidebarMode,
