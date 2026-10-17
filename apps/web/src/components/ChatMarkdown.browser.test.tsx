@@ -964,6 +964,71 @@ describe("ChatMarkdown thread find", () => {
   );
 });
 
+describe("ChatMarkdown copying", () => {
+  it("copies inline code on click and on Enter", async () => {
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockImplementation(async () => undefined);
+    const container = await renderText("Run `vp test run` now.");
+    const code = container.querySelector("code")!;
+
+    await act(async () => code.click());
+    await act(async () => {
+      code.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(writeText.mock.calls).toEqual([["vp test run"], ["vp test run"]]);
+  });
+
+  it("leaves inline code alone when the click ends a selection or belongs to a link", async () => {
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockImplementation(async () => undefined);
+    // Raw HTML anchors rely on the renderer; Markdown links untag code in the pipeline.
+    const container = await renderText(
+      'Run `vp test` or <a href="https://example.com">`docs`</a>.',
+    );
+    const [plain, linked] = container.querySelectorAll("code");
+    const selection = window.getSelection()!;
+    try {
+      selection.selectAllChildren(plain!);
+      expect(selection.toString()).toBe("vp test");
+      await act(async () => plain!.click());
+      expect(writeText).not.toHaveBeenCalled();
+
+      selection.removeAllRanges();
+      container.querySelector("a")!.addEventListener("click", (event) => event.preventDefault());
+      await act(async () => linked!.click());
+      expect(writeText).not.toHaveBeenCalled();
+    } finally {
+      selection.removeAllRanges();
+    }
+  });
+
+  it("falls back to execCommand when the Clipboard API is missing", async () => {
+    const container = await renderText("Run `vp test run` now.");
+    vi.stubGlobal("navigator", {});
+    let copied = "";
+    const execCommand = vi.spyOn(document, "execCommand").mockImplementation(() => {
+      copied = (document.activeElement as HTMLTextAreaElement).value;
+      return true;
+    });
+
+    await act(async () => container.querySelector("code")!.click());
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(copied).toBe("vp test run");
+  });
+
+  it("keeps line breaks when copying a bare pre", async () => {
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockImplementation(async () => undefined);
+    const container = await renderText("<pre>echo one<br>echo two</pre>");
+
+    await act(async () => buttonsLabelled(container, "Copy code")[0]!.click());
+    expect(writeText).toHaveBeenCalledWith("echo one\necho two");
+  });
+});
+
 describe("ChatMarkdown fork math", () => {
   it("renders inline, display, and provider math while leaving code examples literal", async () => {
     const markdown = [
