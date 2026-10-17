@@ -12,6 +12,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { openBlockerSuspensionReason } from "./IssueEligibility.ts";
 
 const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(RepositoryOrchestration));
 import * as SqlClient from "effect/sql/SqlClient";
@@ -246,6 +247,9 @@ export const layer = Layer.effect(
         JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
         WHERE thread.deleted_at IS NULL AND thread.archived_at IS NULL
           AND (json_extract(thread.payload_json, '$.repositoryOrchestration.handoff.status') = 'draining'
+            OR (owner.paused = 0 AND EXISTS (
+              SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.suspendedIssues') suspension
+              WHERE json_extract(suspension.value, '$.reason') = ${openBlockerSuspensionReason}))
             OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.milestones') plan
             WHERE json_extract(plan.value, '$.status') <> 'complete')
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request

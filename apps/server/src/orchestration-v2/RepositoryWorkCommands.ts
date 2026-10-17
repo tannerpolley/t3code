@@ -278,22 +278,22 @@ export function makeRepositoryWorkCommands({
             // The committed suspension still denies admission; this turn queues atomically with its removal.
             yield* dispatchMessage(message, events, effects);
             yield* recordSubagentFollowup(message, events);
+            yield* Ref.update(effects, (pending) => [
+              ...pending,
+              {
+                id: `effect:${command.commandId}:issue-resumed:${resumedIssueId}`,
+                commandId: command.commandId,
+                threadId: command.threadId,
+                request: {
+                  type: "issue.suspension.notify",
+                  projectId: prior.projectId,
+                  issue: owner.linkedIssue!,
+                  reason: openBlockerSuspensionReason,
+                  resumed: true,
+                },
+              } satisfies PendingOrchestrationEffectV2,
+            ]);
           }
-          yield* Ref.update(effects, (pending) => [
-            ...pending,
-            {
-              id: `effect:${command.commandId}:issue-resumed:${resumedIssueId}`,
-              commandId: command.commandId,
-              threadId: command.threadId,
-              request: {
-                type: "issue.suspension.notify",
-                projectId: prior.projectId,
-                issue: owner.linkedIssue!,
-                reason: openBlockerSuspensionReason,
-                resumed: true,
-              },
-            } satisfies PendingOrchestrationEffectV2,
-          ]);
         }
       }
     });

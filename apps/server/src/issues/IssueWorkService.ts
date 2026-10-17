@@ -871,6 +871,9 @@ export const layer = Layer.effect(
               (yield* store.resultAvailable(threadId)))
           )
             continue;
+          // User-decision suspensions remain until the user explicitly resumes repository work.
+          const priorReason = suspended.get(shell.linkedIssue.id);
+          if (priorReason !== undefined && priorReason !== openBlockerSuspensionReason) continue;
           const read = yield* issues.workRead(shell.linkedIssue).pipe(Effect.result);
           let reason: string | null = null;
           if (read._tag === "Failure" || issueEligibility(read.success) === "unknown")
