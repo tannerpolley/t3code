@@ -2690,6 +2690,7 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     expectedRevision: Schema.Int,
     orchestration: RepositoryOrchestration,
+    resumeBlockedIssueId: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),

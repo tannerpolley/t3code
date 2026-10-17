@@ -133,6 +133,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     issue: ThreadLinkedIssue,
     reason: Schema.String,
     projectId: ProjectId,
+    resumed: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("issue.github.comment"),

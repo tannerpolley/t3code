@@ -303,6 +303,8 @@ To change how much issue work runs at once, set the worker limit in the reposito
 Issues pane. The limit starts at 4 and can be set from 1 to 32; the header shows how many slots
 are in use. Raising it starts eligible queued work. Lowering it lets current workers finish and
 holds new starts until there is room. The repository orchestrator does not use a worker slot.
+An issue worker paused by an open GitHub blocker resumes by itself within about a minute after
+all its blockers close. Other pauses still wait for **Resume repository work**.
 
 Issue agents can create issues, split work into sub-issues, and move issues between milestones.
 To require approval for these too, turn on **Ask before agents create, split or move issues** in

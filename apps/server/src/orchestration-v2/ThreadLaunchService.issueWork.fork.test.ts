@@ -1812,6 +1812,283 @@ it.effect(
 );
 
 it.effect(
+  "resumes only blocker-suspended workers once, retains other suspensions, and survives notification replay",
+  () => {
+    let blocked = false;
+    let unreadable = false;
+    const harness = reviewHarness((input) =>
+      Effect.succeed({
+        ...reviewRead(reviewIssue(input.number)),
+        blockedBy:
+          input.number === 1 && blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
+        blockersComplete: input.number !== 2 || !unreadable,
+      }),
+    );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sql = yield* SqlClient.SqlClient;
+      const root = yield* createReviewRoot();
+      for (const number of [1, 2])
+        yield* delegateReviewIssue(root, reviewIssue(number), `blocker-worker:${number}`);
+      const child = (yield* store.issueOwner(reviewIssue(1)))!;
+      const other = (yield* store.issueOwner(reviewIssue(2)))!;
+      const before = (yield* threads.getThreadRecords(child, ["runs"])).thread;
+      blocked = true;
+      unreadable = true;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.equal(
+        (yield* threads.getThreadRecords(child, ["runs"])).runs[0]!.status,
+        "interrupted",
+      );
+      const suspensions = (yield* store.configuration(root))!.suspendedIssues;
+      assert.lengthOf(suspensions, 2);
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 1);
+      const pauseNotice = (yield* threads.getThreadRecords(root, ["messages"])).messages.find(
+        (message) => message.text.startsWith("Issue #1 paused:"),
+      )!;
+      assert.include(pauseNotice.text, "resumes automatically");
+      assert.notInclude(pauseNotice.text, "Ask through t3_request_user_input");
+      const otherNotice = (yield* threads.getThreadRecords(root, ["messages"])).messages.find(
+        (message) => message.text.startsWith("Issue #2 paused:"),
+      )!;
+      assert.include(otherNotice.text, "Ask through t3_request_user_input");
+
+      blocked = false;
+      unreadable = false;
+      const beforeResume = (yield* store.configuration(root))!;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.deepEqual((yield* store.configuration(root))!.suspendedIssues, [
+        suspensions.find((entry) => entry.id === reviewIssue(2).id)!,
+      ]);
+      const resumed = yield* threads.getThreadRecords(child, ["runs", "messages"]);
+      assert.lengthOf(resumed.runs, 2);
+      assert.equal(resumed.runs.at(-1)!.status, "starting");
+      assert.isDefined(resumed.runs.at(-1)!.delegatedTaskId);
+      assert.deepEqual(resumed.thread.lineage, before.lineage);
+      assert.equal(resumed.thread.worktreePath, before.worktreePath);
+      assert.lengthOf(
+        resumed.messages.filter((message) => message.text.includes("GitHub blockers are closed")),
+        1,
+      );
+      assert.lengthOf((yield* threads.getThreadRecords(other, ["runs"])).runs, 1);
+      const rootState = yield* threads.getThreadRecords(root, ["messages", "subagents"]);
+      assert.isTrue(
+        rootState.subagents.some((task) => task.id === resumed.runs.at(-1)!.delegatedTaskId),
+      );
+      assert.lengthOf(
+        rootState.messages.filter(
+          (message) => message.text === "Issue #1 resumed: its GitHub blockers are closed.",
+        ),
+        1,
+      );
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        commandId: CommandId.make(
+          `issue-resume:${root}:${beforeResume.revision}:${reviewIssue(1).id}`,
+        ),
+        threadId: root,
+        expectedRevision: beforeResume.revision,
+        orchestration: {
+          ...beforeResume,
+          suspendedIssues: beforeResume.suspendedIssues.filter(
+            (entry) => entry.id !== reviewIssue(1).id,
+          ),
+        },
+        resumeBlockedIssueId: reviewIssue(1).id,
+      });
+
+      // Simulate process loss after the notice committed but before the outbox acknowledged it.
+      yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'running'
+        WHERE effect_type = 'issue.suspension.notify' AND effect_id LIKE '%issue-resumed:%'`;
+      yield* outbox.reconcileAfterProcessLoss;
+      yield* worker.drain();
+      yield* service.reconcile(root);
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 2);
+      assert.lengthOf(
+        (yield* threads.getThreadRecords(root, ["messages"])).messages.filter((message) =>
+          message.text.startsWith("Issue #1 resumed:"),
+        ),
+        1,
+      );
+
+      blocked = true;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.equal(
+        (yield* threads.getThreadRecords(child, ["runs"])).runs.at(-1)!.status,
+        "interrupted",
+      );
+      blocked = false;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 3);
+      assert.lengthOf(
+        (yield* threads.getThreadRecords(root, ["messages"])).messages.filter((message) =>
+          message.text.startsWith("Issue #1 resumed:"),
+        ),
+        2,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("queues a blocker continuation behind the repository worker limit", () => {
+  let blocked = false;
+  const harness = reviewHarness((input) =>
+    Effect.succeed({
+      ...reviewRead(reviewIssue(input.number)),
+      blockedBy:
+        input.number === 1 && blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
+    }),
+  );
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const service = yield* IssueWorkService.IssueWorkService;
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const root = yield* createReviewRoot();
+    yield* delegateReviewIssue(root, reviewIssue(1), "capacity-blocked-worker");
+    const child = (yield* store.issueOwner(reviewIssue(1)))!;
+    blocked = true;
+    yield* service.reconcile(root);
+    yield* worker.drain();
+    const config = (yield* store.configuration(root))!;
+    yield* threads.dispatch({
+      type: "repository.work.update",
+      commandId: CommandId.make("blocker-worker-limit"),
+      threadId: root,
+      expectedRevision: config.revision,
+      orchestration: { ...config, workerLimit: 1 },
+    });
+    yield* delegateReviewIssue(root, reviewIssue(2), "capacity-occupied-worker");
+    const occupied = (yield* store.issueOwner(reviewIssue(2)))!;
+    blocked = false;
+    yield* service.reconcile(root);
+    yield* worker.drain();
+    const continuation = (yield* threads.getThreadRecords(child, ["runs"])).runs.at(-1)!;
+    assert.equal(continuation.status, "queued");
+    assert.equal(yield* store.slotsInUse(root), 1);
+    yield* service.reconcile(root);
+    assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 2);
+    const active = (yield* threads.getThreadRecords(occupied, ["runs"])).runs[0]!;
+    yield* threads.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("release-blocker-worker-slot"),
+      threadId: occupied,
+      runId: active.id,
+    });
+    yield* service.reconcile(root);
+    yield* worker.drain();
+    const admitted = (yield* threads.getThreadRecords(child, ["runs"])).runs.at(-1)!;
+    assert.equal(admitted.id, continuation.id);
+    assert.equal(admitted.status, "starting");
+    assert.equal(yield* store.slotsInUse(root), 1);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("retains the continuation when a blocker closes before its interrupt effect runs", () => {
+  let blocked = false;
+  const harness = reviewHarness((input) =>
+    Effect.succeed({
+      ...reviewRead(reviewIssue(input.number)),
+      blockedBy: blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
+    }),
+  );
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const service = yield* IssueWorkService.IssueWorkService;
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const root = yield* createReviewRoot();
+    yield* delegateReviewIssue(root, reviewIssue(1), "fast-blocker-worker");
+    const child = (yield* store.issueOwner(reviewIssue(1)))!;
+    blocked = true;
+    yield* service.reconcile(root);
+    blocked = false;
+    yield* service.reconcile(root);
+    const pending = yield* threads.getThreadRecords(child, ["runs"]);
+    assert.lengthOf(pending.runs, 2);
+    assert.equal(pending.runs.at(-1)!.status, "queued");
+    yield* worker.drain();
+    yield* service.reconcile(root);
+    const resumed = yield* threads.getThreadRecords(child, ["runs"]);
+    assert.equal(resumed.runs[0]!.status, "interrupted");
+    assert.equal(resumed.runs.at(-1)!.status, "starting");
+    assert.equal(resumed.runs.at(-1)!.id, pending.runs.at(-1)!.id);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each(["paused", "draining"] as const)(
+  "does not auto-resume a blocker-suspended worker while the repository is %s",
+  (stopped) => {
+    let blocked = false;
+    const harness = reviewHarness((input) =>
+      Effect.succeed({
+        ...reviewRead(reviewIssue(input.number)),
+        blockedBy: blocked ? [{ issue: reviewIssue(99), state: "open" as const }] : [],
+      }),
+    );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const root = yield* createReviewRoot();
+      yield* delegateReviewIssue(root, reviewIssue(1), `stopped-worker:${stopped}`);
+      const child = (yield* store.issueOwner(reviewIssue(1)))!;
+      blocked = true;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      const config = (yield* store.configuration(root))!;
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        commandId: CommandId.make(`stop-repository:${stopped}`),
+        threadId: root,
+        expectedRevision: config.revision,
+        orchestration: {
+          ...config,
+          paused: true,
+          ...(stopped === "draining"
+            ? {
+                handoff: {
+                  requestId: CommandId.make("blocked-handoff"),
+                  nextThreadId: ThreadId.make("blocked-handoff-next"),
+                  summary: "Transfer repository work",
+                  modelSelection,
+                  status: "draining" as const,
+                  wasPaused: false,
+                },
+              }
+            : {}),
+        },
+      });
+      blocked = false;
+      yield* service.reconcile(root);
+      yield* worker.drain();
+      // A draining handoff may transfer ownership, but cannot restart the retained worker.
+      assert.lengthOf((yield* threads.getThreadRecords(child, ["runs"])).runs, 1);
+      assert.lengthOf(
+        (yield* threads.getThreadRecords(root, ["messages"])).messages.filter((message) =>
+          message.text.startsWith("Issue #1 resumed:"),
+        ),
+        0,
+      );
+      assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 1);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect(
   "a burst of worker preparation events continues locally without full GitHub reconciliations",
   () => {
     const workRead = vi.fn(

@@ -1,4 +1,6 @@
 import {
+  CommandId,
+  MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
@@ -14,6 +16,7 @@ import * as Ref from "effect/Ref";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type { DelegatedTaskRequest, ForkCommandHooks } from "./IssueWorkCommands.ts";
 import type { OrchestratorV2Error, OrchestratorProjectionError } from "./Orchestrator.ts";
+import { openBlockerSuspensionReason } from "../issues/IssueEligibility.ts";
 
 interface RepositoryWorkCommandHooks extends ForkCommandHooks {
   readonly dispatchThreadCreate: (
@@ -24,6 +27,10 @@ interface RepositoryWorkCommandHooks extends ForkCommandHooks {
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) => Effect.Effect<void, OrchestratorV2Error>;
+  readonly recordSubagentFollowup: (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "message.dispatch" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) => Effect.Effect<void, OrchestratorV2Error>;
   readonly getProjectionWithPendingEvents: (
     threadId: ThreadId,
@@ -42,6 +49,7 @@ export function makeRepositoryWorkCommands({
   OrchestratorDispatchError,
   dispatchThreadCreate,
   dispatchMessage,
+  recordSubagentFollowup,
   getProjectionWithPendingEvents,
 }: RepositoryWorkCommandHooks) {
   const guardRootLifecycle = Effect.fn("orchestrationV2.guardRepositoryRootLifecycle")(function* (
@@ -159,6 +167,23 @@ export function makeRepositoryWorkCommands({
           cause: "Repository ownership changed. Refresh before updating work.",
         });
       const now = yield* DateTime.now;
+      const resumedIssueId = command.resumeBlockedIssueId;
+      if (
+        resumedIssueId !== undefined &&
+        (prior.paused ||
+          prior.handoff?.status === "draining" ||
+          command.orchestration.paused ||
+          command.orchestration.handoff?.status === "draining" ||
+          !prior.suspendedIssues.some(
+            (entry) => entry.id === resumedIssueId && entry.reason === openBlockerSuspensionReason,
+          ) ||
+          command.orchestration.suspendedIssues.some((entry) => entry.id === resumedIssueId))
+      )
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Only an active repository's blocker suspension can resume automatically.",
+        });
       yield* emit(
         events,
         command,
@@ -176,7 +201,10 @@ export function makeRepositoryWorkCommands({
         (entry) =>
           !prior.suspendedIssues.some((old) => old.id === entry.id && old.reason === entry.reason),
       );
-      if (changedSuspensions.length > 0 && Option.isSome(issueWorkStore)) {
+      if (
+        (changedSuspensions.length > 0 || resumedIssueId !== undefined) &&
+        Option.isSome(issueWorkStore)
+      ) {
         const workers = yield* Effect.forEach(
           yield* issueWorkStore.value
             .workerThreads(command.threadId)
@@ -219,6 +247,50 @@ export function makeRepositoryWorkCommands({
                 projectId: prior.projectId,
                 issue: owner.linkedIssue!,
                 reason: suspension.reason,
+              },
+            } satisfies PendingOrchestrationEffectV2,
+          ]);
+        }
+        const owner = workers.find((worker) => worker?.linkedIssue?.id === resumedIssueId);
+        if (resumedIssueId !== undefined && owner?.linkedIssue !== undefined) {
+          const projection = yield* projectionStore
+            .getThreadRecords(owner.id, ["runs"])
+            .pipe(mapDispatchError(command));
+          const latest = projection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+          if (
+            latest !== undefined &&
+            (latest.status === "interrupted" || owner.activeRunId !== null) &&
+            !projection.runs.some((run) => run.status === "queued")
+          ) {
+            const message = {
+              type: "message.dispatch",
+              commandId: CommandId.make(`${command.commandId}:worker`),
+              threadId: owner.id,
+              senderThreadId: owner.lineage.parentThreadId!,
+              messageId: MessageId.make(`${command.commandId}:worker`),
+              text: `Issue #${owner.linkedIssue.number}'s GitHub blockers are closed. Continue working on the issue from where you left off.`,
+              attachments: [],
+              modelSelection: latest.modelSelection,
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "agent",
+              creationSource: "server",
+            } satisfies Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>;
+            // The committed suspension still denies admission; this turn queues atomically with its removal.
+            yield* dispatchMessage(message, events, effects);
+            yield* recordSubagentFollowup(message, events);
+          }
+          yield* Ref.update(effects, (pending) => [
+            ...pending,
+            {
+              id: `effect:${command.commandId}:issue-resumed:${resumedIssueId}`,
+              commandId: command.commandId,
+              threadId: command.threadId,
+              request: {
+                type: "issue.suspension.notify",
+                projectId: prior.projectId,
+                issue: owner.linkedIssue!,
+                reason: openBlockerSuspensionReason,
+                resumed: true,
               },
             } satisfies PendingOrchestrationEffectV2,
           ]);

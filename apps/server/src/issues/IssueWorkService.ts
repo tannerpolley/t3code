@@ -57,6 +57,7 @@ import {
   sameIssueRepository,
   supportsManagedIssueWork,
   issueScopeExpansionError,
+  openBlockerSuspensionReason,
 } from "./IssueEligibility.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -620,6 +621,7 @@ export const layer = Layer.effect(
       rootThreadId: ThreadId,
       config: RepositoryOrchestration,
       commandId: CommandId,
+      resumeBlockedIssueId?: string,
     ) =>
       threads
         .dispatch({
@@ -628,6 +630,7 @@ export const layer = Layer.effect(
           commandId,
           expectedRevision: config.revision,
           orchestration: config,
+          ...(resumeBlockedIssueId === undefined ? {} : { resumeBlockedIssueId }),
         })
         .pipe(Effect.mapError(mapError), Effect.asVoid);
     const assertCurrentCaller = Effect.fn("IssueWorkService.assertCurrentCaller")(function* (
@@ -861,7 +864,8 @@ export const layer = Layer.effect(
           const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
           if (
             shell?.linkedIssue === undefined ||
-            (shell.activeRunId === null &&
+            (suspended.get(shell.linkedIssue.id) !== openBlockerSuspensionReason &&
+              shell.activeRunId === null &&
               shell.status !== "queued" &&
               (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
               (yield* store.resultAvailable(threadId)))
@@ -875,7 +879,7 @@ export const layer = Layer.effect(
             reason =
               "Issue closed during work. Decide whether to resume or close out the retained result.";
           else if (issueEligibility(read.success) === "blocked")
-            reason = "A GitHub blocker is open. Resolve it before resuming.";
+            reason = openBlockerSuspensionReason;
           else {
             const parent =
               read.success.parent === null
@@ -885,7 +889,29 @@ export const layer = Layer.effect(
               reason =
                 "Issue was re-parented. Cancel or finish this attempt before starting a successor under its new parent.";
           }
-          if (reason === null) continue;
+          if (reason === null) {
+            if (
+              suspended.get(shell.linkedIssue.id) !== openBlockerSuspensionReason ||
+              config.paused ||
+              config.handoff?.status === "draining"
+            )
+              continue;
+            const resumedIssueId = shell.linkedIssue.id;
+            suspended.delete(resumedIssueId);
+            yield* update(
+              rootThreadId,
+              {
+                ...config,
+                suspendedIssues: config.suspendedIssues.filter(
+                  (entry) => entry.id !== resumedIssueId,
+                ),
+              },
+              CommandId.make(`issue-resume:${rootThreadId}:${config.revision}:${resumedIssueId}`),
+              resumedIssueId,
+            );
+            config = (yield* store.configuration(rootThreadId))!;
+            continue;
+          }
           if (suspended.get(shell.linkedIssue.id) === reason) continue;
           suspended.set(shell.linkedIssue.id, reason);
           config = {

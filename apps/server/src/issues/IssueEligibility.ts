@@ -16,6 +16,8 @@ export const sameIssueRepository = (
 export const issueScopeExpansionError =
   "The ancestor owner needs approval to expand the milestone or repository scope.";
 
+export const openBlockerSuspensionReason = "A GitHub blocker is open. Resolve it before resuming.";
+
 /** Failed or partial relationship reads never authorize a worker. */
 export function issueEligibility(
   read: IssueWorkRead,

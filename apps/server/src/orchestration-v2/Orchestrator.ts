@@ -7321,7 +7321,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.notification !== undefined ||
       command.restartContinuationOfRunId !== undefined ||
       command.automaticProviderContinuationOfRunId !== undefined ||
-      (command.createdBy !== "user" && command.creationSource !== "mcp")
+      (command.createdBy !== "user" &&
+        command.creationSource !== "mcp" &&
+        !(command.creationSource === "server" && command.senderThreadId !== undefined))
     )
       return;
     const pending = yield* Ref.get(events);
@@ -11438,6 +11440,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const repositoryWork = makeRepositoryWorkCommands({
+    recordSubagentFollowup: (command, events) =>
+      recordSubagentFollowup(command, events).pipe(mapDispatchError(command)),
     ...forkCommandHooks,
     dispatchThreadCreate,
     dispatchMessage,
