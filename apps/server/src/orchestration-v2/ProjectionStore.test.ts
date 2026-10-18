@@ -326,7 +326,13 @@ it.effect.each([
         }
       });
       const owned = [
-        { taskId: nativeTaskId, description: item.title, kind: "subagent", providerInstanceId },
+        {
+          taskId: nativeTaskId,
+          description: item.title,
+          startedAt: item.startedAt,
+          kind: "subagent",
+          providerInstanceId,
+        },
       ];
       yield* assertOwners(threadId, owned);
       yield* assertOwners(otherThreadId, owned);

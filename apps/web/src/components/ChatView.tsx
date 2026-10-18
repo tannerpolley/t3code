@@ -107,6 +107,10 @@ import {
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  resolveWorkflowOpening,
+  workflowOpeningParentThreadId,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
@@ -1498,6 +1502,28 @@ export default function ChatView(props: ChatViewProps) {
     return scopeThreadRef(parentSubagentEnvironmentId, parentSubagentThreadId);
   })();
   const parentSubagentThread = useQuietThreadShell(parentSubagentThreadRef);
+  // A workflow coordinator's thread opens with its script; the plan that replaces it lives on
+  // the parent's coordinator row, so the parent's detail loads only for such a thread.
+  const workflowOpeningParentId =
+    serverProjection === null
+      ? null
+      : workflowOpeningParentThreadId({
+          thread: serverProjection.thread,
+          messages: serverProjection.messages,
+        });
+  const workflowOpeningParentProjection = useThreadProjection(
+    workflowOpeningParentId === null || parentSubagentEnvironmentId === null
+      ? null
+      : scopeThreadRef(parentSubagentEnvironmentId, workflowOpeningParentId),
+  );
+  const workflowOpening =
+    serverProjection === null || workflowOpeningParentId === null
+      ? null
+      : resolveWorkflowOpening({
+          thread: serverProjection.thread,
+          messages: serverProjection.messages,
+          parentSubagents: workflowOpeningParentProjection?.projection.subagents ?? null,
+        });
   const parentThreadLink =
     parentSubagentThreadRef === null
       ? null
@@ -4780,25 +4806,35 @@ export default function ChatView(props: ChatViewProps) {
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
   const activeThreadPinned = supportsPinning && activeThreadShell?.pinnedAt != null;
+  // The compiler caches render results on their inputs, so a clock read in render
+  // stays frozen until the shell changes. The clock is state: reset with the shell,
+  // and moved by the wake timer.
+  const [snoozeClockState, setSnoozeClockState] = useState(() => ({
+    shell: activeThreadShell,
+    now: new Date().toISOString(),
+  }));
+  if (snoozeClockState.shell !== activeThreadShell) {
+    setSnoozeClockState({ shell: activeThreadShell, now: new Date().toISOString() });
+  }
+  const snoozeClock = snoozeClockState.now;
   const activeThreadSnoozed =
     activeThreadShell !== null &&
     supportsSnooze &&
-    effectiveSnoozed(activeThreadShell, { now: new Date().toISOString() });
-  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
+    effectiveSnoozed(activeThreadShell, { now: snoozeClock });
   useEffect(() => {
     if (!activeThreadSnoozed) return;
     const wakeAtMs = Date.parse(activeThreadShell?.snoozedUntil ?? "");
     if (!Number.isFinite(wakeAtMs)) return;
     const id = window.setTimeout(
-      () => bumpSnoozeWakeTick((tick) => tick + 1),
+      () => setSnoozeClockState((clock) => ({ ...clock, now: new Date().toISOString() })),
       Math.min(Math.max(0, wakeAtMs - Date.now()) + 50, 2_147_483_647),
     );
     return () => window.clearTimeout(id);
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A tick that lands before the wake time (timer clamping, clock skew) re-arms the timer.
-  }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A clock that lands before the wake time (timer clamping, clock skew) re-arms the timer.
+  }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeClock]);
   const activeThreadWokeAt =
     activeThreadShell !== null && supportsSnooze
-      ? threadWokeAt(activeThreadShell, { now: new Date().toISOString() })
+      ? threadWokeAt(activeThreadShell, { now: snoozeClock })
       : null;
   const acknowledgeThreadWoke = useAcknowledgeThreadWoke();
   const acknowledgeActiveThreadWoke = () => {
@@ -8053,6 +8089,7 @@ export default function ChatView(props: ChatViewProps) {
                 }
                 onOpenThread={onOpenRelatedThreadStable}
                 parentThreadLink={paintOnlyDisplayedTimeline ? null : parentThreadLink}
+                workflowOpening={paintOnlyDisplayedTimeline ? null : workflowOpening}
                 onForkFromRun={paintOnlyDisplayedTimeline ? async () => {} : onForkFromRunStable}
                 onRollbackCheckpoint={onTimelineRollbackCheckpointStable}
                 supportsConversationRollback={
