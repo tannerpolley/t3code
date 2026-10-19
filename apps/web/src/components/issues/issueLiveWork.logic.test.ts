@@ -343,6 +343,49 @@ it("keeps identical repository and thread IDs on separate environments apart", (
   expect(section(overlay.list(list, otherEnvironment, index))).toBe("in-progress");
 });
 
+it("overlays ordinary work from compact provenance when the managed thread is idle", () => {
+  const ordinary = {
+    ...running,
+    lineage: { rootThreadId: running.id, parentThreadId: null, relationshipToParent: null },
+  };
+  const status: IssueStatusBatchResult[number] = {
+    host: scope.host,
+    nodeId: linkedIssue.nodeId,
+    state: "open",
+    stateReason: null,
+    blockedBy: [],
+    pullRequests: [],
+    closingPullRequests: [],
+    liveWork: [
+      { threadId: root.id, inherited: false, status: "idle" },
+      { threadId: ordinary.id, inherited: false, status: "idle" },
+    ],
+  };
+  const summary = { ...status, number: linkedIssue.number };
+  const index = indexIssueWork([root, ordinary]);
+  const badge = overlay.summary(summary, scope, environmentId, index);
+  const pane = overlay.summary(
+    {
+      ...list.issues[0]!,
+      liveWork: status.liveWork!.map((work) => ({
+        ...work,
+        title: "cached",
+        branch: null,
+        worktreePath: null,
+        pullRequests: [],
+      })),
+    },
+    scope,
+    environmentId,
+    index,
+  );
+  expect(issueProgress(badge)).toBe("in_progress");
+  expect(issueProgress(badge)).toBe(issueProgress(pane));
+  expect(
+    issueProgress(overlay.summary(summary, scope, environmentId, indexIssueWork([root]))),
+  ).toBe("open");
+});
+
 it("overlays compact sidebar status with the same live work and PR observations", () => {
   const status: IssueStatusBatchResult[number] & Pick<IssueSummary, "number" | "liveWork"> = {
     host: scope.host,

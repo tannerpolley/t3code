@@ -61,6 +61,13 @@ export const IssuePullRequest = Schema.Struct({
 });
 export type IssuePullRequest = typeof IssuePullRequest.Type;
 
+const IssueWorkStatus = Schema.Struct({
+  threadId: ThreadId,
+  /** Descendant work is visible, but only the directly linked thread drives running status. */
+  inherited: Schema.optional(Schema.Boolean),
+  status: Schema.Literals(["working", "waiting_on_you", "idle"]),
+});
+
 export const IssueSummary = Schema.Struct({
   number: IssueNumber,
   title: Schema.String,
@@ -110,16 +117,13 @@ export const IssueSummary = Schema.Struct({
   liveWork: Schema.optional(
     Schema.Array(
       Schema.Struct({
-        threadId: ThreadId,
-        /** Descendant work is visible, but only the directly linked thread drives running status. */
-        inherited: Schema.optional(Schema.Boolean),
+        ...IssueWorkStatus.fields,
         /** An ordinary issue link, removable without altering managed work or PRs. */
         canUnlink: Schema.optional(Schema.Boolean),
         title: Schema.String,
         branch: Schema.NullOr(Schema.String),
         worktreePath: Schema.NullOr(Schema.String),
         pullRequests: Schema.Array(Schema.String),
-        status: Schema.Literals(["working", "waiting_on_you", "idle"]),
       }),
     ),
   ),
@@ -162,6 +166,8 @@ export const IssueStatusBatchResult = Schema.Array(
     stateReason: IssueSummary.fields.stateReason,
     blockedBy: Schema.Array(Schema.Struct({ state: IssueSummary.fields.state })),
     pullRequests: Schema.Array(IssuePullRequestStatus),
+    closingPullRequests: Schema.optional(Schema.Array(IssuePullRequestStatus)),
+    liveWork: Schema.optional(Schema.Array(IssueWorkStatus)),
   }),
 );
 export type IssueStatusBatchResult = typeof IssueStatusBatchResult.Type;

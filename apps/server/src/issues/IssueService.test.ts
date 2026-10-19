@@ -96,6 +96,7 @@ function makeHarness(input: {
   readonly onRequest?: (call: ApiCall) => Effect.Effect<void>;
   readonly accountId?: string;
   readonly verificationError?: GitHubPullRequestApi.GitHubPullRequestApiError;
+  readonly verificationErrorHost?: string;
 }) {
   const responses = [...input.responses];
   const calls: Array<ApiCall> = [];
@@ -156,19 +157,17 @@ function makeHarness(input: {
     Layer.provide(Layer.mergeAll(http, credentials, rateLimits)),
     Layer.provide(GitHubQuota.layer),
   );
-  const verifier =
-    input.verificationError === undefined
-      ? Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          withVerifiedCredential: (_request, use) =>
-            use({
-              accountId: input.accountId ?? ACCOUNT_ID,
-              viewer: "octocat",
-              credentialFingerprint: "credential-fingerprint",
-            }),
-        })
-      : Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-          withVerifiedCredential: () => Effect.fail(input.verificationError!),
-        });
+  const verifier = Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+    withVerifiedCredential: (request, use) =>
+      input.verificationError !== undefined &&
+      (input.verificationErrorHost === undefined || input.verificationErrorHost === request.host)
+        ? Effect.fail(input.verificationError)
+        : use({
+            accountId: input.accountId ?? ACCOUNT_ID,
+            viewer: "octocat",
+            credentialFingerprint: "credential-fingerprint",
+          }),
+  });
   const layer = Layer.mergeAll(api, verifier);
   return { layer, calls, rateLimitRecords, invalidatedHosts };
 }
@@ -193,6 +192,8 @@ it.effect(
       const node = (id: string, overrides: Record<string, unknown> = {}) => ({
         __typename: "Issue",
         id,
+        number: Number(id.slice(2)) + 1,
+        repository: { nameWithOwner: REPOSITORY },
         state: "OPEN",
         stateReason: null,
         blockedBy: connection([]),
@@ -247,6 +248,8 @@ it.effect(
         {
           host: HOST,
           nodeId: "I_0",
+          repository: REPOSITORY,
+          number: 1,
           state: "closed",
           stateReason: "not_planned",
           blockedBy: [],
@@ -255,6 +258,8 @@ it.effect(
         {
           host: HOST,
           nodeId: "I_100",
+          repository: REPOSITORY,
+          number: 101,
           state: "open",
           stateReason: null,
           blockedBy: [{ state: "open" }, { state: "closed" }],
@@ -288,6 +293,59 @@ it.effect(
         requests.map((request) => request.variables.ids),
         [refs.slice(0, 100).map((ref) => ref.nodeId), ["I_100"]],
       );
+    }),
+);
+
+it.effect(
+  "keeps successful hosts' issue statuses when another host fails credential verification",
+  () =>
+    Effect.gen(function* () {
+      const failedHost = "unavailable.enterprise.test";
+      const harness = makeHarness({
+        verificationErrorHost: failedHost,
+        verificationError: new GitHubCredentials.GitHubCliFailedError({
+          host: failedHost,
+          cause: new Error("credential unavailable"),
+        }),
+        responses: [
+          httpResponse({
+            data: {
+              nodes: [
+                {
+                  __typename: "Issue",
+                  id: "I_ok",
+                  number: 13,
+                  repository: { nameWithOwner: REPOSITORY },
+                  state: "OPEN",
+                  stateReason: null,
+                  blockedBy: { nodes: [], pageInfo: { hasNextPage: false } },
+                  closedByPullRequestsReferences: { nodes: [], pageInfo: { hasNextPage: false } },
+                },
+              ],
+            },
+          }),
+        ],
+      });
+      const result = yield* (yield* service(harness)).statusBatch({
+        issues: [
+          { host: failedHost, nodeId: "I_failed" },
+          { host: HOST, nodeId: "I_ok" },
+        ],
+      });
+      assert.deepEqual(result, [
+        {
+          host: HOST,
+          repository: REPOSITORY,
+          number: 13,
+          nodeId: "I_ok",
+          state: "open",
+          stateReason: null,
+          blockedBy: [],
+          pullRequests: [],
+        },
+      ]);
+      assert.equal(harness.calls.length, 1);
+      assert.equal(new URL(harness.calls[0]!.url).host, HOST);
     }),
 );
 

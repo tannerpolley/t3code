@@ -4,6 +4,8 @@ import {
   type IssueReadError,
   type IssueListInput,
   type IssueListResult,
+  type IssueStatusBatchInput,
+  type IssueStatusBatchResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -20,6 +22,9 @@ export class IssueRoadmap extends Context.Service<
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueReadError>;
     /** The issue with the same local work its list row carries. */
     readonly detail: (input: IssueDetailInput) => Effect.Effect<IssueDetailResult, IssueReadError>;
+    readonly statusBatch: (
+      input: IssueStatusBatchInput,
+    ) => Effect.Effect<IssueStatusBatchResult, IssueReadError>;
   }
 >()("t3/issues/IssueRoadmap") {}
 
@@ -30,6 +35,56 @@ export const layer = Layer.effect(
     const links = yield* IssueLinks.IssueLinks;
     return IssueRoadmap.of({
       linkRefreshes: links.refreshes,
+      statusBatch: Effect.fn("IssueRoadmap.statusBatch")(function* (input) {
+        const statuses = yield* issues.statusBatch(input);
+        const repositories = new Map<string, (typeof statuses)[number][]>();
+        for (const status of statuses) {
+          const key = `${status.host.toLowerCase()}/${status.repository.toLowerCase()}`;
+          const group = repositories.get(key) ?? [];
+          group.push(status);
+          repositories.set(key, group);
+        }
+        const result: Array<IssueStatusBatchResult[number]> = [];
+        for (const group of repositories.values()) {
+          const list = {
+            repository: { host: group[0]!.host, repository: group[0]!.repository },
+            issues: group.map((status) => ({ ...status, pullRequestRefs: status.pullRequests })),
+          };
+          const enriched = yield* links.enrich(list).pipe(Effect.orElseSucceed(() => list));
+          for (const status of enriched.issues) {
+            const compactPr = ({
+              host,
+              repository,
+              number,
+              state,
+              updatedAt,
+            }: (typeof status.pullRequests)[number]) => ({
+              host,
+              repository,
+              number,
+              state,
+              updatedAt,
+            });
+            result.push({
+              host: status.host,
+              nodeId: status.nodeId,
+              state: status.state,
+              stateReason: status.stateReason,
+              blockedBy: status.blockedBy,
+              pullRequests: status.pullRequests.map(compactPr),
+              closingPullRequests: (status.closingPullRequests ?? status.pullRequests).map(
+                compactPr,
+              ),
+              liveWork: status.liveWork?.map(({ threadId, inherited, status }) => ({
+                threadId,
+                inherited,
+                status,
+              })),
+            });
+          }
+        }
+        return result;
+      }),
       list: (input) =>
         issues.list(input).pipe(
           Effect.flatMap((list) =>

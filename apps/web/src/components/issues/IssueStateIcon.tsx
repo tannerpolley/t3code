@@ -12,7 +12,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 
 type IssueStateInput = Pick<IssueSummary, "state"> &
-  Partial<Pick<IssueSummary, "stateReason" | "liveWork" | "projects">> & {
+  Partial<Pick<IssueSummary, "stateReason" | "projects">> & {
+    readonly liveWork?:
+      | readonly Pick<NonNullable<IssueSummary["liveWork"]>[number], "status">[]
+      | undefined;
     readonly blockedBy?:
       | readonly Pick<NonNullable<IssueSummary["blockedBy"]>[number], "state">[]
       | undefined;

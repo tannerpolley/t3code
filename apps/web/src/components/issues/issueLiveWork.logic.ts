@@ -32,7 +32,13 @@ export function indexIssueWork(shells: readonly EnvironmentThreadShell[]) {
   return { threads, issues };
 }
 type IssueWorkIndex = ReturnType<typeof indexIssueWork>;
-type WorkSummary = Pick<IssueSummary, "number" | "liveWork"> & {
+type WorkSummary = Pick<IssueSummary, "number"> & {
+  readonly liveWork?:
+    | readonly Pick<
+        NonNullable<IssueSummary["liveWork"]>[number],
+        "threadId" | "inherited" | "status"
+      >[]
+    | undefined;
   readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
   readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
 };

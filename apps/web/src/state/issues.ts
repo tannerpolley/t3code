@@ -86,10 +86,11 @@ const sidebarIssuePresentation = Atom.family((key: string) => {
       JSON.stringify([issue.host.toLowerCase(), issue.nodeId]),
     );
     if (status === undefined) return null;
-    const summary: typeof status &
-      Pick<IssueSummary, "number" | "liveWork"> & {
-        closingPullRequests: typeof status.pullRequests;
-      } = { ...status, number: issue.number, closingPullRequests: status.pullRequests };
+    const summary = {
+      ...status,
+      number: issue.number,
+      closingPullRequests: status.closingPullRequests ?? status.pullRequests,
+    };
     return issueStatePresentation(
       get(allEnvironmentShellsBootstrappedAtom)
         ? overlay.summary(summary, issue, environmentId, get(issueWorkIndexAtom))

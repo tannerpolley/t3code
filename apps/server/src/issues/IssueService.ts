@@ -27,6 +27,7 @@ import {
   type IssueWorkRead,
   type IssueChangeBaseline,
   type IssueRepositoryRef,
+  type IssueRef,
   type ThreadLinkedIssue as ThreadLinkedIssueType,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -280,6 +281,8 @@ const StatusConnection = <S extends Schema.Top>(node: S) =>
 const StatusIssueNode = Schema.Struct({
   __typename: Schema.Literal("Issue"),
   id: WorkIssueNode.fields.id,
+  number: WorkIssueNode.fields.number,
+  repository: GraphQlPullRequestSchema.fields.repository,
   state: WorkIssueNode.fields.state,
   stateReason: GraphQlIssueSchema.fields.stateReason,
   blockedBy: StatusConnection(Schema.Struct({ state: WorkIssueNode.fields.state })),
@@ -310,7 +313,7 @@ const STATUS_BATCH_QUERY = `query($ids: [ID!]!) {
   nodes(ids: $ids) {
     __typename
     ... on Issue {
-      id state stateReason
+      id number repository { nameWithOwner } state stateReason
       blockedBy(first: 100) { nodes { state } pageInfo { hasNextPage } }
       closedByPullRequestsReferences(first: 100, includeClosedPrs: true) {
         nodes { number state updatedAt repository { nameWithOwner } }
@@ -781,7 +784,7 @@ export class IssueService extends Context.Service<
     ) => Effect.Effect<IssueListResultType, IssueReadError>;
     readonly statusBatch: (
       input: IssueStatusBatchInput,
-    ) => Effect.Effect<IssueStatusBatchResult, IssueReadError>;
+    ) => Effect.Effect<ReadonlyArray<IssueStatusBatchResult[number] & IssueRef>, IssueReadError>;
     readonly detail: (
       input: IssueDetailInputType,
     ) => Effect.Effect<IssueDetailResultType, IssueReadError>;
@@ -1013,11 +1016,12 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         if (ids === undefined) byHost.set(host, (ids = new Set()));
         ids.add(issue.nodeId);
       }
-      const result: Array<IssueStatusBatchResult[number]> = [];
+      const result: Array<IssueStatusBatchResult[number] & IssueRef> = [];
       for (const [host, nodeIds] of byHost) {
         yield* githubPullRequests
           .withVerifiedCredential({ cwd: homeDirectory, host }, () =>
             Effect.gen(function* () {
+              const statuses: typeof result = [];
               const ids = [...nodeIds];
               for (let offset = 0; offset < ids.length; offset += 100) {
                 const batch = ids.slice(offset, offset + 100);
@@ -1054,8 +1058,10 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                     node.closedByPullRequestsReferences.pageInfo.hasNextPage
                   )
                     continue;
-                  result.push({
+                  statuses.push({
                     host,
+                    repository: node.repository.nameWithOwner,
+                    number: node.number,
                     nodeId: node.id,
                     state: node.state === "OPEN" ? "open" : "closed",
                     stateReason: node.stateReason?.toLowerCase() ?? null,
@@ -1073,11 +1079,16 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                   });
                 }
               }
+              return statuses;
             }),
           )
           .pipe(
-            Effect.mapError((error) =>
-              isIssueReadError(error) ? error : mapGitHubError("detail", error),
+            Effect.tap((statuses) => Effect.sync(() => result.push(...statuses))),
+            Effect.catch((error) =>
+              Effect.logWarning("Could not read issue statuses for GitHub host", {
+                host,
+                code: (isIssueReadError(error) ? error : mapGitHubError("detail", error)).code,
+              }),
             ),
           );
       }

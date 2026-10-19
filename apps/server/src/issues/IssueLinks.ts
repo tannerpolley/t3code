@@ -3,7 +3,8 @@ import {
   IssueRef,
   type IssueLinkInput,
   type IssueLinkResult,
-  type IssueListResult,
+  type IssueRepositoryRef,
+  type IssuePullRequestStatus,
   type IssueSummary,
   ThreadId,
   type OrchestrationV2ThreadShell,
@@ -30,6 +31,14 @@ const key = (issue: IssueRef) =>
 const isIssueRef = Schema.is(IssueRef);
 const encodePrRefs = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(IssueRef)));
 const storageError = (cause: unknown) => new IssueLinkError({ code: "storage", cause });
+
+type WorkList = {
+  readonly repository: IssueRepositoryRef;
+  readonly issues: readonly (Pick<IssueSummary, "number" | "pullRequestRefs"> & {
+    readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
+    readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
+  })[];
+};
 
 function target(input: IssueLinkInput): IssueRef | null {
   let ref = {
@@ -70,7 +79,15 @@ export class IssueLinks extends Context.Service<
       remove?: boolean,
     ) => Effect.Effect<IssueLinkResult, IssueLinkError>;
     readonly refreshes: Stream.Stream<number>;
-    readonly enrich: (list: IssueListResult) => Effect.Effect<IssueListResult, IssueLinkError>;
+    readonly enrich: <T extends WorkList>(
+      list: T,
+    ) => Effect.Effect<
+      T & {
+        readonly issues: readonly (T["issues"][number] &
+          Pick<IssueSummary, "liveWork" | "pullRequestCount">)[];
+      },
+      IssueLinkError
+    >;
   }
 >()("t3/issues/IssueLinks") {}
 
@@ -101,7 +118,9 @@ const make = Effect.gen(function* () {
     if (rows.length > 0) yield* SubscriptionRef.update(refreshes, (revision) => revision + 1);
     return { issue, threadId, changed: rows.length > 0 };
   });
-  const enrich: IssueLinks["Service"]["enrich"] = Effect.fn("IssueLinks.enrich")(function* (list) {
+  const enrich: IssueLinks["Service"]["enrich"] = Effect.fn("IssueLinks.enrich")(function* <
+    T extends WorkList,
+  >(list: T) {
     const host = list.repository.host.toLowerCase();
     const repository = list.repository.repository.toLowerCase();
     const rows = yield* sql<{ issue_number: number; thread_id: string }>`

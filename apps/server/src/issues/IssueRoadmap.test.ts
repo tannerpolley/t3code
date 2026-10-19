@@ -122,14 +122,14 @@ it.effect("gives an issue's detail the live work its row has, matched by closing
       },
     ],
   };
-  let enriched: IssueListResult | undefined;
+  let enrichedRefs: IssueListResult["issues"][number]["pullRequestRefs"];
   const layer = IssueRoadmap.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(IssueService.IssueService)({ detail: () => Effect.succeed(detail) }),
         Layer.mock(IssueLinks.IssueLinks)({
           enrich: (value) => {
-            enriched = value;
+            enrichedRefs = value.issues[0]?.pullRequestRefs;
             return Effect.succeed({
               ...value,
               issues: value.issues.map(({ pullRequestRefs: _ignored, ...issue }) => ({
@@ -144,7 +144,7 @@ it.effect("gives an issue's detail the live work its row has, matched by closing
   );
   return Effect.gen(function* () {
     const result = yield* (yield* IssueRoadmap.IssueRoadmap).detail({ ...input, number: 13 });
-    assert.deepEqual(enriched?.issues[0]?.pullRequestRefs, [{ ...input, number: 42 }]);
+    assert.deepEqual(enrichedRefs, [{ ...input, number: 42 }]);
     assert.deepEqual(result.issue.liveWork, []);
     assert.equal(result.linkedPullRequests.length, 2);
   }).pipe(Effect.provide(layer));

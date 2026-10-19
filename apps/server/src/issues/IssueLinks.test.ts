@@ -17,6 +17,8 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as Stream from "effect/Stream";
 import * as IssueLinks from "./IssueLinks.ts";
+import * as IssueRoadmap from "./IssueRoadmap.ts";
+import * as IssueService from "./IssueService.ts";
 import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 
 const ref = { host: "github.com", repository: "owner/repo", number: 13 };
@@ -127,6 +129,64 @@ it.effect(
         ],
       );
     }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "sidebar status includes ordinarily linked running work beside an idle managed thread",
+  () => {
+    const managed = {
+      ...liveThreadShell(ThreadId.make("managed"), { activeRunId: null }),
+      status: "idle" as const,
+      linkedIssue: {
+        ...ref,
+        repositoryId: "repo",
+        id: "13",
+        nodeId: "I_13",
+        title: "Roadmap",
+        url: "https://github.com/owner/repo/issues/13",
+      },
+    };
+    const ordinary = liveThreadShell(threadId);
+    const h = harness([managed, ordinary]);
+    const layer = IssueRoadmap.layer.pipe(
+      Layer.provideMerge(h.layer),
+      Layer.provide(
+        Layer.mock(IssueService.IssueService)({
+          list: () => Effect.succeed(list()),
+          statusBatch: () =>
+            Effect.succeed([
+              {
+                ...ref,
+                nodeId: "I_13",
+                state: "open" as const,
+                stateReason: null,
+                blockedBy: [],
+                pullRequests: [],
+              },
+            ]),
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* (yield* IssueLinks.IssueLinks).link(ref, ordinary.id);
+      const roadmap = yield* IssueRoadmap.IssueRoadmap;
+      const pane = yield* roadmap.list({ ...ref, roadmap: true });
+      const badge = yield* roadmap.statusBatch({ issues: [{ host: ref.host, nodeId: "I_13" }] });
+      const compact = pane.issues[0]!.liveWork!.map(({ threadId, inherited, status }) => ({
+        threadId,
+        inherited,
+        status,
+      }));
+      assert.deepEqual(badge[0]?.liveWork, compact);
+      assert.deepEqual(compact, [
+        { threadId: managed.id, inherited: false, status: "idle" },
+        { threadId: ordinary.id, inherited: false, status: "working" },
+      ]);
+      assert.deepEqual(badge[0]?.closingPullRequests, []);
+      assert.notProperty(badge[0]!, "repository");
+      assert.notProperty(badge[0]!.liveWork![0]!, "title");
+    }).pipe(Effect.provide(layer));
   },
 );
 
