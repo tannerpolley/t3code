@@ -299,12 +299,12 @@ worker exists; use the repository's orchestrator link on the Issues page to open
 **Linked issue** in thread details opens the issue beside that thread. A worker marked done may
 still need review, publishing, or merge approval; T3 does not automatically close the GitHub issue.
 
-To change how much issue work runs at once, set the worker limit in the repository header of the
-Issues pane. The limit starts at 4 and can be set from 1 to 32; the header shows how many slots
+To change how much issue work runs at once, edit **Workers** at the top of the repository on the
+Issues pane. The limit starts at 4 and can be set from 1 to 32; **Workers** shows how many slots
 are in use. Raising it starts eligible queued work. Lowering it lets current workers finish and
 holds new starts until there is room. The repository orchestrator does not use a worker slot.
 An issue worker paused by an open GitHub blocker resumes by itself within about a minute after
-all its blockers close. Other pauses still wait for **Resume repository work**.
+all its blockers close. Other pauses wait until you resume repository work from **Status**.
 
 Issue agents can create issues, split work into sub-issues, and move issues between milestones.
 To require approval for these too, turn on **Ask before agents create, split or move issues** in
@@ -318,17 +318,18 @@ preview, the agent must propose a new change. If GitHub may have created an issu
 recover it, the change needs your attention. Check GitHub, then choose **Mark resolved** to stop
 its remaining writes. Propose another create only when you intend to create another issue.
 
-To replace the orchestrator's conversation, open the repository on the Issues page, use
-**Hand off to fresh thread** beside its orchestrator, and provide a summary. Your approval pauses new issue admissions until existing
+To replace the orchestrator's conversation, open the repository on the Issues page, choose
+**Hand off to a fresh thread** from the menu beside its orchestrator, and provide a summary. Your approval pauses new issue admissions until existing
 workers and their final results finish; the fresh thread receives your summary and a recovery
-inventory. These controls also let you cancel a pending handoff and open the current or previous
-roots. For a routine provider or model change, keep the same thread.
+inventory. You can cancel a pending handoff there too, and the same menu opens previous
+orchestrators. For a routine provider or model change, keep the same thread.
 
-To restore orchestration to another existing thread, first use **Pause repository work**. The
+To restore orchestration to another existing thread, first pause repository work from **Status**. The
 current orchestrator must be stopped, with no active issue workers or unclaimed start requests.
-Then use **Use another thread as orchestrator** to select a top-level thread in the same project.
+Then choose **Use another thread as orchestrator** from the orchestrator's menu to select a
+top-level thread in the same project.
 Only you can approve this restore. Existing issue workers keep their threads, and the repository
-remains paused after the change. Use **Resume repository work** when you are ready to continue.
+remains paused after the change. Resume it from **Status** when you are ready to continue.
 
 A thread's details also list its repository's open issues in an **Issues** section, grouped by
 collapsible milestones, and open them beside the thread. For a fork checkout, these are the fork's
