@@ -12,6 +12,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ActivityIcon,
   ArrowRightLeftIcon,
+  ListStartIcon,
   MoreHorizontalIcon,
   NetworkIcon,
   PauseIcon,
@@ -470,20 +471,29 @@ function Controls({
   };
   return (
     <div className="flex max-w-full shrink-0 flex-col items-end gap-1">
-      <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
+      <div className="flex min-h-8 items-center gap-1 pe-2">
         {plan ? (
-          <span className="text-xs text-muted-foreground">
+          <span className="text-2xs text-muted-foreground">
             {config?.paused ? "Paused" : plan.status.replaceAll("_", " ")}
           </span>
         ) : null}
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={busy || project === null || milestone.state === "closed"}
-          onClick={() => setExpanded(!expanded)}
-        >
-          Work through milestone
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Work through milestone"
+                aria-expanded={expanded}
+                disabled={busy || project === null || milestone.state === "closed"}
+                onClick={() => setExpanded(!expanded)}
+              />
+            }
+          >
+            <ListStartIcon />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Work through milestone</TooltipPopup>
+        </Tooltip>
       </div>
       {expanded ? (
         <div className="flex flex-col gap-2 p-2">
