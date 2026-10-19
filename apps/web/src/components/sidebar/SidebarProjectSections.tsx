@@ -1018,6 +1018,9 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
     expandedByKey === null
       ? undefined
       : resolveSidebarFamilySeparators(collectDisplayedFamilyRows({ ...props, expandedByKey }));
+  // Rows compare this text, not the map: any work toggle rebuilds the map, usually unchanged.
+  const familySeparatorsText =
+    familySeparators === undefined ? "" : [...familySeparators].join(";");
   // Each location's lead thread, over every shown row: threads and their running subagents.
   const locationLeads = (() => {
     if (!codexStyle) return null;
@@ -1214,6 +1217,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               relocatedThreadKeys={props.relocatedThreadKeys}
               locationLeadKeys={locationLeadKeys}
               familySeparators={familySeparators}
+              familySeparatorsText={familySeparatorsText}
             />
           ))}
           {props.threads.length === 0 ? (
@@ -1274,6 +1278,8 @@ const SidebarProjectThreadRow = memo(
     readonly locationLeadKeys?: ReadonlySet<string> | undefined;
     readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
     readonly familySeparators?: ReadonlyMap<string, SidebarFamilySeparator> | undefined;
+    /** The project's separators as text; equal text means an equal map. */
+    readonly familySeparatorsText?: string | undefined;
   }) {
     const activeThreadKey = scopedThreadKey(
       scopeThreadRef(props.thread.environmentId, props.thread.id),
@@ -1501,7 +1507,7 @@ const SidebarProjectThreadRow = memo(
       previous.onContextMenu === next.onContextMenu &&
       previous.locationLeadKeys === next.locationLeadKeys &&
       previous.relocatedThreadKeys === next.relocatedThreadKeys &&
-      previous.familySeparators === next.familySeparators &&
+      previous.familySeparatorsText === next.familySeparatorsText &&
       sameSidebarSubagentTree(
         key,
         previous.runningSubagentsByParentKey,
