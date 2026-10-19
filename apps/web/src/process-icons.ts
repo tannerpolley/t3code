@@ -18,6 +18,7 @@ const BRAND_ICONS = [
   ["uv", ["uv"]],
   ["npm", ["npm"]],
   ["gnu", ["gcc", "g++", "cc1", "cc1plus", "ld"]],
+  ["cplusplus", ["c++"]],
   ["llvm", ["clang*"]],
   ["rust", ["rustc", "cargo"]],
   ["go", ["go"]],
@@ -30,7 +31,9 @@ const BRAND_ICONS = [
   ["android", ["adb"]],
 ] as const;
 
-export type ProcessIconKind = (typeof BRAND_ICONS)[number][0] | "terminal";
+export type ProcessIconKind = (typeof BRAND_ICONS)[number][0] | "terminal" | "build";
+// Build tools without brand artwork.
+const BUILD_PROGRAMS = new Set(["ninja", "make", "gmake", "ccache"]);
 const TERMINAL_PROGRAMS = new Set([
   "tail",
   "ugrep",
@@ -43,21 +46,18 @@ const TERMINAL_PROGRAMS = new Set([
   "less",
 ]);
 
-/** Match the process name before argv0's basename, as in Process Monitor. */
-export function processIconKind(name: string, argv0 = ""): ProcessIconKind | null {
-  const candidates = [name.toLowerCase(), argv0.split("/").at(-1)!.toLowerCase()];
-  for (const candidate of candidates) {
-    for (const [slug, patterns] of BRAND_ICONS) {
-      // The source table uses only literal names and trailing-star shell patterns.
-      if (
-        patterns.some((pattern) =>
-          pattern.endsWith("*")
-            ? candidate.startsWith(pattern.slice(0, -1))
-            : candidate === pattern,
-        )
+/** The first matching brand wins, then the generic terminal and build marks. */
+export function processIconKind(name: string): ProcessIconKind | null {
+  const candidate = name.toLowerCase();
+  for (const [slug, patterns] of BRAND_ICONS) {
+    // The source table uses only literal names and trailing-star shell patterns.
+    if (
+      patterns.some((pattern) =>
+        pattern.endsWith("*") ? candidate.startsWith(pattern.slice(0, -1)) : candidate === pattern,
       )
-        return slug;
-    }
+    )
+      return slug;
   }
-  return candidates.some((candidate) => TERMINAL_PROGRAMS.has(candidate)) ? "terminal" : null;
+  if (TERMINAL_PROGRAMS.has(candidate)) return "terminal";
+  return BUILD_PROGRAMS.has(candidate) ? "build" : null;
 }

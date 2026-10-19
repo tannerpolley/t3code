@@ -1,6 +1,5 @@
-import { shellCommandWords } from "@t3tools/shared/shellCommand";
-import { TerminalIcon } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import { HammerIcon, TerminalIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { processIconKind } from "../process-icons";
 import { cn } from "../lib/utils";
 import nodedotjs from "../assets/process-icons/nodedotjs.svg?raw";
@@ -21,6 +20,7 @@ import git from "../assets/process-icons/git.svg?raw";
 import uv from "../assets/process-icons/uv.svg?raw";
 import npm from "../assets/process-icons/npm.svg?raw";
 import gnu from "../assets/process-icons/gnu.svg?raw";
+import cplusplus from "../assets/process-icons/cplusplus.svg?raw";
 import llvm from "../assets/process-icons/llvm.svg?raw";
 import rust from "../assets/process-icons/rust.svg?raw";
 import go from "../assets/process-icons/go.svg?raw";
@@ -52,6 +52,7 @@ const ICONS = Object.fromEntries(
     uv,
     npm,
     gnu,
+    cplusplus,
     llvm,
     rust,
     go,
@@ -74,20 +75,13 @@ const ICONS = Object.fromEntries(
 /** Bundled brand artwork; pale variants inherit the theme's muted text color. */
 export function ProcessProgramIcon(props: {
   readonly program: string;
-  readonly commandLine?: string | undefined;
   readonly className: string;
   readonly fallback?: ReactNode;
 }) {
-  const kind = useMemo(
-    () =>
-      processIconKind(
-        props.program,
-        props.commandLine ? shellCommandWords(props.commandLine)[0]?.[0] : undefined,
-      ),
-    [props.program, props.commandLine],
-  );
+  const kind = processIconKind(props.program);
   if (kind === null) return props.fallback ?? null;
   if (kind === "terminal") return <TerminalIcon aria-hidden className={props.className} />;
+  if (kind === "build") return <HammerIcon aria-hidden className={props.className} />;
   const icon = ICONS[kind]!;
   return icon.monochrome ? (
     <span

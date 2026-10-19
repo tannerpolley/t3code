@@ -11,19 +11,10 @@ it.each([
   ["GNOME-shell", "gnome"],
   ["tail", "terminal"],
   ["ugrep", "terminal"],
+  ["c++", "cplusplus"],
+  ["ninja", "build"],
   ["unknown-program", null],
   ["not-python3", null],
 ])("matches %s", (name, expected) => {
   expect(processIconKind(name)).toBe(expected);
-});
-
-it("falls back to argv0's basename, case-insensitively", () => {
-  expect(processIconKind("unknown", "/opt/bin/PYTHON3.12")).toBe("python");
-  expect(processIconKind("unknown", "/usr/bin/ugrep")).toBe("terminal");
-  expect(processIconKind("unknown", "/opt/bin/unknown")).toBeNull();
-});
-
-it("tries the process name before argv0 and brands before terminal fallbacks", () => {
-  expect(processIconKind("node", "/usr/bin/python3")).toBe("nodedotjs");
-  expect(processIconKind("tail", "/usr/bin/node")).toBe("nodedotjs");
 });

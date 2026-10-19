@@ -174,7 +174,6 @@ export function SidebarProcessGroupRows(props: ProcessRowsProps) {
         const icon = (
           <ProcessProgramIcon
             program={group.label}
-            commandLine={group.commandLine}
             className={iconClassName}
             fallback={<CpuIcon aria-hidden className={iconClassName} />}
           />
