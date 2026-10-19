@@ -278,21 +278,6 @@ export const ForkClientSettingsFields = {
   versionControlIssues: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Offer Claude Code plugin skills in the composer menus, labeled Plugin. */
   pluginSkills: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /**
-   * Usage page Limits laid out like Cost and Tokens (one window kind at a time,
-   * provider rows, an estimated by-provider or by-model chart); off shows the
-   * per-provider window cards.
-   */
-  usageLimitModelBreakdown: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** The sidebar footer's Usage icon shows each provider's five-hour quota left. */
-  sidebarFiveHourUsage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /**
-   * The sidebar footer's Usage icon shows today's pace budget left, pacing each
-   * Monday–Friday at 20% of each provider's weekly limit.
-   */
-  dailyUsageMeter: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /** The sidebar footer's Usage icon shows each provider's weekly quota left instead. */
-  sidebarWeeklyUsage: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Customizations: this fork's UI changes, each switchable back to the original behavior.
   branchPickerGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Show a browser tab an agent uses in the right panel instead of the floating mini player. */
@@ -380,10 +365,6 @@ export const ForkClientSettingsPatchFields = {
   issuesPage: Schema.optionalKey(Schema.Boolean),
   versionControlIssues: Schema.optionalKey(Schema.Boolean),
   pluginSkills: Schema.optionalKey(Schema.Boolean),
-  usageLimitModelBreakdown: Schema.optionalKey(Schema.Boolean),
-  sidebarFiveHourUsage: Schema.optionalKey(Schema.Boolean),
-  dailyUsageMeter: Schema.optionalKey(Schema.Boolean),
-  sidebarWeeklyUsage: Schema.optionalKey(Schema.Boolean),
   branchPickerGroups: Schema.optionalKey(Schema.Boolean),
   agentBrowserInPanel: Schema.optionalKey(Schema.Boolean),
   openQuestionsAutomatically: Schema.optionalKey(Schema.Boolean),

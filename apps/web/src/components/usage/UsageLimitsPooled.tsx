@@ -62,7 +62,7 @@ function AccountChip({ email }: { readonly email: string }) {
   );
 }
 
-export function AccountAvatar({
+function AccountAvatar({
   account,
   className,
 }: {
@@ -554,21 +554,7 @@ export function UsageLimitsPooled({
         </Fragment>
       ))}
       {cursorPromptAt === pools.length ? cursorPrompt : null}
-      <ExternalUsageLinks links={externalLinks} />
-      <LimitNotices notices={notices} />
-    </div>
-  );
-}
-
-/** Providers whose usage lives on an external page, such as ChatGPT's shared usage. */
-export function ExternalUsageLinks({
-  links,
-}: {
-  readonly links: ReturnType<typeof collectExternalUsageLinks>;
-}) {
-  return (
-    <>
-      {links.map((link) => (
+      {externalLinks.map((link) => (
         <section
           key={link.url}
           className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"
@@ -598,11 +584,12 @@ export function ExternalUsageLinks({
           </Button>
         </section>
       ))}
-    </>
+      <LimitNotices notices={notices} />
+    </div>
   );
 }
 
-export function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
+function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (
     <Alert variant="warning" controlAlignment="first-line">

@@ -82,7 +82,6 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
-import { LimitWindowPicker, UsageLimitsOverview, useLimitsOverview } from "./UsageLimitsOverview";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
@@ -229,14 +228,6 @@ export function UsagePage() {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const limitsOverview = useLimitsOverview({
-    showingLimits,
-    selectedEnvironmentIds,
-    hiddenProviders,
-    now: limitsNow,
-    savedWindow: preferences.limitWindow,
-  });
-  const limitWindow = limitsOverview.window;
 
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
@@ -367,16 +358,6 @@ export function UsagePage() {
     shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
       ? `${formatDateTimeShort(shownWindow.sinceTime, shownWindow.timeZone)} to ${formatDateTimeShort(shownWindow.untilTime, shownWindow.timeZone)}`
       : `${formatDayShort(shownWindow.sinceDay)} to ${formatDayShort(shownWindow.untilDay)}`;
-  const cursorLimitsPrompt =
-    cursorAccessEnvironments.length > 0 ? (
-      <CursorEnableLimits
-        environments={cursorAccessEnvironments}
-        onEnabled={() => {
-          void refresh();
-          void refreshLimits(false, true);
-        }}
-      />
-    ) : null;
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 xl:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
@@ -427,32 +408,22 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        {limitWindow ? (
-          <LimitWindowPicker
-            windows={limitsOverview.windows}
-            value={limitWindow.value}
-            onValueChange={(value) => updatePreferences({ limitWindow: value })}
-          />
-        ) : (
-          // The period does not apply to the card Limits view, so it stays in
-          // place but disabled; unmounting it shifted the metric toggle ~300px.
-          <ToggleGroup
-            aria-label="Usage period"
-            variant="segmented"
-            value={[String(windowDays)]}
-            disabled={showingLimits}
-            onValueChange={(next) => {
-              const value = next[0];
-              if (value) selectWindow(Number(value));
-            }}
-          >
-            {WINDOW_OPTIONS.map((option) => (
-              <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
-                {option.label}
-              </Toggle>
-            ))}
-          </ToggleGroup>
-        )}
+        <ToggleGroup
+          aria-label="Usage period"
+          variant="segmented"
+          value={[String(windowDays)]}
+          disabled={showingLimits}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (value) selectWindow(Number(value));
+          }}
+        >
+          {WINDOW_OPTIONS.map((option) => (
+            <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
+              {option.label}
+            </Toggle>
+          ))}
+        </ToggleGroup>
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
@@ -489,42 +460,33 @@ export function UsagePage() {
             ))}
           </SelectPopup>
         </Select>
-        {limitWindow ? (
-          <LimitWindowPicker
-            compact
-            windows={limitsOverview.windows}
-            value={limitWindow.value}
-            onValueChange={(value) => updatePreferences({ limitWindow: value })}
-          />
-        ) : (
-          <Select
-            value={String(windowDays)}
-            disabled={showingLimits}
-            onValueChange={(value) => selectWindow(Number(value))}
+        <Select
+          value={String(windowDays)}
+          disabled={showingLimits}
+          onValueChange={(value) => selectWindow(Number(value))}
+        >
+          <SelectTrigger
+            aria-label="Usage period"
+            size="compact"
+            variant="ghost"
+            className="w-auto min-w-0"
           >
-            <SelectTrigger
-              aria-label="Usage period"
-              size="compact"
-              variant="ghost"
-              className="w-auto min-w-0"
-            >
-              <SelectValue>
-                {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {WINDOW_OPTIONS.map((option) => (
-                <SelectItem
-                  key={option.days}
-                  value={String(option.days)}
-                  title={shortcutTitle(option)}
-                >
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        )}
+            <SelectValue>
+              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {WINDOW_OPTIONS.map((option) => (
+              <SelectItem
+                key={option.days}
+                value={String(option.days)}
+                title={shortcutTitle(option)}
+              >
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
@@ -552,21 +514,22 @@ export function UsagePage() {
                   ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
-            ) : showingLimits && limitsOverview.enabled ? (
-              <UsageLimitsOverview
-                presentations={limitsOverview.presentations}
-                pools={limitsOverview.pools}
-                kind={limitWindow?.value}
-                selectedEnvironmentIds={selectedEnvironmentIds}
-                now={limitsNow}
-                cursorPrompt={cursorLimitsPrompt}
-              />
             ) : showingLimits ? (
               <UsageLimitsSection
                 selectedEnvironmentIds={selectedEnvironmentIds}
                 hiddenProviders={hiddenProviders}
                 now={limitsNow}
-                cursorPrompt={cursorLimitsPrompt}
+                cursorPrompt={
+                  cursorAccessEnvironments.length > 0 ? (
+                    <CursorEnableLimits
+                      environments={cursorAccessEnvironments}
+                      onEnabled={() => {
+                        void refresh();
+                        void refreshLimits(false, true);
+                      }}
+                    />
+                  ) : null
+                }
               />
             ) : shown === null ? (
               <UsageSkeleton />

@@ -285,16 +285,11 @@ export function ResetCredits({
   input,
   credits,
   now,
-  compact = false,
-  leading,
 }: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
-  readonly compact?: boolean;
-  /** Shown before the summary, such as which account the credits belong to. */
-  readonly leading?: ReactNode;
 }) {
   const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
     environmentId,
@@ -303,8 +298,7 @@ export function ResetCredits({
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      {leading}
-      <span className="tabular-nums">{resetCreditsSummary(credits, now, compact)}</span>
+      <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
       {credits.availableCount > 0 ? (
         <Button
           size="xs"

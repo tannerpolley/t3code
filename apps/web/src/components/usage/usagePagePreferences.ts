@@ -1,4 +1,4 @@
-import { ServerProviderUsageWindow, UsageProviderKind } from "@t3tools/contracts";
+import { UsageProviderKind } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
@@ -8,8 +8,6 @@ const UsagePagePreferencesSchema = Schema.Struct({
   metric: Schema.Literals(["cost", "tokens", "limits"]),
   windowDays: Schema.Literals([1, 7, 30, 90]),
   hiddenProviders: Schema.optional(Schema.Array(UsageProviderKind)),
-  /** The limit window Limits shows when laid out like Cost and Tokens. */
-  limitWindow: Schema.optionalKey(ServerProviderUsageWindow.fields.kind),
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
 

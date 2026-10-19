@@ -39,7 +39,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
-import { SidebarUsageItem } from "./SidebarUsageItem";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -257,8 +256,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
 
   return (
-    // Wraps so the usage readouts can take their own row above the icon buttons.
-    <SidebarMenu className="flex-row flex-wrap items-center">
+    <SidebarMenu className="flex-row items-center">
       {isOnUtilityPage ? (
         <SidebarMenuItem className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleBackClick}>
@@ -285,7 +283,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
-          <SidebarUsageItem />
           {/* Don't ask and Issues sit at the far right, so they never shift the buttons before them. */}
           <SidebarDontAskModeItem />
           {issuesSupported ? (

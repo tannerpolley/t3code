@@ -79,10 +79,6 @@ const storedSettingsFile = JSON.stringify({
     issuesPage: false,
     versionControlIssues: false,
     pluginSkills: false,
-    usageLimitModelBreakdown: false,
-    sidebarFiveHourUsage: true,
-    dailyUsageMeter: true,
-    sidebarWeeklyUsage: true,
     branchPickerGroups: false,
     agentBrowserInPanel: false,
     openQuestionsAutomatically: true,
@@ -98,6 +94,21 @@ const storedSettingsFile = JSON.stringify({
 });
 
 describe("stored fork settings compatibility", () => {
+  it("discards removed usage customizations in old client settings without losing saved choices", () => {
+    const client = {
+      projectsView: false,
+      sidebarFiveHourUsage: true,
+      dailyUsageMeter: true,
+      sidebarWeeklyUsage: true,
+      usageLimitModelBreakdown: true,
+    };
+    expect(decodeClientSettingsFile(JSON.stringify(client))).toEqual({
+      ...DEFAULT_CLIENT_SETTINGS,
+      projectsView: false,
+    });
+    expect(decodeClientPatch(client)).toEqual({ projectsView: false });
+  });
+
   it("preserves every stored fork field, legacy roles, and omitted-field defaults", () => {
     const stored = JSON.parse(storedSettingsFile);
     const server = decodeServerSettingsFile(JSON.stringify(stored.server));
@@ -171,10 +182,6 @@ describe("stored fork settings compatibility", () => {
       issuesPage: true,
       versionControlIssues: true,
       pluginSkills: true,
-      usageLimitModelBreakdown: true,
-      sidebarFiveHourUsage: false,
-      dailyUsageMeter: false,
-      sidebarWeeklyUsage: false,
       branchPickerGroups: true,
       agentBrowserInPanel: true,
       openQuestionsAutomatically: false,

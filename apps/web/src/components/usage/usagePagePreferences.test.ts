@@ -35,15 +35,6 @@ describe("Usage page preferences", () => {
     }
   });
 
-  it("keeps the chosen limit window alongside the metric", () => {
-    saveUsagePagePreferences({ metric: "limits", windowDays: 7, limitWindow: "weekly" });
-    expect(readUsagePagePreferences()).toEqual({
-      metric: "limits",
-      windowDays: 7,
-      limitWindow: "weekly",
-    });
-  });
-
   it("round-trips hidden providers and reads older saves without them", () => {
     saveUsagePagePreferences({ metric: "cost", windowDays: 7, hiddenProviders: ["codex"] });
     expect(readUsagePagePreferences().hiddenProviders).toEqual(["codex"]);

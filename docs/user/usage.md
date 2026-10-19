@@ -92,27 +92,6 @@ Claude resets are not available when the server runs on macOS, where Claude keep
 Keychain. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
 
-This fork lays Limits out like Cost and Tokens by default. Pick a window (**5 hours**, **Weekly**,
-**Monthly**) where the period picker usually is. The headline is the tightest provider's share left
-and its next refill. Each provider row shows what is left and how many accounts share it; hover a row
-for each account's share and reset time. The chart and **Breakdown** estimate how much of the window
-each provider or model used. Providers do not report this, so it is estimated from the usage your
-connected environments recorded, weighted by each model's API-equivalent price. Usage from other
-machines or apps on the same account is spread across the models shown. Redeem a banked reset credit
-from the **Reset credits** total. For the window cards described above, turn off **Settings →
-General → Limits page like Cost and Tokens**.
-
-Three optional sidebar readouts live in **Settings → General → Usage**. Each one you turn
-on replaces the Usage button's icon with a compact value per provider for Claude and Codex:
-**5-hour usage in the sidebar** (`5h 62%`) is the five-hour quota left, **Daily usage in the
-sidebar** (`1d 40%`) is the share of today's budget left, and **Weekly usage in the sidebar**
-(`7d 75%`) is the weekly quota left. The daily budget paces the weekly limit at 20% per
-Monday–Friday, carrying unused room forward; it turns red when you are over pace and reads `1d off`
-on weekends. Click a readout to see its last reading time, refresh usage, or open **Usage → Limits**.
-With the weekly readout on, it also shows Claude's model-specific weekly limits. Returning to the
-app checks older readings. A passed reset is shown as stale until usage is read again; manual
-refresh always requests a new reading.
-
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 

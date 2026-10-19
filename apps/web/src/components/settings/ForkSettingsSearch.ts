@@ -258,38 +258,6 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork plugin skills claude code dollar menu composer badge"],
   },
   {
-    id: "usage-limit-model-breakdown",
-    title: "Limits page like Cost and Tokens",
-    to: "/settings/general",
-    searchTerms: [
-      "customization fork usage limits window models breakdown weekly session estimate chart",
-    ],
-  },
-  {
-    id: "sidebar-five-hour-usage",
-    title: "5-hour usage in the sidebar",
-    to: "/settings/general",
-    searchTerms: [
-      "customization fork usage limits five hour 5h session quota left sidebar footer claude codex",
-    ],
-  },
-  {
-    id: "daily-usage-meter",
-    title: "Daily usage in the sidebar",
-    to: "/settings/general",
-    searchTerms: [
-      "customization fork usage limits weekly daily budget pace workday sidebar meter claude codex",
-    ],
-  },
-  {
-    id: "sidebar-weekly-usage",
-    title: "Weekly usage in the sidebar",
-    to: "/settings/general",
-    searchTerms: [
-      "customization fork usage limits weekly quota left sidebar footer claude codex 7d",
-    ],
-  },
-  {
     id: "fast-shimmer",
     title: "Faster activity shimmer",
     to: "/settings/appearance",
