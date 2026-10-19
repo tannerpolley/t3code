@@ -188,7 +188,11 @@ describe("codexResetCreditsToContract", () => {
           { status: "available", expiresAt: 1_784_000_000 },
         ],
       }),
-    ).toEqual({ availableCount: 2, nextExpiresAt: "2026-07-14T03:33:20.000Z" });
+    ).toEqual({
+      availableCount: 2,
+      nextExpiresAt: "2026-07-14T03:33:20.000Z",
+      expiries: ["2026-07-14T03:33:20.000Z", "2026-07-19T22:26:40.000Z"],
+    });
     expect(codexResetCreditsToContract({ availableCount: 0 })).toEqual({ availableCount: 0 });
     expect(codexResetCreditsToContract(null)).toBeUndefined();
   });

@@ -280,6 +280,42 @@ export function resetCreditsSummary(
   }`;
 }
 
+export function ResetCreditExpiries({
+  credits,
+  now,
+}: {
+  readonly credits: ServerProviderResetCredits;
+  readonly now: number;
+}) {
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  if (credits.availableCount === 0) return null;
+  const expiryLine = (label: string, expiry: string) =>
+    `${label} ${formatUpcomingTimestamp(expiry, timestampFormat, now)} · in ${formatDuration(Date.parse(expiry) - now)}`;
+  const lines: string[] = [];
+  if (credits.expiries !== undefined) {
+    const counts = new Map<string, number>();
+    for (const expiry of credits.expiries) {
+      counts.set(expiry, (counts.get(expiry) ?? 0) + 1);
+    }
+    for (const [expiry, count] of [...counts].sort(
+      ([left], [right]) => Date.parse(left) - Date.parse(right),
+    )) {
+      lines.push(expiryLine(`${count} ${count === 1 ? "expires" : "expire"}`, expiry));
+    }
+    const undated = credits.availableCount - credits.expiries.length;
+    if (undated > 0) lines.push(`${undated} with no expiry date`);
+  } else if (credits.nextExpiresAt) {
+    lines.push(expiryLine("Next expires", credits.nextExpiresAt));
+  }
+  return (
+    <div className="flex flex-col gap-1 tabular-nums">
+      {lines.map((line) => (
+        <span key={line}>{line}</span>
+      ))}
+    </div>
+  );
+}
+
 export function ResetCredits({
   environmentId,
   input,
@@ -298,7 +334,13 @@ export function ResetCredits({
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
+      <div className="flex flex-col gap-1">
+        <span className="tabular-nums">
+          {credits.availableCount} reset {credits.availableCount === 1 ? "credit" : "credits"}{" "}
+          banked
+        </span>
+        <ResetCreditExpiries credits={credits} now={now} />
+      </div>
       {credits.availableCount > 0 ? (
         <Button
           size="xs"

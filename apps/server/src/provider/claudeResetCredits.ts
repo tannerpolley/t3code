@@ -113,8 +113,20 @@ export function claudeResetCreditsToContract(
     );
   const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
   const nextExpiresAt = next?.ends_at ? DateTime.make(next.ends_at) : Option.none();
+  const availableCount = next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0;
   return {
-    availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
+    availableCount,
+    ...(availableCount > 0
+      ? {
+          expiries: live
+            .flatMap((grant) => {
+              if (!grant.ends_at) return [];
+              const expiry = DateTime.formatIso(DateTime.makeUnsafe(grant.ends_at));
+              return Array.from({ length: grant.resets_left }, () => expiry);
+            })
+            .sort(),
+        }
+      : {}),
     ...(Option.isSome(nextExpiresAt)
       ? { nextExpiresAt: DateTime.formatIso(nextExpiresAt.value) }
       : {}),

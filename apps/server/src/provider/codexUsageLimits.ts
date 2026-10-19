@@ -93,12 +93,13 @@ export function codexResetCreditsToContract(
   if (!summary) return undefined;
   const expiries = (summary.credits ?? [])
     .filter((credit) => credit.status === "available")
-    .map((credit) => credit.expiresAt)
-    .filter((value): value is number => typeof value === "number");
-  const nextExpiresAt =
-    expiries.length > 0 ? isoFromEpochSeconds(Math.min(...expiries)) : undefined;
+    .map((credit) => isoFromEpochSeconds(credit.expiresAt))
+    .filter((expiry): expiry is string => expiry !== undefined)
+    .sort();
+  const nextExpiresAt = expiries[0];
   return {
     availableCount: Math.max(0, summary.availableCount),
+    ...(summary.credits ? { expiries } : {}),
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
   };
 }

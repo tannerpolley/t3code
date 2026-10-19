@@ -26,6 +26,8 @@ export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 export const ServerProviderResetCredits = Schema.Struct({
   availableCount: NonNegativeInt,
   nextExpiresAt: Schema.optional(IsoDateTime),
+  /** Expiry of each available credit, soonest first; credits without an expiry are left out. */
+  expiries: Schema.optional(Schema.Array(IsoDateTime)),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
 });

@@ -30,6 +30,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   PaceIcon,
   ResetCreditDialog,
+  ResetCreditExpiries,
   barColor,
   resetCreditsSummary,
   useResetCredit,
@@ -462,6 +463,9 @@ function PoolWindowCard({
   readonly label?: string | undefined;
   readonly description?: string | undefined;
 }) {
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const nextWindow = pool.resets[0]?.member.window;
+  const resetsIn = nextWindow ? formatResetsIn(nextWindow, now) : null;
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
@@ -476,6 +480,13 @@ function PoolWindowCard({
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
+        {nextWindow?.resetsAt ? (
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {pool.columns.length > 1 ? "Next reset" : "Resets"}{" "}
+            {formatUpcomingTimestamp(nextWindow.resetsAt, timestampFormat, now)}
+            {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
+          </span>
+        ) : null}
         {nextRefill && pool.columns.length > 1 ? (
           <span className="text-xs font-medium text-foreground tabular-nums">
             ↻ +{nextRefill.restoresPercent}%
@@ -487,6 +498,85 @@ function PoolWindowCard({
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
     </div>
+  );
+}
+
+function PoolResetCreditCard({
+  account,
+  showAccountName,
+  now,
+  redeem,
+}: {
+  readonly account: LimitAccount;
+  readonly showAccountName: boolean;
+  readonly now: number;
+  readonly redeem?: ReturnType<typeof useResetCredit>;
+}) {
+  const credits = account.limits.resetCredits;
+  if (!credits || credits.availableCount === 0) return null;
+  return (
+    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
+      <div className="flex flex-col gap-1">
+        <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+          Reset credits
+          {showAccountName ? <AccountName account={account} /> : null}
+        </span>
+        <span className="flex items-baseline gap-2">
+          <span className="text-3xl font-semibold text-foreground tabular-nums">
+            {credits.availableCount}
+          </span>
+          <span className="text-sm text-muted-foreground">banked</span>
+        </span>
+      </div>
+      <div className="flex flex-col items-start gap-3 text-xs text-muted-foreground">
+        <ResetCreditExpiries credits={credits} now={now} />
+        {redeem ? (
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={redeem.busy || !redeem.canManageProviders}
+            onClick={() => redeem.setConfirming(true)}
+          >
+            {redeem.busy ? "Using…" : "Use reset"}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function RedeemableResetCreditCard({
+  account,
+  showAccountName,
+  now,
+  redeemAt,
+}: {
+  readonly account: LimitAccount;
+  readonly showAccountName: boolean;
+  readonly now: number;
+  readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
+}) {
+  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  return (
+    <>
+      <PoolResetCreditCard
+        account={account}
+        showAccountName={showAccountName}
+        now={now}
+        redeem={redeem}
+      />
+      <ResetCreditDialog
+        open={redeem.confirming}
+        onOpenChange={redeem.setConfirming}
+        onConfirm={() => void redeem.redeem()}
+        disabled={!redeem.canManageProviders}
+      />
+      {redeem.status ? (
+        <span role="status" className="text-xs text-muted-foreground">
+          <AccountName account={account} className="font-medium text-foreground" /> {redeem.status}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -519,6 +609,24 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           />
         );
       })}
+      {pool.accounts.map((account) =>
+        account.redeem ? (
+          <RedeemableResetCreditCard
+            key={account.key}
+            account={account}
+            showAccountName={pool.accounts.length > 1}
+            now={now}
+            redeemAt={account.redeem}
+          />
+        ) : (
+          <PoolResetCreditCard
+            key={account.key}
+            account={account}
+            showAccountName={pool.accounts.length > 1}
+            now={now}
+          />
+        ),
+      )}
     </section>
   );
 }

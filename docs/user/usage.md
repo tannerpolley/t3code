@@ -84,10 +84,10 @@ list. Each window card shows how much of the pool is left and a bar with one seg
 kept in the same column across windows. Accounts are ordered by their 5-hour reset, soonest
 first, or by the first available window when no account reports a 5-hour limit. A gap means the
 account does not report that window. When the provider reports reset times, the card also says
-when the next reset lands and how much it hands back. The hatched
+the next reset date and how much it hands back. The hatched
 part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
 where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
-with banked reset credits show a ticket count and the **Use reset** action in the account details.
+list their banked reset credits with expiry dates and a **Use reset** action under each provider.
 Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
 Keychain. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.

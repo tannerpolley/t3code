@@ -279,6 +279,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
             ? {
                 resetCredits: {
                   availableCount: available.length,
+                  expiries: available
+                    .map((credit) => DateTime.formatIso(DateTime.makeUnsafe(credit.expires_at)))
+                    .sort(),
                   ...(next
                     ? {
                         nextCreditId: next.id,
