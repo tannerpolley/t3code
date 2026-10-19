@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   COMPOSER_MENTION_DRAG_TYPE,
+  COMPOSER_ISSUE_DRAG_TYPE,
+  encodeIssueDragPayload,
   COMPOSER_PULL_REQUEST_DRAG_TYPE,
   encodePullRequestDragPayload,
   type ComposerMentionDropHost,
@@ -42,6 +44,10 @@ const makeHost = (insertResult = true) => {
     },
     insertPullRequestAtEnd: (pullRequest) => {
       log.push(`pr:${pullRequest.number}`);
+      return insertResult;
+    },
+    insertIssueAtEnd: (issue) => {
+      log.push(`issue:${issue.number}:${issue.repository}`);
       return insertResult;
     },
     setDragActive: (active) => void log.push(`active:${active}`),
@@ -160,5 +166,56 @@ describe("makeComposerMentionDragHandlers", () => {
       makeDragEvent({ format: COMPOSER_PULL_REQUEST_DRAG_TYPE, mention: '{"number":0}' }).event,
     );
     expect(log).toEqual(["active:false"]);
+  });
+});
+
+const issue = {
+  host: "github.com",
+  repository: "owner/repo",
+  number: 42,
+  title: "Reference issues",
+  url: "https://github.com/owner/repo/issues/42",
+  state: "closed",
+  stateReason: "completed",
+  blockedBy: [],
+  liveWork: [],
+  pullRequests: [],
+} as const;
+
+describe("issue row drags", () => {
+  it("claims issue drags and routes decoded metadata without eager focus", () => {
+    const { host, log } = makeHost();
+    const handlers = makeComposerMentionDragHandlers(host);
+    const { event, calls } = makeDragEvent({
+      format: COMPOSER_ISSUE_DRAG_TYPE,
+      mention: encodeIssueDragPayload(issue),
+    });
+    expect(dataTransferHasComposerMention(event.dataTransfer.types)).toBe(true);
+    handlers.onDragEnter(event);
+    handlers.onDragOver(event);
+    handlers.onDrop(event);
+    expect(event.dataTransfer.dropEffect).toBe("move");
+    expect(calls).toContain("nativeStopPropagation");
+    expect(log).toEqual(["active:true", "active:true", "active:false", "issue:42:owner/repo"]);
+  });
+  it("reports a busy composer and ignores invalid issue payloads", () => {
+    const { host, log } = makeHost(false);
+    const handlers = makeComposerMentionDragHandlers(host);
+    handlers.onDrop(
+      makeDragEvent({ format: COMPOSER_ISSUE_DRAG_TYPE, mention: encodeIssueDragPayload(issue) })
+        .event,
+    );
+    expect(log).toEqual(["active:false", "issue:42:owner/repo", "rejected"]);
+    for (const mention of [
+      "",
+      "{",
+      JSON.stringify({ ...issue, number: 0 }),
+      JSON.stringify({ ...issue, repository: "bad" }),
+      JSON.stringify({ ...issue, url: "javascript:alert(1)" }),
+    ]) {
+      log.length = 0;
+      handlers.onDrop(makeDragEvent({ format: COMPOSER_ISSUE_DRAG_TYPE, mention }).event);
+      expect(log).toEqual(["active:false"]);
+    }
   });
 });

@@ -244,6 +244,8 @@ and their marks follow the same rules as on web and desktop.
 
 ## Browse GitHub issues
 
+Drag an issue onto the composer or type `#` to reference a repository issue in chat.
+
 When a connected environment has GitHub Issues support, open **Issues** from the sidebar. It lists
 issues from every repository your GitHub account owns and every organization repository you
 administer, whether or not the repository is a T3 Code project. Repositories you only collaborate

@@ -23,6 +23,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "mention",
   "skill",
   "thread",
+  "issue",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -77,6 +78,33 @@ export const PullRequestContextMetadata = Schema.Struct({
   isDraft: Schema.Boolean,
 });
 export type PullRequestContextMetadata = typeof PullRequestContextMetadata.Type;
+
+export const IssueContextMetadata = Schema.Struct({
+  host: TrimmedNonEmptyString.check(Schema.isMaxLength(253)),
+  repository: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(200),
+    Schema.isPattern(/^[^/\s]+\/[^/\s]+$/),
+  ),
+  number: PositiveInt,
+  title: ShortString,
+  url: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(2048),
+    Schema.isPattern(/^https?:\/\/[^\s]+$/i),
+  ),
+  // Linked rows and inbox events retain identity even when a status read is unavailable.
+  state: Schema.NullOr(Schema.Literals(["open", "closed"])),
+  stateReason: NullableShortString,
+  blockedBy: Schema.Array(Schema.Struct({ state: Schema.Literals(["open", "closed"]) })).check(
+    Schema.isMaxLength(200),
+  ),
+  liveWork: Schema.Array(
+    Schema.Struct({ status: Schema.Literals(["working", "waiting_on_you", "idle"]) }),
+  ).check(Schema.isMaxLength(200)),
+  pullRequests: Schema.Array(
+    Schema.Struct({ state: Schema.NullOr(Schema.Literals(["open", "closed", "merged"])) }),
+  ).check(Schema.isMaxLength(200)),
+});
+export type IssueContextMetadata = typeof IssueContextMetadata.Type;
 
 const recordBase = {
   version: Schema.Literal(1),
@@ -213,6 +241,13 @@ export const ThreadContextRecord = Schema.Struct({
 });
 export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 
+export const IssueContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("issue"),
+  ...IssueContextMetadata.fields,
+});
+export type IssueContextRecord = typeof IssueContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /**
@@ -246,6 +281,7 @@ export const KnownComposerContextRecord = Schema.Union([
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,
+  IssueContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 

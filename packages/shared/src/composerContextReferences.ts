@@ -258,6 +258,15 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
       }
       return lines.join("\n");
     }
+    case "issue":
+      return [
+        `host: ${record.host}`,
+        `repository: ${record.repository}`,
+        `number: ${record.number}`,
+        `title: ${record.title}`,
+        `url: ${record.url}`,
+        `state: ${record.state ?? "unknown"}${record.stateReason ? ` (${record.stateReason})` : ""}`,
+      ].join("\n");
     case "mention":
       return `path: ${record.path}`;
     case "skill":

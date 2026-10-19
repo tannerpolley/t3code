@@ -1,4 +1,4 @@
-import { PullRequestContextMetadata } from "@t3tools/contracts";
+import { IssueContextMetadata, PullRequestContextMetadata } from "@t3tools/contracts";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { Option, Schema } from "effect";
 
@@ -9,6 +9,11 @@ export const COMPOSER_MENTION_DRAG_TYPE = "application/x-t3code-composer-mention
  * that start on a pull request row; the composer drops it as the same chip the `#` picker adds.
  */
 export const COMPOSER_PULL_REQUEST_DRAG_TYPE = "application/x-t3code-pull-request";
+
+export const COMPOSER_ISSUE_DRAG_TYPE = "application/x-t3code-issue";
+const IssueDragPayload = Schema.fromJsonString(IssueContextMetadata);
+const decodeIssuePayload = Schema.decodeUnknownOption(IssueDragPayload);
+export const encodeIssueDragPayload = Schema.encodeSync(IssueDragPayload);
 
 const PullRequestDragPayload = Schema.fromJsonString(PullRequestContextMetadata);
 const decodePullRequestPayload = Schema.decodeUnknownOption(PullRequestDragPayload);
@@ -26,7 +31,9 @@ export function composerMentionFromTreePath(treePath: string): string | null {
 
 export function dataTransferHasComposerMention(types: ReadonlyArray<string>): boolean {
   return (
-    types.includes(COMPOSER_MENTION_DRAG_TYPE) || types.includes(COMPOSER_PULL_REQUEST_DRAG_TYPE)
+    types.includes(COMPOSER_MENTION_DRAG_TYPE) ||
+    types.includes(COMPOSER_PULL_REQUEST_DRAG_TYPE) ||
+    types.includes(COMPOSER_ISSUE_DRAG_TYPE)
   );
 }
 
@@ -52,6 +59,7 @@ export interface ComposerMentionDragEvent {
 export interface ComposerMentionDropHost {
   insertMentionAtEnd(text: string): boolean;
   insertPullRequestAtEnd(pullRequest: PullRequestContextMetadata): boolean;
+  insertIssueAtEnd(issue: IssueContextMetadata): boolean;
   setDragActive(active: boolean): void;
   onInsertRejected(): void;
 }
@@ -97,6 +105,11 @@ export function makeComposerMentionDragHandlers(
         return;
       }
       host.setDragActive(false);
+      if (event.dataTransfer.types.includes(COMPOSER_ISSUE_DRAG_TYPE)) {
+        const issue = decodeIssuePayload(event.dataTransfer.getData(COMPOSER_ISSUE_DRAG_TYPE));
+        if (Option.isSome(issue) && !host.insertIssueAtEnd(issue.value)) host.onInsertRejected();
+        return;
+      }
       if (event.dataTransfer.types.includes(COMPOSER_PULL_REQUEST_DRAG_TYPE)) {
         const pullRequest = decodePullRequestPayload(
           event.dataTransfer.getData(COMPOSER_PULL_REQUEST_DRAG_TYPE),

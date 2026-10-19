@@ -1,3 +1,5 @@
+import type { IssueContextRecord } from "@t3tools/contracts";
+import { IssueContextChip } from "./issues/IssueContextChip";
 import ChatMarkdown from "./ChatMarkdown";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type { PreviewAnnotationPayload, ThreadContextRecord } from "@t3tools/contracts";
@@ -58,7 +60,8 @@ export type ComposerDraftContextRecord =
     }
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "file"; record: ComposerFileAttachment; upload?: AttachmentUploadState | undefined }
-  | { kind: "thread"; record: ThreadContextRecord };
+  | { kind: "thread"; record: ThreadContextRecord }
+  | { kind: "issue"; record: IssueContextRecord };
 
 export interface ComposerContextActions {
   environmentId: EnvironmentId | null;
@@ -97,6 +100,7 @@ export function composerContextRecordsFromDraft(input: {
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations?: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
+  issueContexts?: ReadonlyArray<IssueContextRecord>;
   images?: ReadonlyArray<ComposerImageAttachment>;
   files?: ReadonlyArray<ComposerFileAttachment>;
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
@@ -133,6 +137,8 @@ export function composerContextRecordsFromDraft(input: {
   for (const record of input.threadContexts ?? []) {
     records.set(record.contextId, { kind: "thread", record });
   }
+  for (const record of input.issueContexts ?? [])
+    records.set(record.contextId, { kind: "issue", record });
   return records;
 }
 
@@ -341,8 +347,26 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
   ComposerContextRenderContext,
   ReactElement
 >({
-  requiredKinds: ["image", "file", "terminal", "review-comment", "preview-annotation", "thread"],
+  requiredKinds: [
+    "image",
+    "file",
+    "terminal",
+    "review-comment",
+    "preview-annotation",
+    "thread",
+    "issue",
+  ],
   handlers: [
+    {
+      kind: "issue",
+      canRender: (entry) => entry.kind === "issue",
+      render: (entry) =>
+        entry.kind === "issue" ? (
+          <IssueContextChip record={entry.record} />
+        ) : (
+          <UnresolvedContextChip label="Issue" />
+        ),
+    },
     {
       kind: "terminal",
       canRender: (entry) => entry.kind === "terminal",

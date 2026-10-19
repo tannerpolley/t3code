@@ -1,3 +1,4 @@
+import { IssueContextChip } from "../issues/IssueContextChip";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shallow } from "zustand/vanilla/shallow";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
@@ -4288,6 +4289,16 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
 >({
   requiredKinds: COMPOSER_CONTEXT_KINDS,
   handlers: [
+    {
+      kind: "issue",
+      canRender: (record) => record.kind === "issue",
+      render: (record, context) =>
+        record.kind === "issue" ? (
+          <IssueContextChip record={record} copyMarkdown={context.copyMarkdown} />
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
     {
       kind: "mention",
       canRender: (record) => record.kind === "mention",

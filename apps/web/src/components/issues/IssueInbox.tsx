@@ -1,3 +1,4 @@
+import { startIssueDrag } from "./issueComposerContext";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -150,6 +151,17 @@ function InboxList({
             return (
               <li key={event.id} className="px-2 py-1">
                 <div
+                  draggable
+                  onDragStart={(dragEvent) =>
+                    startIssueDrag(
+                      dragEvent,
+                      issue ?? {
+                        number: event.issueNumber,
+                        title: event.issueTitle,
+                        url: `https://${reference.host}/${reference.repository}/issues/${event.issueNumber}`,
+                      },
+                    )
+                  }
                   className={cn(
                     PULL_REQUEST_ROW_CLASS,
                     "items-start px-1 py-1.5 hover:bg-accent/60",

@@ -1,3 +1,4 @@
+import { startIssueDrag } from "./issueComposerContext";
 import type { EnvironmentId, IssueActor, IssueSummary } from "@t3tools/contracts";
 import { ListChecksIcon, MessageSquareIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -67,6 +68,8 @@ export function IssueRow({
   const assignees = issue.assignees.slice(0, 3);
   return (
     <div
+      draggable
+      onDragStart={(event) => startIssueDrag(event, issue)}
       className={cn(
         PULL_REQUEST_ROW_CLASS,
         "min-w-0 flex-col items-stretch gap-0 py-1.5 transition-colors has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-ring",

@@ -1,3 +1,6 @@
+import type { IssueContextRecord, IssueRepositoryRef } from "@t3tools/contracts";
+import { buildIssueReferenceContext, issueContextReference } from "../issues/issueComposerContext";
+import { useComposerIssues } from "../issues/useComposerIssues";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -1464,6 +1467,7 @@ export interface ChatComposerHandle {
     previewAnnotations: PreviewAnnotationPayload[];
     reviewComments: ReviewCommentContext[];
     threadContexts: ThreadContextRecord[];
+    issueContexts: IssueContextRecord[];
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
@@ -1573,6 +1577,7 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  issueRepository: IssueRepositoryRef | null;
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
@@ -1939,6 +1944,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     keybindings,
     terminalOpen,
     gitCwd,
+    issueRepository,
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
@@ -2058,6 +2064,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
   const composerThreadContexts = attachmentDraft.threadContexts;
+  const composerIssueContexts = composerDraft.issueContexts;
   const {
     pendingSnapShotAnimations,
     pendingSnapShotIds,
@@ -2108,6 +2115,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     reviewComments: composerReviewComments,
     previewAnnotations: composerPreviewAnnotations,
     threadContexts: composerThreadContexts,
+    issueContexts: composerIssueContexts,
     images: composerImages,
     files: composerFiles,
     uploadsByImageId,
@@ -2544,7 +2552,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerDraft.persistedAttachments.length === 0 &&
     composerTerminalContexts.length === 0 &&
     composerPreviewAnnotations.length === 0 &&
-    composerReviewComments.length === 0;
+    composerReviewComments.length === 0 &&
+    composerIssueContexts.length === 0;
 
   const pullRequestListTargets =
     composerTriggerKind !== "pull-request" ||
@@ -2564,6 +2573,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             },
           },
         ];
+  const issueLookup = useComposerIssues(
+    environmentId,
+    issueRepository,
+    composerTriggerKind === "pull-request" ? pullRequestTriggerQuery : null,
+  );
   const pullRequestLookup = usePullRequestList(pullRequestListTargets);
   const pullRequestTriggerNumber = (() => {
     if (composerTrigger?.kind !== "pull-request" || composerTrigger.query.length === 0) {
@@ -2604,7 +2618,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? []
       : composerPullRequestsFromLinks(threadPullRequests ?? [], pullRequestProjectId);
 
-  const composerMenuItems = ((): ComposerCommandItem[] => {
+  const baseComposerMenuItems = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return [
@@ -2759,6 +2773,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return [];
   })();
 
+  const composerMenuItems: ComposerCommandItem[] = [
+    ...baseComposerMenuItems,
+    ...(composerTriggerKind === "pull-request"
+      ? issueLookup.issues.map((issue) => ({
+          id: `issue:${issue.url}`,
+          type: "issue" as const,
+          issue,
+          label: `#${issue.number}`,
+          description: issue.title,
+        }))
+      : []),
+  ];
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
     ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
@@ -2800,6 +2826,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
 
   const isComposerMenuLoading =
+    issueLookup.isPending ||
     (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
@@ -2813,8 +2840,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return "No skills found. Try / to browse provider commands.";
     }
     if (composerTriggerKind === "pull-request") {
-      if (pullRequestProjectId === null || pullRequestRepository === null) {
-        return "Pull requests are not available for this project.";
+      if (
+        issueRepository === null &&
+        (pullRequestProjectId === null || pullRequestRepository === null)
+      ) {
+        return "Issues and pull requests are not available for this project.";
       }
       if (
         pullRequestLookup.error !== null ||
@@ -2823,8 +2853,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return "Pull requests could not be read for this project.";
       }
       return composerTrigger?.query
-        ? `No pull request matches ${composerTrigger.query}.`
-        : "No pull requests found in this repository.";
+        ? `No issue or pull request matches ${composerTrigger.query}.`
+        : "No issues or pull requests found in this repository.";
     }
     return composerTriggerKind === "path"
       ? "No matching files or folders."
@@ -2960,6 +2990,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const addComposerDraftPreviewAnnotation = useComposerDraftStore(
     (store) => store.addPreviewAnnotation,
   );
+  const addComposerDraftIssueContexts = useComposerDraftStore((store) => store.addIssueContexts);
+  const setComposerDraftIssueContexts = useComposerDraftStore((store) => store.setIssueContexts);
   const addComposerDraftThreadContexts = useComposerDraftStore((store) => store.addThreadContexts);
   const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
   const buildContextClipboardFragment = (contextIds: ReadonlyArray<string>): string | null => {
@@ -2977,6 +3009,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         .filter((c) => wanted.has(terminalContextReference(c).contextId))
         .map(terminalContextRecord),
       ...composerThreadContexts.filter((record) => wanted.has(record.contextId)),
+      ...composerIssueContexts.filter((record) => wanted.has(record.contextId)),
       ...composerReviewComments
         .filter((c) => wanted.has(reviewCommentContextId(c.id)))
         .map(reviewCommentContextRecord),
@@ -3175,7 +3208,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ? reviewCommentContextRecord(existing.record)
             : existing?.kind === "preview-annotation"
               ? previewAnnotationContextRecord(existing.record)
-              : existing?.kind === "thread"
+              : existing?.kind === "thread" || existing?.kind === "issue"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -3222,6 +3255,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             appendReference: false,
           });
           rewritten.set(record.contextId, previewAnnotationContextId(annotation.id));
+          break;
+        }
+        case "issue": {
+          const imported = conflicts
+            ? { ...record, contextId: toKindScopedComposerContextId("issue", randomUUID()) }
+            : record;
+          addComposerDraftIssueContexts(composerDraftTarget, [imported], {
+            appendReference: false,
+          });
+          rewritten.set(record.contextId, imported.contextId);
           break;
         }
         case "thread": {
@@ -3508,7 +3551,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     terminals: Map<string, TerminalContextDraft>;
     reviewComments: Map<string, ReviewCommentContext>;
     threads: Map<string, ThreadContextRecord>;
-  }>({ terminals: new Map(), reviewComments: new Map(), threads: new Map() });
+    issues: Map<string, IssueContextRecord>;
+  }>({ terminals: new Map(), reviewComments: new Map(), threads: new Map(), issues: new Map() });
   const removedAttachmentContextPayloadsRef = useRef<RetainedAttachmentContextPayloads>({
     files: new Map(),
     previewAnnotations: new Map(),
@@ -3586,6 +3630,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (nextThreads.length !== composerThreadContexts.length || restoredThreads.length > 0) {
       setComposerDraftThreadContexts(composerDraftTarget, nextThreads);
+    }
+
+    const liveIssueIds = new Set<string>(composerIssueContexts.map((record) => record.contextId));
+    const restoredIssues = [...referenced].flatMap((contextId) => {
+      if (liveIssueIds.has(contextId)) return [];
+      const record = retained.issues.get(contextId);
+      return record ? [record] : [];
+    });
+    const nextIssues = [
+      ...composerIssueContexts.filter((record) => referenced.has(record.contextId)),
+      ...restoredIssues,
+    ];
+    for (const record of composerIssueContexts) {
+      if (!referenced.has(record.contextId)) retained.issues.set(record.contextId, record);
+    }
+    if (nextIssues.length !== composerIssueContexts.length || restoredIssues.length > 0) {
+      setComposerDraftIssueContexts(composerDraftTarget, nextIssues);
     }
 
     for (const comment of composerReviewComments) {
@@ -3857,6 +3918,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (applied) {
         addComposerDraftReviewComment(composerDraftTarget, comment, {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "issue") {
+      if (
+        trigger.kind !== "pull-request" ||
+        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = buildIssueReferenceContext(item.issue);
+      const replacement = `${formatInlineContextReference(issueContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftIssueContexts(composerDraftTarget, [record], {
           appendReference: false,
         });
         setComposerHighlightedItemId(null);
@@ -5767,6 +5853,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return inserted;
     },
+    insertIssueAtEnd: (issue) => {
+      const record = buildIssueReferenceContext(issue);
+      const inserted = insertComposerTextAtEndStable(
+        `${formatInlineContextReference(issueContextReference(record))} `,
+        { ensureLeadingBoundary: true },
+      );
+      if (inserted)
+        addComposerDraftIssueContexts(composerDraftTarget, [record], { appendReference: false });
+      return inserted;
+    },
     setDragActive: setIsDragOverComposer,
     onInsertRejected: () => {
       toastManager.add({
@@ -6193,6 +6289,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         previewAnnotations: composerPreviewAnnotations,
         reviewComments: composerReviewComments,
         threadContexts: composerThreadContexts,
+        issueContexts: composerIssueContexts,
         selectedPromptEffort,
         selectedModelOptionsForDispatch,
         selectedModelSelection,

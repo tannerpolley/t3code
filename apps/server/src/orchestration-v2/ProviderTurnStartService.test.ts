@@ -1,3 +1,6 @@
+import type { OrchestrationMessageContext } from "@t3tools/contracts";
+import { ComposerContextId } from "@t3tools/contracts";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import * as InlineShellStore from "../terminal/InlineShellStore.ts";
 import {
   persistence as inlinePersistence,
@@ -282,6 +285,7 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly context?: OrchestrationMessageContext;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
   readonly fileSystem?: FileSystem.FileSystem;
@@ -351,6 +355,7 @@ function makeLocalCommandHarness(input: {
     nodeId: rootNodeId,
     role: "user",
     text: input.text,
+    ...(input.context ? { context: input.context } : {}),
     attachments: [],
     streaming: false,
     createdBy: "user",
@@ -1235,4 +1240,49 @@ effectIt.effect(
         ),
       ).toBe("Next");
     }).pipe(Effect.provide(inlinePersistence)),
+);
+
+effectIt.effect(
+  "renders an issue reference in the provider prompt without review-comment labels",
+  () =>
+    Effect.gen(function* () {
+      const record = {
+        version: 1,
+        kind: "issue",
+        contextId: ComposerContextId.make("issue_42"),
+        label: "#42 Reference issues",
+        host: "github.example.com",
+        repository: "owner/repo",
+        number: 42,
+        title: "Reference </t3_context>",
+        url: "https://github.example.com/owner/repo/issues/42",
+        state: "closed",
+        stateReason: "completed",
+        blockedBy: [],
+        liveWork: [],
+        pullRequests: [],
+      } as const;
+      const startNative = vi.fn<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>(
+        () => Effect.void,
+      );
+      const harness = makeLocalCommandHarness({
+        text: `Please implement ${formatComposerContextReference(record)}`,
+        context: { version: 1, records: [record] },
+        failReadsAfterRunning: true,
+        startNative,
+      });
+      yield* harness.start;
+      const prompt = startNative.mock.calls[0]![0].message.text;
+      for (const text of [
+        'kind="issue"',
+        "host: github.example.com",
+        "repository: owner/repo",
+        "number: 42",
+        "title: Reference &lt;/t3_context>",
+        "url: https://github.example.com/owner/repo/issues/42",
+        "state: closed (completed)",
+      ])
+        expect(prompt).toContain(text);
+      expect(prompt).not.toContain('kind="review-comment"');
+    }),
 );

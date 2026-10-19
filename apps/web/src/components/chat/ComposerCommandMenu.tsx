@@ -1,3 +1,5 @@
+import type { IssueContextMetadata } from "@t3tools/contracts";
+import { IssueStateIcon } from "../issues/IssueStateIcon";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import {
   resolveProviderSkillSourceKind,
@@ -26,12 +28,13 @@ import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../compo
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { Badge } from "../ui/badge";
-import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
+import { Command, CommandGroup, CommandGroupLabel, CommandItem, CommandList } from "../ui/command";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
 export type ComposerCommandItem =
+  | { id: string; type: "issue"; issue: IssueContextMetadata; label: string; description: string }
   | {
       id: string;
       type: "path";
@@ -120,20 +123,34 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
             className="max-h-72 min-h-0 scroll-pb-6"
           >
-            <CommandGroup>
-              {props.items.map((item) => (
-                <ComposerCommandMenuItem
-                  key={item.id}
-                  optionId={composerSuggestionOptionId(props.listId, item.id)}
-                  item={item}
-                  triggerKind={props.triggerKind}
-                  resolvedTheme={props.resolvedTheme}
-                  isActive={props.activeItemId === item.id}
-                  onHighlight={props.onHighlightedItemChange}
-                  onSelect={props.onSelect}
-                />
-              ))}
-            </CommandGroup>
+            {(props.triggerKind === "pull-request"
+              ? (["pull-request", "issue"] as const)
+              : [null]
+            ).map((type) => {
+              const items =
+                type === null ? props.items : props.items.filter((item) => item.type === type);
+              return items.length === 0 ? null : (
+                <CommandGroup key={type ?? "all"}>
+                  {type !== null ? (
+                    <CommandGroupLabel>
+                      {type === "issue" ? "Issues" : "Pull requests"}
+                    </CommandGroupLabel>
+                  ) : null}
+                  {items.map((item) => (
+                    <ComposerCommandMenuItem
+                      key={item.id}
+                      optionId={composerSuggestionOptionId(props.listId, item.id)}
+                      item={item}
+                      triggerKind={props.triggerKind}
+                      resolvedTheme={props.resolvedTheme}
+                      isActive={props.activeItemId === item.id}
+                      onHighlight={props.onHighlightedItemChange}
+                      onSelect={props.onSelect}
+                    />
+                  ))}
+                </CommandGroup>
+              );
+            })}
           </CommandList>
         ) : (
           <div className="px-5 pt-3.5 pb-7">
@@ -142,7 +159,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                 ? props.triggerKind === "skill"
                   ? "Searching workspace skills..."
                   : props.triggerKind === "pull-request"
-                    ? "Finding pull request..."
+                    ? "Finding issues and pull requests..."
                     : "Searching workspace files..."
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
@@ -201,6 +218,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
+      {props.item.type === "issue" && props.item.issue.state !== null ? (
+        <IssueStateIcon issue={{ ...props.item.issue, state: props.item.issue.state }} />
+      ) : null}
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon
           role="img"
@@ -240,7 +260,7 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
 
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
   path: "Files and folders",
-  "pull-request": "Pull requests",
+  "pull-request": "Pull requests and issues",
   "slash-command": "Commands",
   skill: "Skills",
 };

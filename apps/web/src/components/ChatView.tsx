@@ -1244,6 +1244,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
+  const setComposerDraftIssueContexts = useComposerDraftStore((store) => store.setIssueContexts);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
@@ -6134,6 +6135,7 @@ export default function ChatView(props: ChatViewProps) {
       previewAnnotations: sendContextPreviewAnnotations,
       reviewComments: composerReviewComments,
       threadContexts: composerThreadContexts,
+      issueContexts: composerIssueContexts,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
@@ -6168,6 +6170,7 @@ export default function ChatView(props: ChatViewProps) {
           reviewComments: composerReviewComments,
           previewAnnotations: composerPreviewAnnotations,
           threadContexts: composerThreadContexts,
+          issueContexts: composerIssueContexts,
         },
         setThreadError,
       );
@@ -6185,7 +6188,8 @@ export default function ChatView(props: ChatViewProps) {
       elementContextCount:
         composerPreviewAnnotations.length +
         composerReviewComments.length +
-        composerThreadContexts.length,
+        composerThreadContexts.length +
+        composerIssueContexts.length,
     });
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
@@ -6194,6 +6198,7 @@ export default function ChatView(props: ChatViewProps) {
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0 &&
+      composerIssueContexts.length === 0 &&
       composerThreadContexts.length === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
@@ -6270,6 +6275,7 @@ export default function ChatView(props: ChatViewProps) {
       const followUpReviewComments = [...composerReviewComments];
       const followUpPreviewAnnotations = [...composerPreviewAnnotations];
       const followUpThreadContexts = [...composerThreadContexts];
+      const followUpIssueContexts = [...composerIssueContexts];
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -6280,6 +6286,7 @@ export default function ChatView(props: ChatViewProps) {
           reviewComments: composerReviewComments,
           previewAnnotations: composerPreviewAnnotations,
           threadContexts: composerThreadContexts,
+          issueContexts: composerIssueContexts,
         }),
         interactionMode: followUp.interactionMode,
       });
@@ -6293,6 +6300,7 @@ export default function ChatView(props: ChatViewProps) {
             reviewComments: followUpReviewComments,
             previewAnnotations: followUpPreviewAnnotations,
             threadContexts: followUpThreadContexts,
+            issueContexts: followUpIssueContexts,
           },
           writePrompt: (prompt) => setComposerDraftPrompt(composerDraftTarget, prompt),
           writeTerminalContexts: (contexts) =>
@@ -6303,6 +6311,8 @@ export default function ChatView(props: ChatViewProps) {
             setComposerDraftPreviewAnnotations(composerDraftTarget, [...annotations]),
           writeThreadContexts: (records) =>
             setComposerDraftThreadContexts(composerDraftTarget, [...records]),
+          writeIssueContexts: (records) =>
+            setComposerDraftIssueContexts(composerDraftTarget, [...records]),
           resetCursor: (options) => composerRef.current?.resetCursorState(options),
         });
       } else if (
@@ -6320,6 +6330,7 @@ export default function ChatView(props: ChatViewProps) {
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0 &&
+      composerIssueContexts.length === 0 &&
       composerThreadContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
@@ -6379,6 +6390,7 @@ export default function ChatView(props: ChatViewProps) {
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
     const composerThreadContextsSnapshot = [...composerThreadContexts];
+    const composerIssueContextsSnapshot = [...composerIssueContexts];
     const messageTextForSend = composerTerminalContexts
       .filter((context) => !composerTerminalContextsSnapshot.includes(context))
       .reduce(
@@ -6396,6 +6408,7 @@ export default function ChatView(props: ChatViewProps) {
         reviewComments: composerReviewCommentsSnapshot,
         previewAnnotations: composerPreviewAnnotationsSnapshot,
         threadContexts: composerThreadContextsSnapshot,
+        issueContexts: composerIssueContextsSnapshot,
         attachments: composerAttachmentsSnapshot.map((attachment, index) => ({
           attachment,
           attachmentId: attachmentIds[index] ?? attachment.id,
@@ -6757,6 +6770,7 @@ export default function ChatView(props: ChatViewProps) {
           );
           setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
           setComposerDraftThreadContexts(composerDraftTarget, composerThreadContextsSnapshot);
+          setComposerDraftIssueContexts(composerDraftTarget, composerIssueContextsSnapshot);
           if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
             promptRef.current = messageTextForSend;
             composerRef.current.resetCursorState({
@@ -7134,6 +7148,8 @@ export default function ChatView(props: ChatViewProps) {
               ?.previewAnnotations.length ?? 0) === 0 &&
             (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
               .length ?? 0) === 0 &&
+            (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.issueContexts
+              .length ?? 0) === 0 &&
             (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.threadContexts
               .length ?? 0) === 0
       ) {
@@ -7157,6 +7173,7 @@ export default function ChatView(props: ChatViewProps) {
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
         setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
         setComposerDraftThreadContexts(composerDraftTarget, composerThreadContextsSnapshot);
+        setComposerDraftIssueContexts(composerDraftTarget, composerIssueContextsSnapshot);
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(messageTextForSend, messageTextForSend.length),
           prompt: messageTextForSend,
@@ -8345,6 +8362,9 @@ export default function ChatView(props: ChatViewProps) {
                               keybindings={keybindings}
                               terminalOpen={Boolean(terminalUiState.terminalOpen)}
                               gitCwd={gitCwd}
+                              issueRepository={threadIssueRepository(
+                                activeProject?.repositoryIdentity,
+                              )}
                               pullRequestProjectId={
                                 supportsPullRequests ? (activeProject?.id ?? null) : null
                               }

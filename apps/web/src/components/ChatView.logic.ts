@@ -1,3 +1,4 @@
+import type { IssueContextRecord } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
@@ -1257,6 +1258,7 @@ export interface PlanFollowUpComposerSnapshot {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+  readonly issueContexts?: ReadonlyArray<IssueContextRecord>;
 }
 
 /**
@@ -1271,6 +1273,7 @@ export function restorePlanFollowUpComposer(input: {
   readonly writeReviewComments: (comments: ReadonlyArray<ReviewCommentContext>) => void;
   readonly writePreviewAnnotations: (annotations: ReadonlyArray<PreviewAnnotationPayload>) => void;
   readonly writeThreadContexts: (records: ReadonlyArray<ThreadContextRecord>) => void;
+  readonly writeIssueContexts?: (records: ReadonlyArray<IssueContextRecord>) => void;
   readonly resetCursor: (options: {
     cursor: number;
     prompt: string;
@@ -1282,6 +1285,7 @@ export function restorePlanFollowUpComposer(input: {
   input.writeReviewComments(input.snapshot.reviewComments);
   input.writePreviewAnnotations(input.snapshot.previewAnnotations);
   input.writeThreadContexts(input.snapshot.threadContexts);
+  input.writeIssueContexts?.(input.snapshot.issueContexts ?? []);
   input.resetCursor({
     cursor: collapseExpandedComposerCursor(input.snapshot.prompt, input.snapshot.prompt.length),
     prompt: input.snapshot.prompt,

@@ -1,4 +1,8 @@
 import {
+  buildIssueReferenceContext,
+  issueContextMetadata,
+} from "./components/issues/issueComposerContext";
+import {
   scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
@@ -3533,5 +3537,53 @@ describe("composerDraftStore attachment references", () => {
     expect(merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.prompt).toBe(
       prompt,
     );
+  });
+});
+
+describe("composerDraftStore issue contexts", () => {
+  const threadId = ThreadId.make("thread-with-context");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const attached = buildIssueReferenceContext(
+    issueContextMetadata({
+      number: 42,
+      title: "Fix [login] flow",
+      url: "https://github.com/owner/repo/issues/42",
+      state: "open",
+    }),
+  );
+
+  beforeEach(resetComposerDraftStore);
+
+  it("attaches once per thread, appends one chip, and survives persistence", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "Compare with");
+    store.addIssueContexts(threadRef, [attached]);
+    store.addIssueContexts(threadRef, [attached, { ...attached, title: "renamed" }]);
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.issueContexts).toEqual([attached]);
+    expect(attached.label).toBe("#42 Fix login flow");
+    expect(draft?.prompt).toBe(
+      `Compare with [${attached.label}](t3-context://v1/issue/${attached.contextId}) `,
+    );
+
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const hydrated = merge(
+      JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      ),
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]?.issueContexts).toEqual([
+      attached,
+    ]);
+    expect(hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]?.prompt).toBe(draft?.prompt);
+  });
+
+  it("drops the chip with the record and removes an otherwise empty draft", () => {
+    const store = useComposerDraftStore.getState();
+    store.addIssueContexts(threadRef, [attached]);
+    store.setIssueContexts(threadRef, []);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 });

@@ -1,3 +1,4 @@
+import { startIssueDrag } from "../issues/issueComposerContext";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId, ThreadLinkedIssue } from "@t3tools/contracts";
@@ -71,7 +72,13 @@ function LinkedIssueContent({
       className="px-2.5"
     />
   ) : (
-    <button type="button" className={`${PULL_REQUEST_ROW_CLASS} px-2.5`} onClick={onSelect}>
+    <button
+      type="button"
+      draggable
+      onDragStart={(event) => startIssueDrag(event, issue)}
+      className={`${PULL_REQUEST_ROW_CLASS} px-2.5`}
+      onClick={onSelect}
+    >
       <span aria-hidden className="size-4 shrink-0" />
       <PullRequestRowLines
         number={null}

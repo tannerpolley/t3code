@@ -20,6 +20,7 @@ const contextChipVariants = cva(
         element: "[--context-chip-accent:oklch(0.62_0.134_70)]",
         "preview-annotation": "[--context-chip-accent:oklch(0.62_0.134_70)]",
         "review-comment": "[--context-chip-accent:oklch(0.62_0.16_292)]",
+        issue: "[--context-chip-accent:oklch(0.62_0.134_163)]",
         "pull-request": "[--context-chip-accent:oklch(0.62_0.16_277)]",
         "pr-open": "[--context-chip-accent:oklch(0.62_0.134_163)]",
         "pr-draft": "[--context-chip-accent:oklch(0.62_0.02_259)]",
