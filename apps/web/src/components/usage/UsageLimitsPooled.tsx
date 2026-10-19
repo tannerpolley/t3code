@@ -465,7 +465,6 @@ function PoolWindowCard({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const nextWindow = pool.resets[0]?.member.window;
-  const resetsIn = nextWindow ? formatResetsIn(nextWindow, now) : null;
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
@@ -480,11 +479,11 @@ function PoolWindowCard({
             {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
           </span>
         </span>
+        {/* The bar already shows the countdown; the date is what it hides behind a hover. */}
         {nextWindow?.resetsAt ? (
           <span className="text-xs text-muted-foreground tabular-nums">
             {pool.columns.length > 1 ? "Next reset" : "Resets"}{" "}
             {formatUpcomingTimestamp(nextWindow.resetsAt, timestampFormat, now)}
-            {resetsIn ? ` · ${resetsIn.replace("resets in ", "in ")}` : ""}
           </span>
         ) : null}
         {nextRefill && pool.columns.length > 1 ? (
