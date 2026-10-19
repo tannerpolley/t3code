@@ -289,23 +289,33 @@ export function ResetCreditExpiries({
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   if (credits.availableCount === 0) return null;
-  const expiryLine = (label: string, expiry: string) =>
-    `${label} ${formatUpcomingTimestamp(expiry, timestampFormat, now)} · in ${formatDuration(Date.parse(expiry) - now)}`;
+  // A retained snapshot can still list a credit whose expiry has passed.
+  const expiryLine = (expiry: string, upcoming: string, passed: string) => {
+    const at = formatUpcomingTimestamp(expiry, timestampFormat, now);
+    const left = Date.parse(expiry) - now;
+    return left > 0 ? `${upcoming} ${at} · in ${formatDuration(left)}` : `${passed} ${at}`;
+  };
   const lines: string[] = [];
   if (credits.expiries !== undefined) {
-    const counts = new Map<string, number>();
-    for (const expiry of credits.expiries) {
-      counts.set(expiry, (counts.get(expiry) ?? 0) + 1);
-    }
-    for (const [expiry, count] of [...counts].sort(
-      ([left], [right]) => Date.parse(left) - Date.parse(right),
+    // Grouped by the shown text, so credits seconds apart share one line and one key.
+    const groups = new Map<string, { expiry: string; count: number }>();
+    for (const expiry of credits.expiries.toSorted(
+      (left, right) => Date.parse(left) - Date.parse(right),
     )) {
-      lines.push(expiryLine(`${count} ${count === 1 ? "expires" : "expire"}`, expiry));
+      const key = expiryLine(expiry, "expires", "expired");
+      const group = groups.get(key);
+      if (group) group.count += 1;
+      else groups.set(key, { expiry, count: 1 });
+    }
+    for (const { expiry, count } of groups.values()) {
+      lines.push(
+        expiryLine(expiry, `${count} ${count === 1 ? "expires" : "expire"}`, `${count} expired`),
+      );
     }
     const undated = credits.availableCount - credits.expiries.length;
     if (undated > 0) lines.push(`${undated} with no expiry date`);
   } else if (credits.nextExpiresAt) {
-    lines.push(expiryLine("Next expires", credits.nextExpiresAt));
+    lines.push(expiryLine(credits.nextExpiresAt, "Next expires", "Expired"));
   }
   return (
     <div className="flex flex-col gap-1 tabular-nums">
