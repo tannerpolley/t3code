@@ -1009,18 +1009,24 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   );
   const { folderColor, forceFolder } = useProjectFolderAppearance(project.projectKey);
   const familyStyle = useClientSettings((settings) => settings.sidebarFamilyStyle);
-  const expandedByKey = useUiStateStore((state) =>
+  // Selecting this project's lines as text, not the whole expansion record, re-renders the
+  // project and its rows only when its own lines change.
+  const familySeparatorsText = useUiStateStore((state) =>
     codexStyle && familyStyle === "lines" && props.isProjectExpanded
-      ? state.sidebarWorkExpandedById
-      : null,
+      ? JSON.stringify([
+          ...resolveSidebarFamilySeparators(
+            collectDisplayedFamilyRows({
+              ...props,
+              expandedByKey: state.sidebarWorkExpandedById,
+            }),
+          ),
+        ])
+      : "",
   );
+  const familySeparatorEntries: Array<[string, SidebarFamilySeparator]> =
+    familySeparatorsText === "" ? [] : JSON.parse(familySeparatorsText);
   const familySeparators =
-    expandedByKey === null
-      ? undefined
-      : resolveSidebarFamilySeparators(collectDisplayedFamilyRows({ ...props, expandedByKey }));
-  // Rows compare this text, not the map: any work toggle rebuilds the map, usually unchanged.
-  const familySeparatorsText =
-    familySeparators === undefined ? "" : [...familySeparators].join(";");
+    familySeparatorsText === "" ? undefined : new Map(familySeparatorEntries);
   // Each location's lead thread, over every shown row: threads and their running subagents.
   const locationLeads = (() => {
     if (!codexStyle) return null;
@@ -1278,7 +1284,7 @@ const SidebarProjectThreadRow = memo(
     readonly locationLeadKeys?: ReadonlySet<string> | undefined;
     readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
     readonly familySeparators?: ReadonlyMap<string, SidebarFamilySeparator> | undefined;
-    /** The project's separators as text; equal text means an equal map. */
+    /** The project's separators as JSON; equal text means an equal map. */
     readonly familySeparatorsText?: string | undefined;
   }) {
     const activeThreadKey = scopedThreadKey(
