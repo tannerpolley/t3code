@@ -1,12 +1,26 @@
-import type { IssuePullRequest, ThreadPullRequestLink } from "@t3tools/contracts";
+import type {
+  IssuePullRequest,
+  IssuePullRequestStatus,
+  ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import { threadPullRequestKeyOf, visibleThreadPullRequests } from "./threadPullRequests.ts";
 
 /** Order host observations by update time, with terminal states winning when time is unknown. */
 export function issuePullRequests(
   closing: readonly IssuePullRequest[],
   linked: readonly ThreadPullRequestLink[],
-): IssuePullRequest[] {
-  const result = new Map(closing.map((pr) => [threadPullRequestKeyOf(pr), pr]));
+): IssuePullRequest[];
+export function issuePullRequests(
+  closing: readonly IssuePullRequestStatus[],
+  linked: readonly ThreadPullRequestLink[],
+): IssuePullRequestStatus[];
+export function issuePullRequests(
+  closing: readonly IssuePullRequestStatus[],
+  linked: readonly ThreadPullRequestLink[],
+): IssuePullRequestStatus[] {
+  const result = new Map<string, IssuePullRequestStatus>(
+    closing.map((pr) => [threadPullRequestKeyOf(pr), pr]),
+  );
   for (const link of visibleThreadPullRequests(linked)) {
     const key = threadPullRequestKeyOf(link);
     const previous = result.get(key);

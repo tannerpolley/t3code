@@ -776,7 +776,10 @@ export function ThreadRelationshipsPanel(props: {
                               ? sidebarThreadName(threadTitle, sidebarThreadTitle(node.thread))
                               : threadTitle}
                           </span>
-                          <ThreadIssueBadge issue={node?.thread?.linkedIssue} />
+                          <ThreadIssueBadge
+                            environmentId={props.environmentId}
+                            issue={node?.thread?.linkedIssue}
+                          />
                           {!elapsedAgent ? (
                             <span className="shrink-0 text-2xs text-muted-foreground">
                               {threadRelationshipStatusLabel(rowStatus)}

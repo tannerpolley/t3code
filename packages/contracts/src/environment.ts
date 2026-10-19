@@ -91,6 +91,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   issueMilestones: Schema.optionalKey(Schema.Boolean),
   /** Server records external issue activity for repository orchestrators. */
   issueInbox: Schema.optionalKey(Schema.Boolean),
+  issueStatusBatch: Schema.optionalKey(Schema.Boolean),
 
   inlineMessageContext: Schema.optionalKey(Schema.Boolean),
   requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),

@@ -136,6 +136,36 @@ export const IssueViewer = Schema.Struct({
 });
 export type IssueViewer = typeof IssueViewer.Type;
 
+/** PR identity and observation time keep sidebar status consistent with streamed thread PRs. */
+export const IssuePullRequestStatus = Schema.Struct({
+  ...IssueRef.fields,
+  state: IssuePullRequest.fields.state,
+  updatedAt: IssuePullRequest.fields.updatedAt,
+});
+export type IssuePullRequestStatus = typeof IssuePullRequestStatus.Type;
+
+export const IssueStatusBatchInput = Schema.Struct({
+  issues: Schema.Array(
+    Schema.Struct({
+      host: ThreadLinkedIssue.fields.host,
+      nodeId: ThreadLinkedIssue.fields.nodeId,
+    }),
+  ),
+});
+export type IssueStatusBatchInput = typeof IssueStatusBatchInput.Type;
+
+export const IssueStatusBatchResult = Schema.Array(
+  Schema.Struct({
+    host: Host,
+    nodeId: ThreadLinkedIssue.fields.nodeId,
+    state: IssueSummary.fields.state,
+    stateReason: IssueSummary.fields.stateReason,
+    blockedBy: Schema.Array(Schema.Struct({ state: IssueSummary.fields.state })),
+    pullRequests: Schema.Array(IssuePullRequestStatus),
+  }),
+);
+export type IssueStatusBatchResult = typeof IssueStatusBatchResult.Type;
+
 export const IssueListState = Schema.Literals(["open", "all"]);
 export type IssueListState = typeof IssueListState.Type;
 

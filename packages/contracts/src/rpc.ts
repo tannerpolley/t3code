@@ -196,6 +196,8 @@ import {
   IssueListResult,
   IssueReadError,
   IssueRepositoriesResult,
+  IssueStatusBatchInput,
+  IssueStatusBatchResult,
 } from "./issue.ts";
 import {
   IssueWorkError,
@@ -580,6 +582,7 @@ export const WS_METHODS = {
   issuesRepositories: "issues.repositories",
   issuesList: "issues.list",
   issuesDetail: "issues.detail",
+  issuesStatusBatch: "issues.statusBatch",
   issuesSetState: "issues.setState",
   issuesUnlink: "issues.unlink",
   issuesSubscribeLinkRefreshes: "issues.subscribeLinkRefreshes",
@@ -1051,6 +1054,12 @@ const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
 const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
   payload: IssueDetailInput,
   success: IssueDetailResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesStatusBatchRpc = Rpc.make(WS_METHODS.issuesStatusBatch, {
+  payload: IssueStatusBatchInput,
+  success: IssueStatusBatchResult,
   error: IssueRpcError,
 });
 
@@ -2150,6 +2159,7 @@ const forkWsRpcs = [
   WsIssuesRepositoriesRpc,
   WsIssuesListRpc,
   WsIssuesDetailRpc,
+  WsIssuesStatusBatchRpc,
   WsIssuesSetStateRpc,
   WsIssuesUnlinkRpc,
   WsIssuesSubscribeLinkRefreshesRpc,
@@ -2383,6 +2393,7 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issuesRepositories,
   WS_METHODS.issuesList,
   WS_METHODS.issuesDetail,
+  WS_METHODS.issuesStatusBatch,
   WS_METHODS.issuesSetState,
   WS_METHODS.issuesUnlink,
   WS_METHODS.issuesSubscribeLinkRefreshes,

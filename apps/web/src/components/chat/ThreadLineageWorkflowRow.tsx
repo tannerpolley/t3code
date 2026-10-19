@@ -125,7 +125,10 @@ function WorkflowMemberRow({
                     ? sidebarThreadName(member.title, sidebarThreadTitle(thread.source))
                     : member.title}
                 </span>
-                <ThreadIssueBadge issue={thread?.source.linkedIssue} />
+                <ThreadIssueBadge
+                  environmentId={environmentId}
+                  issue={thread?.source.linkedIssue}
+                />
                 <span className="sr-only">
                   Status: {threadRelationshipStatusLabel(member.status)}
                 </span>

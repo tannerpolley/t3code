@@ -12,9 +12,14 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 
 type IssueStateInput = Pick<IssueSummary, "state"> &
-  Partial<
-    Pick<IssueSummary, "stateReason" | "blockedBy" | "liveWork" | "projects" | "pullRequests">
-  >;
+  Partial<Pick<IssueSummary, "stateReason" | "liveWork" | "projects">> & {
+    readonly blockedBy?:
+      | readonly Pick<NonNullable<IssueSummary["blockedBy"]>[number], "state">[]
+      | undefined;
+    readonly pullRequests?:
+      | readonly Pick<NonNullable<IssueSummary["pullRequests"]>[number], "state">[]
+      | undefined;
+  };
 
 export type IssueProgress =
   | "completed"
@@ -29,7 +34,7 @@ export type IssueProgress =
  * completed, which is also what an issue closed without a reason counts as. Then an open
  * blocker, then a running agent, then an open pull request. Project fields are metadata only.
  */
-export function issueProgress(issue: IssueStateInput): IssueProgress {
+export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgress {
   if (issue.state === "closed")
     return issue.stateReason === "not_planned" || issue.stateReason === "duplicate"
       ? "not_planned"

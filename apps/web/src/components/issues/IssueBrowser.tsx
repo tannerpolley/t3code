@@ -885,7 +885,7 @@ export function IssueBrowser({
             tabIndex={-1}
             className="min-w-0 flex-1 text-base font-semibold outline-none"
           >
-            GitHub Issues
+            Issues
           </Heading>
           {viewerLogins.map((login) => (
             <span

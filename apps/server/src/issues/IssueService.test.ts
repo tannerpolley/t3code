@@ -182,6 +182,115 @@ const listInput = {
   repository: REPOSITORY,
 };
 
+it.effect(
+  "batches sidebar status reads, preserving accessible nodes and omitting incomplete ones",
+  () =>
+    Effect.gen(function* () {
+      const connection = (nodes: readonly unknown[], hasNextPage = false) => ({
+        nodes,
+        pageInfo: { hasNextPage },
+      });
+      const node = (id: string, overrides: Record<string, unknown> = {}) => ({
+        __typename: "Issue",
+        id,
+        state: "OPEN",
+        stateReason: null,
+        blockedBy: connection([]),
+        closedByPullRequestsReferences: connection([]),
+        ...overrides,
+      });
+      const nodes: unknown[] = Array.from({ length: 100 }, () => null);
+      nodes[0] = node("I_0", { state: "CLOSED", stateReason: "NOT_PLANNED" });
+      nodes[2] = node("I_2");
+      nodes[3] = { __typename: "PullRequest" };
+      nodes[4] = node("I_4", { blockedBy: connection([], true) });
+      const harness = makeHarness({
+        responses: [
+          httpResponse({
+            data: { nodes },
+            errors: [
+              { type: "NOT_FOUND", path: ["nodes", 1] },
+              { type: "FORBIDDEN", path: ["nodes", 2, "blockedBy"] },
+            ],
+          }),
+          httpResponse({
+            data: {
+              nodes: [
+                node("I_100", {
+                  blockedBy: connection([{ state: "OPEN" }, { state: "CLOSED" }]),
+                  closedByPullRequestsReferences: connection([
+                    {
+                      number: 7,
+                      repository: { nameWithOwner: "acme/other" },
+                      state: "MERGED",
+                      updatedAt: "2026-10-19T00:00:00Z",
+                    },
+                    {
+                      number: 8,
+                      repository: { nameWithOwner: REPOSITORY },
+                      state: "OPEN",
+                      updatedAt: "2026-10-19T01:00:00Z",
+                    },
+                  ]),
+                }),
+              ],
+            },
+          }),
+        ],
+      });
+      const refs = Array.from({ length: 101 }, (_, index) => ({
+        host: HOST,
+        nodeId: `I_${index}`,
+      }));
+      const result = yield* (yield* service(harness)).statusBatch({ issues: [...refs, refs[0]!] });
+      assert.deepEqual(result, [
+        {
+          host: HOST,
+          nodeId: "I_0",
+          state: "closed",
+          stateReason: "not_planned",
+          blockedBy: [],
+          pullRequests: [],
+        },
+        {
+          host: HOST,
+          nodeId: "I_100",
+          state: "open",
+          stateReason: null,
+          blockedBy: [{ state: "open" }, { state: "closed" }],
+          pullRequests: [
+            {
+              host: HOST,
+              repository: "acme/other",
+              number: 7,
+              state: "merged",
+              updatedAt: "2026-10-19T00:00:00Z",
+            },
+            {
+              host: HOST,
+              repository: REPOSITORY,
+              number: 8,
+              state: "open",
+              updatedAt: "2026-10-19T01:00:00Z",
+            },
+          ],
+        },
+      ]);
+      const decodeRequest = Schema.decodeEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            variables: Schema.Struct({ ids: Schema.Array(Schema.String) }),
+          }),
+        ),
+      );
+      const requests = yield* Effect.forEach(harness.calls, (call) => decodeRequest(call.body!));
+      assert.deepEqual(
+        requests.map((request) => request.variables.ids),
+        [refs.slice(0, 100).map((ref) => ref.nodeId), ["I_100"]],
+      );
+    }),
+);
+
 it.effect("paginates only the selected milestone during repository reconciliation", () =>
   Effect.gen(function* () {
     const harness = makeHarness({

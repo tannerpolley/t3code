@@ -4,6 +4,8 @@ import {
   EnvironmentId,
   ThreadId,
   type IssueListResult,
+  type IssueStatusBatchResult,
+  type IssueSummary,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { makeThreadFixture } from "~/test-fixtures";
@@ -339,4 +341,45 @@ it("keeps identical repository and thread IDs on separate environments apart", (
   const index = indexIssueWork([root, other]);
   expect(section(overlay.list(list, environmentId, index))).toBe("ready");
   expect(section(overlay.list(list, otherEnvironment, index))).toBe("in-progress");
+});
+
+it("overlays compact sidebar status with the same live work and PR observations", () => {
+  const status: IssueStatusBatchResult[number] & Pick<IssueSummary, "number" | "liveWork"> = {
+    host: scope.host,
+    nodeId: linkedIssue.nodeId,
+    number: linkedIssue.number,
+    state: "open",
+    stateReason: null,
+    blockedBy: [],
+    pullRequests: [{ ...scope, number: pr.number, state: "open", updatedAt: list.fetchedAt }],
+  };
+  const summary = { ...status, closingPullRequests: status.pullRequests };
+  const working = { ...root, runtime: running.runtime };
+  const progress = (shells: Parameters<typeof indexIssueWork>[0]) =>
+    issueProgress(overlay.summary(summary, scope, environmentId, indexIssueWork(shells)));
+  expect(progress([working])).toBe("in_progress");
+  expect(progress([root])).toBe("in_review");
+  expect(
+    progress([
+      {
+        ...root,
+        pullRequests: [
+          {
+            ...pr,
+            snapshot: { ...pr.snapshot!, state: "merged", updatedAt: "2026-10-16T00:00:00Z" },
+          },
+        ],
+      },
+    ]),
+  ).toBe("open");
+  expect(
+    issueProgress(
+      overlay.summary(
+        { ...summary, state: "closed" as const },
+        scope,
+        environmentId,
+        indexIssueWork([working]),
+      ),
+    ),
+  ).toBe("completed");
 });

@@ -4,6 +4,7 @@ import type {
   IssueListResult,
   IssueRepositoryRef,
   IssueSummary,
+  IssuePullRequestStatus,
 } from "@t3tools/contracts";
 import { issuePullRequests } from "@t3tools/shared/issuePullRequests";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
@@ -31,16 +32,20 @@ export function indexIssueWork(shells: readonly EnvironmentThreadShell[]) {
   return { threads, issues };
 }
 type IssueWorkIndex = ReturnType<typeof indexIssueWork>;
+type WorkSummary = Pick<IssueSummary, "number" | "liveWork"> & {
+  readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
+  readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
+};
 
 /** Cache only associated rows; unchanged shells keep the same issue and list objects. */
 export function createLiveIssueWorkOverlay() {
   const summaries = new WeakMap<
-    IssueSummary,
+    WorkSummary,
     Map<
       string,
       {
         threads: readonly (EnvironmentThreadShell | undefined)[];
-        result: IssueSummary;
+        result: WorkSummary;
       }
     >
   >();
@@ -56,12 +61,12 @@ export function createLiveIssueWorkOverlay() {
     >
   >();
 
-  const summary = (
-    issue: IssueSummary,
+  const summary = <T extends WorkSummary>(
+    issue: T,
     scope: IssueRepositoryRef,
     environmentId: EnvironmentId,
     index: IssueWorkIndex,
-  ): IssueSummary => {
+  ): T => {
     // Older servers lack the provenance needed to safely replace their work and PR counts.
     if (issue.closingPullRequests === undefined) return issue;
     const key = scopeKey(environmentId, scope);
@@ -71,7 +76,7 @@ export function createLiveIssueWorkOverlay() {
     let cached = summaries.get(issue);
     if (cached === undefined) summaries.set(issue, (cached = new Map()));
     const previous = cached.get(key);
-    if (previous !== undefined && sameItems(previous.threads, threads)) return previous.result;
+    if (previous !== undefined && sameItems(previous.threads, threads)) return previous.result as T;
     const active = threads
       .filter((thread) => thread !== undefined)
       .filter((thread) => thread.archivedAt === null);
@@ -113,7 +118,7 @@ export function createLiveIssueWorkOverlay() {
         ? (previous?.result ?? issue)
         : result;
     cached.set(key, { threads, result: stable });
-    return stable;
+    return stable as T;
   };
 
   const list = <T extends IssueListResult>(

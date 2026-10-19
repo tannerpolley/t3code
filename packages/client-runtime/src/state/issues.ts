@@ -156,6 +156,16 @@ export function createIssueEnvironmentAtoms<R, E>(
       refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
       refreshTrigger: linkRefreshTrigger,
     }),
+    statusBatch: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:issues:status-batch",
+      tag: WS_METHODS.issuesStatusBatch,
+      // Retired sidebar sets must stop polling as soon as their last row unsubscribes.
+      idleTtlMs: 0,
+      staleTimeMs: LIVE_ISSUE_REFRESH_MS,
+      refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
+      refreshTrigger: (target) =>
+        Atom.make((get) => [get(refreshTrigger(target)), get(linkRefreshTrigger(target))]),
+    }),
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:detail",
       tag: WS_METHODS.issuesDetail,

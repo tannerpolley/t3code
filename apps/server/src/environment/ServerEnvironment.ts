@@ -228,6 +228,7 @@ export const make = Effect.gen(function* () {
       issueChanges: true,
       issueMilestones: true,
       issueInbox: true,
+      issueStatusBatch: true,
       inlineMessageContext: true,
       requiredWorktreeBootstrap: true,
       threadSettlement: true,

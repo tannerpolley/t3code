@@ -7,6 +7,9 @@ import type {
   IssueRepositoryRef,
   IssueSummary,
   IssueRepositoriesResult,
+  IssueStatusBatchInput,
+  IssueStatusBatchResult,
+  ThreadLinkedIssue,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -17,6 +20,9 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAllEnvironmentShellsBootstrapped } from "./entities";
 import { environmentThreadShells } from "./threads";
+import { environmentServerConfigsAtom } from "./server";
+import { allEnvironmentShellsBootstrappedAtom } from "./shell";
+import { issueStatePresentation } from "../components/issues/IssueStateIcon";
 import {
   createLiveIssueWorkOverlay,
   indexIssueWork,
@@ -27,6 +33,96 @@ const issueWorkIndexAtom = Atom.make((get) =>
 );
 
 export const issueEnvironment = createIssueEnvironmentAtoms(connectionAtomRuntime);
+
+const sidebarIssueRefs = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const refs = new Map<string, IssueStatusBatchInput["issues"][number]>();
+    for (const thread of get(environmentThreadShells.environmentThreadsAtom(environmentId))) {
+      const issue = thread.linkedIssue;
+      if (issue === undefined || thread.archivedAt !== null) continue;
+      const ref = { host: issue.host.toLowerCase(), nodeId: issue.nodeId };
+      refs.set(JSON.stringify(ref), ref);
+    }
+    return JSON.stringify(
+      [...refs.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([, ref]) => ref),
+    );
+  }),
+);
+
+const EMPTY_ISSUE_STATUSES: ReadonlyMap<string, IssueStatusBatchResult[number]> = new Map();
+const sidebarIssueStatuses = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): ReadonlyMap<string, IssueStatusBatchResult[number]> => {
+    if (
+      get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+        .issueStatusBatch !== true
+    )
+      return EMPTY_ISSUE_STATUSES;
+    const issues = JSON.parse(
+      get(sidebarIssueRefs(environmentId)),
+    ) as IssueStatusBatchInput["issues"];
+    if (issues.length === 0) return EMPTY_ISSUE_STATUSES;
+    const result = get(issueEnvironment.statusBatch({ environmentId, input: { issues } }));
+    if (!AsyncResult.isSuccess(result)) return EMPTY_ISSUE_STATUSES;
+    return new Map(
+      result.value.map((issue) => [
+        JSON.stringify([issue.host.toLowerCase(), issue.nodeId]),
+        issue,
+      ]),
+    );
+  }),
+);
+
+/** Each row observes only its own presentation, including streamed work between GitHub refreshes. */
+const sidebarIssuePresentation = Atom.family((key: string) => {
+  const { environmentId, issue } = JSON.parse(key) as {
+    environmentId: EnvironmentId;
+    issue: Pick<ThreadLinkedIssue, "host" | "repository" | "nodeId" | "number">;
+  };
+  const overlay = createLiveIssueWorkOverlay();
+  return Atom.make((get) => {
+    const status = get(sidebarIssueStatuses(environmentId)).get(
+      JSON.stringify([issue.host.toLowerCase(), issue.nodeId]),
+    );
+    if (status === undefined) return null;
+    const summary: typeof status &
+      Pick<IssueSummary, "number" | "liveWork"> & {
+        closingPullRequests: typeof status.pullRequests;
+      } = { ...status, number: issue.number, closingPullRequests: status.pullRequests };
+    return issueStatePresentation(
+      get(allEnvironmentShellsBootstrappedAtom)
+        ? overlay.summary(summary, issue, environmentId, get(issueWorkIndexAtom))
+        : summary,
+    );
+  }).pipe(
+    Atom.withEquality<ReturnType<typeof issueStatePresentation> | null>(
+      (left, right) => left?.label === right?.label && left?.toneClassName === right?.toneClassName,
+    ),
+  );
+});
+const UNKNOWN_ISSUE_PRESENTATION = Atom.make(null);
+
+export function useSidebarIssuePresentation(
+  environmentId: EnvironmentId,
+  issue: ThreadLinkedIssue | undefined,
+) {
+  return useAtomValue(
+    issue === undefined
+      ? UNKNOWN_ISSUE_PRESENTATION
+      : sidebarIssuePresentation(
+          JSON.stringify({
+            environmentId,
+            issue: {
+              host: issue.host,
+              repository: issue.repository,
+              nodeId: issue.nodeId,
+              number: issue.number,
+            },
+          }),
+        ),
+  );
+}
 
 /** Apply streamed work after GitHub paging, whose freshness is keyed by fetchedAt. */
 export function useLiveIssueWork() {

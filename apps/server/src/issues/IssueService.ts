@@ -15,6 +15,8 @@ import {
   type IssueDetailInput as IssueDetailInputType,
   type IssueDetailResult as IssueDetailResultType,
   type IssueLinkedPullRequest,
+  type IssueStatusBatchInput,
+  type IssueStatusBatchResult,
   type IssueListInput as IssueListInputType,
   type IssueListResult as IssueListResultType,
   type IssueListState,
@@ -270,6 +272,54 @@ const GraphQlIssueSchema = Schema.Struct({
     ),
   ),
 });
+const StatusConnection = <S extends Schema.Top>(node: S) =>
+  Schema.Struct({
+    ...graphQlNodes(node).fields,
+    pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
+  });
+const StatusIssueNode = Schema.Struct({
+  __typename: Schema.Literal("Issue"),
+  id: WorkIssueNode.fields.id,
+  state: WorkIssueNode.fields.state,
+  stateReason: GraphQlIssueSchema.fields.stateReason,
+  blockedBy: StatusConnection(Schema.Struct({ state: WorkIssueNode.fields.state })),
+  closedByPullRequestsReferences: StatusConnection(
+    Schema.Struct({
+      number: GraphQlPullRequestSchema.fields.number,
+      repository: GraphQlPullRequestSchema.fields.repository,
+      state: GraphQlPullRequestSchema.fields.state,
+      updatedAt: IsoDateTime,
+    }),
+  ),
+});
+const StatusBatchResponse = Schema.Struct({
+  data: Schema.Struct({
+    nodes: Schema.Array(
+      Schema.NullOr(Schema.Union([StatusIssueNode, Schema.Struct({ __typename: Schema.String })])),
+    ),
+  }),
+  errors: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        path: Schema.optional(Schema.Array(Schema.Union([Schema.String, Schema.Number]))),
+      }),
+    ),
+  ),
+});
+const STATUS_BATCH_QUERY = `query($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    __typename
+    ... on Issue {
+      id state stateReason
+      blockedBy(first: 100) { nodes { state } pageInfo { hasNextPage } }
+      closedByPullRequestsReferences(first: 100, includeClosedPrs: true) {
+        nodes { number state updatedAt repository { nameWithOwner } }
+        pageInfo { hasNextPage }
+      }
+    }
+  }
+}`;
+
 type GraphQlIssue = Schema.Schema.Type<typeof GraphQlIssueSchema>;
 const GraphQlIssueDetailResponseSchema = Schema.Struct({
   data: Schema.optional(
@@ -729,6 +779,9 @@ export class IssueService extends Context.Service<
     readonly list: (
       input: IssueListInputType,
     ) => Effect.Effect<IssueListResultType, IssueReadError>;
+    readonly statusBatch: (
+      input: IssueStatusBatchInput,
+    ) => Effect.Effect<IssueStatusBatchResult, IssueReadError>;
     readonly detail: (
       input: IssueDetailInputType,
     ) => Effect.Effect<IssueDetailResultType, IssueReadError>;
@@ -944,6 +997,93 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     }
     return null;
   });
+
+  const statusBatch: IssueService["Service"]["statusBatch"] = Effect.fn("IssueService.statusBatch")(
+    function* (input) {
+      const byHost = new Map<string, Set<string>>();
+      for (const issue of input.issues) {
+        const host = safeHost(issue.host);
+        if (host === null)
+          return yield* readError(
+            "detail",
+            "scope-unavailable",
+            "The GitHub host cannot be addressed.",
+          );
+        let ids = byHost.get(host);
+        if (ids === undefined) byHost.set(host, (ids = new Set()));
+        ids.add(issue.nodeId);
+      }
+      const result: Array<IssueStatusBatchResult[number]> = [];
+      for (const [host, nodeIds] of byHost) {
+        yield* githubPullRequests
+          .withVerifiedCredential({ cwd: homeDirectory, host }, () =>
+            Effect.gen(function* () {
+              const ids = [...nodeIds];
+              for (let offset = 0; offset < ids.length; offset += 100) {
+                const batch = ids.slice(offset, offset + 100);
+                const body = yield* api
+                  .graphql({
+                    host,
+                    operation: "issues.statusBatch",
+                    query: STATUS_BATCH_QUERY,
+                    variables: { ids: batch },
+                    maxResponseBytes: LIST_MAX_OUTPUT_BYTES,
+                    acceptPartialData: true,
+                  })
+                  .pipe(Effect.mapError((error) => mapGitHubError("detail", error)));
+                const response = yield* decodeApiResponse(
+                  "detail",
+                  StatusBatchResponse,
+                  { body, headers: {} },
+                  "GitHub returned invalid issue status data.",
+                );
+                for (const [index, node] of response.data.nodes.entries()) {
+                  const failed = response.errors?.some(
+                    (error) =>
+                      error.path === undefined ||
+                      (error.path[0] === "nodes" &&
+                        (error.path.length < 2 || error.path[1] === index)),
+                  );
+                  // Incomplete relationships cannot safely claim that an issue is unblocked or unreviewed.
+                  if (
+                    node === null ||
+                    !("id" in node) ||
+                    failed ||
+                    !batch.includes(node.id) ||
+                    node.blockedBy.pageInfo.hasNextPage ||
+                    node.closedByPullRequestsReferences.pageInfo.hasNextPage
+                  )
+                    continue;
+                  result.push({
+                    host,
+                    nodeId: node.id,
+                    state: node.state === "OPEN" ? "open" : "closed",
+                    stateReason: node.stateReason?.toLowerCase() ?? null,
+                    blockedBy: presentNodes(node.blockedBy).map((blocker) => ({
+                      state: blocker.state === "OPEN" ? "open" : "closed",
+                    })),
+                    pullRequests: presentNodes(node.closedByPullRequestsReferences).map((pr) => ({
+                      host,
+                      repository: pr.repository.nameWithOwner,
+                      number: pr.number,
+                      state:
+                        pr.state === "OPEN" ? "open" : pr.state === "MERGED" ? "merged" : "closed",
+                      updatedAt: pr.updatedAt,
+                    })),
+                  });
+                }
+              }
+            }),
+          )
+          .pipe(
+            Effect.mapError((error) =>
+              isIssueReadError(error) ? error : mapGitHubError("detail", error),
+            ),
+          );
+      }
+      return result;
+    },
+  );
 
   const workRead: IssueService["Service"]["workRead"] = Effect.fn("IssueService.workRead")(
     function* (input) {
@@ -1871,6 +2011,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     list,
     detail,
     workRead,
+    statusBatch,
     milestoneIssues,
     repositoryIdentity,
     resolveLinkedIssue,

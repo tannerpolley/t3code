@@ -11,6 +11,8 @@ import { Atom } from "effect/reactivity";
 import { CircleDotIcon, GitBranchIcon } from "lucide-react";
 import { memo, type ReactElement, type ReactNode } from "react";
 import { useProject } from "../../state/entities";
+import { useSidebarIssuePresentation } from "../../state/issues";
+import { cn } from "../../lib/utils";
 import { useEnvironmentIdentities } from "../../state/environments";
 import { environmentSummaries } from "../../state/presentation";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
@@ -48,17 +50,20 @@ const SidebarProjectThreadMachine = memo(function SidebarProjectThreadMachine(pr
   );
 });
 
-/**
- * The issue a thread works on, beside its role title. Neutral: rows read no live GitHub state, so
- * the icon claims nothing about whether the issue is open.
- */
-export function ThreadIssueBadge(props: { readonly issue: ThreadLinkedIssue | undefined }) {
+export function ThreadIssueBadge(props: {
+  readonly issue: ThreadLinkedIssue | undefined;
+  readonly environmentId: EnvironmentId;
+}) {
+  const presentation = useSidebarIssuePresentation(props.environmentId, props.issue);
   if (props.issue === undefined) return null;
   return (
     <span
       role="img"
-      aria-label={`Issue #${props.issue.number}: ${props.issue.title}`}
-      className="inline-flex shrink-0 items-center gap-0.5 text-muted-foreground"
+      aria-label={`Issue #${props.issue.number}: ${props.issue.title}${presentation ? `, ${presentation.label}` : ""}`}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-0.5",
+        presentation?.toneClassName ?? "text-muted-foreground",
+      )}
     >
       <CircleDotIcon aria-hidden className="size-3" />
       <span className="text-3xs tabular-nums">{props.issue.number}</span>
@@ -82,7 +87,10 @@ export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(p
     <span className="flex min-w-0 items-center gap-1.5">
       <span className="fork-sidebar-title min-w-0 flex-1 truncate">{props.children}</span>
       <SidebarProjectThreadMachine environmentId={props.thread.environmentId} />
-      <ThreadIssueBadge issue={props.thread.source.linkedIssue} />
+      <ThreadIssueBadge
+        environmentId={props.thread.environmentId}
+        issue={props.thread.source.linkedIssue}
+      />
       {pr && PrIcon ? (
         <span
           role="img"
