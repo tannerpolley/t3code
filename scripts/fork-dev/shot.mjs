@@ -44,12 +44,7 @@ const threadRow = (page, title) =>
     .locator(`button[aria-label^="${title.replaceAll('"', '\\"')}, "]`)
     .first();
 
-const browser = await chromium.launch({
-  executablePath: NodePath.join(
-    NodeOS.homedir(),
-    ".cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell",
-  ),
-});
+const browser = await chromium.launch();
 const onlyIssues = process.argv[2] === "issues";
 // Projects view is what the owner reviews; Activity view also shows branch labels.
 for (const mode of onlyIssues ? [] : ["projects", "activity"]) {

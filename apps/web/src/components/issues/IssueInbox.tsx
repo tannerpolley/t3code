@@ -7,7 +7,9 @@ import type {
   IssueSummary,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { CheckCheckIcon, CheckIcon } from "lucide-react";
 import * as Option from "effect/Option";
+import type { ReactNode } from "react";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { useServerConfigs } from "~/state/entities";
@@ -15,10 +17,17 @@ import { issueEnvironment } from "~/state/issues";
 import { useEnvironmentQuery } from "~/state/query";
 import { environmentServerConfigsAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
+import {
+  PULL_REQUEST_ROW_CLASS,
+  PULL_REQUEST_ROW_NUMBER_CLASS,
+  PullRequestRowLines,
+} from "../pullRequest/PullRequestListRow";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useIssueSectionCollapsed } from "./useIssueSectionCollapsed";
 import { IssueStateIcon } from "./IssueStateIcon";
 
@@ -117,66 +126,110 @@ function InboxList({
       input: { ...reference, ...(ids === undefined ? {} : { ids }) },
     });
   return (
-    <section
-      aria-label="Inbox"
-      className="my-1 ms-6 me-3 rounded-lg border border-border/60 px-3 py-2"
-    >
-      <div className="flex items-center justify-between gap-2">
-        <CollapsibleSectionHeader
-          expanded={!collapsed}
-          onClick={toggleCollapsed}
-          accessory={<span className="tabular-nums">{events.length} unread</span>}
-        >
-          Inbox
-        </CollapsibleSectionHeader>
+    <section aria-label="Inbox">
+      <div className="flex items-center gap-1 pe-2">
+        <div className="min-w-0 flex-1">
+          <CollapsibleSectionHeader
+            expanded={!collapsed}
+            onClick={toggleCollapsed}
+            accessory={<span className="tabular-nums">{events.length} unread</span>}
+          >
+            Inbox
+          </CollapsibleSectionHeader>
+        </div>
         {canMark ? (
-          <Button onClick={() => mark()} size="xs" variant="ghost">
-            Mark all read
-          </Button>
+          <MarkReadButton label="Mark all read" onClick={() => mark()}>
+            <CheckCheckIcon />
+          </MarkReadButton>
         ) : null}
       </div>
       {!collapsed ? (
-        <ul className="mt-1 flex flex-col gap-1.5">
+        <ul>
           {events.map((event) => {
             const issue = issuesByNumber.get(event.issueNumber);
             return (
-              <li key={event.id} className="flex items-start gap-2 text-xs">
-                {issue ? <IssueStateIcon issue={issue} /> : null}
-                <div className="min-w-0 flex-1">
+              <li key={event.id} className="px-2 py-1">
+                <div
+                  className={cn(
+                    PULL_REQUEST_ROW_CLASS,
+                    "items-start px-1 py-1.5 hover:bg-accent/60",
+                  )}
+                >
+                  <span className="mt-0.75 flex w-4 shrink-0">
+                    {issue ? <IssueStateIcon issue={issue} /> : null}
+                  </span>
                   <a
-                    className="font-medium underline-offset-2 hover:underline"
+                    className="flex min-w-0 flex-1 flex-col"
                     href={event.url}
                     rel="noopener noreferrer"
                     target="_blank"
                   >
-                    {event.issueNumber > 0 ? `#${event.issueNumber} ` : ""}
-                    {event.issueTitle}
+                    <PullRequestRowLines
+                      number={null}
+                      title={event.issueTitle}
+                      signals={
+                        <>
+                          {event.highPriority ? (
+                            <Badge size="sm" variant="warning">
+                              High priority
+                            </Badge>
+                          ) : null}
+                          {event.tagged ? (
+                            <Badge size="sm" variant="info">
+                              Tagged
+                            </Badge>
+                          ) : null}
+                        </>
+                      }
+                      meta={
+                        <>
+                          {event.issueNumber > 0 ? (
+                            <span className={PULL_REQUEST_ROW_NUMBER_CLASS}>
+                              #{event.issueNumber}
+                            </span>
+                          ) : null}
+                          <span className="truncate">{describe(event)}</span>
+                        </>
+                      }
+                    />
+                    {event.snippet !== "" ? (
+                      <span className="truncate text-2xs text-muted-foreground">
+                        {event.snippet}
+                      </span>
+                    ) : null}
                   </a>
-                  <p className="text-muted-foreground">{describe(event)}</p>
-                  {event.snippet !== "" ? (
-                    <p className="truncate text-muted-foreground">{event.snippet}</p>
+                  {canMark ? (
+                    <MarkReadButton label="Mark read" onClick={() => mark([event.id])}>
+                      <CheckIcon />
+                    </MarkReadButton>
                   ) : null}
                 </div>
-                {event.highPriority ? (
-                  <Badge size="sm" variant="warning">
-                    High priority
-                  </Badge>
-                ) : null}
-                {event.tagged ? (
-                  <Badge size="sm" variant="info">
-                    Tagged
-                  </Badge>
-                ) : null}
-                {canMark ? (
-                  <Button onClick={() => mark([event.id])} size="xs" variant="ghost">
-                    Mark read
-                  </Button>
-                ) : null}
               </li>
             );
           })}
         </ul>
       ) : null}
     </section>
+  );
+}
+
+function MarkReadButton({
+  label,
+  onClick,
+  children,
+}: {
+  readonly label: string;
+  readonly onClick: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<Button aria-label={label} onClick={onClick} size="icon-xs" variant="ghost" />}
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">{label}</TooltipPopup>
+    </Tooltip>
   );
 }

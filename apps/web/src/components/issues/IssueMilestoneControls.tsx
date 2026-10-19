@@ -9,6 +9,16 @@ import {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  ActivityIcon,
+  ArrowRightLeftIcon,
+  MoreHorizontalIcon,
+  NetworkIcon,
+  PauseIcon,
+  PlayIcon,
+  ReplaceIcon,
+  UsersIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
@@ -17,10 +27,22 @@ import { useEnvironmentQuery, formatEnvironmentQueryError } from "~/state/query"
 import { useAtomCommand } from "~/state/use-atom-command";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { randomUUID } from "~/lib/utils";
+import { RelativeTime } from "../RelativeTime";
+import { MetaRow } from "../pullRequest/PullRequestSummaryTab";
 import { Button } from "../ui/button";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
 import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { findIssueProject } from "./issueWorktree.logic";
 import { IssueWorkerLimitControl } from "./IssueWorkerLimitControl";
 import { useRepositoryLeads } from "./IssueStartAction";
@@ -161,24 +183,71 @@ function RepositoryControls({
       });
     else appAtomRegistry.refresh(statusAtom);
   };
+  const suspended = config.suspendedIssues.length;
+  const status =
+    config.handoff?.status === "draining"
+      ? "Handing off"
+      : config.paused
+        ? "Paused"
+        : suspended > 0
+          ? `Active, ${suspended} ${suspended === 1 ? "issue" : "issues"} on hold`
+          : "Active";
+  const pauseLabel = canResume ? "Resume repository work" : "Pause repository work";
+  const canHandOff = config.handoff === undefined;
   return (
-    <div className="flex flex-col gap-1 py-1 ps-6 pe-2">
-      <div className="flex max-w-full flex-wrap items-center gap-1">
-        <span className="text-xs text-muted-foreground">Orchestrator:</span>
-        <Button size="xs" variant="link" onClick={() => openRoot(data.rootThreadId!)}>
-          <span className="max-w-48 truncate">{root?.title ?? data.rootThreadId}</span>
-        </Button>
-        {config.handoffHistory?.map((entry, index) => (
-          <Button
-            key={entry.threadId}
-            size="xs"
-            variant="link"
-            onClick={() => openRoot(entry.threadId)}
-            title={`Handed off ${entry.transferredAt}`}
+    <section aria-label="Repository orchestration" className="flex flex-col gap-1.5 px-2 pt-1 pb-2">
+      <MetaRow icon={<NetworkIcon className="size-3.5" />} label="Orchestrator">
+        <span className="flex min-w-0 items-center gap-1">
+          <button
+            type="button"
+            className="min-w-0 truncate text-left underline-offset-2 hover:underline"
+            onClick={() => openRoot(data.rootThreadId!)}
           >
-            Previous root {index + 1}
-          </Button>
-        ))}
+            {root?.title ?? data.rootThreadId}
+          </button>
+          {canHandOff || (config.handoffHistory?.length ?? 0) > 0 ? (
+            <Menu>
+              <MenuTrigger
+                render={<Button variant="ghost" size="icon-xs" aria-label="Orchestrator actions" />}
+              >
+                <MoreHorizontalIcon />
+              </MenuTrigger>
+              <MenuPopup align="start">
+                {canHandOff ? (
+                  <MenuItem disabled={busy} onClick={() => setHandoffExpanded(true)}>
+                    <ArrowRightLeftIcon className="size-3.5" />
+                    Hand off to a fresh thread
+                  </MenuItem>
+                ) : null}
+                {canHandOff && canRestore ? (
+                  <MenuItem disabled={busy} onClick={() => setRestoreExpanded(true)}>
+                    <ReplaceIcon className="size-3.5" />
+                    Use another thread as orchestrator
+                  </MenuItem>
+                ) : null}
+                {config.handoffHistory?.length ? (
+                  <>
+                    {canHandOff ? <MenuSeparator /> : null}
+                    <MenuGroup>
+                      <MenuGroupLabel>Previous orchestrators</MenuGroupLabel>
+                      {config.handoffHistory.map((entry) => (
+                        <PreviousRootItem
+                          key={entry.threadId}
+                          environmentId={environmentId}
+                          threadId={entry.threadId}
+                          transferredAt={entry.transferredAt}
+                          onOpen={openRoot}
+                        />
+                      ))}
+                    </MenuGroup>
+                  </>
+                ) : null}
+              </MenuPopup>
+            </Menu>
+          ) : null}
+        </span>
+      </MetaRow>
+      <MetaRow icon={<UsersIcon className="size-3.5" />} label="Workers">
         <IssueWorkerLimitControl
           key={`${data.rootThreadId}:${config.revision}`}
           environmentId={environmentId}
@@ -187,38 +256,32 @@ function RepositoryControls({
           slotsInUse={data.slotsInUse}
           onSettled={() => appAtomRegistry.refresh(statusAtom)}
         />
-        {config.paused ? <span className="text-xs text-muted-foreground">Paused</span> : null}
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={busy || config.handoff?.status === "draining"}
-          onClick={() => void togglePause()}
-        >
-          {canResume ? "Resume repository work" : "Pause repository work"}
-        </Button>
-        {config.handoff === undefined ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => setHandoffExpanded(!handoffExpanded)}
-          >
-            Hand off to fresh thread
-          </Button>
-        ) : null}
-        {config.handoff === undefined && canRestore ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => setRestoreExpanded(!restoreExpanded)}
-          >
-            Use another thread as orchestrator
-          </Button>
-        ) : null}
-      </div>
+      </MetaRow>
+      <MetaRow icon={<ActivityIcon className="size-3.5" />} label="Status">
+        <span className="flex min-w-0 items-center gap-1">
+          <span className="truncate" role="status">
+            {status}
+          </span>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={pauseLabel}
+                  disabled={busy || config.handoff?.status === "draining"}
+                  onClick={() => void togglePause()}
+                />
+              }
+            >
+              {canResume ? <PlayIcon /> : <PauseIcon />}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">{pauseLabel}</TooltipPopup>
+          </Tooltip>
+        </span>
+      </MetaRow>
       {restoreExpanded && config.handoff === undefined ? (
-        <div className="flex w-full max-w-md flex-col gap-2 p-2">
+        <div className="flex w-full max-w-md flex-col gap-2 pt-1">
           <span className="text-xs text-muted-foreground">
             Pause the repository first. The current orchestrator must be stopped, with no active
             issue workers or unclaimed start requests. Existing issue workers keep their threads.
@@ -266,7 +329,7 @@ function RepositoryControls({
         </div>
       ) : null}
       {config.handoff || handoffExpanded ? (
-        <div className="flex w-full max-w-md flex-col gap-2 p-2">
+        <div className="flex w-full max-w-md flex-col gap-2 pt-1">
           <span className="text-xs text-muted-foreground" role="status">
             {config.handoff?.status === "draining"
               ? "Handoff is pending while existing work finishes and the recovery inventory is prepared. The current root keeps ownership until then."
@@ -297,7 +360,16 @@ function RepositoryControls({
               >
                 Cancel handoff
               </Button>
-            ) : null}
+            ) : (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => setHandoffExpanded(false)}
+              >
+                Cancel
+              </Button>
+            )}
             {config.handoff?.status !== "draining" ? (
               <Button
                 size="xs"
@@ -310,7 +382,30 @@ function RepositoryControls({
           </div>
         </div>
       ) : null}
-    </div>
+    </section>
+  );
+}
+
+/** A menu entry per earlier orchestrator, named by its thread title once loaded. */
+function PreviousRootItem({
+  environmentId,
+  threadId,
+  transferredAt,
+  onOpen,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  transferredAt: string;
+  onOpen: (threadId: ThreadId) => void;
+}) {
+  const thread = useThreadShell(scopeThreadRef(environmentId, threadId));
+  return (
+    <MenuItem onClick={() => onOpen(threadId)}>
+      <span className="min-w-0 flex-1 truncate">{thread?.title ?? threadId}</span>
+      <span className="shrink-0 text-muted-foreground">
+        <RelativeTime timestamp={transferredAt} />
+      </span>
+    </MenuItem>
   );
 }
 
