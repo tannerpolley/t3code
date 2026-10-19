@@ -1,3 +1,7 @@
+import {
+  sidebarSubagentRowKey,
+  type SidebarFamilySeparator,
+} from "./SidebarFamilySeparators.logic";
 import { useEnvironmentProviders } from "../../state/environments";
 import {
   formatModelSelectionEffort,
@@ -95,7 +99,7 @@ export type SidebarBackgroundWorkRowsProps = {
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
   readonly columns?: boolean;
-  readonly separateWorkers?: boolean | undefined;
+  readonly familySeparators?: ReadonlyMap<string, SidebarFamilySeparator> | undefined;
   /** Threads that carry their location's icon; without it every subagent row shows its own. */
   readonly locationLeadKeys?: ReadonlySet<string> | undefined;
   /** Nesting level of these rows below their top-level thread, which sets their tint's shade. */
@@ -150,10 +154,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
   return (
     <ul
       className={cn(
-        props.columns &&
-          props.separateWorkers &&
-          familyStyle === "lines" &&
-          "sidebar-thread-workers",
         props.columns
           ? "text-2xs"
           : props.compact
@@ -379,6 +379,9 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           return (
             <li
               ref={nested?.ref}
+              data-family-separator={props.familySeparators?.get(
+                sidebarSubagentRowKey(props.environmentId, props.threadId, row),
+              )}
               data-thread-item={
                 childThreadId
                   ? scopedThreadKey(scopeThreadRef(props.environmentId, childThreadId))
@@ -386,7 +389,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               }
               className={cn(
                 row.kind !== "subagent" && "group/shell",
-                row.kind === "subagent" && "sidebar-worker-item",
                 index > 0 &&
                   row.kind === "subagent" &&
                   rows[index - 1]!.kind !== "subagent" &&

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useUiStateStore } from "../../uiStateStore";
 import { sidebarWorkExpanded } from "./SidebarThreadProcesses.logic";
 
-export function useSidebarWorkExpansion(hasRunningAgents: boolean) {
-  const [explicit, setExplicit] = useState<boolean>();
+export function useSidebarWorkExpansion(threadKey: string, hasRunningAgents: boolean) {
+  const explicit = useUiStateStore((state) => state.sidebarWorkExpandedById[threadKey]);
+  const setExpanded = useUiStateStore((state) => state.setSidebarWorkExpanded);
   const open = sidebarWorkExpanded(explicit, hasRunningAgents);
-  return { open, onToggle: () => setExplicit(!open) };
+  return { open, onToggle: () => setExpanded(threadKey, !open) };
 }

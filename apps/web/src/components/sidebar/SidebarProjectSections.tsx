@@ -1,4 +1,9 @@
 import { useSidebarWorkExpansion } from "./useSidebarWorkExpansion";
+import {
+  collectDisplayedFamilyRows,
+  resolveSidebarFamilySeparators,
+  type SidebarFamilySeparator,
+} from "./SidebarFamilySeparators.logic";
 import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizes } from "./ForkSidebarTextSizes";
 import { sectionTarget, useProjectSectionPlacementReady } from "../../projectSectionPlacement";
@@ -97,12 +102,7 @@ import {
   type ReactNode,
 } from "react";
 
-import {
-  effectiveThreadRole,
-  type EnvironmentId,
-  type ProjectIconColor,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { type EnvironmentId, type ProjectIconColor, type ThreadId } from "@t3tools/contracts";
 import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 import {
   inheritedSectionFolderAppearance,
@@ -1008,6 +1008,16 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
     (section) => section.custom && section.id !== props.sectionId,
   );
   const { folderColor, forceFolder } = useProjectFolderAppearance(project.projectKey);
+  const familyStyle = useClientSettings((settings) => settings.sidebarFamilyStyle);
+  const expandedByKey = useUiStateStore((state) =>
+    codexStyle && familyStyle === "lines" && props.isProjectExpanded
+      ? state.sidebarWorkExpandedById
+      : null,
+  );
+  const familySeparators =
+    expandedByKey === null
+      ? undefined
+      : resolveSidebarFamilySeparators(collectDisplayedFamilyRows({ ...props, expandedByKey }));
   // Each location's lead thread, over every shown row: threads and their running subagents.
   const locationLeads = (() => {
     if (!codexStyle) return null;
@@ -1203,6 +1213,7 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
               relocatedThreadKeys={props.relocatedThreadKeys}
               locationLeadKeys={locationLeadKeys}
+              familySeparators={familySeparators}
             />
           ))}
           {props.threads.length === 0 ? (
@@ -1262,6 +1273,7 @@ const SidebarProjectThreadRow = memo(
     /** Threads that carry their location's icon; see `resolveLocationLeads`. */
     readonly locationLeadKeys?: ReadonlySet<string> | undefined;
     readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
+    readonly familySeparators?: ReadonlyMap<string, SidebarFamilySeparator> | undefined;
   }) {
     const activeThreadKey = scopedThreadKey(
       scopeThreadRef(props.thread.environmentId, props.thread.id),
@@ -1292,6 +1304,7 @@ const SidebarProjectThreadRow = memo(
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
     const hasWork = workCount > 0;
     const { open: workOpen, onToggle: toggleWork } = useSidebarWorkExpansion(
+      activeThreadKey,
       props.codexStyle ? workRows.some((row) => row.kind === "subagent") : hasWork,
     );
     const familyStyle = useClientSettings((settings) => settings.sidebarFamilyStyle);
@@ -1305,8 +1318,8 @@ const SidebarProjectThreadRow = memo(
       ?.find((entry) => entry.instanceId === props.thread.providerInstanceId);
     return (
       <li
-        className="fork-sidebar-thread-item sidebar-thread-family relative list-none"
-        data-family-style={props.codexStyle ? familyStyle : undefined}
+        className="fork-sidebar-thread-item relative list-none"
+        data-family-separator={props.familySeparators?.get(activeThreadKey)}
         // A family of threads shares one hue, from its root: a thread with listed descendants, and a
         // subagent listed with its own location away from its parent.
         style={
@@ -1449,7 +1462,7 @@ const SidebarProjectThreadRow = memo(
             <SidebarSubagentTree
               environmentId={props.thread.environmentId}
               threadId={props.thread.id}
-              separateWorkers={effectiveThreadRole(props.thread.source) === "orchestrator"}
+              familySeparators={props.familySeparators}
               rows={workRows}
               processRows={processRows}
               parentTasks={props.thread.pendingBackgroundTasks}
@@ -1488,6 +1501,7 @@ const SidebarProjectThreadRow = memo(
       previous.onContextMenu === next.onContextMenu &&
       previous.locationLeadKeys === next.locationLeadKeys &&
       previous.relocatedThreadKeys === next.relocatedThreadKeys &&
+      previous.familySeparators === next.familySeparators &&
       sameSidebarSubagentTree(
         key,
         previous.runningSubagentsByParentKey,
@@ -1516,7 +1530,7 @@ function SidebarSubagentTree(props: {
   readonly depth?: number;
   /** This level's summary row and the processes it opens into. */
   readonly processRows?: SidebarProcessRows;
-  readonly separateWorkers?: boolean;
+  readonly familySeparators?: ReadonlyMap<string, SidebarFamilySeparator> | undefined;
 }) {
   const childWork = (row: BackgroundWorkTaskRow) => {
     if (row.kind !== "subagent") return null;
@@ -1539,7 +1553,7 @@ function SidebarSubagentTree(props: {
     <SidebarBackgroundWorkRows
       compact
       columns
-      separateWorkers={props.separateWorkers}
+      familySeparators={props.familySeparators}
       depth={props.depth ?? 1}
       summary={
         props.processRows ? (
@@ -1565,7 +1579,7 @@ function SidebarSubagentTree(props: {
           <SidebarSubagentRow
             thread={child}
             render={render}
-            separateWorkers={effectiveThreadRole(child.source) === "orchestrator"}
+            familySeparators={props.familySeparators}
             depth={(props.depth ?? 1) + 1}
             environmentId={props.environmentId}
             threadId={child.id}
@@ -1602,6 +1616,7 @@ function SidebarSubagentRow(
     rows,
   );
   const { open, onToggle } = useSidebarWorkExpansion(
+    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     workRows.some((row) => row.kind === "subagent"),
   );
   return render({

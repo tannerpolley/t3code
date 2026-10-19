@@ -667,6 +667,9 @@ export function applySidebarLayoutProjection(
 }
 
 interface UiStateStore extends UiState {
+  /** Memory only: row remounts retain choices without accumulating stored thread keys. */
+  sidebarWorkExpandedById: Record<string, boolean>;
+  setSidebarWorkExpanded: (key: string, expanded: boolean) => void;
   sidebarDisplaySnapshot: { environmentIds: readonly EnvironmentId[]; expiresAt: number } | null;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
@@ -705,6 +708,15 @@ interface UiStateStore extends UiState {
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
   ...startupDisplay?.layout,
+  sidebarWorkExpandedById: {},
+  setSidebarWorkExpanded: (key, expanded) =>
+    set((state) => {
+      const choices = Object.entries(state.sidebarWorkExpandedById).filter(([id]) => id !== key);
+      // Keep the most recent 2,000 choices; abandoned threads cannot grow this session forever.
+      return {
+        sidebarWorkExpandedById: Object.fromEntries([...choices.slice(-1999), [key, expanded]]),
+      };
+    }),
   sidebarDisplaySnapshot:
     startupDisplay === null
       ? null

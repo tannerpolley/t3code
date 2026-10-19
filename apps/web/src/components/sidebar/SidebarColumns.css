@@ -73,15 +73,15 @@
 }
 
 /* Separators overlay rows so changing family style never changes their height. */
-.sidebar-thread-family[data-family-style="lines"] + .sidebar-thread-family::before,
-.sidebar-thread-workers > .sidebar-worker-item:nth-child(1 of .sidebar-worker-item)::before {
+[data-family-separator]::before {
   content: "";
   position: absolute;
+  z-index: 1;
   inset-inline: 0.5rem;
   top: 0;
   pointer-events: none;
-  border-top: 1px solid color-mix(in oklab, var(--sidebar-border) 40%, transparent);
+  border-top: 1px solid color-mix(in oklab, var(--sidebar-border) 80%, transparent);
 }
-.sidebar-thread-workers > .sidebar-worker-item:nth-child(1 of .sidebar-worker-item)::before {
+[data-family-separator="dashed"]::before {
   border-top-style: dashed;
 }
