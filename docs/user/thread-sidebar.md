@@ -391,11 +391,13 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 With **Codex-style sidebar** enabled on web and desktop, the Projects view aligns each thread's location,
 role, provider, model, effort, name, time, and work status. Model names show up to six
 characters, with versions such as 5.5 and 6.1 lined up; hover the model for its full
-name. Expand a thread to follow
-its child agents. Child rows keep the same columns as their parent. A thread with
+name. Running child agents show by default; a row you open or close keeps your choice for that view.
+Processes and commands alone only reveal a caret: open it to see the Processes summary. Child rows keep the same columns as their parent. A thread with
 child agents and everything under it share one tint color, so each group stands out;
 deeper rows take a slightly stronger shade. A thread without children has no tint.
-Turn it off in **Settings → General** to use the classic rows and flat child list.
+In **Settings → Customizations → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
+Choose **Family style → Lines** for solid separators between families and dashed separators between orchestrators and their workers, or keep **Colors** for tints.
+Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 
 Rows are titled by what each thread does rather than its task name: its role

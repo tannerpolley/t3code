@@ -220,3 +220,31 @@ it("defaults sidebar text sizes for old settings and validates saved sizes and p
     }
   }
 });
+
+it("keeps the sidebar look for old settings and persists display customizations", () => {
+  const visibility = {
+    sidebarShowLocation: true,
+    sidebarShowRole: true,
+    sidebarShowProvider: true,
+    sidebarShowModel: true,
+    sidebarShowEffort: true,
+    sidebarShowIssueBadge: true,
+    sidebarShowPullRequestBadge: true,
+  };
+  expect(decodeClientSettingsFile("{}")).toMatchObject({
+    ...visibility,
+    sidebarLocationIconStyle: "worktree",
+    sidebarFamilyStyle: "colors",
+  });
+  const saved = {
+    ...Object.fromEntries(Object.keys(visibility).map((key) => [key, false])),
+    sidebarLocationIconStyle: "branch",
+    sidebarFamilyStyle: "lines",
+  };
+  expect(encodeClientSettings(decodeClientSettingsFile(JSON.stringify(saved)))).toMatchObject(
+    saved,
+  );
+  expect(decodeClientPatch(saved)).toEqual(saved);
+  expect(() => decodeClientPatch({ sidebarLocationIconStyle: "unknown" })).toThrow();
+  expect(() => decodeClientPatch({ sidebarFamilyStyle: "unknown" })).toThrow();
+});

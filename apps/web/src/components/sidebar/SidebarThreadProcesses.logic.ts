@@ -53,3 +53,7 @@ export function visibleProcessGroups(
     hiddenCount: Math.max(0, unlisted.length - VISIBLE_PROCESS_GROUPS),
   };
 }
+
+export function sidebarWorkExpanded(explicit: boolean | undefined, hasRunningAgents: boolean) {
+  return explicit ?? hasRunningAgents;
+}

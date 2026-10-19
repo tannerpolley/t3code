@@ -1,3 +1,4 @@
+import { useClientSettings } from "../../hooks/useSettings";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -76,6 +77,10 @@ export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(p
   readonly thread: SidebarThreadSummary;
   readonly children: ReactNode;
 }) {
+  const { showIssue, showPr } = useClientSettings((settings) => ({
+    showIssue: !settings.codexStyleSidebar || settings.sidebarShowIssueBadge,
+    showPr: !settings.codexStyleSidebar || settings.sidebarShowPullRequestBadge,
+  }));
   const pr = sidebarProjectThreadPullRequests(props.thread.pullRequests);
   // Workers opened their pull requests, so they keep the request glyph in its state's color;
   // orchestrators show the state's own glyph, such as the merge they made.
@@ -87,11 +92,13 @@ export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(p
     <span className="flex min-w-0 items-center gap-1.5">
       <span className="fork-sidebar-title min-w-0 flex-1 truncate">{props.children}</span>
       <SidebarProjectThreadMachine environmentId={props.thread.environmentId} />
-      <ThreadIssueBadge
-        environmentId={props.thread.environmentId}
-        issue={props.thread.source.linkedIssue}
-      />
-      {pr && PrIcon ? (
+      {showIssue ? (
+        <ThreadIssueBadge
+          environmentId={props.thread.environmentId}
+          issue={props.thread.source.linkedIssue}
+        />
+      ) : null}
+      {showPr && pr && PrIcon ? (
         <span
           role="img"
           aria-label={pr.label}

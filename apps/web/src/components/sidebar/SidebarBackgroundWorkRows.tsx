@@ -5,7 +5,6 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
-  effectiveThreadRole,
   isProviderNativeSubagentThread,
   type EnvironmentId,
   type ThreadId,
@@ -96,6 +95,7 @@ export type SidebarBackgroundWorkRowsProps = {
   readonly rows: ReadonlyArray<BackgroundWorkTaskRow>;
   readonly compact?: boolean;
   readonly columns?: boolean;
+  readonly separateWorkers?: boolean | undefined;
   /** Threads that carry their location's icon; without it every subagent row shows its own. */
   readonly locationLeadKeys?: ReadonlySet<string> | undefined;
   /** Nesting level of these rows below their top-level thread, which sets their tint's shade. */
@@ -137,6 +137,8 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
   // `afterTasks` goes between them.
   const rows = props.rows;
   const afterTasksAt = afterTasksIndex(rows);
+  const familyStyle = useClientSettings((settings) => settings.sidebarFamilyStyle);
+  const locationStyle = useClientSettings((settings) => settings.sidebarLocationIconStyle);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
   // Column rows take their group's tint, at their depth.
@@ -147,13 +149,17 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
 
   return (
     <ul
-      className={
+      className={cn(
+        props.columns &&
+          props.separateWorkers &&
+          familyStyle === "lines" &&
+          "sidebar-thread-workers",
         props.columns
           ? "text-2xs"
           : props.compact
             ? "max-h-40 overflow-y-auto text-2xs"
-            : "max-h-48 space-y-0.5 overflow-y-auto pb-1 text-xs"
-      }
+            : "max-h-48 space-y-0.5 overflow-y-auto pb-1 text-xs",
+      )}
     >
       {props.summary}
       {rows.flatMap((row, index) => {
@@ -189,22 +195,21 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
           );
         const renderRow = (nested: NestedWork | null) => {
           const toggle = nested?.toggle ?? null;
-          const caretInLocation =
-            toggle !== null &&
-            row.kind === "subagent" &&
-            row.child !== undefined &&
-            effectiveThreadRole(row.child.source) !== "orchestrator";
           const worktree =
             row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
           // In Projects only each location's lead carries the icon; other cells stay empty.
           const locationIcon =
-            row.kind === "subagent" && row.child && !caretInLocation
+            row.kind === "subagent" && row.child
               ? threadLocationCell(
                   row.child.source,
                   props.locationLeadKeys?.has(
                     scopedThreadKey(scopeThreadRef(props.environmentId, row.child.id)),
                   ) !== false ? (
-                    <ThreadLocationIcon thread={row.child} tooltip={!props.columns} />
+                    <ThreadLocationIcon
+                      thread={row.child}
+                      tooltip={!props.columns}
+                      worktreeStyle={props.columns ? locationStyle : undefined}
+                    />
                   ) : null,
                 )
               : null;
@@ -381,10 +386,16 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               }
               className={cn(
                 row.kind !== "subagent" && "group/shell",
+                row.kind === "subagent" && "sidebar-worker-item",
                 index > 0 &&
                   row.kind === "subagent" &&
                   rows[index - 1]!.kind !== "subagent" &&
-                  "border-t border-sidebar-border/40",
+                  cn(
+                    "border-t",
+                    props.columns && familyStyle === "lines"
+                      ? "border-transparent"
+                      : "border-sidebar-border/40",
+                  ),
                 "fork-sidebar-agent-item relative",
               )}
               style={
@@ -440,7 +451,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   label={`${toggle.open ? "Hide" : "Show"} ${toggle.count} running ${toggle.count === 1 ? "task" : "tasks"} under ${row.label}`}
                   onToggle={toggle.onToggle}
                   className="top-0.5 h-5"
-                  inLocationColumn={caretInLocation}
                 />
               ) : null}
               {toggle === null || toggle.open ? nested?.children : null}

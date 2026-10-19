@@ -1,4 +1,4 @@
-import { FolderGit2Icon, FolderGitIcon, FolderRootIcon } from "lucide-react";
+import { GitBranchIcon, FolderGit2Icon, FolderGitIcon, FolderRootIcon } from "lucide-react";
 import {
   useEnvironmentIdentities,
   useEnvironmentMachines,
@@ -25,13 +25,18 @@ const CHECKOUT_ICON = {
 export function ThreadLocationIcon({
   thread,
   tooltip = true,
+  worktreeStyle = "worktree",
 }: {
   readonly thread: LocatedThread;
+  readonly worktreeStyle?: "worktree" | "branch" | undefined;
   /** A Projects row supplies its own complete checkout hover. */
   readonly tooltip?: boolean;
 }) {
   const location = useThreadLocation(thread);
-  const CheckoutIcon = CHECKOUT_ICON[location.kind];
+  const CheckoutIcon =
+    worktreeStyle === "branch" && location.kind !== "local"
+      ? GitBranchIcon
+      : CHECKOUT_ICON[location.kind];
   const icon = (
     <span
       role="img"

@@ -2,7 +2,11 @@ import { ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
-import { foldThreadWork, visibleProcessGroups } from "./SidebarThreadProcesses.logic";
+import {
+  foldThreadWork,
+  visibleProcessGroups,
+  sidebarWorkExpanded,
+} from "./SidebarThreadProcesses.logic";
 
 const task = (taskId: string, kind: "command" | "monitor" = "command"): BackgroundWorkTaskRow => ({
   taskId,
@@ -47,4 +51,11 @@ it("lists each program once, skipping a command's program before capping the gro
   const visible = visibleProcessGroups(work, groups);
   expect(visible.groups.map((g) => g.label)).toEqual(["a", "b", "c", "d", "e"]);
   expect(visible.hiddenCount).toBe(1);
+});
+
+it("opens work only for running agents unless the user toggled the row", () => {
+  expect(sidebarWorkExpanded(undefined, false)).toBe(false);
+  expect(sidebarWorkExpanded(undefined, true)).toBe(true);
+  expect(sidebarWorkExpanded(true, false)).toBe(true);
+  expect(sidebarWorkExpanded(false, true)).toBe(false);
 });

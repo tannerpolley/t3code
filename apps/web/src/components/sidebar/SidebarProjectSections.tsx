@@ -1,3 +1,4 @@
+import { useSidebarWorkExpansion } from "./useSidebarWorkExpansion";
 import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizes } from "./ForkSidebarTextSizes";
 import { sectionTarget, useProjectSectionPlacementReady } from "../../projectSectionPlacement";
@@ -1290,10 +1291,11 @@ const SidebarProjectThreadRow = memo(
     );
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
     const hasWork = workCount > 0;
-    const caretInLocation =
-      props.codexStyle && hasWork && effectiveThreadRole(props.thread.source) !== "orchestrator";
-    // Running work shows by default, even while the thread itself works; a collapse wins for this row.
-    const [workOpen, setWorkOpen] = useState(true);
+    const { open: workOpen, onToggle: toggleWork } = useSidebarWorkExpansion(
+      props.codexStyle ? workRows.some((row) => row.kind === "subagent") : hasWork,
+    );
+    const familyStyle = useClientSettings((settings) => settings.sidebarFamilyStyle);
+    const locationStyle = useClientSettings((settings) => settings.sidebarLocationIconStyle);
     const contextDrag = useThreadContextPointerDrag(() => ({
       threads: [scopeThreadRef(props.thread.environmentId, props.thread.id)],
       title: props.thread.title,
@@ -1303,11 +1305,13 @@ const SidebarProjectThreadRow = memo(
       ?.find((entry) => entry.instanceId === props.thread.providerInstanceId);
     return (
       <li
-        className="fork-sidebar-thread-item relative list-none"
+        className="fork-sidebar-thread-item sidebar-thread-family relative list-none"
+        data-family-style={props.codexStyle ? familyStyle : undefined}
         // A family of threads shares one hue, from its root: a thread with listed descendants, and a
         // subagent listed with its own location away from its parent.
         style={
           props.codexStyle &&
+          familyStyle !== "lines" &&
           (workRows.some((row) => row.kind === "subagent") ||
             props.thread.lineage.relationshipToParent === "subagent")
             ? ({
@@ -1360,16 +1364,16 @@ const SidebarProjectThreadRow = memo(
             >
               {props.codexStyle ? (
                 <SidebarThreadColumns
-                  location={
-                    caretInLocation
-                      ? undefined
-                      : threadLocationCell(
-                          props.thread.source,
-                          props.locationLeadKeys?.has(activeThreadKey) === false ? undefined : (
-                            <ThreadLocationIcon thread={props.thread} tooltip={false} />
-                          ),
-                        )
-                  }
+                  location={threadLocationCell(
+                    props.thread.source,
+                    props.locationLeadKeys?.has(activeThreadKey) === false ? undefined : (
+                      <ThreadLocationIcon
+                        thread={props.thread}
+                        tooltip={false}
+                        worktreeStyle={locationStyle}
+                      />
+                    ),
+                  )}
                   role={<ThreadRoleIcon thread={props.thread.source} nativeMark={false} />}
                   provider={
                     <ThreadRelationshipIcon
@@ -1421,9 +1425,8 @@ const SidebarProjectThreadRow = memo(
           <SidebarCaretToggle
             open={workOpen}
             label={`${workOpen ? "Hide" : "Show"} running work`}
-            onToggle={() => setWorkOpen(!workOpen)}
+            onToggle={toggleWork}
             className="top-0.5 h-5"
-            inLocationColumn={caretInLocation}
           />
         ) : workCount > 0 ? (
           <button
@@ -1431,7 +1434,7 @@ const SidebarProjectThreadRow = memo(
             aria-expanded={workOpen}
             aria-label={`${workOpen ? "Hide" : "Show"} ${workCount} running background tasks`}
             className="fork-sidebar-work-toggle absolute top-0.5 right-2 flex h-5 w-8 cursor-pointer items-center justify-end gap-0.5 rounded px-0.5 text-3xs text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover"
-            onClick={() => setWorkOpen(!workOpen)}
+            onClick={toggleWork}
           >
             {workCount}
             {workOpen ? (
@@ -1446,6 +1449,7 @@ const SidebarProjectThreadRow = memo(
             <SidebarSubagentTree
               environmentId={props.thread.environmentId}
               threadId={props.thread.id}
+              separateWorkers={effectiveThreadRole(props.thread.source) === "orchestrator"}
               rows={workRows}
               processRows={processRows}
               parentTasks={props.thread.pendingBackgroundTasks}
@@ -1512,9 +1516,8 @@ function SidebarSubagentTree(props: {
   readonly depth?: number;
   /** This level's summary row and the processes it opens into. */
   readonly processRows?: SidebarProcessRows;
+  readonly separateWorkers?: boolean;
 }) {
-  // Children open by default, like a thread's own work; a collapse is remembered for this view.
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const childWork = (row: BackgroundWorkTaskRow) => {
     if (row.kind !== "subagent") return null;
     const child =
@@ -1536,6 +1539,7 @@ function SidebarSubagentTree(props: {
     <SidebarBackgroundWorkRows
       compact
       columns
+      separateWorkers={props.separateWorkers}
       depth={props.depth ?? 1}
       summary={
         props.processRows ? (
@@ -1561,15 +1565,7 @@ function SidebarSubagentTree(props: {
           <SidebarSubagentRow
             thread={child}
             render={render}
-            open={!collapsed.has(child.id)}
-            onToggle={() =>
-              setCollapsed((current) => {
-                const next = new Set(current);
-                if (next.has(child.id)) next.delete(child.id);
-                else next.add(child.id);
-                return next;
-              })
-            }
+            separateWorkers={effectiveThreadRole(child.source) === "orchestrator"}
             depth={(props.depth ?? 1) + 1}
             environmentId={props.environmentId}
             threadId={child.id}
@@ -1597,15 +1593,16 @@ function SidebarSubagentRow(
   props: Omit<ComponentProps<typeof SidebarSubagentTree>, "processRows"> & {
     readonly thread: SidebarThreadSummary;
     readonly render: (nested: NestedWork | null) => ReactNode;
-    readonly open: boolean;
-    readonly onToggle: () => void;
   },
 ) {
-  const { thread, rows, render, open, onToggle, ...tree } = props;
+  const { thread, rows, render, ...tree } = props;
   const { watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
     thread,
     resolveSidebarThreadStatus(thread) === "working" || thread.pendingBackgroundTasks.length > 0,
     rows,
+  );
+  const { open, onToggle } = useSidebarWorkExpansion(
+    workRows.some((row) => row.kind === "subagent"),
   );
   return render({
     ref: watchRow,

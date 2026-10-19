@@ -114,6 +114,62 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["customization fork codex projects view chevron drag grip spinner dots"],
   },
   {
+    id: "sidebar-show-location",
+    title: "Location icon",
+    to: "/settings/customizations",
+    searchTerms: ["codex sidebar projects thread show hide location checkout icon"],
+  },
+  {
+    id: "sidebar-show-role",
+    title: "Role icon",
+    to: "/settings/customizations",
+    searchTerms: ["codex sidebar projects thread show hide role orchestrator implementor icon"],
+  },
+  {
+    id: "sidebar-show-provider",
+    title: "Provider icon",
+    to: "/settings/customizations",
+    searchTerms: ["codex sidebar projects thread show hide provider codex claude icon"],
+  },
+  {
+    id: "sidebar-show-model",
+    title: "Model",
+    to: "/settings/customizations",
+    searchTerms: ["codex sidebar projects thread show hide model name version"],
+  },
+  {
+    id: "sidebar-show-effort",
+    title: "Effort",
+    to: "/settings/customizations",
+    searchTerms: ["codex sidebar projects thread show hide reasoning effort"],
+  },
+  {
+    id: "sidebar-show-issue-badge",
+    title: "Issue badge",
+    to: "/settings/customizations",
+    searchTerms: ["codex sidebar projects thread show hide issue badge github number"],
+  },
+  {
+    id: "sidebar-show-pull-request-badge",
+    title: "Pull request badge",
+    to: "/settings/customizations",
+    searchTerms: ["codex sidebar projects thread show hide pull request badge github state"],
+  },
+  {
+    id: "sidebar-location-icon-style",
+    title: "Location icon style",
+    to: "/settings/customizations",
+    searchTerms: ["codex sidebar projects thread location icon worktree branch"],
+  },
+  {
+    id: "sidebar-family-style",
+    title: "Family style",
+    to: "/settings/customizations",
+    searchTerms: [
+      "codex sidebar projects thread family colors tint lines solid dashed orchestrator workers",
+    ],
+  },
+  {
     id: "section-folder-colors",
     title: "Section folder colors",
     to: "/settings/appearance",

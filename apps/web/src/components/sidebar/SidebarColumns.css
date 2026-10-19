@@ -11,9 +11,6 @@
 @utility sidebar-caret-toggle {
   inset-inline-start: 0.125rem;
 }
-.sidebar-caret-toggle[data-location-column] {
-  inset-inline-start: calc(0.125rem + var(--sidebar-caret-width) + var(--sidebar-column-gap));
-}
 /*
  * A thread group (a top-level thread and its descendants) tints its rows with the group's hue, set
  * on the group; deeper rows tint a little stronger. Without a hue the declaration drops out, so
@@ -73,4 +70,18 @@
 }
 .sidebar-caret-toggle > span {
   width: var(--sidebar-caret-width, 1rem);
+}
+
+/* Separators overlay rows so changing family style never changes their height. */
+.sidebar-thread-family[data-family-style="lines"] + .sidebar-thread-family::before,
+.sidebar-thread-workers > .sidebar-worker-item:nth-child(1 of .sidebar-worker-item)::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0.5rem;
+  top: 0;
+  pointer-events: none;
+  border-top: 1px solid color-mix(in oklab, var(--sidebar-border) 40%, transparent);
+}
+.sidebar-thread-workers > .sidebar-worker-item:nth-child(1 of .sidebar-worker-item)::before {
+  border-top-style: dashed;
 }

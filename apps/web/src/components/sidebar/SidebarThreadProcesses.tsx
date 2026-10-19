@@ -14,7 +14,7 @@ import { serverEnvironment } from "../../state/server";
 import type { SidebarThreadSummary } from "../../types";
 import { useBackgroundTaskListVisibility } from "../chat/BackgroundTaskUsage";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PROJECTS_WORK_ROW_HEIGHT, SidebarCaret, SidebarThreadColumns } from "./SidebarColumns";
+import { PROJECTS_WORK_ROW_HEIGHT, SidebarCaretSlot, SidebarThreadColumns } from "./SidebarColumns";
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
 import { foldThreadWork, visibleProcessGroups } from "./SidebarThreadProcesses.logic";
 
@@ -106,7 +106,7 @@ function processRowLayout(props: ProcessRowsProps) {
 
 /**
  * The Processes row a thread's tasks, commands and processes fold into, first in its work list.
- * In the columns its caret sits one column left of the icons of the rows it opens.
+ * Its caret uses the same leftmost column as the thread rows.
  */
 export function SidebarProcessSummaryRow(props: ProcessRowsProps) {
   if (props.count === 0) return null;
@@ -123,7 +123,7 @@ export function SidebarProcessSummaryRow(props: ProcessRowsProps) {
       >
         {props.columns ? (
           <SidebarThreadColumns
-            role={<SidebarCaret open={props.open} />}
+            caret={<SidebarCaretSlot open={props.open} />}
             name={name}
             count={count}
           />

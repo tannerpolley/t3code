@@ -1,8 +1,9 @@
 import { ChevronRightIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "~/lib/utils";
 
 /*
@@ -45,23 +46,19 @@ export function SidebarCaretSlot(props: {
  * A caret toggle over a row's empty caret slot, for rows that are buttons themselves (buttons
  * cannot nest), so it renders as the row's sibling inside a `relative` parent whose padding box
  * starts at the row. `start-0.5` plus `px-1.5` is the row's 8px padding, which widens the hit area.
- * `className` places it vertically to match the row's height. A non-orchestrator's caret sits one
- * column in, over its row's emptied location cell (`inLocationColumn`), so carets step in with
- * depth: orchestrator, then its agents, then their processes.
+ * `className` places it vertically to match the row's height.
  */
 export function SidebarCaretToggle(props: {
   readonly open: boolean;
   readonly label: string;
   readonly onToggle: () => void;
   readonly className: string;
-  readonly inLocationColumn?: boolean | undefined;
 }) {
   return (
     <button
       type="button"
       aria-expanded={props.open}
       aria-label={props.label}
-      data-location-column={props.inLocationColumn ? "" : undefined}
       className={cn(
         "sidebar-caret-toggle absolute flex cursor-pointer items-center rounded px-1.5 text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         props.className,
@@ -115,18 +112,45 @@ export function SidebarThreadColumns(props: {
   readonly time?: ReactNode;
   readonly status?: ReactNode;
 }) {
+  const columns = useClientSettings((settings) => ({
+    location: !settings.codexStyleSidebar || settings.sidebarShowLocation,
+    role: !settings.codexStyleSidebar || settings.sidebarShowRole,
+    provider: !settings.codexStyleSidebar || settings.sidebarShowProvider,
+    model: !settings.codexStyleSidebar || settings.sidebarShowModel,
+    effort: !settings.codexStyleSidebar || settings.sidebarShowEffort,
+  }));
+  const style = Object.fromEntries(
+    Object.entries(columns).flatMap(([column, visible]) =>
+      visible === false
+        ? [
+            [`--sidebar-${column}-track`, "0px"],
+            [`--sidebar-${column}-gap`, "0px"],
+          ]
+        : [],
+    ),
+  ) as CSSProperties;
   return (
-    <span className="sidebar-thread-columns">
+    <span className="sidebar-thread-columns" style={style}>
       <span className="sidebar-thread-caret">{props.caret ?? <SidebarCaretSlot />}</span>
-      <span className="sidebar-thread-icon">{props.location}</span>
-      <span className="sidebar-thread-icon">{props.role}</span>
-      <span className="sidebar-thread-icon">{props.provider}</span>
-      <SidebarThreadModel label={props.model} />
-      <span className="sidebar-thread-effort">{props.effort}</span>
+      {columns.location !== false ? (
+        <span className="sidebar-thread-icon sidebar-thread-location">{props.location}</span>
+      ) : null}
+      {columns.role !== false ? (
+        <span className="sidebar-thread-icon sidebar-thread-role">{props.role}</span>
+      ) : null}
+      {columns.provider !== false ? (
+        <span className="sidebar-thread-icon sidebar-thread-provider">{props.provider}</span>
+      ) : null}
+      {columns.model !== false ? <SidebarThreadModel label={props.model} /> : null}
+      {columns.effort !== false ? (
+        <span className="sidebar-thread-effort">{props.effort}</span>
+      ) : null}
       <span className="sidebar-thread-name">{props.name}</span>
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       <span className={cn("sidebar-thread-time", props.trailingClassName)}>{props.time}</span>
-      <span className={cn("sidebar-thread-icon", props.trailingClassName)}>{props.status}</span>
+      <span className={cn("sidebar-thread-icon sidebar-thread-work", props.trailingClassName)}>
+        {props.status}
+      </span>
     </span>
   );
 }
