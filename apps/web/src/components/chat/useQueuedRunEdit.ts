@@ -112,8 +112,9 @@ async function submitQueuedRunEdit(input: {
     // Kept records for removed attachments would point at nothing.
     const keptRecords = (editing.context?.records ?? []).filter(
       (record) =>
-        !("attachmentId" in record) ||
-        editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId),
+        record.kind !== "issue" &&
+        (!("attachmentId" in record) ||
+          editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId)),
     );
     const newRecords =
       buildMessageContext({
@@ -227,14 +228,22 @@ export function useQueuedRunEdit(input: {
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);
     store.setPrompt(target, request.text);
+    const context = serverProjection?.messages.find(
+      (message) => message.id === request.messageId,
+    )?.context;
+    store.setIssueContexts(
+      target,
+      (context?.records ?? []).filter(
+        (record): record is IssueContextRecord => record.kind === "issue" && !("payload" in record),
+      ),
+    );
     setEditing({
       threadId: activeThreadId,
       runId: request.runId,
       messageId: request.messageId,
       originalText: request.text,
       existingAttachments: request.attachments,
-      context: serverProjection?.messages.find((message) => message.id === request.messageId)
-        ?.context,
+      context,
     });
     focusComposerSoon();
   });

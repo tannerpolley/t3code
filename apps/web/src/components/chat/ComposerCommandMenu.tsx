@@ -124,7 +124,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             className="max-h-72 min-h-0 scroll-pb-6"
           >
             {(props.triggerKind === "pull-request"
-              ? (["pull-request", "issue"] as const)
+              ? (["issue", "pull-request"] as const)
               : [null]
             ).map((type) => {
               const items =

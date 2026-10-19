@@ -38,6 +38,7 @@ const makeDragEvent = (options?: {
 const makeHost = (insertResult = true) => {
   const log: Array<string> = [];
   const host: ComposerMentionDropHost = {
+    supportsIssueContexts: true,
     insertMentionAtEnd: (text) => {
       log.push(`insert:${text}`);
       return insertResult;
@@ -183,6 +184,21 @@ const issue = {
 } as const;
 
 describe("issue row drags", () => {
+  it("leaves issue drags unclaimed when the server does not support issue contexts", () => {
+    const { host, log } = makeHost();
+    const handlers = makeComposerMentionDragHandlers({ ...host, supportsIssueContexts: false });
+    const { event, calls } = makeDragEvent({
+      format: COMPOSER_ISSUE_DRAG_TYPE,
+      mention: encodeIssueDragPayload(issue),
+    });
+    expect(dataTransferHasComposerMention(event.dataTransfer.types)).toBe(false);
+    handlers.onDragEnter(event);
+    handlers.onDragOver(event);
+    handlers.onDrop(event);
+    expect(calls).toEqual([]);
+    expect(log).toEqual([]);
+    expect(event.dataTransfer.dropEffect).toBe("none");
+  });
   it("claims issue drags and routes decoded metadata without eager focus", () => {
     const { host, log } = makeHost();
     const handlers = makeComposerMentionDragHandlers(host);
@@ -190,7 +206,7 @@ describe("issue row drags", () => {
       format: COMPOSER_ISSUE_DRAG_TYPE,
       mention: encodeIssueDragPayload(issue),
     });
-    expect(dataTransferHasComposerMention(event.dataTransfer.types)).toBe(true);
+    expect(dataTransferHasComposerMention(event.dataTransfer.types, true)).toBe(true);
     handlers.onDragEnter(event);
     handlers.onDragOver(event);
     handlers.onDrop(event);

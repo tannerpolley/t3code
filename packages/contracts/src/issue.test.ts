@@ -185,6 +185,13 @@ describe("githubIssues capability compatibility", () => {
   };
 
   it("treats the missing capability as unsupported and preserves true", () => {
+    expect(decodeDescriptor(descriptor).capabilities.issueContexts).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, issueContexts: true },
+      }).capabilities.issueContexts,
+    ).toBe(true);
     expect(decodeDescriptor(descriptor).capabilities.githubIssues).toBeUndefined();
     expect(
       decodeDescriptor({

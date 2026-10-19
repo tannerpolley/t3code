@@ -49,8 +49,9 @@ export function useComposerIssues(
   scope: IssueRepositoryRef | null,
   query: string | null,
 ) {
-  const supported =
-    useServerConfigs().get(environmentId)?.environment.capabilities.githubIssues === true;
+  const capabilities = useServerConfigs().get(environmentId)?.environment.capabilities;
+  const supportsIssueContexts = capabilities?.issueContexts === true;
+  const supported = supportsIssueContexts && capabilities?.githubIssues === true;
   const result = useAtomValue(
     scope !== null && query !== null && supported
       ? repositoryIssues(JSON.stringify({ environmentId, scope }))
@@ -65,6 +66,7 @@ export function useComposerIssues(
     ).values(),
   ];
   return {
+    supportsIssueContexts,
     issues: filterComposerIssues(issues, query ?? "")
       .slice(0, 20)
       .map(issueContextMetadata),

@@ -29,11 +29,14 @@ export function composerMentionFromTreePath(treePath: string): string | null {
   return serializeComposerFileLink(relativePath);
 }
 
-export function dataTransferHasComposerMention(types: ReadonlyArray<string>): boolean {
+export function dataTransferHasComposerMention(
+  types: ReadonlyArray<string>,
+  supportsIssueContexts = false,
+): boolean {
   return (
     types.includes(COMPOSER_MENTION_DRAG_TYPE) ||
     types.includes(COMPOSER_PULL_REQUEST_DRAG_TYPE) ||
-    types.includes(COMPOSER_ISSUE_DRAG_TYPE)
+    (supportsIssueContexts && types.includes(COMPOSER_ISSUE_DRAG_TYPE))
   );
 }
 
@@ -57,6 +60,7 @@ export interface ComposerMentionDragEvent {
  * focuses on the next frame, after the editor has caught up.
  */
 export interface ComposerMentionDropHost {
+  readonly supportsIssueContexts: boolean;
   insertMentionAtEnd(text: string): boolean;
   insertPullRequestAtEnd(pullRequest: PullRequestContextMetadata): boolean;
   insertIssueAtEnd(issue: IssueContextMetadata): boolean;
@@ -77,7 +81,7 @@ export function makeComposerMentionDragHandlers(
   // synthetic dispatch, so the native event must be stopped too or the
   // editor's own DOM listeners still process the drag.
   const claim = (event: ComposerMentionDragEvent): boolean => {
-    if (!dataTransferHasComposerMention(event.dataTransfer.types)) {
+    if (!dataTransferHasComposerMention(event.dataTransfer.types, host.supportsIssueContexts)) {
       return false;
     }
     event.preventDefault();
@@ -105,7 +109,10 @@ export function makeComposerMentionDragHandlers(
         return;
       }
       host.setDragActive(false);
-      if (event.dataTransfer.types.includes(COMPOSER_ISSUE_DRAG_TYPE)) {
+      if (
+        host.supportsIssueContexts &&
+        event.dataTransfer.types.includes(COMPOSER_ISSUE_DRAG_TYPE)
+      ) {
         const issue = decodeIssuePayload(event.dataTransfer.getData(COMPOSER_ISSUE_DRAG_TYPE));
         if (Option.isSome(issue) && !host.insertIssueAtEnd(issue.value)) host.onInsertRejected();
         return;

@@ -1,5 +1,4 @@
 import { issueContextReference } from "./components/issues/issueComposerContext";
-import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
   ElementContextDetails,
@@ -4181,13 +4180,28 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               });
             const movedFileIds = new Set(movedFiles.map((file) => file.id));
             const retainedFiles = source.files.filter((file) => !movedFileIds.has(file.id));
+            const issueContexts = [
+              ...new Map(
+                [...destination.issueContexts, ...source.issueContexts].map(
+                  (record) => [record.contextId, record] as const,
+                ),
+              ).values(),
+            ];
             const movedPrompt = ensureInlineContextReferences(
-              stripInlineContextReferences(source.prompt),
-              destination.terminalContexts.map(terminalContextReference),
+              replaceComposerContextReferences(source.prompt, (reference) =>
+                reference.kind === "issue"
+                  ? source.prompt.slice(reference.start, reference.end)
+                  : "",
+              ),
+              [
+                ...destination.terminalContexts.map(terminalContextReference),
+                ...issueContexts.map(issueContextReference),
+              ],
             );
             const nextDestination: ComposerThreadDraftState = {
               ...destination,
               prompt: movedPrompt,
+              issueContexts,
               images: [...destination.images, ...movedImages],
               files: [...destination.files, ...movedFiles],
               nonPersistedImageIds: [
@@ -4210,6 +4224,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 "",
                 source.terminalContexts.map(terminalContextReference),
               ),
+              issueContexts: [],
               images: retainedImages,
               files: retainedFiles,
               nonPersistedImageIds: source.nonPersistedImageIds.filter(

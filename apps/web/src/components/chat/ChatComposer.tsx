@@ -2774,7 +2774,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   })();
 
   const composerMenuItems: ComposerCommandItem[] = [
-    ...baseComposerMenuItems,
     ...(composerTriggerKind === "pull-request"
       ? issueLookup.issues.map((issue) => ({
           id: `issue:${issue.url}`,
@@ -2784,6 +2783,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: issue.title,
         }))
       : []),
+    ...baseComposerMenuItems,
   ];
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -5840,6 +5840,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // editor never sees the drop; the load-bearing rules (native stop, "move"
   // effect, no eager focus) live in makeComposerMentionDragHandlers.
   const composerMentionDragHandlers = makeComposerMentionDragHandlers({
+    supportsIssueContexts: issueLookup.supportsIssueContexts,
     insertMentionAtEnd: (text) =>
       insertComposerTextAtEndStable(text, { ensureLeadingBoundary: true }),
     insertPullRequestAtEnd: (pullRequest) => {
@@ -5979,7 +5980,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
 
   const onComposerMentionDragLeaveCapture = (event: React.DragEvent<HTMLFormElement>) => {
-    if (!dataTransferHasComposerMention(event.dataTransfer.types)) return;
+    if (
+      !dataTransferHasComposerMention(event.dataTransfer.types, issueLookup.supportsIssueContexts)
+    )
+      return;
     event.stopPropagation();
     const nextTarget = event.relatedTarget;
     if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;

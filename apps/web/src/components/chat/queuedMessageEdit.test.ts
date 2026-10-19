@@ -1,3 +1,4 @@
+import { buildIssueReferenceContext, issueContextMetadata } from "../issues/issueComposerContext";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
@@ -86,14 +87,25 @@ describe("queued message file edits", () => {
     ).rejects.toThrow("Retry or remove");
   });
 
-  it("keeps file-only edits when another client starts the queued run", () => {
+  it("keeps files and issue references when another client starts the queued run", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(editTarget, "Original message");
     store.addFiles(editTarget, [file]);
+    const issue = buildIssueReferenceContext(
+      issueContextMetadata({
+        number: 42,
+        title: "Keep references",
+        url: "https://github.com/owner/repo/issues/42",
+        state: "open",
+      }),
+    );
+    store.addIssueContexts(editTarget, [issue]);
+    const prompt = store.getComposerDraft(editTarget)?.prompt;
     expect(
       recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
     ).toBe("kept");
-    expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
+    expect(store.getComposerDraft(threadTarget)?.prompt).toBe(prompt);
+    expect(store.getComposerDraft(threadTarget)?.issueContexts).toEqual([issue]);
     expect(store.getComposerDraft(threadTarget)?.files).toEqual([file]);
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
