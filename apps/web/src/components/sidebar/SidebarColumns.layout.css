@@ -17,6 +17,7 @@
   --sidebar-model-width: 5.65ch;
   --sidebar-version-width: 2.35ch;
   --sidebar-effort-width: 2.5rem;
+  --sidebar-count-width: 1rem;
   --sidebar-issue-width: 2.25rem;
   --sidebar-pr-width: 2.25rem;
   --sidebar-time-width: 4.4375rem;
@@ -51,7 +52,10 @@
     ) [name] minmax(0, max-content) var(
       --sidebar-name-gap,
       var(--sidebar-column-gap)
-    ) [spacer] minmax(0, 1fr) var(--sidebar-spacer-gap, var(--sidebar-column-gap)) [issue] var(
+    ) [spacer] minmax(0, 1fr) var(--sidebar-spacer-gap, var(--sidebar-column-gap)) [count] var(
+      --sidebar-count-track,
+      var(--sidebar-count-width)
+    ) var(--sidebar-count-gap, var(--sidebar-column-gap)) [issue] var(
       --sidebar-issue-track,
       var(--sidebar-issue-width)
     ) var(--sidebar-issue-gap, var(--sidebar-column-gap)) [pr] var(
@@ -93,6 +97,9 @@
 .sidebar-thread-spacer {
   grid-column: spacer;
 }
+.sidebar-thread-count {
+  grid-column: count;
+}
 .sidebar-thread-issue {
   grid-column: issue;
 }
@@ -105,7 +112,7 @@
 .sidebar-thread-work {
   grid-column: work;
 }
-@container sidebar-columns (width < calc(16.5625rem + 36px + 18ch)) {
+@container sidebar-columns (width < calc(17.5625rem + 39px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
@@ -114,7 +121,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(14.0625rem + 33px + 18ch)) {
+@container sidebar-columns (width < calc(15.0625rem + 36px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-model-track: 0px;
     --sidebar-model-gap: 0px;

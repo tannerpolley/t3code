@@ -17,6 +17,8 @@ export const sidebarColumnLayout = {
     // the badges, time and status stay right-aligned.
     name: 0,
     spacer: 0,
+    // A collapsed row's hidden work count, right-aligned just before the badges.
+    count: 1,
     // Every row reserves both badge slots, so issue and pull request icons line up whichever it has:
     // each fits its icon and three digits (an orchestrator can hold 100+ pull requests).
     issue: 2.25,

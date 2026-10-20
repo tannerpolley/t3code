@@ -164,11 +164,9 @@ export function SidebarThreadColumns(props: {
         <span className="sidebar-thread-effort">{props.effort}</span>
       ) : null}
       <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
-        <span className="min-w-0 truncate">{props.name}</span>
-        {props.count === undefined ? null : (
-          <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
-        )}
+        {props.name}
       </span>
+      <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       {columns.issue !== false ? (
         <span className={cn("sidebar-thread-badge sidebar-thread-issue", props.trailingClassName)}>
           {props.issue}
