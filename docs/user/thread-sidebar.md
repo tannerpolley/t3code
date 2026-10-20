@@ -334,7 +334,12 @@ subagents. It starts collapsed; click it to list them, each named by its program
 thread's agent is running now and the processes those commands and background tasks
 started. Each program gets one row: commands of the same program share it, such as `npm ×2`,
 as do processes, such as `python ×10`, and a program already listed as a command is not
-listed again. Each thread shows up to five process rows.
+listed again. Each thread shows up to five process groups, with their elapsed time and running
+mark. Expand a group to inspect up to 20 individual processes; click a process for its full
+command, PID, start time, CPU and memory. Group expansion is remembered. A settled thread shows
+**Waiting on background work** while it has running tasks, commands or sampled processes.
+Commands and processes are sampled only while this setting is on and the thread is visible;
+reported background tasks still affect its status with the setting off.
 Claude shows a foreground command's output only when it finishes, and cannot stop it on its
 own; Codex streams it and can.
 

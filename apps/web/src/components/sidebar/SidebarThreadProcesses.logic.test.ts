@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type ThreadProcesses } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
@@ -6,6 +6,7 @@ import {
   foldThreadWork,
   visibleProcessGroups,
   sidebarWorkExpanded,
+  withRunningProcessWork,
 } from "./SidebarThreadProcesses.logic";
 
 const task = (taskId: string, kind: "command" | "monitor" = "command"): BackgroundWorkTaskRow => ({
@@ -13,6 +14,59 @@ const task = (taskId: string, kind: "command" | "monitor" = "command"): Backgrou
   label: taskId,
   kind,
   startedAt: null,
+});
+
+it("marks sampled work as waiting only after the thread settles, independent of expansion", () => {
+  const none: ThreadProcesses = {
+    commands: [],
+    runningTaskIds: [],
+    processGroups: [],
+    hiddenProcessGroupCount: 0,
+  };
+  const samples: ThreadProcesses[] = [
+    { ...none, runningTaskIds: ["background-task"] },
+    {
+      ...none,
+      commands: [
+        {
+          taskId: "command",
+          command: "make",
+          commandKind: "build",
+          startedAt: null,
+          followable: true,
+        },
+      ],
+    },
+    {
+      ...none,
+      processGroups: [
+        {
+          label: "python",
+          commandLine: "python worker.py",
+          count: 3,
+          cpuPercent: 0,
+          residentBytes: 0,
+        },
+      ],
+    },
+  ];
+  for (const sample of samples) {
+    expect(withRunningProcessWork("ready", sample)).toBe("waiting");
+    for (const status of [
+      "working",
+      "waiting",
+      "approval",
+      "input",
+      "failed",
+      "limited",
+    ] as const) {
+      expect(withRunningProcessWork(status, sample)).toBe(status);
+    }
+  }
+  expect(withRunningProcessWork("ready", none)).toBe("ready");
+  expect(withRunningProcessWork("ready", undefined)).toBe("ready");
+  expect(withRunningProcessWork("ready", null)).toBe("ready");
+  expect(withRunningProcessWork("waiting", undefined)).toBe("waiting");
 });
 const agent: BackgroundWorkTaskRow = {
   taskId: "agent",

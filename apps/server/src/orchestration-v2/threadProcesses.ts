@@ -9,6 +9,7 @@ import type {
   ResourceTelemetryProcess,
   ThreadId,
   ThreadProcessGroup,
+  ThreadProcessMember,
   ThreadRunningCommand,
 } from "@t3tools/contracts";
 import {
@@ -226,22 +227,43 @@ export function groupSpawnedProcesses(input: {
   }
   const groups = new Map<
     string,
-    { count: number; cpuPercent: number; residentBytes: number; commandLine: string }
+    {
+      count: number;
+      cpuPercent: number;
+      residentBytes: number;
+      commandLine: string;
+      startedAt: string;
+      members: ThreadProcessMember[];
+    }
   >();
-  for (const pid of spawned) {
+  // Stable membership keeps expanded rows from shuffling between samples.
+  for (const pid of [...spawned].sort((left, right) => left - right)) {
     const process = byPid.get(pid);
     if (process === undefined || commandPids.has(pid)) continue;
     const label = shellProgramName(process.command);
     if (label === null || UNLISTED_PROGRAMS.has(label)) continue;
+    const startedAt = DateTime.formatIso(DateTime.makeUnsafe(process.identity.startTimeMs));
     const group = groups.get(label) ?? {
       count: 0,
       cpuPercent: 0,
       residentBytes: 0,
       commandLine: process.command.trim(),
+      startedAt,
+      members: [],
     };
     group.count += 1;
     group.cpuPercent += process.cpuPercent;
     group.residentBytes += process.residentBytes;
+    if (startedAt < group.startedAt) group.startedAt = startedAt;
+    if (group.members.length < 20) {
+      group.members.push({
+        pid,
+        commandLine: process.command.trim(),
+        startedAt,
+        cpuPercent: process.cpuPercent,
+        residentBytes: process.residentBytes,
+      });
+    }
     groups.set(label, group);
   }
   const listed = [...groups].map(([label, group]) => ({ label, ...group }));

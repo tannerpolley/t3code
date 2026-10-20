@@ -909,8 +909,6 @@ export function resolveThreadRowClassName(input: {
   );
 }
 
-// wake it (subagents, monitors): not the user's turn yet, so it renders amber. Commands it left running, such as a dev
-
 export type SidebarThreadStatus =
   | "approval"
   | "input"
@@ -939,7 +937,7 @@ type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest" | "runtime"
 > &
-  Partial<Pick<SidebarThreadSummary, "latestRun">>;
+  Partial<Pick<SidebarThreadSummary, "latestRun" | "pendingBackgroundTasks">>;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
@@ -962,6 +960,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   if (thread.runtime?.status === "idle") return "waiting";
+  if (thread.pendingBackgroundTasks?.length) return "waiting";
   return "ready";
 }
 

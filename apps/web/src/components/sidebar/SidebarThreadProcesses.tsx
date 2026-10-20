@@ -2,10 +2,9 @@ import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-lab
 import type { ThreadProcessGroup } from "@t3tools/contracts";
 import { shellProgramName } from "@t3tools/shared/shellCommand";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ChevronRightIcon, CpuIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 
-import { ProcessProgramIcon } from "../ProcessProgramIcon";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useUiStateStore } from "../../uiStateStore";
@@ -13,10 +12,15 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import type { SidebarThreadSummary } from "../../types";
 import { useBackgroundTaskListVisibility } from "../chat/BackgroundTaskUsage";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROJECTS_WORK_ROW_HEIGHT, SidebarCaretSlot, SidebarThreadColumns } from "./SidebarColumns";
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
-import { foldThreadWork, visibleProcessGroups } from "./SidebarThreadProcesses.logic";
+import {
+  foldThreadWork,
+  visibleProcessGroups,
+  withRunningProcessWork,
+} from "./SidebarThreadProcesses.logic";
+import type { SidebarThreadStatus } from "../Sidebar.logic";
+import { SidebarThreadProcessesGroup } from "./SidebarThreadProcessesGroup";
 
 const NO_COMMAND_ROWS: ReadonlyArray<BackgroundWorkTaskRow> = [];
 const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
@@ -25,15 +29,15 @@ const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
  * A thread's work rows, with its tasks, running commands and spawned processes folded into one
  * Processes row that starts collapsed. Commands and processes are experimental ("Show running
  * commands and processes"): they poll with task usage's cadence, only while the setting is on,
- * `working` says the thread has work running, and the element given `watchRow` as its ref (the
- * thread's row) is on screen.
+ * the element given `watchRow` as its ref (the thread's row) is on screen. Settled threads poll
+ * too: running commands do not hold the server's turn completion.
  */
 export function useSidebarThreadProcesses(
   thread: SidebarThreadSummary,
-  working: boolean,
+  status: SidebarThreadStatus,
   rows: ReadonlyArray<BackgroundWorkTaskRow>,
 ) {
-  const wanted = useClientSettings((settings) => settings.runningCommandsAndProcesses) && working;
+  const wanted = useClientSettings((settings) => settings.runningCommandsAndProcesses);
   const { listRef, isVisible: enabled } = useBackgroundTaskListVisibility(wanted);
   const query = useEnvironmentQuery(
     enabled
@@ -66,12 +70,14 @@ export function useSidebarThreadProcesses(
   );
   const processCount = work.work.length + processGroups.length + hiddenProcessGroups;
   return {
+    status: withRunningProcessWork(status, data),
     // Only rows that would poll watch their visibility.
     watchRow: wanted ? listRef : undefined,
     workRows: work.rows,
     /** The agents and Processes entries under the thread, folded ones included. */
     workCount: work.agents.length + processCount,
     processRows: {
+      expansionKey: openKey,
       groups: processGroups,
       hiddenGroupCount: hiddenProcessGroups,
       /** Rows the Processes row opens into; none means no Processes row. */
@@ -153,47 +159,16 @@ export function SidebarProcessGroupRows(props: ProcessRowsProps) {
   const { className, style } = processRowLayout(props);
   return (
     <>
-      {props.groups.map((group) => {
-        const name = (
-          <span className="flex min-w-0 items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger
-                render={<span className="fork-sidebar-title min-w-0 flex-1 truncate" />}
-              >
-                {group.label}
-              </TooltipTrigger>
-              <TooltipPopup side="right">
-                {group.count > 1
-                  ? `${group.count} processes, such as ${group.commandLine}`
-                  : group.commandLine}
-              </TooltipPopup>
-            </Tooltip>
-            {group.count > 1 ? <span className="shrink-0 text-2xs">×{group.count}</span> : null}
-          </span>
-        );
-        const iconClassName = props.columns ? "size-4" : "size-3.5";
-        const icon = (
-          <ProcessProgramIcon
-            program={group.label}
-            className={iconClassName}
-            fallback={<CpuIcon aria-hidden className={iconClassName} />}
-          />
-        );
-        return (
-          <li key={`process:${group.label}`} style={style}>
-            <div className={className}>
-              {props.columns ? (
-                <SidebarThreadColumns provider={icon} name={name} wideName />
-              ) : (
-                <>
-                  {icon}
-                  {name}
-                </>
-              )}
-            </div>
-          </li>
-        );
-      })}
+      {props.groups.map((group) => (
+        <SidebarThreadProcessesGroup
+          key={group.label}
+          group={group}
+          expansionKey={props.expansionKey}
+          columns={props.columns}
+          className={className}
+          style={style}
+        />
+      ))}
       {props.hiddenGroupCount > 0 ? (
         <li style={style}>
           <div className={className}>

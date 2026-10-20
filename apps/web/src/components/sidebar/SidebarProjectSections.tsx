@@ -1292,7 +1292,7 @@ const SidebarProjectThreadRow = memo(
       scopeThreadRef(props.thread.environmentId, props.thread.id),
     );
     const runningSubagents = props.runningSubagentsByParentKey.get(activeThreadKey) ?? NO_THREADS;
-    const status = withChildNeeds(resolveSidebarThreadStatus(props.thread), runningSubagents);
+    const threadStatus = withChildNeeds(resolveSidebarThreadStatus(props.thread), runningSubagents);
     const active = props.activeThreadKey === activeThreadKey;
     const selected = useThreadSelectionStore((store) =>
       store.selectedThreadKeys.has(activeThreadKey),
@@ -1300,11 +1300,9 @@ const SidebarProjectThreadRow = memo(
     const localLastVisitedAt = useUiStateStore(
       (state) => state.threadLastVisitedAtById[activeThreadKey],
     );
-    // Finished while you were away and not opened since: a green dot where the spinner was.
-    const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
-    const { watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
+    const { status, watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
       props.thread,
-      status === "working" || props.thread.pendingBackgroundTasks.length > 0,
+      threadStatus,
       describeSidebarBackgroundWork(
         props.thread.pendingBackgroundTasks,
         props.codexStyle
@@ -1314,6 +1312,8 @@ const SidebarProjectThreadRow = memo(
         props.relocatedThreadKeys,
       ),
     );
+    // Finished while you were away and not opened since: a green dot where the spinner was.
+    const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
     const hasWork = workCount > 0;
     const { open: workOpen, onToggle: toggleWork } = useSidebarWorkExpansion(
@@ -1623,9 +1623,9 @@ function SidebarSubagentRow(
   },
 ) {
   const { thread, rows, render, ...tree } = props;
-  const { watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
+  const { status, watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
     thread,
-    resolveSidebarThreadStatus(thread) === "working" || thread.pendingBackgroundTasks.length > 0,
+    withChildNeeds(resolveSidebarThreadStatus(thread), props.runningChildren),
     rows,
   );
   const { open, onToggle } = useSidebarWorkExpansion(
@@ -1633,6 +1633,7 @@ function SidebarSubagentRow(
     workRows.some((row) => row.kind === "subagent"),
   );
   return render({
+    status,
     ref: watchRow,
     toggle: workCount > 0 ? { count: workCount, open, onToggle } : null,
     children:

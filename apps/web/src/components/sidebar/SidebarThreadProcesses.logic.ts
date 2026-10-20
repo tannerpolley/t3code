@@ -1,7 +1,8 @@
-import type { ThreadProcessGroup } from "@t3tools/contracts";
+import type { ThreadProcessGroup, ThreadProcesses } from "@t3tools/contracts";
 import { shellProgramName } from "@t3tools/shared/shellCommand";
 
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
+import type { SidebarThreadStatus } from "../Sidebar.logic";
 
 type BackgroundTaskRow = Exclude<BackgroundWorkTaskRow, { readonly kind: "subagent" }>;
 
@@ -56,4 +57,18 @@ export function visibleProcessGroups(
 
 export function sidebarWorkExpanded(explicit: boolean | undefined, hasRunningAgents: boolean) {
   return explicit ?? hasRunningAgents;
+}
+
+/** Sampling augments the server's status without hiding active turns, requests or failures. */
+export function withRunningProcessWork(
+  status: SidebarThreadStatus,
+  processes: ThreadProcesses | null | undefined,
+): SidebarThreadStatus {
+  return status === "ready" &&
+    processes != null &&
+    (processes.runningTaskIds.length > 0 ||
+      processes.commands.length > 0 ||
+      processes.processGroups.length > 0)
+    ? "waiting"
+    : status;
 }
