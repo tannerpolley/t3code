@@ -7,15 +7,17 @@ Only Codex and Claude matter here; mobile is out of scope.
 ## Where work is tracked
 
 Plans and bugs live in the fork's GitHub issues. Issue #1 is the roadmap and maintenance tracker.
-Close an issue when its fix lands on `main`.
+Every task starts from an issue: the orchestrator creates one before delegating, and links each worker thread to it (`link_issue`), so the Issues pane shows it In progress. Close an issue when its fix lands on `main`.
 
 ## Branches and worktrees
 
 - `main` is the only long-lived branch, and GitHub `main` mirrors local `main`.
 - **Each task:**
-  - Gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
-  - After review, merge it into `main` with a fast-forward or merge commit, then push `main`.
-  - Then delete the branch and its worktree. A post-merge hook deletes merged branches that aren't checked out.
+  - Has a GitHub issue, and gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
+  - Lands through a pull request: push the branch, open a pull request whose body says `Closes #<issue>`, and link it to the worker's thread and the orchestrator's (`link_pull_request`). Review happens on that branch.
+  - After review, fast-forward `main` to the branch and push `main`. GitHub marks the pull request merged, which keeps `main`'s history linear. Close the issue if it is still open.
+  - Then delete the branch (local and remote) and its worktree. A post-merge hook deletes merged local branches that aren't checked out.
+- **Upstream syncs** follow the same path: one issue per sync, and a pull request for the sync branch.
 - **Releases** are tags on `main`: `release/vX.Y.Z`.
 - **Superseded, unmerged work** becomes an `archive/<name>` tag, not a kept branch.
 - **Fixes meant for upstream** go on `upstream-fix/<name>` branches cut from `upstream/main`. Keep each one until its upstream pull request closes. Every public post needs the owner's approval.
