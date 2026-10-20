@@ -10,14 +10,22 @@ SANDBOX=$REPO/.worktrees/fork-sandbox
 
 case "${1:-}" in
 open)
-  systemctl --user stop t3-dev 2>/dev/null || true
-  before=$(git -C "$SANDBOX" rev-parse HEAD)
+  # Edits left in the sandbox would be served as if they were main; keep them and stop here.
+  if [ -n "$(git -C "$SANDBOX" status --porcelain --untracked-files=no)" ]; then
+    echo "The sandbox has uncommitted edits; commit or discard them in $SANDBOX first." >&2
+    exit 1
+  fi
+  # Before stopping anything, so a failed checkout leaves the running preview alone.
   git -C "$SANDBOX" checkout -q --detach main
-  # Reinstall only when dependencies changed; it takes a minute or more.
-  if ! git -C "$SANDBOX" diff --quiet "$before" HEAD -- pnpm-lock.yaml; then
-    echo "Dependencies changed; installing…"
+  systemctl --user stop t3-dev 2>/dev/null || true
+  # Reinstall when the lockfile differs from the last successful install (it takes a minute or more).
+  marker=$SANDBOX/node_modules/.fork-preview-lockfile
+  lock=$(git -C "$SANDBOX" hash-object pnpm-lock.yaml)
+  if [ "$(cat "$marker" 2>/dev/null)" != "$lock" ]; then
+    echo "Installing dependencies…"
     (cd "$SANDBOX" && PATH="$REPO/node_modules/.bin:$PATH" CI=true T3CODE_PROJECT_ROOT="$REPO" \
       nice -n 10 node scripts/setup-worktree.ts)
+    echo "$lock" >"$marker"
   fi
   echo "Starting the dev preview of main: $(git -C "$SANDBOX" log -1 --format='%h %s')"
   "$REPO/scripts/fork-dev/seed.sh" start
