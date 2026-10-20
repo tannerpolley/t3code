@@ -108,6 +108,7 @@ import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import { layerForkWsRpc } from "./ForkWsRpc.ts";
+import { withRoutedRequestParent } from "./orchestration-v2/RoutedRequestShell.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
@@ -123,6 +124,7 @@ import {
   buildActiveShellSnapshot,
   bufferShellLiveStream,
   coalesceShellApplicationEvents,
+  SHELL_COALESCE_WINDOW,
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
@@ -1031,7 +1033,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
               return yield* projectItem(stored);
             }
             const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
-            return shellStreamItemFromThreadShell({ stored, shell });
+            return yield* withRoutedRequestParent(
+              shellStreamItemFromThreadShell({ stored, shell }),
+              threadManagement.getThreadShell,
+            );
           }),
         { concurrency: 8 },
       );
@@ -1039,7 +1044,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
 
     const toShellStream = <E, R>(stream: Stream.Stream<ShellApplicationEvent, E, R>) =>
       stream.pipe(
-        Stream.groupedWithin(512, Duration.millis(50)),
+        Stream.groupedWithin(512, SHELL_COALESCE_WINDOW),
         Stream.mapEffect((events) => projectShellItems(Array.from(events))),
         Stream.flatMap(Stream.fromIterable),
         skipUnchangedThreadShells,
@@ -1773,7 +1778,7 @@ export const layerWsRpc = (
           const live = threadManagement
             .streamStoredEventsFrom({ afterSequence: snapshot.snapshotSequence })
             .pipe(
-              Stream.groupedWithin(512, Duration.millis(50)),
+              Stream.groupedWithin(512, SHELL_COALESCE_WINDOW),
               Stream.mapEffect((events) =>
                 Effect.forEach(
                   coalesceStoredThreadEvents(Array.from(events)),
@@ -2570,6 +2575,10 @@ export const layerWsRpc = (
                     projectId: project.projectId,
                     title: project.title,
                     workspaceRoot: project.workspaceRoot,
+                    ...(project.sectionId === undefined ? {} : { sectionId: project.sectionId }),
+                    ...(project.sidebarExpanded === undefined
+                      ? {}
+                      : { sidebarExpanded: project.sidebarExpanded }),
                     createWorkspaceRootIfMissing: true,
                   })
                   .pipe(

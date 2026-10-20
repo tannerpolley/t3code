@@ -973,9 +973,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             event.providerTurn.status === "failed",
         );
         assert.isAtLeast(childTerminal, 0);
-        assert.isAbove(
-          harness.events.findIndex((event) => event.type === "turn.terminal"),
-          childTerminal,
+        const rootTerminal = harness.terminalEvents()[0];
+        assert.isTrue(
+          rootTerminal?.status === "failed" && rootTerminal.childTurnsContinue === true,
         );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(

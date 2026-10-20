@@ -459,7 +459,8 @@ function pendingTaskApproval(
   for (const request of child.runtimeRequests) {
     if (
       request.status !== "pending" ||
-      request.responseCapability.type !== "live" ||
+      (request.responseCapability.type !== "live" &&
+        request.responseCapability.type !== "app_owned") ||
       !isApprovalRequestKind(request.kind)
     ) {
       continue;

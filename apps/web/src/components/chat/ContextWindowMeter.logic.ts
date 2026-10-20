@@ -70,8 +70,9 @@ export function shouldOfferResumeCompaction(input: {
   readonly now: string;
 }): boolean {
   if (
-    input.provider !== "claudeAgent" ||
-    (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
+    (input.provider !== "claudeAgent" && input.provider !== "codex") ||
+    (input.usedTokens ?? 0) <
+      (input.provider === "codex" ? 100_000 : COMPACTION_SUGGESTION_MIN_TOKENS)
   ) {
     return false;
   }

@@ -2746,7 +2746,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "provider-turn.updated": {
               const existingRows =
-                event.payload.tokenUsage === undefined
+                event.payload.tokenUsage === undefined || event.payload.turnTokenUsage === undefined
                   ? yield* sql<PayloadRow>`
                     SELECT payload_json
                     FROM orchestration_v2_projection_provider_turns
@@ -7161,7 +7161,33 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
     const service: ProjectionStoreV2Shape = {
       getIssueWorkCommentState: () => Effect.succeed(null),
       getIssueCommentReceipt: () => Effect.succeed(null),
-      getTitleRefreshCandidates: () => Effect.succeed([]),
+      // Returns every live top-level thread; selectTitleRefreshThreads applies the rules.
+      getTitleRefreshCandidates: () =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .filter(
+                ({ thread }) =>
+                  thread.deletedAt === null &&
+                  thread.archivedAt === null &&
+                  thread.lineage.relationshipToParent !== "subagent",
+              )
+              .map(({ thread, messages }) => {
+                const latest = messages
+                  .filter((message) => message.role === "user" || message.role === "assistant")
+                  .map((message) => message.updatedAt)
+                  .reduce<DateTime.Utc | null>(
+                    (max, value) =>
+                      max === null || DateTime.isGreaterThan(value, max) ? value : max,
+                    null,
+                  );
+                return {
+                  thread,
+                  latestMessageAt: latest === null ? null : DateTime.formatIso(latest),
+                };
+              }),
+          ),
+        ),
       getPendingRoutedRequestThreadIds: (parentThreadId) =>
         Ref.get(replayState).pipe(
           Effect.map((state) =>

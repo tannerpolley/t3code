@@ -84,6 +84,38 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("keeps plugin enablement when skill overrides are invalid", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const installPath = path.join(configDir, "plugins", "kept");
+      yield* writeSkill(path.join(installPath, "skills"), "review", "# Review");
+      yield* fs.writeFileString(
+        path.join(configDir, "plugins", "installed_plugins.json"),
+        JSON.stringify({
+          plugins: { "kept@shop": [{ scope: "user", installPath }] },
+        }),
+      );
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        JSON.stringify({
+          skillOverrides: { invalid: false },
+          enabledPlugins: { "kept@shop": true },
+        }),
+      );
+      const result = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
+      assert.deepEqual(
+        result.skills.map((skill) => skill.name),
+        ["kept:review"],
+      );
+      assert.deepEqual(
+        result.plugins.map((plugin) => plugin.name),
+        ["kept"],
+      );
+    }),
+  );
   it.effect("merges plugin enablement and selects installs in native registry order", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -150,8 +182,10 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         '{"enabledPlugins":{"plugin@shop":true,"local@shop":false},"skillOverrides":{"invalid":"bogus"}}',
       );
       assert.deepEqual(
-        yield* discoverClaudeSkills({ homePath: configDir }, workspace),
-        projectSettings,
+        (yield* discoverClaudeSkills({ homePath: configDir }, workspace)).map(
+          (skill) => skill.name,
+        ),
+        ["plugin:review"],
       );
       yield* fs.writeFileString(
         path.join(workspace, ".claude", "settings.local.json"),

@@ -1194,6 +1194,111 @@ it.effect("memory shell snapshots scope to one project", () =>
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
+  it.effect("finds only pending routed requests without loading historical children", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const parentId = yield* addRolledBackRecoveryCandidate("routed-request-parent");
+      const parent = yield* store.getThread(parentId);
+      const parentRunId = (yield* store.getThreadRecords(parentId, ["runs"])).runs[0]!.id;
+      const now = yield* DateTime.now;
+      const childIds: ThreadId[] = [];
+      for (let index = 0; index < 20; index++) {
+        const childId = ThreadId.make(`routed-request-child:${index}`);
+        childIds.push(childId);
+        yield* store.apply({
+          id: EventId.make(`routed-child:${index}`),
+          type: "thread.created",
+          threadId: childId,
+          occurredAt: now,
+          payload: {
+            ...parent,
+            id: childId,
+            lineage: {
+              rootThreadId: parentId,
+              parentThreadId: parentId,
+              relationshipToParent: "subagent",
+            },
+          },
+        });
+        yield* store.apply({
+          id: EventId.make(`historical-task:${index}`),
+          type: "subagent.updated",
+          threadId: parentId,
+          occurredAt: now,
+          payload: {
+            id: NodeId.make(`historical-task:${index}`),
+            threadId: parentId,
+            runId: parentRunId,
+            parentNodeId: NodeId.make("root"),
+            origin: "app_owned",
+            createdBy: "agent",
+            driver,
+            providerInstanceId,
+            providerThreadId: null,
+            childThreadId: childId,
+            nativeTaskRef: null,
+            prompt: "Inspect",
+            title: null,
+            model: null,
+            status: "completed",
+            result: "Done",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          },
+        });
+      }
+      const { statements, tracer } = traceSqlStatements();
+      assert.deepEqual(
+        yield* store.getPendingRoutedRequestThreadIds(parentId).pipe(Effect.withTracer(tracer)),
+        [],
+      );
+      assert.equal(statements.length, 1);
+      assert.notInclude(statements[0]!, "projection_subagents");
+      const plans = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN SELECT DISTINCT thread_id FROM orchestration_v2_projection_runtime_requests
+        WHERE status = 'pending' AND json_extract(payload_json, '$.routedTo') = ${parentId}
+      `;
+      assert.ok(
+        plans.some((plan) =>
+          plan.detail.includes(
+            "USING INDEX orchestration_v2_projection_runtime_requests_pending_routed_idx",
+          ),
+        ),
+      );
+
+      const request = {
+        nodeId: NodeId.make("question"),
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input" as const,
+        responseCapability: { type: "message" as const },
+        createdAt: now,
+        resolvedAt: null,
+      };
+      for (const [ordinal, [index, status, routedTo]] of (
+        [
+          [0, "pending", parentId],
+          [0, "pending", parentId],
+          [1, "resolved", parentId],
+          [2, "pending", ThreadId.make("other-parent")],
+          [3, "pending", undefined],
+        ] as const
+      ).entries()) {
+        const id = RuntimeRequestId.make(`question:${ordinal}`);
+        yield* store.apply({
+          id: EventId.make(id),
+          type: "runtime-request.updated",
+          threadId: childIds[index]!,
+          occurredAt: now,
+          payload: { ...request, id, status, ...(routedTo === undefined ? {} : { routedTo }) },
+        });
+      }
+      assert.deepEqual(yield* store.getPendingRoutedRequestThreadIds(parentId), [childIds[0]!]);
+    }),
+  );
+
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -1400,7 +1505,17 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         nodeId,
         driver,
         occurredAt: now,
-        payload: { ...providerTurn, tokenUsage: initialUsage },
+        payload: {
+          ...providerTurn,
+          tokenUsage: initialUsage,
+          turnTokenUsage: {
+            usageScope: "main_agent",
+            usageStatus: "partial",
+            inputTokens: 11_000,
+            outputTokens: 1_000,
+            hasSubagents: false,
+          },
+        },
       });
       yield* projectionStore.apply({
         id: EventId.make("event:provider-usage-reload:completed"),
@@ -1433,6 +1548,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       const replaced = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(replaced.providerTurns[0]?.tokenUsage, replacementUsage);
+      assert.deepEqual(replaced.providerTurns[0]?.turnTokenUsage, {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        inputTokens: 11_000,
+        outputTokens: 1_000,
+        hasSubagents: false,
+      });
     }),
   );
 

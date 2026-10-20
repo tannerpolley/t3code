@@ -105,7 +105,7 @@ describe("Codex context usage compatibility", () => {
 });
 
 describe("CodexAdapterV2 file change approvals", () => {
-  it("uses nonblank reasons before sorted file operations and renamed paths", () => {
+  it("keeps the reason, grant root, all file operations, and renamed paths", () => {
     const fileChanges = {
       "/tmp/removed.md": { type: "delete" as const, content: "gone" },
       "/tmp/added.ts": { type: "add" as const, content: "export {};" },
@@ -118,9 +118,10 @@ describe("CodexAdapterV2 file change approvals", () => {
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({
         reason: "  Update configuration. ",
+        grantRoot: "/workspace",
         fileChanges,
       }),
-      "Update configuration.",
+      "Update configuration.\n\nGrant root: /workspace\nadd /tmp/added.ts\nupdate /tmp/moved.ts -> /tmp/renamed.ts\ndelete /tmp/removed.md",
     );
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", fileChanges }),
@@ -131,11 +132,11 @@ describe("CodexAdapterV2 file change approvals", () => {
   it("falls back to a nonblank grant root and omits empty details", () => {
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({ reason: " ", grantRoot: " /workspace " }),
-      "/workspace",
+      "Grant root: /workspace",
     );
     assert.equal(
       CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges: {}, grantRoot: "/workspace" }),
-      "/workspace",
+      "Grant root: /workspace",
     );
     assert.isUndefined(
       CodexAdapterV2.codexFileChangeApprovalPrompt({
@@ -146,7 +147,7 @@ describe("CodexAdapterV2 file change approvals", () => {
     );
   });
 
-  it("bounds large patch descriptions without losing the remaining count", () => {
+  it("keeps every file path in a large patch description", () => {
     const fileChanges = Object.fromEntries(
       Array.from({ length: 25 }, (_, index) => [
         `/tmp/file-${String(index).padStart(2, "0")}.ts`,
@@ -154,10 +155,9 @@ describe("CodexAdapterV2 file change approvals", () => {
       ]),
     );
     const detail = CodexAdapterV2.codexFileChangeApprovalPrompt({ fileChanges });
-    assert.equal(detail?.split("\n").length, 21);
+    assert.equal(detail?.split("\n").length, 25);
     assert.isTrue(detail?.startsWith("add /tmp/file-00.ts") ?? false);
-    assert.isTrue(detail?.endsWith("+5 more") ?? false);
-    assert.notInclude(detail, "file-20.ts");
+    assert.isTrue(detail?.endsWith("add /tmp/file-24.ts") ?? false);
   });
 
   it("uses item-start file changes when Codex omits the approval payload", () => {
@@ -8357,6 +8357,48 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ]);
         }
         assert.equal(metadataRequests, name === "current Codex Sol" ? 1 : 2);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("gives a worker subagent's thread the Implementor role its child thread reports", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const roleReported = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          resumeSubagentTranscript,
+          (event) =>
+            event.type === "app_thread.created" && event.appThread.role !== undefined
+              ? Deferred.succeed(roleReported, undefined)
+              : Effect.void,
+          undefined,
+          (threadId) =>
+            Effect.succeed({ thread: { id: threadId, model: "gpt-6-sol", agentRole: "worker" } }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-role"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* Deferred.await(roleReported);
+        yield* TestClock.adjust("100 millis");
+        yield* harness.firstTerminal;
+        const childThreads = harness.events.flatMap((event) =>
+          event.type === "app_thread.created" ? [event.appThread] : [],
+        );
+        assert.deepEqual(
+          childThreads.map((thread) => thread.role),
+          [undefined, "implementor"],
+        );
+        assert.equal(childThreads[1]?.id, childThreads[0]?.id);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

@@ -47,6 +47,7 @@ describe("ClaudeAdapterV2 fetched model catalog", () => {
           prefix: "t3-claude-catalog-",
         });
         let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const messages = yield* Queue.unbounded<ReturnType<typeof claudeSdkFrame>>();
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
@@ -63,7 +64,7 @@ describe("ClaudeAdapterV2 fetched model catalog", () => {
               Effect.sync(() => {
                 openedOptions = input.options;
                 return {
-                  messages: Stream.never,
+                  messages: Stream.fromQueue(messages),
                   offer: () => Effect.void,
                   backgroundTasks: () => Effect.succeed(false),
                   stopTask: () => Effect.void,
@@ -110,6 +111,31 @@ describe("ClaudeAdapterV2 fetched model catalog", () => {
         );
         assert.equal(openedOptions?.model, "claude-opus-5-5-manifest-only");
         assert.equal(openedOptions?.effort, "xhigh");
+        const compacted = yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.tokenUsage?.usedTokens === 400,
+          ),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* Queue.offer(
+          messages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "compact_boundary",
+            compact_metadata: { trigger: "auto", pre_tokens: 1_000, post_tokens: 400 },
+            uuid: "00000000-0000-4000-8000-000000000991",
+            session_id: "native-thread-claude-catalog",
+          }),
+        );
+        const [usage] = yield* Fiber.join(compacted);
+        assert.equal(
+          usage?.type === "provider_turn.updated" ? usage.providerTurn.tokenUsage?.maxTokens : null,
+          1_000_000,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -782,3 +808,64 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 });
+
+it.effect.each(["task_started", "task_progress"] as const)(
+  "gives a worker subagent's thread the Implementor role named by %s",
+  (namedBy) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-subagent-role"),
+            text: "Spawn a worker.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-subagent-role",
+            tool_use_id: "toolu-subagent-role",
+            description: "Build the parser",
+            ...(namedBy === "task_started" ? { subagent_type: "worker" } : {}),
+            task_type: "local_agent",
+            uuid: "00000000-0000-4000-8000-000000000391",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: "task-subagent-role",
+            tool_use_id: "toolu-subagent-role",
+            description: "Building the parser",
+            ...(namedBy === "task_progress" ? { subagent_type: "worker" } : {}),
+            usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 },
+            uuid: "00000000-0000-4000-8000-000000000393",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000392",
+            result: "Spawned the worker.",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+
+        const children = harness.events.flatMap((event) =>
+          event.type === "app_thread.created" ? [event.appThread] : [],
+        );
+        assert.equal(children.at(-1)?.role, "implementor");
+        assert.equal(new Set(children.map((thread) => thread.id)).size, 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+);

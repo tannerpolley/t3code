@@ -1,8 +1,4 @@
-import type {
-  ClaudeSettings,
-  ServerProviderPlugin,
-  ServerProviderSkill,
-} from "@t3tools/contracts";
+import type { ClaudeSettings, ServerProviderPlugin, ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -226,11 +222,14 @@ const SkillOverrideValue = Schema.Literals(["on", "name-only", "user-invocable-o
 // tolerates comments and trailing commas in them.
 const SkillSettings = fromLenientJson(
   Schema.Struct({
-    skillOverrides: Schema.optional(Schema.Record(Schema.String, SkillOverrideValue)),
+    skillOverrides: Schema.optional(Schema.Unknown),
     enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
   }),
 );
 const decodeSkillSettings = Schema.decodeUnknownEffect(SkillSettings);
+const decodeSkillOverrides = Schema.decodeUnknownOption(
+  Schema.Record(Schema.String, SkillOverrideValue),
+);
 
 type SkillOverride = {
   readonly enabled: boolean;
@@ -285,8 +284,11 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
       ),
       Effect.orElseSucceed(() => undefined),
     );
-    for (const [name, value] of Object.entries(parsed?.skillOverrides ?? {})) {
-      overridesByName.set(name, parseSkillOverride(value));
+    const overrides = decodeSkillOverrides(parsed?.skillOverrides);
+    if (Option.isSome(overrides)) {
+      for (const [name, value] of Object.entries(overrides.value)) {
+        overridesByName.set(name, parseSkillOverride(value));
+      }
     }
     for (const [key, enabled] of Object.entries(parsed?.enabledPlugins ?? {})) {
       if (typeof enabled === "boolean") {
@@ -576,7 +578,9 @@ const discoverClaudeSkillData = Effect.fn("discoverClaudeSkillData")(function* (
     }
   }
 
-  const skills = [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  const skills = [...skillsByName.values()].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
   const plugins = pluginDiscovery.plugins.map(({ skillPrefix, ...plugin }) => ({
     ...plugin,
     skillCount: skills.filter((skill) => skill.pluginName === skillPrefix).length,
@@ -590,9 +594,7 @@ export const discoverClaudeSkills = (
   environment?: NodeJS.ProcessEnv,
 ) =>
   discoverClaudeSkillData(config, cwd, environment).pipe(
-    Effect.map(({ skills }) =>
-      skills.map(({ pluginName: _pluginName, ...skill }) => skill),
-    ),
+    Effect.map(({ skills }) => skills.map(({ pluginName: _pluginName, ...skill }) => skill)),
   );
 
 export const discoverClaudeSkillsAndPlugins = (
@@ -602,9 +604,7 @@ export const discoverClaudeSkillsAndPlugins = (
 ) =>
   discoverClaudeSkillData(config, cwd, environment).pipe(
     Effect.map(({ skills, plugins }) => ({
-      skills: skills.map((skill) =>
-        skill.pluginName ? { ...skill, scope: "plugin" } : skill,
-      ),
+      skills: skills.map((skill) => (skill.pluginName ? { ...skill, scope: "plugin" } : skill)),
       plugins,
     })),
   );

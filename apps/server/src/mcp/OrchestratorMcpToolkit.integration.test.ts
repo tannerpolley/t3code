@@ -4952,6 +4952,15 @@ describe("orchestrator MCP toolkit", () => {
               pendingApproval: expectedApproval,
               waitTimedOut: false,
             });
+            yield* persistRequest({
+              ...liveApproval,
+              responseCapability: {
+                type: "app_owned",
+                providerSessionId: approvalChild.providerSessions[0]!.id,
+              },
+            });
+            expect((yield* readApprovalStatus()).pendingApproval).toEqual(expectedApproval);
+            yield* persistRequest(liveApproval);
             const earlierApproval = approvalRequest("earlier", {
               createdAt: DateTime.subtract(approvalAskedAt, { seconds: 1 }),
             });

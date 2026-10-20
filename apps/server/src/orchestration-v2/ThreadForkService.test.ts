@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   ContextTransferId,
+  CommandId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -48,6 +49,20 @@ function makeSourceThread(): OrchestrationV2AppThread {
       number: 8,
       url: "https://github.com/tannerpolley/t3code/issues/8",
       title: "Single issue",
+    },
+    repositoryOrchestration: {
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      repositoryId: "repo:8",
+      projectId: ProjectId.make("project:fork-snooze"),
+      launchCommandId: CommandId.make("repository:create"),
+      revision: 1,
+      paused: false,
+      workerLimit: 4,
+      publishStatusComments: false,
+      publishCloseoutComments: false,
+      milestones: [],
+      suspendedIssues: [],
     },
     providerInstanceId,
     modelSelection,

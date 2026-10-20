@@ -178,8 +178,6 @@ export function codexFileChangeApprovalPrompt(input: {
     Pick<CodexSchema.V2ItemStartedNotification__FileUpdateChange, "path" | "kind">
   >;
 }): string | undefined {
-  const reason = input.reason?.trim();
-  if (reason) return reason;
   const entries = Object.entries(input.fileChanges ?? {}).toSorted(([left], [right]) =>
     left.localeCompare(right),
   );
@@ -188,6 +186,7 @@ export function codexFileChangeApprovalPrompt(input: {
   );
   const grantRoot = input.grantRoot?.trim();
   const details = [
+    grantRoot ? `Grant root: ${grantRoot}` : undefined,
     ...entries.map(([path, change]) => {
       const movePath = change.type === "update" ? change.move_path : undefined;
       return movePath ? `${change.type} ${path} -> ${movePath}` : `${change.type} ${path}`;
@@ -197,10 +196,7 @@ export function codexFileChangeApprovalPrompt(input: {
       return movePath ? `${kind.type} ${path} -> ${movePath}` : `${kind.type} ${path}`;
     }),
   ].filter((detail): detail is string => detail !== undefined);
-  if (details.length === 0) return grantRoot || undefined;
-  const shown = details.slice(0, 20);
-  const remaining = details.length - shown.length;
-  return remaining > 0 ? `${shown.join("\n")}\n+${remaining} more` : shown.join("\n");
+  return combineApprovalPrompt([input.reason], details.join("\n"));
 }
 
 // Reasoning effort changes future generation, not the existing context's tokenizer
@@ -2251,75 +2247,75 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           completedAt: DateTime.Utc,
           nativeItemId?: string,
         ) {
-            const items = (yield* Ref.get(runningCommandItemsByTurn)).get(nativeTurnId);
-            if (items === undefined || items.size === 0) {
-              return;
+          const items = (yield* Ref.get(runningCommandItemsByTurn)).get(nativeTurnId);
+          if (items === undefined || items.size === 0) {
+            return;
+          }
+          for (const tracked of items.values()) {
+            if (nativeItemId !== undefined && tracked.id !== nativeItemId) continue;
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: tracked.id,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: tracked.id,
+            });
+            const { ordinal, startedAt } = yield* resolveItemPosition(context, tracked.id);
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              parentNodeId: context.itemParentNodeId,
+              rootNodeId: context.rootNodeId,
+              kind: "tool_call",
+              status,
+              countsForRun: false,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(tracked.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              nodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(tracked.id),
+              parentItemId: null,
+              ordinal,
+              status,
+              title: null,
+              startedAt,
+              completedAt,
+              updatedAt: completedAt,
+              type: "command_execution",
+              input: tracked.command,
+              ...(tracked.aggregatedOutput === undefined
+                ? {}
+                : { output: tracked.aggregatedOutput }),
+            };
+            if (nativeItemId !== undefined) {
+              const stopped = stoppedCommandItemsByTurn.get(nativeTurnId) ?? new Map();
+              stopped.set(tracked.id, turnItem);
+              stoppedCommandItemsByTurn.set(nativeTurnId, stopped);
             }
-            for (const tracked of items.values()) {
-              if (nativeItemId !== undefined && tracked.id !== nativeItemId) continue;
-              const nodeId = idAllocator.derive.nodeFromProviderItem({
-                driver: CODEX_PROVIDER,
-                nativeItemId: tracked.id,
-              });
-              const turnItemId = idAllocator.derive.turnItemFromProviderItem({
-                driver: CODEX_PROVIDER,
-                nativeItemId: tracked.id,
-              });
-              const { ordinal, startedAt } = yield* resolveItemPosition(context, tracked.id);
-              const node: OrchestrationV2ExecutionNode = {
-                id: nodeId,
-                threadId: context.projectionThreadId,
-                runId: context.projectionRunId,
-                parentNodeId: context.itemParentNodeId,
-                rootNodeId: context.rootNodeId,
-                kind: "tool_call",
-                status,
-                countsForRun: false,
-                providerThreadId: context.providerThread.id,
-                providerTurnId: context.providerTurnId,
-                nativeItemRef: codexNativeItemRef(tracked.id),
-                runtimeRequestId: null,
-                checkpointScopeId: null,
-                startedAt,
-                completedAt,
-              };
-              const turnItem: OrchestrationV2TurnItem = {
-                id: turnItemId,
-                threadId: context.projectionThreadId,
-                runId: context.projectionRunId,
-                nodeId,
-                providerThreadId: context.providerThread.id,
-                providerTurnId: context.providerTurnId,
-                nativeItemRef: codexNativeItemRef(tracked.id),
-                parentItemId: null,
-                ordinal,
-                status,
-                title: null,
-                startedAt,
-                completedAt,
-                updatedAt: completedAt,
-                type: "command_execution",
-                input: tracked.command,
-                ...(tracked.aggregatedOutput === undefined
-                  ? {}
-                  : { output: tracked.aggregatedOutput }),
-              };
-              if (nativeItemId !== undefined) {
-                const stopped = stoppedCommandItemsByTurn.get(nativeTurnId) ?? new Map();
-                stopped.set(tracked.id, turnItem);
-                stoppedCommandItemsByTurn.set(nativeTurnId, stopped);
-              }
-              yield* emitProviderEvent({
-                type: "node.updated",
-                driver: CODEX_PROVIDER,
-                node,
-              });
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CODEX_PROVIDER,
-                turnItem,
-              });
-            }
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CODEX_PROVIDER,
+              node,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem,
+            });
+          }
         });
 
         const terminateBackgroundTerminal = Effect.fn("CodexAdapterV2.terminateBackgroundTerminal")(
@@ -3353,6 +3349,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             messageId,
             text: item.text,
             streaming: !completed,
+            ...(item.phase ? { phase: item.phase } : {}),
           };
           return { node, message, turnItem };
         });
@@ -4283,16 +4280,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               `Provider thread ${input.context.providerThread.id} is missing a provider session id.`,
             );
           }
-          const questions = input.questions.map((question, index) => ({
-            id: nonEmptyText(question.id, `question-${index + 1}`),
-            header: nonEmptyText(question.header, "Question"),
-            question: nonEmptyText(question.question, "Choose an answer."),
-            options:
-              question.options?.map((option, optionIndex) => ({
-                label: nonEmptyText(option.label, `Option ${optionIndex + 1}`),
-                description: nonEmptyText(option.description, option.label),
-              })) ?? [],
-          }));
+          const questions = codexUserInputQuestions(input.questions);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CODEX_PROVIDER,
             nativeItemId: input.nativeItemId,
@@ -7476,7 +7464,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               ),
-            ),
+          ),
           stopSubagent: Effect.fn("CodexAdapterV2.stopSubagent")(
             function* (stopInput) {
               const subagent = Array.from((yield* Ref.get(subagentThreads)).values()).find(
@@ -7511,18 +7499,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
             },
             (effect, _stopInput) =>
-              effect.pipe(Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver: CODEX_PROVIDER,
-                    detail: "Failed to stop Codex native subagent.",
-                    cause,
-                  }),
-              )),
-            ),
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CODEX_PROVIDER,
+                      detail: "Failed to stop Codex native subagent.",
+                      cause,
+                    }),
+                ),
+              ),
+          ),
           respondToRuntimeRequest: Effect.fn("CodexAdapterV2.respondToRuntimeRequest")(
             function* (requestInput) {
-
               const pending = (yield* Ref.get(pendingRuntimeRequests)).get(
                 String(requestInput.requestId),
               );
@@ -7571,7 +7560,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       }),
                 ),
               ),
-            ),
+          ),
           stopBackgroundTask: Effect.fn("CodexAdapterV2.stopBackgroundTask")(
             function* (stopInput) {
               // A background command's task id is its native item id; Codex names its process.
@@ -7610,18 +7599,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* releaseSettledTurnIfIdle(turnId);
             },
             (effect, stopInput) =>
-              effect.pipe(Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver: CODEX_PROVIDER,
-                    detail: `Failed to stop Codex background command ${stopInput.taskId}.`,
-                    payload: cause,
-                  }),
-              )),
-            ),
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CODEX_PROVIDER,
+                      detail: `Failed to stop Codex background command ${stopInput.taskId}.`,
+                      payload: cause,
+                    }),
+                ),
+              ),
+          ),
           uploadFeedback: Effect.fn("CodexAdapterV2.uploadFeedback")(
             function* (feedbackInput) {
-
               const threadId = yield* getNativeThreadId(feedbackInput.providerThread);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(

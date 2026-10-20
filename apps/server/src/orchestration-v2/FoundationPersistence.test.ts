@@ -55,6 +55,7 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -3707,4 +3708,109 @@ it.effect.each(["events", "receipts"] as const)(
         assert.deepEqual(retained, [{ id: "pending" }]);
       }).pipe(Effect.provide(maintenanceLayer));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([true, false])(
+  "preserves repository pause (%s) and admission after visit, compaction and reboot rebuild",
+  (pauseState) =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const rootId = ThreadId.make("pause-replay-root");
+      const workerId = ThreadId.make("pause-replay-worker");
+      const issue = {
+        host: "github.com",
+        repository: "owner/repo",
+        repositoryId: "pause-replay-repo",
+        id: "pause-replay-issue",
+        nodeId: "pause-replay-node",
+        number: 1,
+        title: "Retain pause",
+        url: "https://github.com/owner/repo/issues/1",
+      };
+      const root = {
+        ...makeThread(rootId, now),
+        repositoryOrchestration: {
+          host: issue.host,
+          repository: issue.repository,
+          repositoryId: issue.repositoryId,
+          projectId: ProjectId.make(`project:${rootId}`),
+          launchCommandId: CommandId.make("pause-replay-create"),
+          revision: 1,
+          paused: false,
+          workerLimit: 4,
+          publishStatusComments: false,
+          publishCloseoutComments: false,
+          milestones: [],
+          suspendedIssues: [],
+        },
+      };
+      yield* sink.write({
+        events: [
+          threadCreatedEvent({ id: "pause-replay-create", thread: root, now }),
+          threadCreatedEvent({
+            id: "pause-replay-worker-create",
+            thread: {
+              ...makeThread(workerId, now),
+              linkedIssue: issue,
+              lineage: {
+                rootThreadId: rootId,
+                parentThreadId: rootId,
+                relationshipToParent: "subagent",
+              },
+            },
+            now,
+          }),
+        ],
+      });
+      assert.isTrue(yield* store.canAdmit(issue, workerId));
+      const paused = {
+        ...root,
+        repositoryOrchestration: {
+          ...root.repositoryOrchestration,
+          paused: pauseState,
+          revision: 2,
+        },
+      };
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("pause-replay-pause"),
+            type: "thread.metadata-updated",
+            threadId: rootId,
+            occurredAt: now,
+            payload: paused,
+          },
+          {
+            id: EventId.make("pause-replay-visit"),
+            type: "thread.visited",
+            threadId: rootId,
+            occurredAt: now,
+            payload: { ...paused, lastVisitedAt: now },
+          },
+        ],
+      });
+      assert.equal(yield* store.canAdmit(issue, workerId), !pauseState);
+      yield* maintenance.compactEventStore;
+      const events = yield* sql<{
+        event_type: string;
+      }>`SELECT event_type FROM orchestration_events WHERE stream_id = ${rootId}`;
+      assert.isTrue(events.some((event) => event.event_type === "thread.metadata-updated"));
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      const owner = yield* sql<{
+        paused: number;
+        revision: number;
+      }>`SELECT paused, revision FROM orchestration_v2_projection_repository_orchestration WHERE root_thread_id = ${rootId}`;
+      assert.deepEqual(owner, [{ paused: pauseState ? 1 : 0, revision: 2 }]);
+      assert.equal((yield* store.repositoryOwner(issue))!.paused, pauseState);
+      assert.equal((yield* store.configuration(rootId))!.revision, 2);
+      assert.equal(yield* store.canAdmit(issue, workerId), !pauseState);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(layerTest, IssueWorkStore.layer.pipe(Layer.provide(layerDatabase))),
+      ),
+    ),
 );

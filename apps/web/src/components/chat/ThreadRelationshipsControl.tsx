@@ -467,8 +467,8 @@ export function ThreadRelationshipsPanel(props: {
   ];
   const runningCount =
     (projection?.subagents.filter(
-      (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+      (agent) => agent.childThreadId === null && isOrchestrationV2WorkActive(agent.status),
+    ).length ?? 0) + active.length;
   const parentTasks =
     currentThreadShell?.lineage.parentThreadId == null
       ? []

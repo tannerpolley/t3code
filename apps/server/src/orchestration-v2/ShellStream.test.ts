@@ -26,6 +26,7 @@ import {
   buildActiveShellSnapshot,
   bufferShellLiveStream,
   coalesceShellApplicationEvents,
+  SHELL_COALESCE_WINDOW,
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
   dedupeShellEnrichment,
@@ -810,14 +811,14 @@ it.effect("reduces shell projections for streaming items while retaining final s
         ),
       ),
     );
-    const collect = (window: "50 millis" | "1 second") =>
+    const collect = (window: Duration.Input) =>
       source.pipe(
         Stream.groupedWithin(512, window),
         Stream.flatMap((batch) => Stream.fromIterable(coalesceShellApplicationEvents(batch))),
         Stream.runCollect,
       );
     const before = yield* collect("50 millis").pipe(Effect.forkScoped);
-    const after = yield* collect("1 second").pipe(Effect.forkScoped);
+    const after = yield* collect(SHELL_COALESCE_WINDOW).pipe(Effect.forkScoped);
     yield* TestClock.adjust("10 seconds");
     const beforeProjections = yield* Fiber.join(before);
     const afterProjections = yield* Fiber.join(after);

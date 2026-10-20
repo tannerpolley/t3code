@@ -286,7 +286,7 @@ it.effect.each([
         (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]?.delegatedTaskId,
         taskId,
       );
-      // A terminal write based on the attempt's start snapshot loses a later steer binding.
+      // Older runtimes persisted terminal snapshots that erased a later steer binding.
       yield* apply({
         type: "run.updated",
         threadId: childThreadId,
@@ -298,6 +298,12 @@ it.effect.each([
           ...(childState === "correlated" ? { delegatedTaskId: taskId } : {}),
         },
       });
+      if (childState !== "correlated") {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE orchestration_v2_projection_runs
+          SET payload_json = json_remove(payload_json, '$.delegatedTaskId')
+          WHERE run_id = ${runAtStart.id}`;
+      }
       assert.equal(
         (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]?.delegatedTaskId,
         childState === "correlated" ? taskId : undefined,
