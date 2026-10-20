@@ -11444,16 +11444,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentThreadId = childControls.thread.lineage.parentThreadId;
       const parentProjection = yield* projectionStore.getThreadRecords(
         parentThreadId,
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "nodes",
-          "turnItems",
-          "contextTransfers",
-        ],
+        ["runs", "messages", "subagents", "providerThreads", "providerTurns", "nodes", "turnItems"],
         { turnItemTypes: ["subagent"], messageRoles: ["user"] },
       );
       const task = parentProjection.subagents.find(
@@ -11465,17 +11456,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      const existingResultTransfer = parentProjection.contextTransfers.find(
-        (transfer) =>
-          transfer.type === "subagent_result" &&
-          transfer.sourceThreadId === childThreadId &&
-          transfer.targetThreadId === parentThreadId &&
-          (transfer.sourcePoint.runId === childRun.id ||
-            (options.task.id === forkedFrom.nodeId && transfer.sourcePoint.runId === undefined)),
-      );
-      if (existingResultTransfer !== undefined) {
-        return;
-      }
+      if (task.result !== null) return;
 
       const now = yield* DateTime.now;
       const settledRun = { ...childRun, status: outcome };

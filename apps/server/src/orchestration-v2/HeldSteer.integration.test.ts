@@ -325,8 +325,8 @@ it.effect("steers a live turn directly without holding it", () =>
   ),
 );
 
-it.effect.each(["live", "held", "held-switch"] as const)(
-  "completes a delegated follow-up steered into a %s provider turn",
+it.effect.each(["live", "held", "held-switch", "promoted"] as const)(
+  "completes delegated follow-ups with %s steering",
   (timing) =>
     runScenario(`delegated-${timing}`, ({ started, events, steered, cwd }) =>
       Effect.gen(function* () {
@@ -401,7 +401,11 @@ it.effect.each(["live", "held", "held-switch"] as const)(
           yield* Queue.offer(events, providerTurnFor(resumed, "running", yield* DateTime.now));
           yield* Fiber.join(live);
         });
-        if (timing === "live") yield* goLive;
+        const activeFollowupId = (yield* orchestrator.getThreadProjection(childThreadId)).runs.find(
+          (run) => run.id === resumed.runId,
+        )!.delegatedTaskId;
+        assert.isDefined(activeFollowupId);
+        if (timing === "live" || timing === "promoted") yield* goLive;
         const messageId = MessageId.make("message:parent-answer");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -411,15 +415,38 @@ it.effect.each(["live", "held", "held-switch"] as const)(
           messageId,
           text: "Use the adaptive barrier setting",
           attachments: [],
-          dispatchMode: { type: "steer_active", targetRunId: resumed.runId },
+          dispatchMode:
+            timing === "promoted"
+              ? { type: "queue_after_active" }
+              : { type: "steer_active", targetRunId: resumed.runId },
           createdBy: "agent",
           creationSource: "mcp",
         });
         const followup = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
-          (task) => task.id !== original.id,
+          (task) =>
+            task.id !== original.id && (timing !== "promoted" || task.id !== activeFollowupId),
         )!;
         assert.isDefined(followup);
-        if (timing !== "live") {
+        if (timing === "promoted") {
+          const queued = (yield* orchestrator.getThreadProjection(childThreadId)).runs.find(
+            (run) => run.userMessageId === messageId,
+          )!;
+          assert.equal(queued.status, "queued");
+          assert.equal(queued.delegatedTaskId, followup.id);
+          yield* orchestrator.dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: CommandId.make("promote-followup"),
+            threadId: childThreadId,
+            queuedRunId: queued.id,
+            targetRunId: resumed.runId,
+          });
+          const promoted = yield* orchestrator.getThreadProjection(childThreadId);
+          assert.equal(promoted.runs.find((run) => run.id === queued.id)?.status, "cancelled");
+          assert.equal(
+            promoted.messages.find((message) => message.id === messageId)?.runId,
+            resumed.runId,
+          );
+        } else if (timing !== "live") {
           const promoted = yield* watch(
             (event) =>
               event.type === "message.updated" &&
@@ -530,6 +557,40 @@ it.effect.each(["live", "held", "held-switch"] as const)(
         assert.isFalse(yield* orchestrator.delegatedTaskResultPending(childThreadId, followup.id));
         assert.isNotNull(task.completedAt);
         assert.isNotNull(task.result);
+        if (timing === "promoted") {
+          const activeFollowup = finished.subagents.find((row) => row.id === activeFollowupId)!;
+          assert.equal(activeFollowup.status, "completed");
+          assert.equal(activeFollowup.result, task.result);
+          assert.isNotNull(activeFollowup.completedAt);
+          assert.equal(activeFollowup.completionDelivery?.state, "claimed");
+          assert.equal(
+            finished.nodes.find((node) => node.id === activeFollowupId)?.status,
+            "completed",
+          );
+          assert.equal(
+            finished.turnItems.find(
+              (item) => item.type === "subagent" && item.subagentId === activeFollowupId,
+            )?.status,
+            "completed",
+          );
+          assert.isFalse(
+            yield* orchestrator.delegatedTaskResultPending(childThreadId, activeFollowupId),
+          );
+          assert.equal(
+            finished.contextTransfers.filter(
+              (transfer) =>
+                transfer.type === "subagent_result" &&
+                transfer.sourceThreadId === childThreadId &&
+                transfer.sourcePoint.runId === resumed.runId,
+            ).length,
+            2,
+          );
+          yield* orchestrator.recoverDelegatedTasks;
+          yield* orchestrator.recoverDelegatedTasks;
+          const recovered = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(recovered.subagents, finished.subagents);
+          assert.deepEqual(recovered.contextTransfers, finished.contextTransfers);
+        }
         assert.equal(task.completionDelivery?.state, "claimed");
         assert.equal(finished.nodes.find((node) => node.id === task.id)?.status, "completed");
         assert.equal(
