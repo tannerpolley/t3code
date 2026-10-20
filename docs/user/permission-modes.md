@@ -18,19 +18,22 @@ and modes you choose in a draft keep their permissions.
 Approve or reject requests in the conversation to let the agent continue. Permission modes do
 not prevent the agent from asking questions about the task.
 
-## Don't ask mode
+## Ask mode
 
-Turn on **Don't ask mode** with the speech-bubble switch at the bottom left of the sidebar when you
-step away. While it is on, the server answers for you the moment an agent waits: it approves each
-request once, and answers each question with its first option (the agent's recommendation) plus a
-note asking the agent to list the decisions it made. Switching it on also answers everything
-already waiting in every thread, including delegated ones. Answers it gave are marked **Answered by
-Don't ask mode** or **Approved by Don't ask mode** in the conversation. Switch it off to have agents
-wait for you again.
+**Ask mode** lets agents wait for your answers and approvals. Toggle it in the sidebar footer or
+in **Settings → General → Ask mode** (also available in **Customizations**). Orange means it is on;
+gray means it is off.
 
-The switch belongs to your primary environment's server, so it keeps working with no client open
-and stays on after a restart. Requests left waiting across a server restart are handled the way a
-restart normally handles them, not by Don't ask mode. Agents cannot change it.
+Turn Ask mode off when you step away. While it is off, the server answers for you the moment an
+agent waits: it approves each request once, and answers each question with its first option (the
+agent's recommendation) plus a note asking the agent to list the decisions it made. Turning it off
+also answers everything already waiting in every thread, including delegated ones. Automatic
+answers retain the conversation labels **Answered by Don't ask mode** and **Approved by Don't ask
+mode**. Turn Ask mode on to have agents wait for you again.
+
+The sidebar switch belongs to your primary environment's server, so automatic answers keep working
+with no client open and the setting persists after a restart. Requests left waiting across a
+server restart are handled the way a restart normally handles them. Agents cannot change the setting.
 
 ## Provider differences
 

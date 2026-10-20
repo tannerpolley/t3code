@@ -297,7 +297,7 @@ archiving, or settling it prevents a pending continuation from starting.
 - **Wait for reset** snoozes and continues limited threads when the reported allowance returns.
 - **Switch provider** moves the limited thread between Codex and Claude and sends
   “Continue where you left off.” with a context handoff. Other threads and children keep running.
-  Switching proceeds without asking, including in Don't ask mode.
+  Switching proceeds without asking, including when Ask mode is off.
 
 A thread uses its role's available alternatives, ordered by weekly headroom. Implementor threads
 use the profile matching their current model and effort, or the first configured Implementor

@@ -18,6 +18,9 @@ describe("fork settings destinations", () => {
     ["thread rows text size", "sidebar-thread-text-size", "/settings/appearance"],
     ["agent rows text size", "sidebar-agent-text-size", "/settings/appearance"],
     ["process rows text size", "sidebar-process-text-size", "/settings/appearance"],
+    ["ask", "dont-ask-mode", "/settings/general"],
+    ["ask mode", "dont-ask-mode", "/settings/general"],
+    ["don't ask", "dont-ask-mode", "/settings/general"],
     ["don't ask mode", "dont-ask-mode", "/settings/general"],
     ["inside project local .worktrees", "storage-worktrees-location", "/settings/storage"],
   ])("finds %s on its settings page", (query, id, to) => {

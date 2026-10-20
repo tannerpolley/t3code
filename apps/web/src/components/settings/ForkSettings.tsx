@@ -251,7 +251,6 @@ function CustomizationsGroup({
 }
 
 type ServerSwitchKey =
-  | "dontAskMode"
   | "autoOrganizeByFolder"
   | "keepThreadTitlesCurrent"
   | "agentBrowserTabLimits"
@@ -548,10 +547,19 @@ function ForkGeneralBehaviorRows() {
   const mixedIdleTimeout = useScopedSettingsMixed(["idleAgentSessionMinutes"]);
   return (
     <SettingsSection title="Agent sessions & background behavior">
-      <ServerSwitchRow
-        settingKey="dontAskMode"
-        searchId="dont-ask-mode"
-        description="While you're away, answer agents' questions with their recommended option and grant their approvals. Turn off when you return to answer them yourself."
+      <SettingsRow
+        serverScoped
+        settingKeys={["dontAskMode"]}
+        {...searchableSetting("dont-ask-mode")}
+        description="Let agents ask you questions and wait for your answers and approvals. Turn off when you step away to answer questions with their recommended option and grant approvals automatically."
+        control={
+          <ScopedSwitch
+            settingKeys={["dontAskMode"]}
+            checked={!settings.dontAskMode}
+            onCheckedChange={(checked) => updateSettings({ dontAskMode: !checked })}
+            aria-label="Ask mode"
+          />
+        }
       />
       {isElectron && !isMacPlatform(navigator.platform) ? (
         <SettingsRow

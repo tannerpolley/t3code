@@ -49,7 +49,7 @@ export function UsageLimitRecoverySettings() {
         serverScoped
         {...searchableSetting("usage-limit-recovery")}
         settingKeys={["usageLimitRecovery"]}
-        description="Choose what happens after a usage limit. Switching moves only the limited thread and continues without asking, including in Don't ask mode. If no alternative is available, it waits for reset."
+        description="Choose what happens after a usage limit. Switching moves only the limited thread and continues without asking, including when Ask mode is off. If no alternative is available, it waits for reset."
         control={
           <Select
             value={settings.usageLimitRecovery}
