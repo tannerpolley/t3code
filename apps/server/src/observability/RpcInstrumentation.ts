@@ -1,3 +1,4 @@
+import { PROJECT_ARTIFACT_METHODS } from "@t3tools/contracts";
 import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,6 +15,10 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * even where they differ from the method prefix.
  */
 const RPC_AGGREGATES = {
+  [PROJECT_ARTIFACT_METHODS.list]: "projectArtifacts",
+  [PROJECT_ARTIFACT_METHODS.add]: "projectArtifacts",
+  [PROJECT_ARTIFACT_METHODS.remove]: "projectArtifacts",
+  [PROJECT_ARTIFACT_METHODS.subscribe]: "projectArtifacts",
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: "orchestration",

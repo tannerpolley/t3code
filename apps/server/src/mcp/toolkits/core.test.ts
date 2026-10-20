@@ -1,3 +1,4 @@
+import { ProjectArtifactsToolkit } from "./projectArtifacts/tools.ts";
 import * as IssueLinks from "../../issues/IssueLinks.ts";
 import * as IssueInbox from "../../issues/IssueInbox.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -105,6 +106,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     ThreadToolkit,
     AttachmentToolkit,
     ProjectToolkit,
+    ProjectArtifactsToolkit,
     EnvironmentToolkit,
     PreviewControlsToolkit,
     DeviceToolkit,

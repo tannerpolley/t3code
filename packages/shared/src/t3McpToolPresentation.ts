@@ -353,6 +353,18 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "environment-update",
   ),
   t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
+  t3_project_artifacts_list: tool(
+    ["List", "Listing", "Listed", "project artifacts"],
+    "project-read",
+  ),
+  t3_project_artifacts_add: tool(
+    ["Pin", "Pinning", "Pinned", "project artifact"],
+    "project-update",
+  ),
+  t3_project_artifacts_remove: tool(
+    ["Remove", "Removing", "Removed", "project artifact"],
+    "project-update",
+  ),
   t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
   t3_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
   t3_project_create: tool(["Register", "Registering", "Registered", "a project"], "project-create"),

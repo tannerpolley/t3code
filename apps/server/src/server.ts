@@ -1,3 +1,4 @@
+import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
@@ -716,7 +717,8 @@ const layerCommandReadiness = HttpRouter.middleware(
   { global: true },
 );
 
-const layerRouterServices = Layer.merge(
+const layerRouterServices = Layer.mergeAll(
+  ProjectArtifacts.layer,
   ThreadWorkspaceService.layer,
   IssueRoadmap.layer.pipe(
     Layer.provideMerge(IssueLinks.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),

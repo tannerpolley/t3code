@@ -46,6 +46,19 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Artifacts
+
+On web and desktop, expand the thread details pane and use **Artifacts → Add** to pin a
+manuscript, slide deck, or another file you return to often. Enter a path relative to the project
+folder or an absolute path on the connected environment's machine, and optionally give it a label.
+Every thread in that project shares the same pins, including on other connected devices.
+
+Select a pin to open it beside the conversation. PDF and HTML files open in the in-app browser;
+text, Markdown, Quarto, LaTeX, and code open in the file viewer. Missing files stay listed so you
+can see what needs rebuilding. Remove a pin with its **Remove** control; this leaves the file intact.
+Agents can also list, pin, and remove project artifacts through T3 tools. Agent-added pins carry
+an agent indicator.
+
 ## Worktree branch names
 
 In **Settings → Source Control → Worktree branch naming**, choose a static prefix,

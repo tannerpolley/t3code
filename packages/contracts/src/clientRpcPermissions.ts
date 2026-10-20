@@ -1,3 +1,4 @@
+import { PROJECT_ARTIFACT_METHODS } from "./projectArtifactRpc.ts";
 import { type ServerSettingsPatch, requiredScopesForServerSettingsPatch } from "./settings.ts";
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
@@ -16,6 +17,8 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [PROJECT_ARTIFACT_METHODS.add]: AuthOrchestrationOperateScope,
+  [PROJECT_ARTIFACT_METHODS.remove]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   [WS_METHODS.sidebarLayoutUpdate]: AuthSettingsWriteScope,
   [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,

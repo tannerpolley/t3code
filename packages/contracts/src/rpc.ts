@@ -1,3 +1,4 @@
+import { PROJECT_ARTIFACT_METHODS, projectArtifactRpcs } from "./projectArtifactRpc.ts";
 import { SidebarLayoutRecord, SidebarLayoutUpdate, SidebarLayoutError } from "./sidebarLayout.ts";
 import { ThreadProcesses, ThreadProcessesInput } from "./threadProcesses.ts";
 import {
@@ -2187,6 +2188,7 @@ const WsTerminalWatchInlineRunRpc = Rpc.make(WS_METHODS.terminalWatchInlineRun, 
 });
 
 const forkWsRpcs = [
+  ...projectArtifactRpcs,
   WsSidebarLayoutUpdateRpc,
   WsSubscribeSidebarLayoutRpc,
   WsTerminalWatchInlineRunRpc,
@@ -2426,6 +2428,7 @@ export const WsRpcGroup = RpcGroup.make(
 ).middleware(RpcScopeAuthorization);
 export const ForkWsRpcGroup = RpcGroup.make(...forkWsRpcs).middleware(RpcScopeAuthorization);
 export const UpstreamWsRpcGroup = WsRpcGroup.omit(
+  ...Object.values(PROJECT_ARTIFACT_METHODS),
   WS_METHODS.sidebarLayoutUpdate,
   WS_METHODS.subscribeSidebarLayout,
   WS_METHODS.terminalWatchInlineRun,

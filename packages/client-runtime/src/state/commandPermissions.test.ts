@@ -1,3 +1,4 @@
+import { PROJECT_ARTIFACT_METHODS } from "@t3tools/contracts";
 import { requestGuarded, runStreamGuarded } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -65,6 +66,66 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("artifact mutations never reach transport without the destination grant", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.mount(sessions(other));
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        const calls: string[] = [];
+        const add = createEnvironmentRpcCommand(runtime, {
+          label: "test.artifacts.add",
+          tag: PROJECT_ARTIFACT_METHODS.add,
+          execute: () =>
+            Effect.sync(() => {
+              calls.push("add");
+              return {
+                id: "pin",
+                path: "paper.qmd",
+                resolvedPath: "/science/paper.qmd",
+                name: "paper.qmd",
+                label: null,
+                addedBy: "user" as const,
+                available: true,
+              };
+            }),
+        });
+        const remove = createEnvironmentRpcCommand(runtime, {
+          label: "test.artifacts.remove",
+          tag: PROJECT_ARTIFACT_METHODS.remove,
+          execute: () =>
+            Effect.sync(() => {
+              calls.push("remove");
+            }),
+        });
+        const projectId = ProjectId.make("science");
+        expect(
+          (yield* Effect.promise(() =>
+            add.run(registry, { environmentId: other, input: { projectId, path: "paper.qmd" } }),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.promise(() =>
+            remove.run(registry, { environmentId: other, input: { projectId, id: "pin" } }),
+          ))._tag,
+        ).toBe("Failure");
+        expect(calls).toEqual([]);
+        expect(
+          (yield* Effect.promise(() =>
+            add.run(registry, { environmentId: env, input: { projectId, path: "paper.qmd" } }),
+          ))._tag,
+        ).toBe("Success");
+        expect(
+          (yield* Effect.promise(() =>
+            remove.run(registry, { environmentId: env, input: { projectId, id: "pin" } }),
+          ))._tag,
+        ).toBe("Success");
+        expect(calls).toEqual(["add", "remove"]);
+      }),
+    ),
+  );
+
   it.effect("sidebar writes check the destination grant before calling transport", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -152,30 +213,34 @@ describe("command permissions", () => {
       ),
   );
 
-  it.effect("requires the destination operate grant for issue recovery and inbox writes", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        registry.set(sessions(other), AsyncResult.success(grant(false)));
-        for (const method of [
-          WS_METHODS.issuesCancelRequest,
-          WS_METHODS.issuesRestoreRoot,
-          WS_METHODS.issuesInboxMarkRead,
-          WS_METHODS.issuesSetWorkerLimit,
-          WS_METHODS.issuesQueue,
-          WS_METHODS.issuesUnqueue,
-        ]) {
-          const recovery = createCommandPermissions(runtime, method);
-          expect(registry.get(recovery.permissionAtom(env))).toBe(true);
-          yield* recovery.authorize(registry, env);
-          expect(registry.get(recovery.permissionAtom(other))).toBe(false);
-          expect((yield* recovery.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
-            "EnvironmentAuthorizationError",
-          );
-        }
-      }),
-    ),
+  it.effect(
+    "requires the destination operate grant for artifacts, issue recovery and inbox writes",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          for (const method of [
+            PROJECT_ARTIFACT_METHODS.add,
+            PROJECT_ARTIFACT_METHODS.remove,
+            WS_METHODS.issuesCancelRequest,
+            WS_METHODS.issuesRestoreRoot,
+            WS_METHODS.issuesInboxMarkRead,
+            WS_METHODS.issuesSetWorkerLimit,
+            WS_METHODS.issuesQueue,
+            WS_METHODS.issuesUnqueue,
+          ]) {
+            const recovery = createCommandPermissions(runtime, method);
+            expect(registry.get(recovery.permissionAtom(env))).toBe(true);
+            yield* recovery.authorize(registry, env);
+            expect(registry.get(recovery.permissionAtom(other))).toBe(false);
+            expect((yield* recovery.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+              "EnvironmentAuthorizationError",
+            );
+          }
+        }),
+      ),
   );
 
   it.effect("sends issue recovery commands only to an environment that grants them", () =>

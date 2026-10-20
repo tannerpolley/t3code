@@ -2,10 +2,16 @@
  * WebSocket handlers for the fork's own RPCs (`ForkWsRpcGroup`): issues, issue work, issue
  * changes and background-task output. `ws.ts` merges this layer next to upstream's handlers.
  */
-import { ForkWsRpcGroup, ORCHESTRATION_V2_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
+import {
+  PROJECT_ARTIFACT_METHODS,
+  ForkWsRpcGroup,
+  ORCHESTRATION_V2_WS_METHODS,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
+import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
 import * as SidebarLayout from "./sidebarLayout.ts";
 import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
@@ -34,7 +40,12 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const issueChanges = yield* IssueChangeService.IssueChangeService;
       const sidebarLayout = yield* SidebarLayout.SidebarLayoutService;
       const inbox = yield* IssueInbox.IssueInbox;
+      const artifacts = yield* ProjectArtifacts.ProjectArtifacts;
       return {
+        [PROJECT_ARTIFACT_METHODS.list]: (input) => artifacts.list(input.projectId),
+        [PROJECT_ARTIFACT_METHODS.add]: (input) => artifacts.add(input, "user"),
+        [PROJECT_ARTIFACT_METHODS.remove]: (input) => artifacts.remove(input),
+        [PROJECT_ARTIFACT_METHODS.subscribe]: (input) => artifacts.subscribe(input.projectId),
         [WS_METHODS.sidebarLayoutUpdate]: (input) => sidebarLayout.update(input),
         [WS_METHODS.subscribeSidebarLayout]: () => sidebarLayout.stream,
         [WS_METHODS.terminalRunInline]: (input) => inlineShell.run(input),

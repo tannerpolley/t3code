@@ -1,3 +1,5 @@
+import { ProjectArtifactsToolkit } from "./toolkits/projectArtifacts/tools.ts";
+import * as ProjectArtifactsHandlers from "./toolkits/projectArtifacts/handlers.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -1072,6 +1074,7 @@ export const layer = Layer.mergeAll(
   layerThreadToolkit,
   layerAttachmentToolkit,
   layerProjectRegistration,
+  toolkitRegistration(ProjectArtifactsToolkit, ProjectArtifactsHandlers.layer),
   layerEnvironmentToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,

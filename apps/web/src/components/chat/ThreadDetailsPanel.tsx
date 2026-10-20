@@ -22,6 +22,7 @@ import { memo, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadLinkedIssueRow } from "./ThreadLinkedIssueRow";
+import { ThreadDetailsArtifactRows } from "./ThreadDetailsArtifactRows";
 import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
@@ -195,6 +196,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
           {density === "full" && !props.draftId ? (
             <div data-thread-details-lists>
+              <ThreadDetailsArtifactRows
+                key={`${props.environmentId}:${props.projectId}`}
+                environmentId={props.environmentId}
+                projectId={props.projectId}
+                threadId={props.threadId}
+              />
               <ThreadDetailsIssueRows
                 environmentId={props.environmentId}
                 threadId={props.threadId}

@@ -1,3 +1,4 @@
+import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -464,6 +465,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(IssueService.IssueService)({}),
   Layer.mock(IssueWorkService.IssueWorkService)({}),
   Layer.mock(SidebarLayout.SidebarLayoutService)({}),
+  Layer.mock(ProjectArtifacts.ProjectArtifacts)({}),
   Layer.mock(ThreadWorkspaceService.ThreadWorkspaceService)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
