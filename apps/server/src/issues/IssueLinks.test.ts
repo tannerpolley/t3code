@@ -467,48 +467,51 @@ it.effect(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`ANALYZE orchestration_v2_projection_threads`;
-      for (const hasPrRefs of [true, false]) {
-        const linkedIds = hasPrRefs ? [threadId] : [];
-        const query = issueWorkThreadIds(
-          sql,
-          ref,
-          [13],
-          linkedIds,
-          '[{"host":"github.com","repository":"owner/repo","number":42}]',
-          hasPrRefs,
-        );
-        const plan = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN ${query}`;
-        const details = plan.map((row) => row.detail).join("\n");
-        if (linkedIds.length > 0)
+      for (const includeArchived of [true, false]) {
+        for (const hasPrRefs of [true, false]) {
+          const linkedIds = hasPrRefs ? [threadId] : [];
+          const query = issueWorkThreadIds(
+            sql,
+            ref,
+            [13],
+            linkedIds,
+            '[{"host":"github.com","repository":"owner/repo","number":42}]',
+            hasPrRefs,
+            includeArchived,
+          );
+          const plan = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN ${query}`;
+          const details = plan.map((row) => row.detail).join("\n");
+          if (linkedIds.length > 0)
+            assert.include(
+              details,
+              "SEARCH explicit USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
+            );
+          else assert.notInclude(details, "explicit");
           assert.include(
             details,
-            "SEARCH explicit USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
+            "SEARCH issue_thread USING INDEX issue_roadmap_linked_issue_idx (<expr>=? AND <expr>=? AND <expr>=?)",
           );
-        else assert.notInclude(details, "explicit");
-        assert.include(
-          details,
-          "SEARCH issue_thread USING INDEX issue_roadmap_linked_issue_idx (<expr>=? AND <expr>=? AND <expr>=?)",
-        );
-        assert.include(details, "SEARCH child USING INDEX issue_roadmap_parent_idx (<expr>=?)");
-        if (hasPrRefs)
+          assert.include(details, "SEARCH child USING INDEX issue_roadmap_parent_idx (<expr>=?)");
+          if (hasPrRefs)
+            assert.include(
+              details,
+              "SEARCH pr_thread USING INDEX issue_roadmap_linked_pr_idx (<expr>=? AND <expr>=?)",
+            );
+          else assert.notInclude(details, "pr_thread");
           assert.include(
             details,
-            "SEARCH pr_thread USING INDEX issue_roadmap_linked_pr_idx (<expr>=? AND <expr>=?)",
+            "SEARCH selected USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
           );
-        else assert.notInclude(details, "pr_thread");
-        assert.include(
-          details,
-          "SEARCH selected USING INDEX sqlite_autoindex_orchestration_v2_projection_threads_1",
-        );
-        assert.notInclude(query.compile()[0], "$.pullRequests");
-        for (const detail of plan.map((row) => row.detail)) {
-          if (
-            !detail.startsWith("SCAN ") ||
-            detail === "SCAN linked" ||
-            detail.includes("VIRTUAL TABLE INDEX")
-          )
-            continue;
-          assert.fail(`Unexpected scan: ${detail}\n${details}`);
+          assert.notInclude(query.compile()[0], "$.pullRequests");
+          for (const detail of plan.map((row) => row.detail)) {
+            if (
+              !detail.startsWith("SCAN ") ||
+              detail === "SCAN linked" ||
+              detail.includes("VIRTUAL TABLE INDEX")
+            )
+              continue;
+            assert.fail(`Unexpected scan: ${detail}\n${details}`);
+          }
         }
       }
     }).pipe(
@@ -639,3 +642,33 @@ it.effect("returns closing and linked-thread PRs with state, deduplicating the s
     );
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect(
+  "retains archived worker associations on closed issues without showing them on open issues",
+  () => {
+    const archived = {
+      ...liveThreadShell(threadId),
+      archivedAt: DateTime.makeUnsafe("2026-10-19T12:00:00Z"),
+      linkedIssue: {
+        ...ref,
+        repositoryId: "repo",
+        id: "13",
+        nodeId: "I_13",
+        title: "Roadmap",
+        url: "https://github.com/owner/repo/issues/13",
+      },
+    };
+    const h = harness([archived]);
+    return Effect.gen(function* () {
+      const links = yield* IssueLinks.IssueLinks;
+      assert.deepEqual((yield* links.enrich(list())).issues[0]?.liveWork, []);
+      const source = list();
+      const closed = yield* links.enrich({
+        ...source,
+        issues: source.issues.map((issue) => ({ ...issue, state: "closed" as const })),
+      });
+      assert.equal(closed.issues[0]?.liveWork?.[0]?.threadId, threadId);
+      assert.equal(closed.issues[0]?.liveWork?.[0]?.status, "idle");
+    }).pipe(Effect.provide(h.layer));
+  },
+);

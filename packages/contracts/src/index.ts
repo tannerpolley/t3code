@@ -81,3 +81,4 @@ export * from "./secretRequest.ts";
 export * from "./clientRpcPermissions.ts";
 
 export * from "./issueLinks.ts";
+export * from "./issueCleanup.ts";

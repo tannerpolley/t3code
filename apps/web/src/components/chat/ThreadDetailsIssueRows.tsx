@@ -113,8 +113,10 @@ function IssueRows({
     "section",
   );
   const open = !collapsed;
-  const listState =
-    issueView === "roadmap" ? "open" : issueListStateFor(issueStateFilter(preferences) ?? "open");
+  const listState = issueListStateFor(
+    issueStateFilter(preferences) ?? "open",
+    issueView === "roadmap",
+  );
   const result = useAtomValue(
     // Both views read blockers and live work so issue circles show blocked and in progress.
     (issueView === "roadmap" ? issueEnvironment.roadmapList : issueEnvironment.liveList)({
@@ -131,7 +133,7 @@ function IssueRows({
       ? null
       : threadIssueGroups(
           list.issues,
-          issueView === "roadmap" ? { ...preferences, open: true, closed: false } : preferences,
+          preferences,
           showAll ? Number.POSITIVE_INFINITY : VISIBLE_ISSUE_COUNT,
         );
   const more = list?.nextCursor == null ? "" : "+";
@@ -212,7 +214,7 @@ function IssueRows({
                 new Set(
                   filterAndSortIssues(list.issues, {
                     query: "",
-                    state: "open",
+                    state: issueStateFilter(preferences) ?? "open",
                     milestone: preferences.milestone,
                     assignee: preferences.assignee,
                     sort: preferences.sort,

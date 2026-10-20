@@ -130,6 +130,7 @@ export const IssueSummary = Schema.Struct({
   milestone: Schema.NullOr(IssueMilestone),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  closedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   commentCount: NonNegativeInt,
 });
 export type IssueSummary = typeof IssueSummary.Type;

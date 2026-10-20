@@ -15,6 +15,7 @@ import RepositoryScheduledWork from "./ForkMigrations/005_RepositoryScheduledWor
 import IssueChanges from "./ForkMigrations/006_IssueChanges.ts";
 import SidebarLayout from "./ForkMigrations/013_SidebarLayout.ts";
 import ProjectArtifacts from "./ForkMigrations/017_ProjectArtifacts.ts";
+import ClosedIssueWorkIndexes from "./ForkMigrations/018_ClosedIssueWorkIndexes.ts";
 import IssueQueue from "./ForkMigrations/016_IssueQueue.ts";
 import IssueInbox from "./ForkMigrations/015_IssueInbox.ts";
 import UsageLimitSwitchRecovery from "./ForkMigrations/012_UsageLimitSwitchRecovery.ts";
@@ -46,6 +47,7 @@ export const forkMigrationEntries = [
   [15, "IssueInbox", IssueInbox],
   [16, "IssueQueue", IssueQueue],
   [17, "ProjectArtifacts", ProjectArtifacts],
+  [18, "ClosedIssueWorkIndexes", ClosedIssueWorkIndexes],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.

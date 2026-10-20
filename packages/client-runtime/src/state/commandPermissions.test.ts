@@ -330,6 +330,79 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect(
+    "issue cleanup checks source-control permission at execution in the destination environment",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          registry.mount(sessions(other));
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(false),
+              permissions: [AuthSourceControlWriteScope],
+              scopes: [AuthSourceControlWriteScope],
+            }),
+          );
+          registry.set(sessions(other), AsyncResult.success(grant(true)));
+          let calls = 0;
+          const session = {
+            client: {
+              [WS_METHODS.issuesCleanup]: () =>
+                Effect.sync(() => {
+                  calls++;
+                }),
+            },
+          } as unknown as RpcSession;
+          const supervisor = {
+            target: { environmentId: env, label: "target" },
+            session: yield* SubscriptionRef.make(Option.some(session)),
+          } as unknown as EnvironmentSupervisor["Service"];
+          const issues = createIssueEnvironmentAtoms(
+            Atom.runtime(
+              Layer.succeed(EnvironmentRegistry, {
+                run: (_id: EnvironmentId, effect: Effect.Effect<unknown, never, never>) =>
+                  Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+              } as unknown as EnvironmentRegistry["Service"]),
+            ),
+          );
+          const input = {
+            host: "github.com",
+            repository: "owner/repo",
+            number: 1,
+            threadId: ThreadId.make("worker"),
+            action: "delete-branch" as const,
+            expectedBranch: "work",
+            expectedWorktreePath: null,
+            confirmed: true,
+            confirmUnmerged: false,
+          };
+          expect(registry.get(issues.cleanup.permissionAtom(env))).toBe(true);
+          expect(registry.get(issues.cleanup.permissionAtom(other))).toBe(false);
+          expect(
+            (yield* Effect.promise(() =>
+              issues.cleanup.run(registry, { environmentId: other, input }),
+            ))._tag,
+          ).toBe("Failure");
+          expect(calls).toBe(0);
+          expect(
+            (yield* Effect.promise(() =>
+              issues.cleanup.run(registry, { environmentId: env, input }),
+            ))._tag,
+          ).toBe("Success");
+          expect(calls).toBe(1);
+          registry.set(sessions(env), AsyncResult.success(grant(false)));
+          expect(
+            (yield* Effect.promise(() =>
+              issues.cleanup.run(registry, { environmentId: env, input }),
+            ))._tag,
+          ).toBe("Failure");
+          expect(calls).toBe(1);
+        }),
+      ),
+  );
+
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {

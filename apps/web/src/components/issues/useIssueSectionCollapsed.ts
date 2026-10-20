@@ -13,7 +13,9 @@ export function issueSectionCollapsedSelector(scope: IssueSectionScope, section:
   const legacyKey = `${repositoryKey(scope.host, scope.repository)}:${section}`;
   return (state: { readonly issueMilestoneCollapsedById: Readonly<Record<string, boolean>> }) =>
     state.issueMilestoneCollapsedById[key] ??
-    (section.startsWith("milestone:") ? state.issueMilestoneCollapsedById[legacyKey] : false) ??
+    (section.startsWith("milestone:")
+      ? state.issueMilestoneCollapsedById[legacyKey]
+      : section === "roadmap:closed") ??
     false;
 }
 

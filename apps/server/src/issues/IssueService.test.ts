@@ -1819,3 +1819,28 @@ it.effect("Milestones and default page reads request only Project metadata", () 
     assert.notProperty(result.issues[0]!, "pullRequestRefs");
   }),
 );
+
+it.effect("fetches closed issues in all-state roadmap reads and retains actual closure time", () =>
+  Effect.gen(function* () {
+    const closedAt = "2026-10-19T12:00:00Z";
+    const harness = makeHarness({
+      responses: [
+        httpResponse([
+          rawIssue(1, {
+            state: "closed",
+            state_reason: "completed",
+            closed_at: closedAt,
+            updated_at: "2026-10-20T12:00:00Z",
+          }),
+        ]),
+        httpResponse([]),
+        httpResponse({ data: {} }),
+      ],
+    });
+    const issues = yield* service(harness);
+    const result = yield* issues.list({ ...listInput, state: "all", roadmap: true });
+    assert.equal(result.issues[0]?.state, "closed");
+    assert.equal(result.issues[0]?.closedAt, closedAt);
+    assert.include(harness.calls[0]!.url, "state=all");
+  }),
+);
