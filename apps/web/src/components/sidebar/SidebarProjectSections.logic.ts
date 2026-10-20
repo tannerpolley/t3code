@@ -36,10 +36,11 @@ export interface ProjectThreadSection {
 }
 
 /** A project's orchestrators lead its threads; the rest keep the Thread order setting's order. */
-export function orchestratorsFirst<T extends Parameters<typeof effectiveThreadRole>[0]>(
-  threads: readonly T[],
-): T[] {
-  const lead = (thread: T) => (effectiveThreadRole(thread) === "orchestrator" ? 0 : 1);
+export function orchestratorsFirst<
+  T extends { readonly source: Parameters<typeof effectiveThreadRole>[0] },
+>(threads: readonly T[]): T[] {
+  // The shell's role lives on its source; the shell itself has none.
+  const lead = (thread: T) => (effectiveThreadRole(thread.source) === "orchestrator" ? 0 : 1);
   return [...threads].sort((a, b) => lead(a) - lead(b));
 }
 

@@ -212,10 +212,9 @@ it("orders subsections alongside projects and keeps body drops as moves into the
 
 describe("orchestratorsFirst", () => {
   it("puts a project's orchestrators above newer workers and keeps everyone else's order", () => {
-    const environmentId = EnvironmentId.make("env");
     const thread = (id: string, role: "orchestrator" | "investigator" | "implementor") => ({
-      ...makeThreadFixture({ environmentId, id: ThreadId.make(id) }),
-      role,
+      id,
+      source: { role, branch: null, worktreePath: null, lineage: { relationshipToParent: null } },
     });
     const ordered = orchestratorsFirst([
       thread("newest-investigator", "investigator"),
