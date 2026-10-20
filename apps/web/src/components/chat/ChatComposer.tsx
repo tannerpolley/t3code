@@ -5874,8 +5874,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
-  const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
-  const importDroppedThread = useEffectEvent(
+  const attachDroppedThreadFile = useStableCallback((file: File) => addComposerAttachments([file]));
+  const importDroppedThread = useStableCallback(
     async (ref: ScopedThreadRef, isActive: () => boolean) => {
       const targetKey = attachmentTargetKey;
       pendingDraftWork.begin(targetKey);

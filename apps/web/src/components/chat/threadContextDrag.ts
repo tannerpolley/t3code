@@ -2,12 +2,12 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   type RefObject,
   useEffect,
-  useEffectEvent,
   useRef,
   useSyncExternalStore,
   type MouseEvent,
   type PointerEvent,
 } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
 
 export const THREAD_CONTEXT_DROP_EVENT = "t3-thread-context-drop";
 
@@ -17,7 +17,8 @@ export function useThreadContextDrop(
   targetKey: string,
   onDrop: (refs: ReadonlyArray<ScopedThreadRef>, isActive: () => boolean) => void,
 ) {
-  const handleDrop = useEffectEvent(onDrop);
+  // React 19.2.6 does not refresh Effect Events in memoized components.
+  const handleDrop = useStableCallback(onDrop);
   useEffect(() => {
     const target = targetRef.current;
     if (!target) return;
@@ -34,6 +35,7 @@ export function useThreadContextDrop(
     environmentId,
     targetKey,
     targetRef,
+    handleDrop,
   ]);
 }
 

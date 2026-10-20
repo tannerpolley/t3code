@@ -1,10 +1,54 @@
-import { EnvironmentId } from "@t3tools/contracts";
-import { act, useRef } from "react";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { act, memo, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { importComposerThreadAttachment } from "./composerThreadImport";
 import { THREAD_CONTEXT_DROP_EVENT, useThreadContextDrop } from "./threadContextDrag";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { threadContextRecord } from "../../lib/composerContextRecords";
+
+it("adds a dropped thread to the selected draft after a memoized composer switches threads", () => {
+  const environmentId = EnvironmentId.make("destination");
+  const first = scopeThreadRef(environmentId, ThreadId.make("first"));
+  const second = scopeThreadRef(environmentId, ThreadId.make("second"));
+  const dropped = scopeThreadRef(environmentId, ThreadId.make("dropped"));
+  const record = threadContextRecord(dropped, "Dropped thread");
+  const previousState = useComposerDraftStore.getState();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const Composer = memo(function Composer({ threadRef }: { threadRef: ScopedThreadRef }) {
+    const targetRef = useRef<HTMLFormElement>(null);
+    useThreadContextDrop(targetRef, environmentId, scopedThreadKey(threadRef), (refs) => {
+      useComposerDraftStore.getState().addThreadContexts(
+        threadRef,
+        refs.map((ref) => threadContextRecord(ref, "Dropped thread")),
+      );
+    });
+    return <form ref={targetRef} />;
+  });
+
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  try {
+    act(() => root.render(<Composer threadRef={first} />));
+    act(() => root.render(<Composer threadRef={second} />));
+    act(() =>
+      container
+        .querySelector("form")!
+        .dispatchEvent(new CustomEvent(THREAD_CONTEXT_DROP_EVENT, { detail: [dropped] })),
+    );
+    const store = useComposerDraftStore.getState();
+    expect(store.getComposerDraft(first)?.threadContexts ?? []).toEqual([]);
+    expect(store.getComposerDraft(first)?.prompt ?? "").toBe("");
+    expect(store.getComposerDraft(second)?.threadContexts).toEqual([record]);
+    expect(store.getComposerDraft(second)?.prompt).toContain(record.contextId);
+  } finally {
+    act(() => root.unmount());
+    useComposerDraftStore.setState(previousState, true);
+    vi.unstubAllGlobals();
+  }
+});
 
 function deferredFile() {
   let resolve!: (file: File) => void;
