@@ -847,7 +847,7 @@ export const layer = Layer.effect(
             });
         }
         if (draining) return yield* drainHandoff(rootThreadId);
-        if ((yield* store.queue(config)).some((entry) => entry.state === "queued"))
+        if ((yield* store.queue(config)).length > 0)
           yield* deliverQueuedIssue(
             rootThreadId,
             eventSequence === undefined

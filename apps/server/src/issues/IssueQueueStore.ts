@@ -71,9 +71,10 @@ export const isIssueQueueNoticeRun = Effect.fn("IssueQueueStore.isIssueQueueNoti
 ) {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql`
-      SELECT 1 FROM orchestration_v2_events event
-      JOIN orchestration_v2_command_receipts receipt ON receipt.command_id = event.command_id
-      WHERE event.thread_id = ${threadId} AND event.run_id = ${runId}
+      SELECT 1 FROM orchestration_events event
+      JOIN orchestration_command_receipts receipt ON receipt.command_id = event.command_id
+      WHERE event.aggregate_kind = 'thread' AND event.stream_id = ${threadId}
+        AND event.application_event_version = 2 AND json_extract(event.metadata_json, '$.runId') = ${runId}
         AND event.event_type = 'run.created' AND receipt.command_type = 'issue.queue.deliver'
       LIMIT 1
     `;

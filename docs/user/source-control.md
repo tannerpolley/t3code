@@ -321,9 +321,12 @@ still need review, publishing, or merge approval; T3 does not automatically clos
 
 Use **Add to queue** on an open issue’s row or detail panel to put it in the repository’s
 ordered **Queued** section. When the registered orchestrator is idle and a worker slot is free,
-it receives the next issue and an instruction to start an implementor. Each notice waits for the
-previous orchestrator turn to finish. An issue stays queued until a worker claims it. If the
-orchestrator finishes without starting it, the row shows **Orchestrator didn’t start it**; use
+it receives a notification to review the next issue against the current code and the repository’s
+other issues. The orchestrator may start a worker as written, update the issue first, close it as
+already done or not planned with an explanatory comment, or leave it open and withdraw it from the
+queue. Each notice waits for the previous orchestrator turn to finish. A worker claim or withdrawal
+removes the issue from the queue; closed issues are removed on the next queue refresh. If the
+orchestrator finishes without any of these outcomes, the row shows **Orchestrator didn’t start it**; use
 **Retry** to remind it again, or **Remove from queue** to withdraw it. Failed or interrupted
 notices are retried when the orchestrator is next available. Repository pause and the **Workers** limit apply. Without a
 registered orchestrator, the queue waits. Claimed work is managed through its orchestrator or worker.

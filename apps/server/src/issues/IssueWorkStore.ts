@@ -291,7 +291,7 @@ export const layer = Layer.effect(
             OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.milestones') plan
             WHERE json_extract(plan.value, '$.status') <> 'complete')
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request
-              WHERE request.host = owner.host AND request.repository_id = owner.repository_id AND request.queue_state = 'queued')
+              WHERE request.host = owner.host AND request.repository_id = owner.repository_id AND request.queue_state IN ('queued', 'needs_attention'))
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request
               LEFT JOIN orchestration_v2_projection_issue_work work ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
               WHERE request.root_thread_id = owner.root_thread_id AND work.owner_thread_id IS NULL AND request.queue_state IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL)

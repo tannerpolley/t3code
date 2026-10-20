@@ -22,7 +22,7 @@ type Command<T extends OrchestrationV2ServerCommand["type"]> = Extract<
 >;
 
 export const issueQueueMessage = (entry: IssueQueueEntry) =>
-  `Queued issue #${entry.issue.number}: ${entry.issue.title}\n${entry.issue.url}\n\nStart an implementor agent for this issue with delegate_task and its issue argument: ${JSON.stringify({ host: entry.issue.host, repository: entry.issue.repository, number: entry.issue.number })}. Use the existing managed-issue path so the worker gets its own issue worktree and shares the repository worker limit.`;
+  `Queued issue #${entry.issue.number}: ${entry.issue.title}\n${entry.issue.url}\n\nReview this issue against the current code and the repository's other issues first. Use get_repository_orchestration for the queue. Options: start as written; edit the issue on GitHub, then start; close it on GitHub as done (comment where it landed) or not planned (comment why); or keep it open and withdraw it with unqueue_issue. To start a managed worker, use delegate_task with issue argument: ${JSON.stringify({ host: entry.issue.host, repository: entry.issue.repository, number: entry.issue.number })}.`;
 
 export function makeIssueQueueCommands(
   hooks: ForkCommandHooks & {
@@ -92,24 +92,37 @@ export function makeIssueQueueCommands(
     if (Option.isNone(issueWorkStore)) return;
     const store = issueWorkStore.value;
     const config = yield* store.configuration(command.threadId).pipe(mapDispatchError(command));
-    if (
-      config === null ||
-      config.paused ||
-      config.handoff !== undefined ||
-      config.retiredToThreadId !== undefined
-    )
-      return;
+    if (config === null || config.retiredToThreadId !== undefined) return;
     const owner = yield* store.repositoryOwner(config).pipe(mapDispatchError(command));
+    if (owner?.rootThreadId !== command.threadId) return;
+    const reads = yield* IssueQueueReads;
+    const queue: IssueQueueEntry[] = [];
+    for (const candidate of yield* store.queue(config).pipe(mapDispatchError(command))) {
+      const read = reads.find(
+        (read) =>
+          sameIssueRepository(read.issue, candidate.issue) && read.issue.id === candidate.issue.id,
+      );
+      // A reviewed issue can close without a worker, even when no slot is free for the next one.
+      if (read?.outcome === "closed" || read?.outcome === "worked") {
+        yield* emit(
+          events,
+          command,
+        )<OrchestrationV2DomainEvent>({
+          type: "issue.queue.updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...candidate, state: "removed", noticeRunId: undefined },
+        });
+      } else queue.push(candidate);
+    }
+    if (config.paused || config.handoff !== undefined) return;
     if (
-      owner?.rootThreadId !== command.threadId ||
       (yield* store.slotsInUse(command.threadId).pipe(mapDispatchError(command))) >=
-        config.workerLimit
+      config.workerLimit
     )
       return;
     if (!(yield* store.queueRootIdle(command.threadId).pipe(mapDispatchError(command)))) return;
-    const queue = yield* store.queue(config).pipe(mapDispatchError(command));
     if (queue.some((entry) => entry.noticeRunId !== undefined)) return;
-    const reads = yield* IssueQueueReads;
     let entry: IssueQueueEntry | undefined;
     for (const candidate of queue) {
       if (candidate.state !== "queued") continue;
@@ -128,7 +141,7 @@ export function makeIssueQueueCommands(
         (read) =>
           sameIssueRepository(read.issue, candidate.issue) && read.issue.id === candidate.issue.id,
       );
-      if (working || read?.outcome === "closed" || read?.outcome === "worked") {
+      if (working) {
         yield* emit(
           events,
           command,
@@ -150,6 +163,7 @@ export function makeIssueQueueCommands(
       break;
     }
     if (entry === undefined) return;
+    const text = issueQueueMessage(entry);
     yield* hooks.dispatchMessage(
       {
         type: "message.dispatch",
@@ -158,10 +172,16 @@ export function makeIssueQueueCommands(
         messageId: hooks.idAllocator.derive.delegatedTaskMessage({
           commandId: command.commandId,
         }),
-        text: issueQueueMessage(entry),
+        text,
+        notification: {
+          source: { kind: "system" },
+          outcome: "updated",
+          summary: `Queued issue #${entry.issue.number} is next`,
+          detail: text,
+        },
         attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "user",
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
         creationSource: "server",
       },
       events,
