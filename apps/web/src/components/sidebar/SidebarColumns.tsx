@@ -6,6 +6,15 @@ import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "~/lib/utils";
 
+// Dev preview only: `localStorage["t3code:debug-sidebar-columns"] = "1"` outlines every column
+// cell (SidebarColumns.css) to show the space each one gets.
+if (
+  import.meta.env.DEV &&
+  globalThis.localStorage?.getItem("t3code:debug-sidebar-columns") === "1"
+) {
+  document.documentElement.dataset.debugSidebarColumns = "";
+}
+
 /*
  * The Codex-style sidebar's shared columns. Every row (section header, project, thread, subagent,
  * shell) keeps an 8px start and end padding and a caret slot, so carets and icons line up across

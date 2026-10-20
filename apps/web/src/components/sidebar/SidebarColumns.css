@@ -91,3 +91,17 @@
 [data-family-separator="dashed"]::before {
   border-top-style: dashed;
 }
+
+/* Dev preview column outlines; see SidebarColumns.tsx. Badge slots get their own colors. */
+:root[data-debug-sidebar-columns] .sidebar-thread-columns > * {
+  outline: 1px dashed rgb(239 68 68 / 0.6);
+  outline-offset: -1px;
+  min-height: 1rem;
+  align-self: stretch;
+}
+:root[data-debug-sidebar-columns] .sidebar-thread-columns > .sidebar-thread-issue {
+  outline: 1px solid rgb(34 197 94 / 0.9);
+}
+:root[data-debug-sidebar-columns] .sidebar-thread-columns > .sidebar-thread-pr {
+  outline: 1px solid rgb(168 85 247 / 0.9);
+}
