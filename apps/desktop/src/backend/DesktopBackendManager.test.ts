@@ -455,6 +455,38 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("recognizes migration status across output chunks and keeps streams separate", () =>
+    Effect.gen(function* () {
+      const statuses: boolean[] = [];
+      const layerSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeProcess({
+              stdout: Stream.encodeText(
+                Stream.make(
+                  "unrelated log\nRunning database ",
+                  "migrations\nMigrations ran success",
+                  "fully\nRunning database ",
+                ),
+              ),
+              stderr: Stream.encodeText(Stream.make("migrations\n")),
+            }),
+          ),
+        ),
+      );
+      yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+        onMigrationStatus: (running) =>
+          Effect.sync(() => {
+            statuses.push(running);
+          }),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
+      assert.deepEqual(statuses, [true, false]);
+    }),
+  );
+
   it.effect("reports output stream failures with process and stream context", () =>
     Effect.gen(function* () {
       const outputCause = PlatformError.systemError({
@@ -1131,6 +1163,25 @@ describe("DesktopBackendManager", () => {
 
         assert.equal(yield* Queue.take(starts).pipe(Effect.timeout("1 second")), 2);
       }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("notifies shutdown when the backend exits before readiness", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stopped = yield* Deferred.make<void>();
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.succeed(makeProcess())),
+          ),
+          httpClientLayer: layerHttpClient(() => Effect.never),
+          onShutdown: Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
+        });
+        yield* instance.start;
+        yield* Deferred.await(stopped);
+        assert.isFalse((yield* instance.snapshot).ready);
+      }),
     ),
   );
 

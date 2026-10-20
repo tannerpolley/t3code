@@ -133,6 +133,7 @@ function makeFakeBrowserWindow() {
 
   return {
     window: window as unknown as Electron.BrowserWindow,
+    close: window.close,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
     isDestroyed: window.isDestroyed,
@@ -966,7 +967,7 @@ describe("DesktopWindow", () => {
         const state = yield* DesktopState.DesktopState;
         yield* Ref.set(state.quitting, true);
 
-        yield* windows.showConnectingSplash;
+        yield* windows.showConnectingSplash();
         yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
         yield* windows.activate;
         yield* windows.dispatchMenuAction("open-settings");
@@ -1011,7 +1012,7 @@ describe("DesktopWindow", () => {
           const state = yield* DesktopState.DesktopState;
           const fiber = yield* (
             kind === "splash"
-              ? windows.showConnectingSplash
+              ? windows.showConnectingSplash()
               : windows.handleBackendReady(new URL("http://127.0.0.1:3773"))
           ).pipe(Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(creationStarted);
@@ -1685,6 +1686,46 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("closes the local splash on failure and ignores late migration updates", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([splash.window]);
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash("Starting T3 Code…");
+        yield* desktopWindow.setConnectingSplashLabel("Upgrading the database…");
+        yield* desktopWindow.setConnectingSplashLabel("Upgrading the database…");
+        assert.equal(splash.loadURL.mock.calls.length, 2);
+        yield* desktopWindow.handleBackendNotReady;
+        assert.equal(splash.close.mock.calls.length, 1);
+        yield* desktopWindow.setConnectingSplashLabel("Starting T3 Code…");
+        assert.equal(splash.loadURL.mock.calls.length, 2);
+        assert.equal(yield* Ref.get(scenario.createCalls), 1);
+      }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
+  it.effect("keeps the local splash until the main window is revealed", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const main = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([splash.window, main.window]);
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash("Starting T3 Code…");
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.equal(splash.close.mock.calls.length, 0);
+        main.windowListeners.get("ready-to-show")?.();
+        yield* Effect.promise(() => Promise.resolve());
+        assert.equal(splash.close.mock.calls.length, 1);
+        yield* desktopWindow.setConnectingSplashLabel("Upgrading the database…");
+        assert.equal(splash.loadURL.mock.calls.length, 1);
+        yield* desktopWindow.showConnectingSplash("Starting T3 Code…");
+        assert.equal(yield* Ref.get(scenario.createCalls), 2);
+      }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
   it.effect(
     "retries opening the real main on activate when a failed post-readiness open left only the splash",
     () =>
@@ -1696,7 +1737,7 @@ describe("DesktopWindow", () => {
         yield* Effect.gen(function* () {
           const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
-          yield* desktopWindow.showConnectingSplash;
+          yield* desktopWindow.showConnectingSplash();
           assert.equal(yield* Ref.get(scenario.createCalls), 1);
 
           const readyExit = yield* Effect.exit(
@@ -1725,7 +1766,7 @@ describe("DesktopWindow", () => {
         yield* Effect.gen(function* () {
           const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
-          yield* desktopWindow.showConnectingSplash;
+          yield* desktopWindow.showConnectingSplash();
           assert.equal(yield* Ref.get(scenario.createCalls), 1);
 
           yield* desktopWindow.activate;
@@ -1744,7 +1785,7 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
-        yield* desktopWindow.showConnectingSplash;
+        yield* desktopWindow.showConnectingSplash();
         yield* desktopWindow.dispatchMenuAction("open-settings");
 
         assert.equal(yield* Ref.get(scenario.createCalls), 1);
@@ -1763,7 +1804,7 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
-        yield* desktopWindow.showConnectingSplash;
+        yield* desktopWindow.showConnectingSplash();
         const readyExit = yield* Effect.exit(
           desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773")),
         );
@@ -1852,7 +1893,7 @@ describe("DesktopWindow", () => {
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        yield* desktopWindow.showConnectingSplash;
+        yield* desktopWindow.showConnectingSplash();
         yield* desktopWindow.dispatchSnapShotEvent({ type: "ready", id: captureOne });
 
         assert.equal(yield* Ref.get(scenario.createCalls), 1);

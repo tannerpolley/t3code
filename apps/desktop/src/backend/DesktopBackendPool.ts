@@ -175,6 +175,16 @@ export const layer = Layer.effect(
           ),
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
+      onMigrationStatus: (running) =>
+        appSettings.get.pipe(
+          Effect.flatMap((settings) =>
+            settings.wslOnly === true && settings.wslBackendEnabled === true
+              ? Effect.void
+              : desktopWindow.setConnectingSplashLabel(
+                  running ? "Upgrading the database…" : "Starting T3 Code…",
+                ),
+          ),
+        ),
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>
         electronDialog

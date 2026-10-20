@@ -48,6 +48,7 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
           message: "Cannot upgrade V2 preview with unexpected later migrations.",
         });
       }
+      yield* Effect.log("Running database migrations");
       const executed: Array<readonly [number, string]> = [];
       if (legacy.migration_id === 53) {
         yield* PullRequestFilesViewed;

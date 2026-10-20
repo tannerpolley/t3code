@@ -203,6 +203,7 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
     chunk: Uint8Array,
   ) => Effect.Effect<void, Error>;
   readonly onOutputFailure?: (error: BackendProcessOutputError) => Effect.Effect<void>;
+  readonly onMigrationStatus?: (running: boolean) => Effect.Effect<void>;
 }
 
 export interface DesktopBackendSnapshot {
@@ -241,6 +242,7 @@ export interface BackendInstanceSpec {
   // between "fired onReady" and "currentConfig already advanced".
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
+  readonly onMigrationStatus?: (running: boolean) => Effect.Effect<void>;
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
   readonly onStateDirOwned?: () => Effect.Effect<void>;
 }
@@ -344,6 +346,7 @@ function drainBackendOutput(
     chunk: Uint8Array,
   ) => Effect.Effect<void, Error>,
   onOutputFailure: (error: BackendProcessOutputError) => Effect.Effect<void>,
+  onMigrationStatus?: (running: boolean) => Effect.Effect<void>,
 ): Effect.Effect<void> {
   return stream.pipe(
     Stream.mapError(
@@ -354,7 +357,7 @@ function drainBackendOutput(
           cause,
         }),
     ),
-    Stream.runForEach((chunk) =>
+    Stream.tap((chunk) =>
       onOutput(streamName, chunk).pipe(
         Effect.mapError(
           (cause) =>
@@ -368,6 +371,18 @@ function drainBackendOutput(
         Effect.catchTags({ BackendProcessOutputHandlingError: onOutputFailure }),
       ),
     ),
+    // Decode and split the stream so a signal split across child writes is still recognized.
+    Stream.decodeText(),
+    Stream.splitLines,
+    Stream.runForEach((line) => {
+      if (line.includes("Running database migrations")) {
+        return onMigrationStatus?.(true) ?? Effect.void;
+      }
+      if (line.includes("Migrations ran successfully")) {
+        return onMigrationStatus?.(false) ?? Effect.void;
+      }
+      return Effect.void;
+    }),
     Effect.catchTags({
       BackendProcessOutputReadError: onOutputFailure,
     }),
@@ -532,6 +547,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         handle.stdout,
         onOutput,
         onOutputFailure,
+        options.onMigrationStatus,
       ).pipe(Effect.forkScoped),
       yield* drainBackendOutput(
         outputContext,
@@ -539,6 +555,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         handle.stderr,
         onOutput,
         onOutputFailure,
+        options.onMigrationStatus,
       ).pipe(Effect.forkScoped),
     );
   }
@@ -697,6 +714,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           Effect.option,
         );
         if (Option.isNone(config)) {
+          yield* spec.onShutdown?.() ?? Effect.void;
           if (current.desiredRunning) {
             yield* scheduleRestart("failed to generate desktop backend configuration");
           }
@@ -773,6 +791,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         );
 
         if (!entryExists) {
+          yield* spec.onShutdown?.() ?? Effect.void;
           yield* scheduleRestart(`missing server entry at ${config.value.entryPath}`);
           return;
         }
@@ -801,7 +820,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           const stateDirOwned = exitCode === SERVER_EXIT_CODE_STATE_DIR_OWNED;
           yield* mutex.withPermits(1)(
             Effect.gen(function* () {
-              const { isCurrentRun, nextState, pid, exitObserved, stopRequested, wasReady } =
+              const { isCurrentRun, nextState, pid, exitObserved, stopRequested } =
                 yield* Ref.modify(
                   state,
                   (
@@ -813,7 +832,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                       readonly pid: Option.Option<number>;
                       readonly exitObserved: boolean;
                       readonly stopRequested: boolean;
-                      readonly wasReady: boolean;
                     },
                     BackendManagerState,
                   ] => {
@@ -826,7 +844,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                           pid: Option.none<number>(),
                           exitObserved: false,
                           stopRequested: false,
-                          wasReady: false,
                         },
                         latest,
                       ] as const;
@@ -844,7 +861,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                         pid: currentRun.pid,
                         exitObserved: currentRun.exitObserved,
                         stopRequested: currentRun.stopRequested,
-                        wasReady: latest.ready,
                       },
                       next,
                     ] as const;
@@ -862,7 +878,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                     yield* backendOutputLog.discardSession;
                   }
                 }
-                if (wasReady) {
+                if (!stopRequested && nextState.desiredRunning) {
                   yield* spec.onShutdown?.() ?? Effect.void;
                 }
               }
@@ -942,6 +958,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             },
           ),
           onOutput: (streamName, chunk) => backendOutputLog.writeOutputChunk(streamName, chunk),
+          ...(spec.onMigrationStatus ? { onMigrationStatus: spec.onMigrationStatus } : {}),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -1035,7 +1052,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             {
               active,
               restartFiber: latest.restartFiber,
-              notifyShutdown: latest.ready,
+              notifyShutdown: latest.ready || Option.isSome(latest.active),
             },
             {
               ...latest,
