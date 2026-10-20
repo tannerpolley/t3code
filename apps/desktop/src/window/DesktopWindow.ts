@@ -1049,8 +1049,9 @@ export const make = Effect.gen(function* () {
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
       yield* createMainIfBackendReady;
     }),
+    // The splash stays through a backend crash: it may be the only window, and closing it would
+    // quit the app before the backend manager's restart could open the main window.
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
-      Effect.andThen(dismissConnectingSplash),
       Effect.withSpan("desktop.window.handleBackendNotReady"),
     ),
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(

@@ -1686,23 +1686,25 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("closes the local splash on failure and ignores late migration updates", () =>
-    Effect.gen(function* () {
-      const splash = makeFakeBrowserWindow();
-      const scenario = yield* makeSplashScenario([splash.window]);
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        yield* desktopWindow.showConnectingSplash("Starting T3 Code…");
-        yield* desktopWindow.setConnectingSplashLabel("Upgrading the database…");
-        yield* desktopWindow.setConnectingSplashLabel("Upgrading the database…");
-        assert.equal(splash.loadURL.mock.calls.length, 2);
-        yield* desktopWindow.handleBackendNotReady;
-        assert.equal(splash.close.mock.calls.length, 1);
-        yield* desktopWindow.setConnectingSplashLabel("Starting T3 Code…");
-        assert.equal(splash.loadURL.mock.calls.length, 2);
-        assert.equal(yield* Ref.get(scenario.createCalls), 1);
-      }).pipe(Effect.provide(scenario.layer));
-    }),
+  it.effect(
+    "keeps the local splash through a backend crash so a restart can still open the app",
+    () =>
+      Effect.gen(function* () {
+        const splash = makeFakeBrowserWindow();
+        const scenario = yield* makeSplashScenario([splash.window]);
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.showConnectingSplash("Starting T3 Code…");
+          yield* desktopWindow.setConnectingSplashLabel("Upgrading the database…");
+          yield* desktopWindow.setConnectingSplashLabel("Upgrading the database…");
+          assert.equal(splash.loadURL.mock.calls.length, 2);
+          yield* desktopWindow.handleBackendNotReady;
+          assert.equal(splash.close.mock.calls.length, 0);
+          yield* desktopWindow.setConnectingSplashLabel("Starting T3 Code…");
+          assert.equal(splash.loadURL.mock.calls.length, 3);
+          assert.equal(yield* Ref.get(scenario.createCalls), 1);
+        }).pipe(Effect.provide(scenario.layer));
+      }),
   );
 
   it.effect("keeps the local splash until the main window is revealed", () =>
