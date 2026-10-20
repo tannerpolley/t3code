@@ -1420,7 +1420,7 @@ const SidebarProjectThreadRow = memo(
                 links: props.thread.pullRequests,
               })}
               className={cn(
-                "fork-sidebar-thread group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
+                "fork-sidebar-thread sidebar-caret-row group/project-thread @container/thread-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left outline-none transition-colors",
                 PROJECTS_WORK_ROW_HEIGHT,
                 props.codexStyle ? "sidebar-thread-tint text-xs" : "text-sm",
                 active
@@ -1474,7 +1474,6 @@ const SidebarProjectThreadRow = memo(
                       </span>
                     </SidebarProjectThreadName>
                   }
-                  count={workCount > 0 && !workOpen ? workCount : undefined}
                   issue={
                     <ThreadIssueBadge
                       environmentId={props.thread.environmentId}
@@ -1514,7 +1513,8 @@ const SidebarProjectThreadRow = memo(
         {hasWork && props.codexStyle ? (
           <SidebarCaretToggle
             open={workOpen}
-            label={`${workOpen ? "Hide" : "Show"} running work`}
+            count={workCount}
+            label={`${workOpen ? "Hide" : "Show"} ${workCount} running ${workCount === 1 ? "item" : "items"}`}
             onToggle={toggleWork}
             className="top-0.5 h-5"
           />

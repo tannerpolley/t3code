@@ -349,6 +349,10 @@ as do processes, such as `python ×10`, and a program already listed as a comman
 listed again. Each thread shows up to five process groups, with their elapsed time and running
 mark. Expand a group to inspect up to 20 individual processes; click a process for its
 command (up to 500 characters), PID, start time, CPU and memory. Group expansion is remembered.
+In the Codex-style sidebar, a collapsed thread's hidden work count and a collapsed process group's
+member count appear at the far left. Hover the row or focus its toggle to reveal the caret;
+expanded rows show a downward caret. Counts above 99 show `99+`, with the full count on hover
+and in the toggle's accessible label.
 In the Codex-style Projects view, a settled thread shows
 **Waiting on background work** while it has running tasks, commands or sampled processes.
 An unseen completion keeps its green mark until you open the thread; completion notifications

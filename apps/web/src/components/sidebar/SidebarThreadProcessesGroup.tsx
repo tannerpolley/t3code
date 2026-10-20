@@ -66,12 +66,7 @@ export function SidebarThreadProcessesGroup(props: {
       fallback={<CpuIcon aria-hidden className={iconClassName} />}
     />
   );
-  const rowContent = (
-    name: ReactElement,
-    startedAt: string | undefined,
-    caret?: ReactElement,
-    count?: number,
-  ) => {
+  const rowContent = (name: ReactElement, startedAt: string | undefined, caret?: ReactElement) => {
     const time = startedAt ? (
       <AgentElapsed agent={{ status: "running", startedAt, completedAt: null }} />
     ) : null;
@@ -82,7 +77,6 @@ export function SidebarThreadProcessesGroup(props: {
         provider={icon}
         name={name}
         wideName
-        count={count}
         time={time}
         status={status}
       />
@@ -116,10 +110,16 @@ export function SidebarThreadProcessesGroup(props: {
   const content = rowContent(
     groupName,
     group.startedAt,
-    expandable ? <SidebarCaretSlot open={open} /> : undefined,
-    group.count > 1 ? group.count : undefined,
+    expandable ? (
+      <SidebarCaretSlot open={open} count={props.columns ? group.count : undefined} />
+    ) : group.count > 1 && props.columns ? (
+      <SidebarCaretSlot count={group.count} />
+    ) : undefined,
   );
-  const buttonClass = cn(props.className, "w-full cursor-pointer text-left hover:bg-accent");
+  const buttonClass = cn(
+    props.className,
+    "group/sidebar-caret w-full cursor-pointer text-left hover:bg-accent",
+  );
   const single = group.count === 1 ? members[0] : undefined;
   return (
     <>
@@ -129,7 +129,11 @@ export function SidebarThreadProcessesGroup(props: {
             type="button"
             className={buttonClass}
             aria-expanded={open}
-            aria-label={`${open ? "Hide" : "Show"} ${group.label} processes`}
+            aria-label={
+              props.columns
+                ? `${open ? "Hide" : "Show"} ${group.count} ${group.label} processes`
+                : `${open ? "Hide" : "Show"} ${group.label} processes`
+            }
             onClick={() => setExpanded([key], !open)}
           >
             {content}

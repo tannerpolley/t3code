@@ -68,11 +68,21 @@
   align-items: center;
   overflow: hidden;
 }
-@utility sidebar-thread-count {
-  font-size: 0.6875rem;
-  text-align: right;
+.sidebar-caret-count {
+  font-size: 0.625rem;
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
+}
+/* Overlay toggles are siblings of their row; match only that row, never its descendants. */
+.sidebar-caret-row:hover ~ .sidebar-caret-toggle {
+  & .sidebar-caret-slot[data-count] {
+    .sidebar-caret-count {
+      display: none;
+    }
+    .sidebar-caret-icon {
+      display: flex;
+    }
+  }
 }
 /* One caret width for the overlay toggle and the in-row slot, so both carets sit at the same x. */
 .sidebar-caret-toggle > span,
@@ -81,7 +91,7 @@
 }
 /* Rows without a model (commands, processes) start their name at the model's x. */
 .sidebar-thread-name-wide {
-  grid-column: model / count;
+  grid-column: model / issue;
 }
 /* Icon role display hides a title that only repeats the role; the role icon names it on hover. */
 [data-sidebar-role-display="icon"] .sidebar-role-title {

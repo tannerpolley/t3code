@@ -2,6 +2,7 @@ import { ChevronRightIcon } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
+import { sidebarCaretCount } from "./SidebarColumns.logic";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "~/lib/utils";
@@ -34,13 +35,50 @@ export function SidebarCaret(props: { readonly open: boolean }) {
  */
 export function SidebarCaretSlot(props: {
   readonly open?: boolean | undefined;
+  readonly count?: number | undefined;
   readonly className?: string | undefined;
   readonly children?: ReactNode;
 }) {
-  return (
-    <span aria-hidden className={cn(CARET_SLOT_CLASS, props.className)}>
-      {props.open === undefined ? props.children : <SidebarCaret open={props.open} />}
+  const count = sidebarCaretCount(props.count, props.open);
+  const slot = (
+    <span
+      aria-hidden
+      className={cn(CARET_SLOT_CLASS, "sidebar-caret-slot", props.className)}
+      data-count={count === undefined ? undefined : ""}
+    >
+      {count === undefined ? null : (
+        <span
+          className={cn(
+            "sidebar-caret-count",
+            props.open !== undefined &&
+              "group-hover/sidebar-caret:hidden group-focus/sidebar-caret:hidden",
+          )}
+        >
+          {count}
+        </span>
+      )}
+      {props.open === undefined ? (
+        props.children
+      ) : (
+        <span
+          className={cn(
+            "sidebar-caret-icon",
+            count !== undefined &&
+              "hidden group-hover/sidebar-caret:flex group-focus/sidebar-caret:flex",
+          )}
+        >
+          <SidebarCaret open={props.open} />
+        </span>
+      )}
     </span>
+  );
+  return props.count === undefined ? (
+    slot
+  ) : (
+    <Tooltip>
+      <TooltipTrigger render={slot} />
+      <TooltipPopup side="right">{props.count}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -52,6 +90,7 @@ export function SidebarCaretSlot(props: {
  */
 export function SidebarCaretToggle(props: {
   readonly open: boolean;
+  readonly count?: number | undefined;
   readonly label: string;
   readonly onToggle: () => void;
   readonly className: string;
@@ -62,14 +101,12 @@ export function SidebarCaretToggle(props: {
       aria-expanded={props.open}
       aria-label={props.label}
       className={cn(
-        "sidebar-caret-toggle absolute flex cursor-pointer items-center rounded px-1.5 text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        "sidebar-caret-toggle group/sidebar-caret absolute flex cursor-pointer items-center rounded px-1.5 text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         props.className,
       )}
       onClick={props.onToggle}
     >
-      <span className={CARET_SLOT_CLASS}>
-        <SidebarCaret open={props.open} />
-      </span>
+      <SidebarCaretSlot open={props.open} count={props.count} />
     </button>
   );
 }
@@ -111,7 +148,6 @@ export function SidebarThreadColumns(props: {
   readonly name: ReactNode;
   /** The row has no model or effort, so its name starts in the model's column. */
   readonly wideName?: boolean | undefined;
-  readonly count?: number | undefined;
   readonly issue?: ReactNode;
   readonly pr?: ReactNode;
   readonly trailingClassName?: string | undefined;
@@ -164,7 +200,6 @@ export function SidebarThreadColumns(props: {
       <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
         {props.name}
       </span>
-      <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       {columns.issue !== false ? (
         <span className={cn("sidebar-thread-badge sidebar-thread-issue", props.trailingClassName)}>
           {props.issue}

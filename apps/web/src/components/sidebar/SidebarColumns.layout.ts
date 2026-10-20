@@ -9,7 +9,7 @@ const labelCh = 4;
 
 export const sidebarColumnLayout = {
   tracks: {
-    caret: 0.75,
+    caret: 1.5,
     location: 0.75,
     role: 0.75,
     provider: 1,
@@ -19,12 +19,10 @@ export const sidebarColumnLayout = {
     version: { ch: 2.35 },
     effort: 2.5,
     // A role-name title: "Orchestrator" is 10.625ch at 12px in OpenDyslexic Bold, plus a narrow
-    // space. Other titles take their text's width. Spare width goes to the spacer so counts,
+    // space. Other titles take their text's width. Spare width goes to the spacer so
     // badges, time and status stay right-aligned.
     name: { ch: titleCh },
     spacer: 0,
-    // A collapsed row's hidden work count, right-aligned just before the badges.
-    count: 1,
     // Every row reserves both badge slots, so issue and pull request icons line up whichever it has:
     // each fits its icon and three digits (an orchestrator can hold 100+ pull requests).
     issue: 2.25,

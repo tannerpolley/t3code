@@ -34,27 +34,27 @@ const minimumTitlePx = (sidebarRem: number) => {
 describe("sidebar width budget", () => {
   it("budgets for the full role name before admitting optional columns", () => {
     expect(optionalColumns(16)).toEqual([]);
-    expect(optionalColumns(23.8)).toEqual([]);
-    expect(optionalColumns(24)).toEqual(["issue"]);
-    expect(optionalColumns(28)).toEqual(["issue"]);
-    expect(optionalColumns(28.5)).toEqual(["model", "issue"]);
-    expect(optionalColumns(30.8)).toEqual(["model", "issue"]);
-    expect(optionalColumns(31.1)).toEqual(["model", "effort", "issue"]);
+    expect(optionalColumns(23.5)).toEqual([]);
+    expect(optionalColumns(23.6)).toEqual(["issue"]);
+    expect(optionalColumns(27.9)).toEqual(["issue"]);
+    expect(optionalColumns(28)).toEqual(["model", "issue"]);
+    expect(optionalColumns(30.6)).toEqual(["model", "issue"]);
+    expect(optionalColumns(30.7)).toEqual(["model", "effort", "issue"]);
   });
 
   it("admits optional columns sooner with role icons, keeping room for short command labels", () => {
-    expect(optionalColumns(21.3, "icon")).toEqual([]);
-    expect(optionalColumns(21.6, "icon")).toEqual(["issue"]);
-    expect(optionalColumns(25.7, "icon")).toEqual(["issue"]);
-    expect(optionalColumns(26, "icon")).toEqual(["model", "issue"]);
-    expect(optionalColumns(28.6, "icon")).toEqual(["model", "effort", "issue"]);
-    for (const rem of [21.6, 26, 28.6]) {
+    expect(optionalColumns(20.9, "icon")).toEqual([]);
+    expect(optionalColumns(21, "icon")).toEqual(["issue"]);
+    expect(optionalColumns(25.3, "icon")).toEqual(["issue"]);
+    expect(optionalColumns(25.4, "icon")).toEqual(["model", "issue"]);
+    expect(optionalColumns(28.1, "icon")).toEqual(["model", "effort", "issue"]);
+    for (const rem of [21, 25.4, 28.1]) {
       expect(optionalColumns(rem, "icon").length).toBeGreaterThan(optionalColumns(rem).length);
     }
   });
 
   it("never overflows the default 16rem sidebar once every optional column has dropped", () => {
-    expect(minimumTitlePx(16)).toBeGreaterThan(0);
+    expect(minimumTitlePx(16)).toBeGreaterThan(40);
   });
 });
 
@@ -73,6 +73,7 @@ it("keeps the committed CSS equal to generated CSS apart from formatter whitespa
 const ADVANCES = new Map(
   Object.entries({
     " ": 801,
+    "+": 1571,
     ".": 603,
     A: 1710,
     G: 1614,
@@ -113,6 +114,10 @@ const fits = (labels: readonly string[], sizePx: number, trackPx: number) => {
   for (const label of labels) expect(widthPx(label, sizePx), label).toBeLessThanOrEqual(trackPx);
 };
 const { tracks } = sidebarColumnLayout;
+
+it("fits two-digit counts and their capped label inside the caret track", () => {
+  fits(["1", "16", "99", "99+"], 10, tracks.caret * 16);
+});
 
 it("fits every elapsed label up to ten days inside the time track", () => {
   // From 100 hours the label switches to days, so hours never grow a third digit; two-digit days

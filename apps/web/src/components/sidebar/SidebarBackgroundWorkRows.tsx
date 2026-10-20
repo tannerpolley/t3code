@@ -44,6 +44,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { cn } from "../../lib/utils";
 import {
   SidebarCaretToggle,
+  SidebarCaretSlot,
   SidebarThreadColumns,
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
@@ -246,6 +247,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             ) : null;
           const content = props.columns ? (
             <SidebarThreadColumns
+              caret={sameProgram ? <SidebarCaretSlot count={sameProgram} /> : undefined}
               location={locationIcon}
               role={roleIcon}
               provider={icon}
@@ -293,7 +295,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   <ThreadPullRequestBadge thread={row.child} />
                 ) : undefined
               }
-              count={sameProgram ?? (toggle && !toggle.open ? toggle.count : undefined)}
               time={time}
               status={<ThreadStatusMark status={status} />}
             />
@@ -330,7 +331,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 environmentId={props.environmentId}
                 threadId={childThreadId}
                 className={cn(
-                  "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left hover:bg-accent",
+                  "sidebar-caret-row flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md text-left hover:bg-accent",
                   PROJECTS_WORK_ROW_HEIGHT,
                   rowClass,
                 )}
@@ -465,6 +466,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               {toggle ? (
                 <SidebarCaretToggle
                   open={toggle.open}
+                  count={props.columns ? toggle.count : undefined}
                   label={`${toggle.open ? "Hide" : "Show"} ${toggle.count} running ${toggle.count === 1 ? "task" : "tasks"} under ${row.label}`}
                   onToggle={toggle.onToggle}
                   className="top-0.5 h-5"
