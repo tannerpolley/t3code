@@ -2,6 +2,8 @@
  * Fixed tracks, in rem, or in ch of the 12px row font where a track should follow the user's actual
  * font (as the title budget does).
  */
+const titleCh = 11;
+
 export const sidebarColumnLayout = {
   tracks: {
     caret: 0.75,
@@ -13,9 +15,9 @@ export const sidebarColumnLayout = {
     model: { ch: 5.65 },
     version: { ch: 2.35 },
     effort: 2.5,
-    // The title takes only its text's width; the spare width goes to the empty spacer after it, so
-    // the badges, time and status stay right-aligned.
-    name: 0,
+    // "Orchestrator" is 10.625ch at 12px in OpenDyslexic Bold; leave a narrow space.
+    // Spare width goes to the spacer so counts, badges, time and status stay right-aligned.
+    name: { ch: titleCh },
     spacer: 0,
     // A collapsed row's hidden work count, right-aligned just before the badges.
     count: 1,
@@ -33,7 +35,7 @@ export const sidebarColumnLayout = {
    */
   dropOrder: [["effort"], ["model", "version"], ["issue", "pr"]],
   rowPaddingRem: 1,
-  titleCh: 10,
+  titleCh,
   titleFontRem: 0.75,
 } as const;
 
@@ -45,7 +47,7 @@ export function generateSidebarColumnLayoutCss() {
     .map(([name], index) => {
       const width =
         name === "name"
-          ? "minmax(0, max-content)"
+          ? "minmax(0, var(--sidebar-name-track, var(--sidebar-name-width)))"
           : name === "spacer"
             ? "minmax(0, 1fr)"
             : `var(--sidebar-${name}-track, var(--sidebar-${name}-width))`;
@@ -69,14 +71,14 @@ export function generateSidebarColumnLayoutCss() {
         `@property --sidebar-${name}-width {\n  syntax: "<length>";\n  inherits: true;\n  initial-value: 0px;\n}\n`,
     )
     .join("")}@utility sidebar-columns-container {\n${entries
-    .filter(([name]) => name !== "name" && name !== "spacer")
+    .filter(([name]) => name !== "spacer")
     .map(
       ([name, width]) =>
         `  --sidebar-${name}-width: ${typeof width === "number" ? `${width}rem` : `${width.ch}ch`};`,
     )
     .join(
       "\n",
-    )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n`;
+    )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n[data-sidebar-role-display="icon"] {\n  --sidebar-name-track: max-content;\n}\n`;
   css += entries.map(([name]) => `.sidebar-thread-${name} { grid-column: ${name}; }\n`).join("");
   for (const roleDisplay of ["name", "icon"] as const) {
     const hidden = new Set<string>();
@@ -98,19 +100,16 @@ export function sidebarColumnBudget(
   hidden: ReadonlySet<string>,
   roleDisplay: "name" | "icon" = "name",
 ) {
-  const { tracks, rowPaddingRem, gapPx, titleCh } = sidebarColumnLayout;
+  const { tracks, rowPaddingRem, gapPx } = sidebarColumnLayout;
   const visible = Object.entries(tracks)
     .filter(([name]) => !hidden.has(name) && (name !== "role" || roleDisplay === "icon"))
-    .map(([, width]) => width);
+    .map(([name, width]) => (name === "name" && roleDisplay === "icon" ? 0 : width));
   return {
     rem: visible.reduce<number>(
       (sum, width) => sum + (typeof width === "number" ? width : 0),
       rowPaddingRem,
     ),
     px: (visible.length - 1) * gapPx,
-    ch: visible.reduce<number>(
-      (sum, width) => sum + (typeof width === "number" ? 0 : width.ch),
-      titleCh,
-    ),
+    ch: visible.reduce<number>((sum, width) => sum + (typeof width === "number" ? 0 : width.ch), 0),
   };
 }

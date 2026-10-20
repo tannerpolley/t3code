@@ -8,13 +8,13 @@ import {
   sidebarColumnLayout,
 } from "./SidebarColumns.layout";
 
-// Local OpenDyslexic font metrics: zero advances 1337 of 2048 units.
-const ch = (1337 / 2048) * sidebarColumnLayout.titleFontRem * 16;
-const optionalColumns = (sidebarRem: number) => {
+// Headless Chrome, installed OpenDyslexic Bold WOFF: 1ch = 8px at the 12px row font.
+const ch = (8 / 12) * sidebarColumnLayout.titleFontRem * 16;
+const optionalColumns = (sidebarRem: number, roleDisplay: "name" | "icon" = "name") => {
   const container = sidebarRem * 16 - 40;
   const hidden = new Set<string>();
   for (const group of sidebarColumnLayout.dropOrder) {
-    const budget = sidebarColumnBudget(hidden);
+    const budget = sidebarColumnBudget(hidden, roleDisplay);
     if (container < budget.rem * 16 + budget.px + budget.ch * ch)
       for (const column of group) hidden.add(column);
   }
@@ -32,11 +32,21 @@ const minimumTitlePx = (sidebarRem: number) => {
 };
 
 describe("sidebar width budget", () => {
-  it("protects ten title characters before admitting optional columns", () => {
+  it("budgets for the full role name before admitting optional columns", () => {
     expect(optionalColumns(16)).toEqual([]);
-    expect(optionalColumns(26)).toEqual(["issue"]);
-    expect(optionalColumns(29)).toEqual(["model", "issue"]);
-    expect(optionalColumns(31.5)).toEqual(["model", "effort", "issue"]);
+    expect(optionalColumns(23.8)).toEqual([]);
+    expect(optionalColumns(24)).toEqual(["issue"]);
+    expect(optionalColumns(28)).toEqual(["issue"]);
+    expect(optionalColumns(28.5)).toEqual(["model", "issue"]);
+    expect(optionalColumns(30.8)).toEqual(["model", "issue"]);
+    expect(optionalColumns(31.1)).toEqual(["model", "effort", "issue"]);
+  });
+
+  it("admits optional columns earlier when icons hide the role name", () => {
+    expect(optionalColumns(19.3, "icon")).toEqual([]);
+    expect(optionalColumns(19.5, "icon")).toEqual(["issue"]);
+    expect(optionalColumns(24, "icon")).toEqual(["model", "issue"]);
+    expect(optionalColumns(26.5, "icon")).toEqual(["model", "effort", "issue"]);
   });
 
   it("never overflows the default 16rem sidebar once every optional column has dropped", () => {
@@ -127,4 +137,11 @@ it("reserves the role track and its gap only for icons", () => {
   const icons = sidebarColumnBudget(hidden, "icon");
   expect(icons.rem - names.rem).toBe(sidebarColumnLayout.tracks.role);
   expect(icons.px - names.px).toBe(sidebarColumnLayout.gapPx);
+  expect(names.ch - icons.ch).toBe(sidebarColumnLayout.titleCh);
+});
+
+it("fits the longest role labels with a narrow space at the 12px row font", () => {
+  const track = tracks.name.ch * ch;
+  expect(track - 85, "Orchestrator").toBeGreaterThanOrEqual(3);
+  expect(track - 79, "Investigator").toBeGreaterThanOrEqual(3);
 });

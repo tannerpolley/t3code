@@ -380,6 +380,7 @@ describe("sidebarThreadTitle", () => {
       const thread = {
         role,
         lineage,
+        creationSource: "mcp" as const,
         branch: worktreePath === null ? null : "t3/x",
         worktreePath,
         linkedIssue,
@@ -396,6 +397,15 @@ describe("sidebarThreadTitle", () => {
     expect(title(undefined, child)).toBe("Implementor");
     expect(title(undefined, top, "/wt/x")).toBe("Implementor");
     expect(title("reviewer", child, "/wt/x")).toBe("Reviewer");
+    expect(
+      sidebarThreadTitle({
+        role: undefined,
+        creationSource: "provider",
+        lineage: child,
+        branch: null,
+        worktreePath: null,
+      }),
+    ).toBe("Worker");
   });
 });
 

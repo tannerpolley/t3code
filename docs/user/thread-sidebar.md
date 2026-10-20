@@ -383,11 +383,12 @@ Implementors unless their parent gives them another role. Forks keep their sourc
 role. A native provider subagent takes its role from its agent type: Codex's manager
 is an Orchestrator; reviewer types are Reviewers; explorer or researcher types are
 Investigators; tester or checker types are Checkers; and every other type, including
-the default agents, is an Implementor. Role icons appear in the chat header, and in
+the default agents, is an Implementor. Native subagents with the Implementor role display as
+Worker with a hard hat icon. Role icons appear in the chat header, and in
 thread rows when you turn them on in **Settings → Customizations → Sidebar & projects**.
 
-Native provider subagents have a bot icon before their role icon and run on their
-own. They cannot take messages; use **Open parent** to direct them. App-owned child
+Native provider subagents run on their own; their role icon's tooltip identifies them as
+the provider's own subagent. They cannot take messages; use **Open parent** to direct them. App-owned child
 threads accept messages like other threads. Questions and approvals from either kind are routed
 to their parent.
 
@@ -425,7 +426,7 @@ Turn off **Codex-style sidebar** in **Settings → General** to use the classic 
 The Activity view keeps its cards.
 
 Rows are titled by what each thread does rather than its task name: its role
-(Orchestrator, Implementor, Reviewer, Investigator, Checker), matching its role icon.
+(Orchestrator, Implementor, Reviewer, Investigator, Checker, or Worker), matching its role icon.
 A thread working on an issue adds an issue icon with the issue's number, and a thread
 with pull requests adds a pull request icon in the color of their state; on an
 orchestrator's row that icon shows the state itself, such as a merge. Hover a title to

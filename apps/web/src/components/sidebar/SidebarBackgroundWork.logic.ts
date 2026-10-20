@@ -5,9 +5,7 @@ import { fileBasename } from "@t3tools/shared/path";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import {
   effectiveThreadRole,
-  THREAD_ROLE_LABELS,
   type OrchestrationV2PendingBackgroundTask,
-  type OrchestrationV2ThreadShell,
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -17,6 +15,8 @@ import {
   backgroundWorkHoldsCompletion,
   pendingBackgroundWorkOfThread,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+
+import { threadRoleDisplay, type RoleDisplayThread } from "../threadRoleDisplay";
 
 import type { SidebarThreadSummary } from "../../types";
 import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "../Sidebar.logic";
@@ -97,16 +97,9 @@ export function resolveSidebarThreadModelLabel(
   return !includeEffort || effort === null ? modelLabel : `${modelLabel} · ${effort}`;
 }
 
-/**
- * What a thread row is titled instead of its task name: an issue worker's issue, else the role it
- * works as, the same one its role icon shows. The name shows on hover.
- */
-export function sidebarThreadTitle(
-  thread: Pick<OrchestrationV2ThreadShell, "role" | "branch" | "worktreePath"> & {
-    readonly lineage: Pick<OrchestrationV2ThreadShell["lineage"], "relationshipToParent">;
-  },
-): string {
-  return THREAD_ROLE_LABELS[effectiveThreadRole(thread)];
+/** The role title matches the role icon; the thread's task name shows on hover. */
+export function sidebarThreadTitle(thread: RoleDisplayThread): string {
+  return threadRoleDisplay(thread).label;
 }
 
 /**

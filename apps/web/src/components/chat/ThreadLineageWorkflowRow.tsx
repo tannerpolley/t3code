@@ -1,7 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell } from "../../state/entities";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
-import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
+import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { SidebarThreadColumns, sidebarThreadName } from "../sidebar/SidebarColumns";
 import { sidebarThreadTitle } from "../sidebar/SidebarBackgroundWork.logic";
 import { ThreadIssueBadge } from "../sidebar/SidebarProjectThreadTooltip";
@@ -109,12 +109,8 @@ function WorkflowMemberRow({
           }
         >
           <SidebarThreadColumns
-            location={
-              thread
-                ? threadLocationCell(thread.source, <ThreadLocationIcon thread={thread} />)
-                : undefined
-            }
-            role={thread ? <ThreadRoleIcon thread={thread.source} nativeMark={false} /> : undefined}
+            location={thread ? <ThreadLocationIcon thread={thread} /> : undefined}
+            role={thread ? <ThreadRoleIcon thread={thread.source} /> : undefined}
             provider={<ThreadRelationshipIcon driver={driver} provider={provider} />}
             model={shortModelName(member.model ?? thread?.modelSelection.model ?? "")}
             effort={shortModelSelectionEffort(member.effort ?? null)}

@@ -67,7 +67,7 @@ import {
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { workRowProgram } from "./SidebarThreadProcesses.logic";
-import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
+import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { SidebarThreadStatus } from "../Sidebar.logic";
 
@@ -203,23 +203,20 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
           // In Projects only each location's lead carries the icon; other cells stay empty.
           const locationIcon =
-            row.kind === "subagent" && row.child
-              ? threadLocationCell(
-                  row.child.source,
-                  props.locationLeadKeys?.has(
-                    scopedThreadKey(scopeThreadRef(props.environmentId, row.child.id)),
-                  ) !== false ? (
-                    <ThreadLocationIcon
-                      thread={row.child}
-                      tooltip={!props.columns}
-                      worktreeStyle={props.columns ? locationStyle : undefined}
-                    />
-                  ) : null,
-                )
-              : null;
+            row.kind === "subagent" && row.child ? (
+              props.locationLeadKeys?.has(
+                scopedThreadKey(scopeThreadRef(props.environmentId, row.child.id)),
+              ) !== false ? (
+                <ThreadLocationIcon
+                  thread={row.child}
+                  tooltip={!props.columns}
+                  worktreeStyle={props.columns ? locationStyle : undefined}
+                />
+              ) : null
+            ) : null;
           const roleIcon =
             row.kind === "subagent" && row.child ? (
-              <ThreadRoleIcon thread={row.child.source} nativeMark={false} />
+              <ThreadRoleIcon thread={row.child.source} />
             ) : null;
           // Commands and tasks go by their program only; the full command is on hover and in the popup.
           const name =

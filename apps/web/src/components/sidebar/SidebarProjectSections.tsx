@@ -88,7 +88,7 @@ import {
   PROJECTS_WORK_ROW_HEIGHT,
 } from "./SidebarColumns";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
-import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
+import { ThreadRoleIcon } from "../ThreadRoleIcon";
 import { ThreadRelationshipIcon } from "../chat/ThreadRelationshipIcon";
 import {
   describeSidebarBackgroundWork,
@@ -1446,17 +1446,16 @@ const SidebarProjectThreadRow = memo(
             >
               {props.codexStyle ? (
                 <SidebarThreadColumns
-                  location={threadLocationCell(
-                    props.thread.source,
+                  location={
                     props.locationLeadKeys?.has(activeThreadKey) === false ? undefined : (
                       <ThreadLocationIcon
                         thread={props.thread}
                         tooltip={false}
                         worktreeStyle={locationStyle}
                       />
-                    ),
-                  )}
-                  role={<ThreadRoleIcon thread={props.thread.source} nativeMark={false} />}
+                    )
+                  }
+                  role={<ThreadRoleIcon thread={props.thread.source} />}
                   provider={
                     <ThreadRelationshipIcon
                       driver={provider?.driver}
