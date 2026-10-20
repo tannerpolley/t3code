@@ -20,8 +20,6 @@ import {
   formatStoppedThreadDuration,
   flattenRunningSubagents,
   groupRunningSubagentsByParent,
-  groupThreadsByLocation,
-  placeThreadsByLocation,
   resolveLocationLeads,
   withChildNeeds,
   resolveThreadStatusMark,
@@ -2539,7 +2537,7 @@ describe("groupRunningSubagentsByParent", () => {
     ).toEqual(["middle", "leaf"]);
   });
 
-  it("lists a parent's native subagents before its app-owned children", () => {
+  it("leaves worker ordering to the background work rows", () => {
     const grouped = groupRunningSubagentsByParent([
       child("native-early", { native: true }),
       child("implementor"),
@@ -2547,8 +2545,8 @@ describe("groupRunningSubagentsByParent", () => {
     ]);
     expect([...grouped.values()].flat().map((thread) => thread.id)).toEqual([
       "native-early",
-      "native-late",
       "implementor",
+      "native-late",
     ]);
   });
 
@@ -2589,38 +2587,6 @@ describe("thread locations", () => {
       lineage: { parentThreadId: null, relationshipToParent, rootThreadId: ThreadId.make(id) },
     },
   });
-  const keyOf = (thread: { readonly id: ThreadId }) =>
-    scopedThreadKey(scopeThreadRef(localEnvironmentId, thread.id));
-
-  it("groups main checkouts first, then worktrees, keeping each group's order", () => {
-    const threads = [at("a", "/wt/x"), at("b", null), at("c", "/wt/y"), at("d", "/wt/x")];
-    expect(groupThreadsByLocation(threads).map((thread) => thread.id)).toEqual([
-      "b",
-      "a",
-      "d",
-      "c",
-    ]);
-  });
-
-  it("moves a subagent working elsewhere into its own location's section", () => {
-    const orchestrator = at("orchestrator", null, "orchestrator");
-    const reviewer = at("reviewer", null, "reviewer");
-    const implementor = at("implementor", "/wt/x");
-    // Native helpers of the implementor work in its worktree and stay nested under it.
-    const helper = at("helper", "/wt/x");
-    const byParent = new Map([
-      [keyOf(orchestrator), [reviewer, implementor]],
-      [keyOf(implementor), [helper]],
-    ]);
-    const placed = placeThreadsByLocation([orchestrator, at("other", "/wt/y")], byParent);
-    expect(placed.threads.map((thread) => thread.id)).toEqual([
-      "orchestrator",
-      "implementor",
-      "other",
-    ]);
-    expect([...placed.relocated]).toEqual([keyOf(implementor)]);
-  });
-
   it("leads the main checkout with its orchestrator and a worktree with its implementor", () => {
     const leads = resolveLocationLeads([
       // A role-less child is an implementor; a role-less top-level thread there is the orchestrator.

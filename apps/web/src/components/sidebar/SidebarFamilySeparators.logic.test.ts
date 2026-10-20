@@ -7,77 +7,101 @@ import {
   resolveSidebarFamilySeparators,
 } from "./SidebarFamilySeparators.logic";
 
-it("marks only family and orchestrator boundaries in displayed row order", () => {
-  const standalone = (key: string) => ({
+it("marks checkout changes within a family and solid boundaries around families", () => {
+  const row = (key: string, familyKey = key, workspace: string | null = null) => ({
     key,
-    familyKey: key,
-    parentKey: null,
-    orchestrator: false,
-    worker: false,
+    familyKey,
+    workspace,
   });
-  const orchestrator = { ...standalone("orchestrator"), orchestrator: true };
-  const worker = {
-    ...standalone("worker"),
-    familyKey: orchestrator.key,
-    parentKey: orchestrator.key,
-    worker: true,
-  };
-  const sibling = { ...worker, key: "sibling" };
-  const a = standalone("a");
-  const b = standalone("b");
-  for (const [rows, expected] of [
-    [[a, b], []],
-    [[orchestrator, worker, sibling], [[worker.key, "dashed"]]],
-    [
-      [a, orchestrator, worker, b],
-      [
-        [orchestrator.key, "solid"],
-        [worker.key, "dashed"],
-        [b.key, "solid"],
-      ],
-    ],
-    [[worker, orchestrator], []],
-    [[orchestrator, { ...worker, parentKey: "other" }], []],
-    [[orchestrator, { ...worker, familyKey: "other" }], []],
-  ] as const) {
-    expect([...resolveSidebarFamilySeparators(rows)]).toEqual(expected);
-  }
+  const orchestrator = row("orchestrator");
+  const worker = row("worker", orchestrator.key, "/wt/implementation");
+  const helper = row("helper", orchestrator.key, worker.workspace);
+  const sibling = row("sibling", orchestrator.key, "/wt/other");
+  const reviewer = row("reviewer", orchestrator.key);
+  const investigator = row("investigator", orchestrator.key);
+  const otherRoot = row("other-root");
+  const otherWorker = row("other-worker", otherRoot.key);
+  expect([
+    ...resolveSidebarFamilySeparators([
+      row("before"),
+      orchestrator,
+      worker,
+      helper,
+      sibling,
+      reviewer,
+      investigator,
+      otherRoot,
+      otherWorker,
+      row("after"),
+      row("standalone"),
+    ]),
+  ]).toEqual([
+    [orchestrator.key, "solid"],
+    [worker.key, "dashed"],
+    [sibling.key, "dashed"],
+    [reviewer.key, "dashed"],
+    [otherRoot.key, "solid"],
+    ["after", "solid"],
+  ]);
 });
 
-it("uses the same boundaries for nested and relocated workers, following expansion choices", () => {
+it("compares only displayed rows, following role order, nesting and expansion", () => {
   const environmentId = EnvironmentId.make("local");
   const parentId = ThreadId.make("orchestrator");
-  const parentFixture = makeThreadFixture({ environmentId, id: parentId });
-  const parent = {
-    ...parentFixture,
-    source: { ...parentFixture.source, role: "orchestrator" as const },
-  };
-  const workerFixture = makeThreadFixture({
+  const parent = makeThreadFixture({ environmentId, id: parentId });
+  const worker = makeThreadFixture({
     environmentId,
     id: ThreadId.make("worker"),
+    worktreePath: "/wt/worker",
     lineage: { rootThreadId: parentId, parentThreadId: parentId, relationshipToParent: "subagent" },
+    pendingBackgroundTasks: [
+      { taskId: "known-child", kind: "subagent", childThreadId: ThreadId.make("helper") },
+      { taskId: "unknown-child", kind: "subagent" },
+    ],
   });
-  const worker = {
-    ...workerFixture,
-    source: { ...workerFixture.source, role: "implementor" as const },
+  const helper = makeThreadFixture({
+    environmentId,
+    id: ThreadId.make("helper"),
+    worktreePath: worker.worktreePath,
+    lineage: {
+      rootThreadId: parentId,
+      parentThreadId: worker.id,
+      relationshipToParent: "subagent",
+    },
+  });
+  const reviewerFixture = makeThreadFixture({
+    environmentId,
+    id: ThreadId.make("reviewer"),
+    lineage: worker.lineage,
+  });
+  const reviewer = {
+    ...reviewerFixture,
+    source: { ...reviewerFixture.source, role: "reviewer" as const },
   };
   const standalone = makeThreadFixture({ environmentId, id: ThreadId.make("standalone") });
-  const key = (thread: typeof parentFixture) =>
+  const key = (thread: typeof parent) =>
     scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
   const input = {
     threads: [parent, standalone],
-    runningSubagentsByParentKey: new Map([[key(parent), [worker]]]),
+    runningSubagentsByParentKey: new Map([
+      [key(parent), [reviewer, worker]],
+      [key(worker), [helper]],
+    ]),
     expandedByKey: {},
   };
-  const nested = collectDisplayedFamilyRows(input);
-  const relocated = collectDisplayedFamilyRows({
-    ...input,
-    threads: [parent, worker, standalone],
-    relocatedThreadKeys: new Set([key(worker)]),
-  });
-  expect(relocated).toEqual(nested);
-  expect([...resolveSidebarFamilySeparators(nested)]).toEqual([
+  const rows = collectDisplayedFamilyRows(input);
+  expect(rows.map((row) => row.key)).toEqual([
+    key(parent),
+    key(worker),
+    key(helper),
+    `${key(worker)}:task:unknown-child`,
+    key(reviewer),
+    key(standalone),
+  ]);
+  expect(rows[3]?.workspace).toBe(worker.worktreePath);
+  expect([...resolveSidebarFamilySeparators(rows)]).toEqual([
     [key(worker), "dashed"],
+    [key(reviewer), "dashed"],
     [key(standalone), "solid"],
   ]);
   const collapsed = collectDisplayedFamilyRows({
@@ -86,14 +110,10 @@ it("uses the same boundaries for nested and relocated workers, following expansi
   });
   expect(collapsed.map((row) => row.key)).toEqual([key(parent), key(standalone)]);
   expect([...resolveSidebarFamilySeparators(collapsed)]).toEqual([]);
-  expect([
-    ...resolveSidebarFamilySeparators(
-      collectDisplayedFamilyRows({
-        ...input,
-        threads: [parent, worker],
-        relocatedThreadKeys: new Set([key(worker)]),
-        expandedByKey: { [key(parent)]: false },
-      }),
-    ),
-  ]).toEqual([[key(worker), "dashed"]]);
+  expect(
+    collectDisplayedFamilyRows({
+      ...input,
+      expandedByKey: { [key(worker)]: false },
+    }).map((row) => row.key),
+  ).toEqual([key(parent), key(worker), key(reviewer), key(standalone)]);
 });

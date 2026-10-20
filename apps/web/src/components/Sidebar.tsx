@@ -200,7 +200,6 @@ import {
   firstValidTimestampMs,
   hasUnseenCompletion,
   groupRunningSubagentsByParent,
-  placeThreadsByLocation,
   withChildNeeds,
   isSidebarNestedLinkClick,
   isSidebarThreadWorking,
@@ -2750,7 +2749,6 @@ export default function Sidebar() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
-  const codexStyleSidebar = useClientSettings((s) => s.codexStyleSidebar);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
@@ -3079,7 +3077,7 @@ export default function Sidebar() {
   });
 
   // Projects follow the Thread order setting; Activity keeps its own arranged order.
-  const { sidebarProjectThreadsByKey, relocatedProjectThreadKeys } = (() => {
+  const sidebarProjectThreadsByKey = (() => {
     const grouped = new Map<string, EnvironmentThreadShell[]>();
     for (const thread of sortThreads(
       filterSidebarV2VisibleThreads(threads, null),
@@ -3093,16 +3091,7 @@ export default function Sidebar() {
       projectThreads.push(thread);
       grouped.set(projectKey, projectThreads);
     }
-    // The Codex-style rows are grouped by location, so keyboard order follows them too.
-    const relocated = new Set<string>();
-    if (codexStyleSidebar) {
-      for (const [projectKey, projectThreads] of grouped) {
-        const placed = placeThreadsByLocation(projectThreads, runningSubagentsByParentKey);
-        grouped.set(projectKey, placed.threads);
-        for (const key of placed.relocated) relocated.add(key);
-      }
-    }
-    return { sidebarProjectThreadsByKey: grouped, relocatedProjectThreadKeys: relocated };
+    return grouped;
   })();
 
   const projectThreadOrder = collectVisibleProjectThreadOrder({
@@ -4971,7 +4960,6 @@ export default function Sidebar() {
             selectedProjectKey={projectScopeKey}
             threadsByProjectKey={sidebarProjectThreadsByKey}
             runningSubagentsByParentKey={runningSubagentsByParentKey}
-            relocatedThreadKeys={relocatedProjectThreadKeys}
           />
         ) : null}
         <SidebarGroup className="flex-1" role="presentation">

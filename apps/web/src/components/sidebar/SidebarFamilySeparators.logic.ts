@@ -1,5 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { effectiveThreadRole, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import type { SidebarThreadSummary } from "../../types";
 import {
@@ -12,9 +12,7 @@ export type SidebarFamilySeparator = "solid" | "dashed";
 type DisplayedFamilyRow = {
   readonly key: string;
   readonly familyKey: string;
-  readonly parentKey: string | null;
-  readonly orchestrator: boolean;
-  readonly worker: boolean;
+  readonly workspace: string | null;
 };
 
 export function sidebarSubagentRowKey(
@@ -30,7 +28,6 @@ export function sidebarSubagentRowKey(
 export function collectDisplayedFamilyRows(input: {
   readonly threads: readonly SidebarThreadSummary[];
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-  readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
   readonly expandedByKey: Readonly<Record<string, boolean>>;
 }): DisplayedFamilyRow[] {
   const displayed: DisplayedFamilyRow[] = [];
@@ -42,14 +39,7 @@ export function collectDisplayedFamilyRows(input: {
     displayed.push({
       key,
       familyKey,
-      parentKey:
-        thread.lineage.parentThreadId === null
-          ? null
-          : scopedThreadKey(scopeThreadRef(thread.environmentId, thread.lineage.parentThreadId)),
-      orchestrator: effectiveThreadRole(thread.source) === "orchestrator",
-      worker:
-        thread.lineage.relationshipToParent === "subagent" &&
-        effectiveThreadRole(thread.source) !== "orchestrator",
+      workspace: thread.worktreePath,
     });
     const rows = describeSidebarBackgroundWork(
       parent === undefined
@@ -61,7 +51,6 @@ export function collectDisplayedFamilyRows(input: {
           ),
       input.runningSubagentsByParentKey.get(key) ?? [],
       parent === undefined ? undefined : thread.id,
-      input.relocatedThreadKeys,
     );
     if (
       !sidebarWorkExpanded(
@@ -77,9 +66,7 @@ export function collectDisplayedFamilyRows(input: {
         displayed.push({
           key: sidebarSubagentRowKey(thread.environmentId, thread.id, row),
           familyKey,
-          parentKey: key,
-          orchestrator: false,
-          worker: true,
+          workspace: thread.worktreePath,
         });
     }
   };
@@ -98,7 +85,7 @@ export function resolveSidebarFamilySeparators(rows: readonly DisplayedFamilyRow
     if (previous.familyKey !== row.familyKey) {
       if (familySizes.get(previous.familyKey)! > 1 || familySizes.get(row.familyKey)! > 1)
         separators.set(row.key, "solid");
-    } else if (previous.orchestrator && row.worker && row.parentKey === previous.key) {
+    } else if (previous.workspace !== row.workspace) {
       separators.set(row.key, "dashed");
     }
   }

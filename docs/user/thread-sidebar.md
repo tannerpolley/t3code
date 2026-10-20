@@ -406,7 +406,9 @@ characters, with versions such as 5.5 and 6.1 lined up; hover the model for its 
 name. Running child agents show by default; a row you open or close keeps your choice for that view.
 Processes and commands alone only reveal a caret: open it to see the Processes summary. Child rows keep the same columns as their parent. A solid line separates
 each thread with child agents, and everything under it, from the rows around it; a dashed line
-separates an orchestrator from its workers.
+marks each change of checkout between consecutive rows within a family. Workers stay under their
+parent across worktrees, ordered by role: Implementor, Reviewer, Investigator, Checker, then other
+roles, with the newest activity first within each role.
 In **Settings → Customizations → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
 Choose **Family style → Colors** to tint each family instead, with deeper rows a slightly stronger shade.
 Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.
