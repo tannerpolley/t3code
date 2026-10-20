@@ -76,6 +76,7 @@ make_repo() { # relative path, then the worktree branches it keeps
   # Same layout and ignore rules T3 writes for project-local worktrees.
   printf '.worktrees/\n' >>"$repo/.git/info/exclude"
   for branch in "$@"; do
+    g show-ref --verify --quiet "refs/heads/$branch" || g branch "$branch" main
     g worktree add -q ".worktrees/${branch//\//-}" "$branch"
     # Uncommitted work keeps storage cleanup from removing the worktree.
     printf 'In progress on %s\n' "$branch" >>"$repo/.worktrees/${branch//\//-}/README.md"
@@ -89,10 +90,11 @@ build_workspace() {
     Scratch/echo-playground; do
     rm -rf "${ROOT:?}/$dir"
   done
-  make_repo Apps/aurora-web feature/sidebar-gradient fix/login-timeout
-  make_repo Apps/borealis-cli
-  make_repo Research/cascade-sim experiment/fast-solver
-  make_repo Scratch/echo-playground
+  make_repo Apps/aurora-web feature/sidebar-gradient fix/login-timeout chore/vite-7 \
+    refactor/theme-layers fix/e2e-flake experiment/canvas
+  make_repo Apps/borealis-cli feature/json-status refactor/toml chore/stale-branches
+  make_repo Research/cascade-sim experiment/fast-solver experiment/numba-kernel
+  make_repo Scratch/echo-playground experiment/pattern-matching ci/matrix docs/badges
   mkdir -p "$ROOT/Research/delta-notes"
   printf '# Turbulence closures\n\n- k-epsilon vs k-omega SST\n' >"$ROOT/Research/delta-notes/closures.md"
   printf '# Weekly log\n\n- Week 41: mock entries only\n' >"$ROOT/Research/delta-notes/weekly-log.md"
@@ -115,6 +117,14 @@ sync_github_sandbox() {
     GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" worktree add -q -B fix/absolute-zero "$tree" origin/fix/absolute-zero
     printf 'In progress on fix/absolute-zero\n' >>"$tree/README.md"
   fi
+  local branch
+  for branch in t3/issue-6-k-to-c t3/issue-7-f-to-k; do
+    tree=$repo/.worktrees/${branch//\//-}
+    if [ ! -d "$tree" ]; then
+      GIT_CONFIG_GLOBAL=/dev/null git -C "$repo" worktree add -q -B "$branch" "$tree" main
+      printf 'In progress on %s\n' "$branch" >>"$tree/README.md"
+    fi
+  done
 }
 
 if [ "${1:-}" = live ]; then

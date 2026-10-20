@@ -7,14 +7,49 @@ running. Together they cover most sidebar and chat states:
 - **Sidebar rows:** Working, Waiting, Done, idle, settled, Approval, Input, Failed, Limited,
   snoozed, Woke, pinned, archived, and plan mode.
 - **Background tasks:** a server, a watcher, a Python job and a monitor.
-- **Thread groups:** two groups with nested children of every kind.
-- **Pull requests:** open, draft, merged and closed.
-- **Roles:** every thread has one. Top-level threads outside a worktree are Orchestrators,
-  worktree threads Implementors, native subagents take their agent type's role.
+- **Thread families:** one repository orchestrator per project, direct workers, and nested helpers.
+- **Pull requests:** open, draft, merged and closed, including 123 PRs on the aurora orchestrator.
+- **Roles:** explicit roles keep only the repository coordinator labeled Orchestrator. Direct
+  Implementors have separate worktrees; Reviewers, Investigators and Checkers share the main
+  checkout. Nested native helpers share their parent's checkout.
 - **Questions:** a Claude single-choice question and a Codex multi-select question
   ("Choose the release checks for borealis 1.2").
 - **Task list:** the aurora-web orchestrator's Claude task list, shown above the composer.
 - **Issues:** real issues and PRs in `tannerpolley/t3code-sandbox` (see below).
+
+## Project layout
+
+Each project has one main-checkout orchestrator above its workers in Projects with the default
+activity order. Workers stay nested across checkouts: Implementors, Reviewers, Investigators,
+Checkers, then other roles, newest activity first within a role. In **Family style → Lines**,
+dashed lines mark checkout changes and solid lines separate families.
+
+- **aurora-web (APPS):** “Coordinate the sidebar gradient redesign”; gradient-header Implementor
+  with a nested token investigator, a Reviewer, two main-checkout Investigators and a Checker.
+  Historical Implementors retain merged, usage-limited, snoozed and archived examples in separate
+  worktrees. One standalone Implementor, “Fix login timeout on slow networks”, keeps Done/unseen,
+  the open PR and checkpoint diff available. The orchestrator carries the 123-PR badge and task list.
+- **borealis-cli (APPS):** “Coordinate borealis 1.2”; separate worktrees for JSON output, TOML and
+  branch cleanup (Approval), a packaging Investigator with a nested wheel Checker, and the
+  multi-select release-checks Checker. The one standalone Investigator retains the plugin plan.
+- **cascade-sim (RESEARCH → EXPERIMENTS):** “Run the 10k-cell solver benchmark campaign”; two
+  Implementors in distinct worktrees, a nested kernel profiler, main-checkout Reviewers,
+  Investigators (including the charting question) and the benchmark Checker with background work.
+  One standalone settled Investigator retains the long boundary-condition title.
+- **delta-notes (OTHER PROJECTS):** “Coordinate turbulence research notes”; a main-folder
+  Investigator, plus one standalone settled Investigator for the weekly log. This is a plain
+  folder, without Git or worktrees.
+- **echo-playground (OTHER PROJECTS):** “Coordinate playground experiments”; a pattern-matching
+  Implementor and README Implementor in separate worktrees, plus a main-checkout parser Checker.
+  One standalone Implementor retains the failed CI run and closed PR.
+- **t3code-sandbox (GitHub sandbox):** “Coordinate t3code-sandbox issues”; the real #6, #7 and #15
+  issue Implementors each have their own local worktree, with #15 linked to real PR #24.
+  `github.py` and the passive repository orchestration settings are unchanged.
+
+The empty INBOX section stays available for section review. Finished children remain hidden in
+Projects unless held by pending work; their states and timelines are retained. `shot.mjs` opens
+such examples by route when they have no visible row (including the usage-limited child), keeping
+all existing screenshot titles usable.
 
 ## Rerun
 
@@ -29,8 +64,9 @@ node scripts/fork-dev/shot.mjs  # optional: headless screenshots
 node scripts/fork-dev/icon-review.cjs  # optional: every icon in use, as shots/icon-review.html
 ```
 
-A full rebuild stops `t3-dev`, deletes the dev database and `environment-id`, and starts the unit
-again. Rerun it every few days: thread times are relative to the seed, and after three idle days
+After changing this fixture layout, run **`scripts/fork-dev/seed.sh` with no arguments**;
+`start` and `live` do not rebuild thread lineage or worktrees. A full rebuild stops `t3-dev`,
+deletes the dev database and `environment-id`, and starts the unit again. Rerun it every few days: thread times are relative to the seed, and after three idle days
 the server auto-settles unsettled threads.
 
 Generated output (Claude task files, screenshots) goes to `~/Workspaces-Dev/.t3-dev-fixture/`,
@@ -46,7 +82,7 @@ outside the repository.
   A restart, including a dev-watch reload, clears them. Run `seed.sh live` to bring them back.
 
 - **What survives restarts:**
-  - the two pending questions, which are answered by message;
+  - pending questions, which are answered by message;
   - the open delegated-task cards, which keep their parents Waiting.
 - **Mock content still triggers real actions when you use it.** These all start a real Claude or
   Codex turn, like typing a message in the dev app:
