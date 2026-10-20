@@ -58,13 +58,14 @@ def b64(value):
 
 
 PROJECTS = {
-    "aurora": ("aurora-web", "Apps/aurora-web"),
-    "borealis": ("borealis-cli", "Apps/borealis-cli"),
-    "cascade": ("cascade-sim", "Research/cascade-sim"),
-    "delta": ("delta-notes", "Research/delta-notes"),
-    "echo": ("echo-playground", "Scratch/echo-playground"),
-    # A real private test repository (cloned by seed.sh), so the Issues pane has GitHub data.
-    "sandbox": ("t3code-sandbox", "GitHub/t3code-sandbox"),
+    "processes": ("01 · Processes and background work", "Showcase/processes"),
+    "families": ("02 · Thread families and separators", "Showcase/families"),
+    "roles": ("03 · Roles and native subagents", "Showcase/roles"),
+    "statuses": ("04 · Statuses and attention", "Showcase/statuses"),
+    "badges": ("05 · PR badges and checkpoint diffs", "Showcase/badges"),
+    "workflow": ("06 · Questions, plans and task lists", "Showcase/workflow"),
+    "sections": ("07 · Sections and plain folders", "Notes/sections"),
+    "sandbox": ("08 · GitHub issues · t3code-sandbox", "GitHub/t3code-sandbox"),
 }
 SANDBOX_REPO = "tannerpolley/t3code-sandbox"
 PID = {key: uid(f"project/{key}") for key in PROJECTS}
@@ -116,210 +117,201 @@ LONG_TITLE = (
 )
 LIMIT_RESET = at(hours=-3)
 
-# kind: top (user thread), child (app-owned delegate_task child), native (provider subagent).
-# runs: finished (started, completed) as timedelta kwargs; `failure` fails the last one.
-# live: minutes ago the live run (or native task) began; it is written by `seed.py live`.
-# visited before the last completion shows Done; after it, idle. settled, snoozed, pinned and
-# archived park the row the way the sidebar actions do.
+
+@functools.cache
+def native_role(agent_type):
+    # Use the adapter's mapping so native examples follow role changes in the checkout being seeded.
+    module = Path(__file__).resolve().parents[2] / "packages/contracts/src/threadRole.ts"
+    source = (f"import {{ nativeSubagentRole }} from {json.dumps(module.as_uri())}; "
+              f"console.log(JSON.stringify(nativeSubagentRole({json.dumps(agent_type)})));")
+    return json.loads(subprocess.run(["node", "--input-type=module", "-e", source],
+                                     capture_output=True, text=True, check=True).stdout)
+
+
+# Existing timeline keys stay stable for screenshots and checkpoint identities. Every title is
+# also the sidebar role's hover checklist; kinds and roles use the real production contracts.
+def example(key, project, check, *, role="investigator", parent=None, native=None,
+            provider=X, created=None, **state):
+    if created is None:
+        created = max([state.get("live", 0)] +
+                      [timedelta(**start).total_seconds() / 60
+                       for start, _ in state.get("runs", [])]) + 2
+    return dict(key=key, project=project, title=f"Check: {check}", role=native_role(native) if native else role,
+                kind="native" if native else "child" if parent else "top",
+                **({"parent": parent} if parent else {}),
+                **({"agent_type": native} if native else {}),
+                provider=provider, model="claude-sonnet-5-5" if provider == C else "gpt-6.1-sol",
+                effort="medium", created=dict(minutes=created), **state)
+
+
+def coordinator(key, project, check, **state):
+    return example(key, project, check, role="orchestrator", created=1440, **state)
+
+
+def checkout(project, branch):
+    return dict(branch=branch, worktree=wt(project, branch))
+
+
+FINISHED = [(dict(minutes=40), dict(minutes=30))]
 THREADS = [
-    dict(key="aur-orchestrate", project="aurora", kind="top", role="orchestrator",
-         title="Coordinate the sidebar gradient redesign", provider=C, model="claude-opus-5-5",
-         effort="xhigh", created=dict(days=30), runs=[(dict(hours=3), dict(hours=2, minutes=40))],
-         visited=dict(minutes=39), live=38,
-         prs=[pr("aurora-web", number, "merged", f"Sidebar refinement {number}",
-                 f"sidebar/refinement-{number}", checks="passing", review="approved")
-              for number in range(100, 223)]),
-    dict(key="aur-gradient-header", project="aurora", kind="child", parent="aur-orchestrate",
-         role="implementor", title="Build the gradient header component", provider=X,
-         model="gpt-6.1-sol", effort="high", branch="feature/sidebar-gradient",
-         worktree=wt("aurora", "feature/sidebar-gradient"), created=dict(minutes=36), live=35),
-    # Native subagents carry the role their provider agent type maps to (threadRole.ts):
-    # Codex "explorer" and Claude "Explore" are Investigators, "worker" and
-    # "general-purpose" Implementors.
-    dict(key="aur-theme-scan", project="aurora", kind="native", parent="aur-gradient-header",
-         role="investigator",
-         title="/root/theme_token_scan", provider=X, model="gpt-6-luna", effort="max",
-         branch="feature/sidebar-gradient", worktree=wt("aurora", "feature/sidebar-gradient"),
-         created=dict(minutes=20), live=20),
-    dict(key="aur-contrast", project="aurora", kind="child", parent="aur-orchestrate",
-         role="investigator",
-         title="Collect contrast ratios for the new palette", provider=C,
-         model="claude-sonnet-5-5", effort="low", created=dict(minutes=14), live=14),
-    dict(key="aur-css-explore", project="aurora", kind="native", parent="aur-orchestrate",
-         role="investigator",
-         title="Explore existing sidebar CSS variables", provider=C, model="claude-sonnet-5-5",
-         effort="medium", created=dict(minutes=31), live=31),
-    dict(key="aur-review", project="aurora", kind="child", parent="aur-orchestrate",
-         role="reviewer", title="Review the gradient header changes", provider=X,
-         model="gpt-6.1-sol", effort="high", created=dict(minutes=18), live=17),
-    dict(key="aur-login-timeout", project="aurora", kind="top", role="implementor",
-         title="Fix login timeout on slow networks", provider=X, model="gpt-6.1-sol",
-         effort="medium", branch="fix/login-timeout", worktree=wt("aurora", "fix/login-timeout"),
-         created=dict(hours=1), runs=[(dict(minutes=58), dict(minutes=25))],
-         visited=dict(minutes=59),
-         prs=[pr("aurora-web", 12, "open", "Raise the login timeout and retry once",
-                 "fix/login-timeout", checks="passing", review="review-required", diff=(18, 4, 2))]),
-    dict(key="aur-browser-check", project="aurora", kind="child", parent="aur-orchestrate", role="checker",
-         title="Check the release build in Safari and Firefox", provider=C,
-         model="claude-haiku-5-5", effort="low", branch="release/1.2",
-         created=dict(days=1, hours=4), runs=[(dict(days=1, hours=4), dict(days=1, hours=3, minutes=40))],
-         visited=dict(days=1, hours=2), live=10),
-    dict(key="aur-vite7", project="aurora", kind="child", parent="aur-orchestrate", role="implementor", title="Upgrade aurora-web to Vite 7",
-         provider=X, model="gpt-6-luna", effort="low", branch="chore/vite-7", worktree=wt("aurora", "chore/vite-7"), created=dict(days=9),
-         runs=[(dict(days=9), dict(days=8, hours=23, minutes=40))], visited=dict(days=8, hours=23),
-         settled=dict(days=6),
-         prs=[pr("aurora-web", 9, "merged", "Upgrade to Vite 7", "chore/vite-7", checks="passing",
-                 review="approved", diff=(64, 51, 7))]),
-    dict(key="aur-theme-layers", project="aurora", kind="child", parent="aur-orchestrate", role="implementor",
-         title="Refactor theme tokens into CSS layers", provider=C, model="claude-opus-5-5",
-         effort="xhigh", branch="refactor/theme-layers", worktree=wt("aurora", "refactor/theme-layers"), created=dict(hours=1, minutes=35),
-         runs=[(dict(hours=1, minutes=30), dict(hours=1, minutes=20))], visited=dict(hours=1),
-         failure={"class": "usage_limit", "message": "Claude usage limit reached. Your limit resets in about 3 hours.",
-                  "code": "rate_limit_error", "retryable": True, "resetAt": LIMIT_RESET}),
-    dict(key="aur-e2e-flake", project="aurora", kind="top", role="implementor",
-         title="Revisit the flaky e2e test after the CI upgrade", provider=X, model="gpt-6.1-sol",
-         effort="low", branch="fix/e2e-flake", worktree=wt("aurora", "fix/e2e-flake"), created=dict(days=1, hours=2), runs=[(dict(days=1, hours=2), dict(days=1, hours=1))],
-         visited=dict(days=1), snoozed=(dict(hours=-18), dict(hours=2))),
-    dict(key="aur-roadmap", project="aurora", kind="top", role="investigator", title="Roadmap: aurora-web 2.0",
-         provider=C, model="claude-sonnet-5-5", effort="medium", created=dict(days=2),
-         runs=[(dict(hours=5), dict(hours=4, minutes=50))], visited=dict(hours=4), pinned=True),
-    dict(key="aur-canvas-spike", project="aurora", kind="child", parent="aur-orchestrate", role="implementor",
-         title="Spike: canvas renderer for the sidebar", provider=X, model="gpt-6-luna",
-         effort="medium", branch="experiment/canvas", worktree=wt("aurora", "experiment/canvas"), created=dict(days=6), runs=[(dict(days=6), dict(days=5, hours=23))],
-         visited=dict(days=5), archived=dict(days=4)),
-    dict(key="bor-orchestrate", project="borealis", kind="top", role="orchestrator",
-         title="Coordinate borealis 1.2", provider=C, model="claude-opus-5-5", effort="high",
-         created=dict(days=30), runs=[(dict(hours=2), dict(hours=1, minutes=55))]),
-    dict(key="bor-packaging", project="borealis", kind="child", parent="bor-orchestrate", role="investigator",
-         title="Investigate flaky packaging on release/1.2", provider=X, model="gpt-6-astra",
-         effort="high", branch="release/1.2", created=dict(hours=1, minutes=10),
-         runs=[(dict(minutes=55), dict(minutes=21))], visited=dict(minutes=18)),
-    dict(key="bor-wheel-check", project="borealis", kind="child", parent="bor-packaging",
-         role="checker", title="Verify wheel metadata on release/1.2", provider=C,
-         model="claude-sonnet-5-5", effort="medium", branch="release/1.2",
-         created=dict(minutes=21), live=20),
-    dict(key="bor-json-status", project="borealis", kind="child", parent="bor-orchestrate", role="implementor",
-         title="Add --json output to borealis status", provider=C, model="claude-opus-5-5",
-         effort="medium", branch="feature/json-status", worktree=wt("borealis", "feature/json-status"), created=dict(days=2, hours=1), runs=[(dict(days=2, hours=1), dict(days=2))],
-         visited=dict(days=1, hours=23), live=8),
-    dict(key="bor-toml", project="borealis", kind="child", parent="bor-orchestrate", role="implementor",
-         title="Port the config loader to TOML", provider=X, model="gpt-6.1-sol", effort="medium",
-         branch="refactor/toml", worktree=wt("borealis", "refactor/toml"), created=dict(days=15), runs=[(dict(days=15), dict(days=14, hours=22))],
-         visited=dict(days=14, hours=21), settled=dict(days=12)),
-    dict(key="bor-stale-branches", project="borealis", kind="child", parent="bor-orchestrate", role="implementor",
-         title="Clean up stale release branches", provider=X, model="gpt-6.1-sol",
-         effort="medium", branch="chore/stale-branches", worktree=wt("borealis", "chore/stale-branches"), created=dict(minutes=13), live=12),
-    # A Codex thread waiting on a multi-select question from T3's question tool.
-    dict(key="bor-release-checks", project="borealis", kind="child", parent="bor-orchestrate", role="checker",
-         title="Choose the release checks for borealis 1.2", provider=X, model="gpt-6.1-sol",
-         effort="medium", branch="release/1.2", created=dict(minutes=50),
-         runs=[(dict(minutes=48), dict(minutes=44))], visited=dict(minutes=45)),
-    dict(key="bor-plugin-plan", project="borealis", kind="top", role="investigator", plan=True,
-         title="Plan the borealis plugin API", provider=C, model="claude-opus-5-5", effort="high",
-         created=dict(hours=3), runs=[(dict(hours=3), dict(hours=2, minutes=45))],
-         visited=dict(hours=2, minutes=40)),
-    dict(key="cas-fast-solver", project="cascade", kind="child", parent="cas-campaign", role="implementor",
-         title="Speed up the fast solver on 10k-cell grids", provider=X, model="gpt-6.1-sol",
-         effort="xhigh", branch="experiment/fast-solver",
-         worktree=wt("cascade", "experiment/fast-solver"), created=dict(hours=6), live=13,
-         runs=[(dict(hours=5), dict(hours=2))], visited=dict(hours=5, minutes=10),
-         prs=[pr("cascade-sim", 4, "open", "Vectorize the fast solver's inner loop",
-                 "experiment/fast-solver", draft=True, checks="failing", mergeable="conflicting",
-                 diff=(212, 97, 6))]),
-    dict(key="cas-convergence", project="cascade", kind="child", parent="cas-campaign", role="reviewer",
-         title="Review solver convergence plots", provider=C, model="claude-opus-5-5",
-         effort="max", created=dict(days=1, hours=2), runs=[(dict(days=1, hours=2), dict(days=1, hours=1))],
-         visited=dict(days=1)),
-    dict(key="cas-boundary", project="cascade", kind="top", role="investigator", title=LONG_TITLE, provider=C,
-         model="claude-opus-5-5", effort="high", created=dict(days=20),
-         runs=[(dict(days=20), dict(days=19, hours=23))], visited=dict(days=19, hours=22),
-         settled=dict(days=17)),
-    dict(key="cas-charting", project="cascade", kind="child", parent="cas-campaign", role="investigator",
-         title="Choose a charting library for cascade-sim", provider=C, model="claude-opus-5-5",
-         effort="high", created=dict(minutes=42), runs=[(dict(minutes=40), dict(minutes=33))],
-         visited=dict(minutes=30)),
-    # One repository coordinator, with direct workers and a nested profiler.
-    dict(key="cas-campaign", project="cascade", kind="top", role="orchestrator",
-         title="Run the 10k-cell solver benchmark campaign", provider=X, model="gpt-6.1-sol",
-         effort="high", created=dict(days=30), live=26),
-    dict(key="cas-numba", project="cascade", kind="child", parent="cas-campaign",
-         role="implementor", title="Port the solver kernel to Numba", provider=C,
-         model="claude-opus-5-5", effort="high", branch="experiment/numba-kernel",
-         worktree=wt("cascade", "experiment/numba-kernel"), created=dict(minutes=23), live=22),
-    dict(key="cas-hot-loop", project="cascade", kind="native", parent="cas-numba", role="investigator",
-         title="Profile the hot loop in flux_update", provider=C, model="claude-sonnet-5-5",
-         effort="medium", branch="experiment/numba-kernel",
-         worktree=wt("cascade", "experiment/numba-kernel"), created=dict(minutes=15), live=15),
-    dict(key="cas-bench", project="cascade", kind="child", parent="cas-campaign",
-         role="checker",
-         title="Benchmark 1k, 10k and 100k grids", provider=C, model="claude-sonnet-5-5",
-         effort="medium", created=dict(minutes=25), runs=[(dict(minutes=24), dict(minutes=12))]),
-    dict(key="cas-harness-review", project="cascade", kind="child", parent="cas-campaign",
-         role="reviewer", title="Review the benchmark harness", provider=X, model="gpt-6-astra",
-         effort="xhigh", created=dict(minutes=19), live=18),
-    dict(key="cas-plot-style", project="cascade", kind="child", parent="cas-campaign",
-         role="investigator", title="Pick plot styling for the report", provider=C,
-         model="claude-haiku-5-5", effort="low", created=dict(minutes=21),
-         runs=[(dict(minutes=20), dict(minutes=9))]),
-    dict(key="cas-timings", project="cascade", kind="native", parent="cas-campaign", role="investigator",
-         title="/root/collect_timings", provider=X, model="gpt-6-luna", effort="medium",
-         created=dict(minutes=11), live=11),
-    # The Issues pane's repository orchestrator, paused with publishing off (see base()), and
-    # two issue workers whose live work turns #6 and #7 blue.
-    dict(key="gh-orchestrator", project="sandbox", kind="top", role="orchestrator",
-         title="Coordinate t3code-sandbox issues", provider=C, model="claude-opus-5-5",
-         effort="high", created=dict(hours=2),
-         runs=[(dict(hours=2), dict(hours=1, minutes=50)), (dict(hours=1, minutes=42), dict(hours=1, minutes=8))],
-         visited=dict(hours=1, minutes=5), orchestrates=True),
-    dict(key="gh-issue-6", project="sandbox", kind="child", parent="gh-orchestrator",
-         role="implementor", gh_issue=6, provider=X, model="gpt-6.1-sol", effort="medium",
-         branch="t3/issue-6-k-to-c", worktree=wt("sandbox", "t3/issue-6-k-to-c"), created=dict(minutes=17), live=16),
-    dict(key="gh-issue-7", project="sandbox", kind="child", parent="gh-orchestrator",
-         role="implementor", gh_issue=7, provider=C, model="claude-sonnet-5-5", effort="medium",
-         branch="t3/issue-7-f-to-k", worktree=wt("sandbox", "t3/issue-7-f-to-k"), created=dict(minutes=34), runs=[(dict(minutes=33), dict(minutes=14))]),
-    # A finished issue worker in its own worktree, with the real open PR #24 that closes #15.
-    dict(key="gh-issue-15", project="sandbox", kind="child", parent="gh-orchestrator",
-         role="implementor", gh_issue=15, provider=X, model="gpt-6.1-sol", effort="high",
-         branch="fix/absolute-zero", worktree=wt("sandbox", "fix/absolute-zero"),
-         created=dict(hours=1, minutes=40), runs=[(dict(hours=1, minutes=38), dict(hours=1, minutes=10))],
-         prs=[pr("t3code-sandbox", 24, "open", "Reject temperatures below absolute zero",
-                 "fix/absolute-zero", owner="tannerpolley", review="review-required",
-                 diff=(6, 0, 1))]),
-    dict(key="del-orchestrate", project="delta", kind="top", role="orchestrator", branch=None,
-         title="Coordinate turbulence research notes", provider=C, model="claude-opus-5-5",
-         effort="high", created=dict(days=30), runs=[(dict(hours=4), dict(hours=3, minutes=40))]),
-    dict(key="del-closures", project="delta", kind="child", parent="del-orchestrate", role="investigator", branch=None,
-         title="Summarize reading notes on turbulence closures", provider=C,
-         model="claude-sonnet-5-5", effort="high", created=dict(hours=3, minutes=20),
-         runs=[(dict(hours=3, minutes=20), dict(hours=3))], visited=dict(hours=2, minutes=50), live=3),
-    dict(key="del-weekly-log", project="delta", kind="top", role="investigator", branch=None,
-         title="Draft the weekly research log", provider=X, model="gpt-6-luna", effort="medium",
-         created=dict(days=12), runs=[(dict(days=12), dict(days=11, hours=23, minutes=50))],
-         visited=dict(days=11, hours=23), settled=dict(days=8)),
-    dict(key="ech-orchestrate", project="echo", kind="top", role="orchestrator",
-         title="Coordinate playground experiments", provider=X, model="gpt-6.1-sol",
-         effort="high", created=dict(days=30), runs=[(dict(minutes=10), dict(minutes=9))]),
-    dict(key="ech-pattern-matching", project="echo", kind="child", parent="ech-orchestrate", role="implementor",
-         title="Try the new pattern-matching syntax", provider=X, model="gpt-6-luna",
-         effort="low", branch="experiment/pattern-matching", worktree=wt("echo", "experiment/pattern-matching"), created=dict(minutes=6), live=5),
-    dict(key="ech-json-parsers", project="echo", kind="child", parent="ech-orchestrate", role="checker",
-         title="Benchmark three JSON parsers", provider=C, model="claude-haiku-5-5",
-         effort="medium", created=dict(days=1, hours=6),
-         runs=[(dict(days=1, hours=6), dict(days=1, hours=5, minutes=30))],
-         visited=dict(days=1, hours=6)),
-    dict(key="ech-ci-matrix", project="echo", kind="top", role="implementor",
-         title="Migrate CI to a GitHub Actions matrix", provider=X, model="gpt-6-luna",
-         effort="high", branch="ci/matrix", worktree=wt("echo", "ci/matrix"), created=dict(hours=2), runs=[(dict(hours=2), dict(hours=1, minutes=50))],
-         visited=dict(hours=1, minutes=40),
-         failure={"class": "provider_error",
-                  "message": "The model stream ended before the turn completed.",
-                  "code": "responseStreamDisconnected", "retryable": True},
-         prs=[pr("echo-playground", 3, "closed", "Try a CI matrix", "ci/matrix", checks="failing",
-                 diff=(31, 8, 1))]),
-    dict(key="ech-readme-badges", project="echo", kind="top", role="implementor", title="Tidy the README badges",
-         provider=C, model="claude-haiku-5-5", effort="low", branch="docs/badges", worktree=wt("echo", "docs/badges"), created=dict(days=1, hours=5),
-         runs=[(dict(days=1, hours=5), dict(days=1, hours=4, minutes=55))],
-         visited=dict(days=1, hours=4), snoozed=(dict(hours=2), dict(days=1, hours=4))),
+    coordinator("proc-orchestrate", "processes",
+                "expand C++, Vite, pytest, Rust and Python; compare counts, CPU/memory, output and nested processes",
+                live=25),
+    example("proc-cpp", "processes",
+            "C++ build: ccache, c++ and cc1plus each fold 16 members; open caret, click command details",
+            role="implementor", parent="proc-orchestrate", live=24,
+            **checkout("processes", "build/cpp")),
+    example("proc-vite", "processes",
+            "Vite: node and esbuild groups; click command output and check elapsed time and running marks",
+            role="implementor", parent="proc-orchestrate", created=25, live=23,
+            **checkout("processes", "dev/vite")),
+    example("proc-rust", "processes",
+            "Rust: 12 rustc members; process block ends with a dashed separator before the helper",
+            role="implementor", parent="proc-orchestrate", created=26, live=22,
+            **checkout("processes", "build/rust")),
+    example("proc-nested-tests", "processes",
+            "nested helper also owns pytest processes: eight xdist workers and a coverage reporter",
+            role="checker", parent="proc-rust", provider=C, live=18,
+            **checkout("processes", "build/rust")),
+    example("cas-bench", "processes",
+            "processes only: finished turn, Python benchmark plus monitor, CPU/memory and readable output; no agents",
+            role="checker", parent="proc-orchestrate", provider=C, runs=FINISHED,
+            visited=dict(minutes=29)),
+
+    coordinator("fam-orchestrate", "families",
+                "one root above role-ordered workers; newest Implementor first; nested helpers; Lines marks checkout changes",
+                live=28),
+    example("fam-new", "families", "newer Implementor sorts above the older one; dashed checkout boundary",
+            role="implementor", parent="fam-orchestrate", created=12, live=11,
+            **checkout("families", "feature/newer")),
+    example("fam-old", "families", "older Implementor remains below the newer one; helper stays in this family",
+            role="implementor", parent="fam-orchestrate", created=24, live=23,
+            **checkout("families", "feature/older")),
+    example("fam-helper", "families", "nested Investigator shares its parent's checkout; stays below that parent",
+            parent="fam-old", native="explorer", live=10,
+            **checkout("families", "feature/older")),
+    example("fam-review", "families", "Reviewer follows Implementors, shares main; solid family and dashed checkout lines",
+            role="reviewer", parent="fam-orchestrate", live=9),
+    example("fam-investigate", "families", "Investigator follows Reviewer even though this row is newer",
+            parent="fam-orchestrate", created=6, live=5),
+    example("fam-check", "families", "Checker follows Investigator; main checkout needs no checkout-change dash",
+            role="checker", parent="fam-orchestrate", created=4, live=3),
+    example("fam-second-family", "families", "standalone family has a solid separator in Family style Lines",
+            live=2),
+
+    coordinator("role-orchestrate", "roles",
+                "compare explicit Implementor/Reviewer/Investigator/Checker with Codex and Claude native types; inspect generic Worker label",
+                live=29),
+    example("role-build", "roles", "explicit app-owned Implementor has a separate checkout",
+            role="implementor", parent="role-orchestrate", live=22,
+            **checkout("roles", "feature/worker")),
+    example("role-review", "roles", "explicit app-owned Reviewer keeps its role label",
+            role="reviewer", parent="role-orchestrate", live=21),
+    example("role-investigate", "roles", "explicit app-owned Investigator keeps its role label",
+            parent="role-orchestrate", live=20),
+    example("role-check", "roles", "explicit app-owned Checker keeps its role label",
+            role="checker", parent="role-orchestrate", live=19),
+    example("role-generic", "roles", "Claude general-purpose native agent: inspect generic Worker label and column width",
+            parent="role-orchestrate", native="general-purpose", provider=C, live=17),
+    example("role-worker", "roles", "Codex worker native agent: inspect Worker label; helper belongs to this worker",
+            parent="role-build", native="worker", live=16,
+            **checkout("roles", "feature/worker")),
+    example("role-explorer", "roles", "Codex explorer native agent maps to Investigator",
+            parent="role-orchestrate", native="explorer", live=15),
+    example("role-explore", "roles", "Claude Explore native agent maps to Investigator",
+            parent="role-orchestrate", native="Explore", provider=C, live=14),
+    example("role-native-review", "roles", "Claude code-reviewer native agent maps to Reviewer",
+            parent="role-orchestrate", native="code-reviewer", provider=C, live=13),
+    example("role-native-check", "roles", "Codex tester native agent maps to Checker",
+            parent="role-orchestrate", native="tester", live=12),
+
+    coordinator("status-orchestrate", "statuses",
+                "compare Working, Waiting, Done, idle, settled, Approval, Input, Failed, Limited, snoozed, Woke, pinned and archived",
+                live=27),
+    example("status-working", "statuses", "Working: active Codex turn and running mark",
+            role="implementor", parent="status-orchestrate", live=10,
+            **checkout("statuses", "feature/working")),
+    example("status-waiting", "statuses", "Waiting: completed parent turn waits for an active delegated Checker",
+            runs=FINISHED, visited=dict(minutes=29)),
+    example("status-waiting-child", "statuses", "active child keeps its finished parent Waiting",
+            role="checker", parent="status-waiting", live=9),
+    example("status-done", "statuses", "Done: completed but unseen; open the row to clear unseen state",
+            runs=FINISHED, visited=dict(minutes=41)),
+    example("status-idle", "statuses", "idle: completed and already visited; compare with Done", runs=FINISHED,
+            visited=dict(minutes=29)),
+    example("status-settled", "statuses", "settled: explicitly parked row; inspect Activity and settled filters",
+            runs=FINISHED, visited=dict(minutes=29), settled=dict(minutes=28)),
+    example("bor-stale-branches", "statuses", "Approval: pending branch-delete command; inspect permission card",
+            role="implementor", parent="status-orchestrate", live=12,
+            **checkout("statuses", "chore/stale-branches")),
+    example("status-input", "statuses", "Input: pending single-choice request; answering starts a real turn",
+            provider=C, runs=FINISHED),
+    example("ech-ci-matrix", "statuses", "Failed: disconnected provider, error card and retry action",
+            role="implementor", runs=FINISHED, visited=dict(minutes=29),
+            failure={"class": "provider_error", "message": "The model stream ended before the turn completed.",
+                     "code": "responseStreamDisconnected", "retryable": True},
+            **checkout("statuses", "ci/matrix")),
+    example("aur-theme-layers", "statuses", "Limited: usage-limit card and reset time; auto-resume is off",
+            role="implementor", provider=C, runs=FINISHED, visited=dict(minutes=29),
+            failure={"class": "usage_limit", "message": "Claude usage limit reached. Resets in about 3 hours.",
+                     "code": "rate_limit_error", "retryable": True, "resetAt": LIMIT_RESET},
+            **checkout("statuses", "refactor/theme-layers")),
+    example("status-snoozed", "statuses", "snoozed: future wake time; inspect snoozed filter and unsnooze",
+            runs=FINISHED, visited=dict(minutes=29), snoozed=(dict(hours=-18), dict(minutes=28))),
+    example("ech-readme-badges", "statuses", "Woke: expired snooze returns the thread to attention",
+            runs=FINISHED, visited=dict(minutes=29), snoozed=(dict(minutes=5), dict(minutes=28))),
+    example("status-pinned", "statuses", "pinned: row stays in the pinned area; try unpin",
+            runs=FINISHED, visited=dict(minutes=29), pinned=True),
+    example("status-archived", "statuses", "archived: hidden until the archived filter is on; try reopen",
+            runs=FINISHED, visited=dict(minutes=29), archived=dict(minutes=28)),
+
+    coordinator("badge-orchestrate", "badges", "123-PR badge; open/draft/merged/closed states; checks, reviews and checkpoint diff",
+                prs=[pr("badges", n, "merged", f"Sidebar refinement {n}", f"sidebar/refinement-{n}",
+                        checks="passing", review="approved") for n in range(100, 223)]),
+    example("aur-login-timeout", "badges", "open PR: passing checks, review required; inspect checkpoint Diff and inline shell result",
+            role="implementor", runs=FINISHED, visited=dict(minutes=41),
+            prs=[pr("badges", 12, "open", "Raise login timeout and retry once", "fix/login-timeout",
+                    checks="passing", review="review-required")], **checkout("badges", "fix/login-timeout")),
+    example("badge-draft", "badges", "draft PR: failing checks, conflicting merge and changed-file counts",
+            role="implementor", parent="badge-orchestrate", live=9,
+            prs=[pr("badges", 4, "open", "Vectorize the solver", "experiment/fast-solver", draft=True,
+                    checks="failing", mergeable="conflicting", diff=(212, 97, 6))],
+            **checkout("badges", "experiment/fast-solver")),
+    example("badge-merged", "badges", "merged PR: approved review and passing checks", runs=FINISHED,
+            visited=dict(minutes=29), prs=[pr("badges", 9, "merged", "Upgrade Vite", "chore/vite-7",
+                                           checks="passing", review="approved")]),
+    example("badge-closed", "badges", "closed PR: unmerged and failing checks", runs=FINISHED,
+            visited=dict(minutes=29), prs=[pr("badges", 3, "closed", "Try CI matrix", "ci/matrix", checks="failing")]),
+
+    coordinator("aur-orchestrate", "workflow", "Claude task list above composer; single-choice and multi-select questions; proposed plan and plan mode",
+                provider=C, runs=FINISHED, live=24),
+    example("cas-charting", "workflow", "Claude single-choice: two questions, recommendations and custom answer",
+            parent="aur-orchestrate", provider=C, runs=FINISHED),
+    example("bor-release-checks", "workflow", "Codex multi-select: choose several release gates before submitting",
+            role="checker", parent="aur-orchestrate", runs=FINISHED),
+    example("bor-plugin-plan", "workflow", "plan mode: proposed plugin plan and Implement action; action starts real work",
+            plan=True, provider=C, runs=FINISHED, visited=dict(minutes=29)),
+
+    coordinator("section-orchestrate", "sections", "folder subsection, unsectioned project and empty INBOX; plain folder has no Git branch", branch=None),
+    example("section-notes", "sections", "plain-folder Investigator: no Git or checkout badge", parent="section-orchestrate",
+            branch=None, live=5),
+    example("cas-boundary", "sections", "long title truncates cleanly; hover reveals the full checklist: " + LONG_TITLE,
+            branch=None, runs=FINISHED, visited=dict(minutes=29), settled=dict(minutes=28)),
+
+    coordinator("gh-orchestrator", "sandbox", "real issues #6/#7 Working/Input, #15 open PR #24; roadmap and dependency colors; repository work paused",
+                provider=C, runs=[(dict(hours=2), dict(hours=1, minutes=50)),
+                                  (dict(hours=1, minutes=42), dict(hours=1, minutes=8))],
+                visited=dict(hours=1, minutes=5), orchestrates=True),
+    example("gh-issue-6", "sandbox", "issue #6 Working: blue in the Issues roadmap", role="implementor",
+            parent="gh-orchestrator", gh_issue=6, live=16, **checkout("sandbox", "t3/issue-6-k-to-c")),
+    example("gh-issue-7", "sandbox", "issue #7 Input: blue in roadmap; open rounding question", role="implementor",
+            parent="gh-orchestrator", gh_issue=7, provider=C, runs=FINISHED,
+            **checkout("sandbox", "t3/issue-7-f-to-k")),
+    example("gh-issue-15", "sandbox", "issue #15 Done: real open PR #24 closes the issue; inspect Thread details",
+            role="implementor", parent="gh-orchestrator", gh_issue=15, runs=FINISHED,
+            prs=[pr("t3code-sandbox", 24, "open", "Reject temperatures below absolute zero", "fix/absolute-zero",
+                    owner="tannerpolley", review="review-required", diff=(6, 0, 1))],
+            **checkout("sandbox", "fix/absolute-zero")),
 ]
 BY_KEY = {spec["key"]: spec for spec in THREADS}
 
@@ -397,7 +389,7 @@ def thread_row(spec):
     tid = thread_id(spec)
     if "gh_issue" in spec:
         spec["linked_issue"] = sandbox_issue(spec["gh_issue"])
-        spec["title"] = f"#{spec['gh_issue']} {spec['linked_issue']['title']}"
+
     created = at(**spec["created"])
     times = [created] + [at(**t) for run in spec.get("runs", []) for t in run]
     for field in ("visited", "settled", "archived"):
@@ -520,7 +512,7 @@ def child_card(child_key, prompt, live=False):
             "live": live}
 
 
-AURORA_LOGIN = wt("aurora", "fix/login-timeout")
+AURORA_LOGIN = wt("badges", "fix/login-timeout")
 OLD_LOGIN = """import { DEFAULT_TIMEOUT_MS, request } from "./http";
 import { parseSession } from "./session";
 
@@ -595,7 +587,7 @@ Run the focused test yourself:
 pnpm vitest run src/login.test.ts
 ```
 
-The dev server is still running on port 5173 if you want to try it in the browser. I opened [#12](https://github.com/t3-dev-mock/aurora-web/pull/12) for review."""
+Open [#12](https://github.com/t3-dev-mock/badges/pull/12) for the mock PR snapshot. The Processes project has the Vite background-work example."""
 PLUGIN_PLAN = """# Borealis plugin API
 
 ## Goals
@@ -651,66 +643,23 @@ TIMELINES = {
         (1, cmd("/bin/bash -lc \"pnpm vitest run src/login.test.ts\"",
                 " ✓ src/login.test.ts (4 tests) 38ms\n\n Test Files  1 passed (1)\n"
                 "      Tests  4 passed (4)\n")),
-        (1, bg("npm run dev -- --port 5173", "call_mockdevserver5173",
-               "\n> aurora-web@1.1.1 dev\n> vite --port 5173\n\n  VITE v7.1.4  ready in 412 ms\n\n"
-               "  ➜  Local:   http://127.0.0.1:5173/\n  ➜  Network: use --host to expose\n\n"
-               "[vite] hmr update /src/login.ts\n[vite] hmr update /src/http.ts\n")),
         (1, cmd("/bin/bash -lc \"gh pr create --title 'Raise the login timeout and retry once' --fill\"",
-                "https://github.com/t3-dev-mock/aurora-web/pull/12\n")),
+                "https://github.com/t3-dev-mock/badges/pull/12\n")),
         (1, say(LOGIN_SUMMARY, shell={"output": " ✓ src/login.test.ts (4 tests) 41ms\n\n"
                                                " Test Files  1 passed (1)\n      Tests  4 passed (4)\n"})),
         (1, {"type": "checkpoint"}),
     ],
     "aur-orchestrate": [
-        (1, user("Coordinate the sidebar gradient redesign: split it into a header component, a "
-                 "contrast pass and a CSS audit. Delegate, then review what comes back.")),
-        (1, {"type": "subagent", "native": True, "title": "Inventory the design tokens",
-             "prompt": "List every color token the sidebar uses and flag unused ones.",
-             "result": "Found 14 color tokens; `--sidebar-accent-2`, `--nav-muted` and "
-                       "`--legacy-blue` are unused.", "status": "completed"}),
-        (1, say("The audit is done: 3 of 14 tokens are unused. Next I'll delegate the header to an "
-                "Implementor in its own worktree and the contrast pass to a quick Claude child.")),
-        (2, user("Go ahead and start the delegations.")),
-        # Claude's task list (TaskCreate/TaskUpdate), on the live run.
-        (2, {"type": "todo_list", "explanation": "Three delegations; I review each result before "
-             "anything merges.", "steps": [
-                 ("Audit the existing sidebar CSS variables", "completed"),
-                 ("Build the gradient header component", "running"),
-                 ("Check contrast ratios against WCAG AA", "running"),
-                 ("Review and merge the header PR", "pending")]}),
-        (2, {"type": "dynamic_tool", "toolName": "mcp__t3-code__delegate_task",
-             "title": "delegate task", "source": "t3-code",
-             "input": {"title": "Build the gradient header component", "role": "implementor",
-                       "workspace": "worktree", "branch": "feature/sidebar-gradient"},
-             "output": {"status": "started", "role": "implementor"}}),
-        (2, child_card("aur-gradient-header", "Build the gradient header from the audited tokens; "
-                       "add a visual test.", live=True)),
-        (2, child_card("aur-contrast", "Compute contrast ratios for the new palette against both "
-                       "themes.", live=True)),
-    ],
-    "bor-packaging": [
-        (1, user("release/1.2 wheels fail to install on about one CI run in five. Find out why.")),
-        (1, {"type": "web_search", "patterns": ["pip wheel hash mismatch intermittent CI",
-                                                "setuptools-scm dirty version second build"],
-             "results": [{"title": "setuptools-scm: dirty versions", "url": "https://docs.example.com/setuptools-scm/dirty",
-                          "snippet": "A build in a modified tree appends +dirty to the version."}]}),
-        (1, cmd("/bin/bash -lc \"git log --oneline -4 release/1.2\"",
-                "565ff6b Work in progress on release/1.2\n2c1d0e9 Note the 1.1.1 fixes\n"
-                "8f3a7b2 Add the entry point\n41c9e5d Start a changelog\n")),
-        (1, cmd("/bin/bash -lc \"pip install dist/borealis_cli-1.2.0-py3-none-any.whl\"",
-                "ERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.\n"
-                "    borealis-cli==1.2.0 from dist/borealis_cli-1.2.0-py3-none-any.whl:\n"
-                "        Expected sha256 9b1f…c2\n             Got        41aa…7e\n", exit_code=1)),
-        (1, think("The hash only changes when the release job builds twice. The second build runs "
-                  "after `CHANGELOG.md` is rewritten, so setuptools-scm sees a dirty tree.")),
-        (1, child_card("bor-wheel-check", "Rebuild the wheel twice in one job and diff the METADATA "
-                       "files.")),
-        (1, bg("while ! ls dist/*.whl >/dev/null 2>&1; do sleep 10; done", "call_mockwheelwatch",
-               "waiting for dist/*.whl\nwaiting for dist/*.whl\nwaiting for dist/*.whl\n")),
-        (1, say("Root cause: the release job builds the wheel twice, and the second build sees a "
-                "dirty tree, so the version becomes `1.2.0+dirty` and the hash changes.\n\n"
-                "I've asked a Checker to confirm from the METADATA files and I'm watching `dist/` "
-                "for the rebuilt wheel.")),
+        (1, user("Prepare the release: compare reporting libraries, choose release gates and draft a plugin plan.")),
+        (1, say("The release checklist is ready; decisions and implementation remain separate.")),
+        (2, user("Track the work and ask for the remaining decisions.")),
+        (2, {"type": "todo_list", "explanation": "Completed, running and pending steps stay visible above the composer.",
+             "steps": [("Inventory existing checks", "completed"),
+                       ("Choose the chart library", "running"),
+                       ("Choose release gates", "running"),
+                       ("Implement the accepted plugin plan", "pending")]}),
+        (2, child_card("cas-charting", "Ask which report library to use.", live=True)),
+        (2, child_card("bor-release-checks", "Ask which checks should block the release.", live=True)),
     ],
     "bor-stale-branches": [
         (1, user("Delete remote release branches older than 1.0 that are fully merged.")),
@@ -745,8 +694,8 @@ TIMELINES = {
     ],
     "aur-theme-layers": [
         (1, user("Move the theme tokens into @layer tokens so component styles stop fighting them.")),
-        (1, edit(f"{wt('aurora', 'refactor/theme-layers')}/src/theme.css", json.dumps({
-            "filePath": f"{wt('aurora', 'refactor/theme-layers')}/src/theme.css",
+        (1, edit(f"{wt('statuses', 'refactor/theme-layers')}/src/theme.css", json.dumps({
+            "filePath": f"{wt('statuses', 'refactor/theme-layers')}/src/theme.css",
             "oldString": ":root {\n  --sidebar-bg: #0b1020;\n  --sidebar-fg: #e6e9f2;",
             "newString": "@layer tokens {\n  :root {\n    --sidebar-bg: #0b1020;\n    --sidebar-fg: #e6e9f2;",
             "replaceAll": False}), 4, 3)),
@@ -754,7 +703,7 @@ TIMELINES = {
     ],
     "ech-ci-matrix": [
         (1, user("Move CI to a matrix over Python 3.11 to 3.13 and Node 20 and 22.")),
-        (1, edit(f"{wt('echo', 'ci/matrix')}/.github/workflows/ci.yml",
+        (1, edit(f"{wt('statuses', 'ci/matrix')}/.github/workflows/ci.yml",
                  "@@ -0,0 +1,12 @@\n+name: ci\n+on: [push, pull_request]\n+jobs:\n+  test:\n"
                  "+    strategy:\n+      matrix:\n+        python: [\"3.11\", \"3.12\", \"3.13\"]\n"
                  "+        node: [20, 22]\n+    runs-on: ubuntu-latest\n+    steps:\n"
@@ -763,20 +712,6 @@ TIMELINES = {
                 "Error: Cannot connect to the Docker daemon at unix:///var/run/docker.sock.\n",
                 exit_code=1)),
         (1, {"type": "error", "title": "Provider error"}),
-    ],
-    "cas-campaign": [
-        (1, user("Run the 10k-cell benchmark campaign across the solver variants and report a "
-                 "speed-up table.")),
-        (1, {"type": "todo_list", "explanation": "Kernel port and benchmarks run in parallel.",
-             "steps": [("Port the kernel to Numba", "running"),
-                       ("Benchmark 1k, 10k and 100k grids", "running"),
-                       ("Review the harness", "running"),
-                       ("Choose plot styling", "running"),
-                       ("Write the speed-up table", "pending")]}),
-        (1, child_card("cas-numba", "Port flux_update to Numba and keep results bit-identical.", live=True)),
-        (1, child_card("cas-bench", "Benchmark the three grid sizes in the background.", live=True)),
-        (1, child_card("cas-harness-review", "Review scripts/bench.py for timing mistakes.", live=True)),
-        (1, child_card("cas-plot-style", "Propose a plot style for the report.", live=True)),
     ],
     "cas-bench": [
         (1, user("Benchmark the three grid sizes in the background and report when done.", by="agent")),
@@ -788,25 +723,10 @@ TIMELINES = {
              "status": "running", "live": True, "native": "toolu_mockmonitor01",
              "input": {"command": "tail -f results/bench.log", "description": "Watch benchmark progress"},
              "output": {"taskId": "bmon01"}}),
+        (1, bg("tail -f results/bench.log", "toolu_mocktail01",
+               "[monitor] grid=100000 still running; last sample 9.7s\n", claude=True)),
         (1, say("The 1k and 10k grids are done (Numba is about 9x faster). The 100k grid is still "
                 "running in the background; I'm watching its log.")),
-    ],
-    "cas-harness-review": [
-        (1, user("Review scripts/bench.py for timing mistakes.", by="agent")),
-        (1, cmd("/bin/bash -lc \"rg -n 'perf_counter|time.time' scripts/bench.py\"",
-                "scripts/bench.py:22:    start = time.time()\nscripts/bench.py:31:    elapsed = time.time() - start\n")),
-        (1, {"type": "approval_request", "requestKind": "command",
-             "prompt": "rm -rf results/stale && uv run python scripts/bench.py --verify"}),
-    ],
-    "cas-plot-style": [
-        (1, user("Propose a plot style for the report.", by="agent")),
-        (1, say("Two styles fit the report. I need you to pick one.")),
-        (1, {"type": "user_input_request", "questions": [
-            {"id": "style", "header": "Plot style",
-             "question": "Which style should the speed-up plots use?",
-             "options": [{"label": "Log-log lines (Recommended)", "description": "Shows scaling across grid sizes."},
-                         {"label": "Grouped bars", "description": "Easier to read for three sizes."}],
-             "multiSelect": False}]}),
     ],
 }
 TIMELINES |= {
@@ -825,14 +745,6 @@ TIMELINES |= {
                  {"label": "Type check", "description": "mypy --strict on src/."},
                  {"label": "Docs build", "description": "mkdocs build with warnings as errors."}],
              "multiSelect": True}]}),
-    ],
-    "aur-gradient-header": [
-        (1, user("Build the gradient header from the audited tokens; add a visual test.", by="agent")),
-        (1, cmd("/bin/bash -lc \"rg -n 'sidebar-' src/theme.css | head -3\"",
-                "src/theme.css:2:  --sidebar-bg: #0b1020;\nsrc/theme.css:3:  --sidebar-fg: #e6e9f2;\n")),
-        # A foreground command still running: listed under the thread in Projects.
-        (1, {"type": "command_execution", "status": "running", "live": True,
-             "input": "/bin/bash -lc \"pnpm vitest run src/components/GradientHeader.test.tsx\""}),
     ],
     "gh-issue-15": [
         (1, user("Implement issue #15: reject temperatures below absolute zero, with tests.",
@@ -875,6 +787,61 @@ TIMELINES |= {
              "multiSelect": False}]}),
     ],
 }
+TIMELINES["status-input"] = TIMELINES["cas-charting"]
+TIMELINES["status-waiting"] = [(1, child_card("status-waiting-child", "Verify the release artifacts."))]
+
+PROCESS_COMMANDS = {
+    "proc-cpp": "make -j16 -C build/cpp",
+    "proc-vite": "npm run dev -- --host 127.0.0.1 --port 5173",
+    "proc-rust": "cargo build --manifest-path crates/solver/Cargo.toml",
+    "proc-nested-tests": "pytest -n 8 tests/integration --cov=solver",
+}
+for key, command in PROCESS_COMMANDS.items():
+    TIMELINES[key] = [(1, user(f"Run {command} and report progress.", by="agent")),
+                      (1, bg(command, f"call_mock_{key}",
+                             f"$ {command}\n[fixture] Running; sample output only.\n", claude=BY_KEY[key]["provider"] == C))]
+
+
+def write_process_fixture():
+    """The server resolves the root ppid at read time; no real processes are launched."""
+    processes = []
+
+    def add(command, parent="server", cpu=0.5, mib=12):
+        pid = 900000 + len(processes)
+        processes.append(dict(pid=pid, ppid=parent, command=command, cpuPercent=cpu,
+                              residentBytes=int(mib * 1024 * 1024),
+                              startTimeMs=int((NOW - timedelta(minutes=5)).timestamp() * 1000) + len(processes) * 30))
+        return pid
+
+    cpp = add("bash -c " + PROCESS_COMMANDS["proc-cpp"])
+    make = add(PROCESS_COMMANDS["proc-cpp"], cpp, 1.2, 28)
+    for n in range(16):
+        cache = add(f"ccache c++ -O3 -c src/flux_{n:02}.cpp -o build/flux_{n:02}.o", make, 0.8, 18)
+        compiler = add(f"c++ -O3 -c src/flux_{n:02}.cpp -o build/flux_{n:02}.o", cache, 1.4, 26)
+        add(f"/usr/lib/gcc/x86_64-linux-gnu/14/cc1plus src/flux_{n:02}.cpp -O3", compiler, 48 + n, 220 + 8 * n)
+    vite = add(PROCESS_COMMANDS["proc-vite"], cpu=0.4, mib=50)
+    node = add("node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173", vite, 3.6, 174)
+    add("node scripts/typecheck-watch.mjs --project web", node, 7.3, 260)
+    for n in range(3):
+        add(f"node_modules/@esbuild/linux-x64/bin/esbuild --service=0.25.0 --ping --worker={n}", node, 2.1 + n, 32 + n * 4)
+    rust = add(PROCESS_COMMANDS["proc-rust"], cpu=1.8, mib=82)
+    for n in range(12):
+        add(f"rustc --crate-name solver_part_{n} crates/solver/src/part_{n}.rs --emit=metadata,link -C opt-level=3", rust, 32 + n * 2, 180 + n * 12)
+    add("cc -o target/debug/build/solver build/solver.o", rust, 12, 44)
+    tests = add(PROCESS_COMMANDS["proc-nested-tests"], cpu=2.2, mib=98)
+    for n in range(8):
+        add(f"python -u -c 'from execnet.gateway_base import serve; serve()' --pytest-xdist-worker=gw{n}", tests, 18 + n, 110 + n * 3)
+    add("coverage combine --data-file=.coverage.integration", tests, 1.1, 24)
+    bench = add("uv run python scripts/bench.py --cells 1000,10000,100000", cpu=0.2, mib=16)
+    python = add("python scripts/bench.py --cells 1000,10000,100000", bench, 94, 1480)
+    for n in range(4):
+        add(f"python -m multiprocessing.spawn --worker={n} --campaign=10k", python, 65 + n, 340 + n * 20)
+    add("tee results/bench-summary.log", bench, 0.1, 3)
+    add("tail -f results/bench.log", cpu=0.1, mib=3)
+    FIXTURE.mkdir(parents=True, exist_ok=True)
+    (FIXTURE / "processes.json").write_text(json.dumps(processes, indent=2) + "\n")
+
+
 FAILURES = {key: spec["failure"] for key, spec in BY_KEY.items() if "failure" in spec}
 
 
@@ -967,8 +934,6 @@ def timeline_rows(spec):
                          "driver": driver, "providerInstanceId": driver,
                          "childThreadId": thread_id(child) if child else None,
                          "prompt": raw["prompt"], "result": raw.get("result")}
-                if child and "gh_issue" in child:
-                    child["title"] = f"#{child['gh_issue']} {sandbox_issue(child['gh_issue'])['title']}"
                 item["title"] = raw.get("title") or (child["title"] if child else None)
             elif kind == "checkpoint":
                 scope = checkpoint_scope_id(spec)
@@ -1142,18 +1107,18 @@ def write_checkpoints(db):
 
 
 def sidebar_layout():
-    apps, research, experiments, inbox = (uid(f"section/{name}") for name in
-                                          ("apps", "research", "experiments", "inbox"))
+    showcases, folders, nested, inbox = (uid(f"section/{name}") for name in
+                                         ("showcases", "folders", "nested", "inbox"))
     return {
         "sidebarProjectSections": [
-            {"id": apps, "name": "Apps", "projectKeys": [PID["aurora"], PID["borealis"]],
+            {"id": showcases, "name": "Feature showcases", "projectKeys":
+             [PID[key] for key in ("processes", "families", "roles", "statuses", "badges", "workflow")],
              "collapsed": False, "color": "teal", "folderIcons": True},
-            {"id": research, "name": "Research", "projectKeys": [], "collapsed": False},
-            {"id": experiments, "name": "Experiments", "projectKeys": [PID["cascade"]],
-             "collapsed": False, "parentId": research},
-            {"id": inbox, "name": "Inbox", "projectKeys": [], "collapsed": False},
-            {"id": uid("section/github-sandbox"), "name": "GitHub sandbox",
-             "projectKeys": [PID["sandbox"]], "collapsed": False, "color": "indigo"},
+            {"id": folders, "name": "Folder sections", "projectKeys": [], "collapsed": False,
+             "folderIcons": True},
+            {"id": nested, "name": "Plain folders", "projectKeys": [PID["sections"]],
+             "collapsed": False, "parentId": folders, "folderIcons": True},
+            {"id": inbox, "name": "INBOX", "projectKeys": [], "collapsed": False},
         ],
         "projectExpandedById": {pid: True for pid in PID.values()},
         "projectOrder": list(PID.values()),
@@ -1205,6 +1170,7 @@ def base(db):
 
 
 def live(db):
+    write_process_fixture()
     db.executemany(RUN_SQL, [run_row(spec, live_ordinal(spec), "running")
                              for spec in THREADS if "live" in spec and spec["kind"] != "native"])
     db.executemany(

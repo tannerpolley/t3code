@@ -45,15 +45,21 @@ const threadIdsByTitle = new Map(
   ),
 );
 const OPEN_THREADS = [
-  ["orchestrator", "Coordinate the sidebar gradient redesign"],
-  ["plan", "Plan the borealis plugin API"],
-  ["question", "Choose a charting library for cascade-sim"],
-  ["multi-select", "Choose the release checks for borealis 1.2"],
-  ["approval", "Clean up stale release branches"],
-  ["usage-limited", "Refactor theme tokens into CSS layers"],
-  ["failed", "Migrate CI to a GitHub Actions matrix"],
+  [
+    "orchestrator",
+    "Check: Claude task list above composer; single-choice and multi-select questions; proposed plan and plan mode",
+  ],
+  ["plan", "Check: plan mode: proposed plugin plan and Implement action; action starts real work"],
+  ["question", "Check: Claude single-choice: two questions, recommendations and custom answer"],
+  ["multi-select", "Check: Codex multi-select: choose several release gates before submitting"],
+  ["approval", "Check: Approval: pending branch-delete command; inspect permission card"],
+  ["usage-limited", "Check: Limited: usage-limit card and reset time; auto-resume is off"],
+  ["failed", "Check: Failed: disconnected provider, error card and retry action"],
   // Last: it leaves the Diff panel open.
-  ["login-timeout", "Fix login timeout on slow networks"],
+  [
+    "login-timeout",
+    "Check: open PR: passing checks, review required; inspect checkpoint Diff and inline shell result",
+  ],
 ];
 
 // A thread's own row button, named "<title>, <status>"; rows may show a role instead of the title,
@@ -137,7 +143,8 @@ for (const mode of onlyIssues ? [] : ["projects", "activity"]) {
 // blockers (red) and live work (blue), exists only in the panel beside a thread and lists open
 // issues only.
 const SANDBOX = "github.com/tannerpolley/t3code-sandbox";
-const ORCHESTRATOR = "Coordinate t3code-sandbox issues";
+const ORCHESTRATOR =
+  "Check: real issues #6/#7 Working/Input, #15 open PR #24; roadmap and dependency colors; repository work paused";
 const filters = (closed) => ({
   open: true,
   closed,

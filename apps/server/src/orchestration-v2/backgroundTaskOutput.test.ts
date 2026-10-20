@@ -28,7 +28,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { afterAll, assert, describe, it } from "vite-plus/test";
+import { afterAll, assert, describe, it, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -294,6 +294,95 @@ describe("BackgroundTasks", () => {
     }),
   ).pipe(Layer.provideMerge(NodeServices.layer));
   const layer = backgroundTasksLayer.pipe(Layer.provideMerge(dependencies));
+
+  effectIt.effect(
+    "groups dev fixture descendants under their task while native telemetry is unhealthy",
+    () =>
+      Effect.gen(function* () {
+        const fixture = NodePath.join(dir, "processes.json");
+        const command = "make -j16 -C build/cpp";
+        NodeFS.writeFileSync(
+          fixture,
+          JSON.stringify([
+            {
+              pid: 900000,
+              ppid: "server",
+              command: `bash -c ${command}`,
+              cpuPercent: 1,
+              residentBytes: 100,
+              startTimeMs: 1000,
+            },
+            ...Array.from({ length: 16 }, (_, index) => ({
+              pid: 900001 + index,
+              ppid: 900000,
+              command: `cc1plus src/flux_${index}.cpp -O3`,
+              cpuPercent: 50,
+              residentBytes: 200,
+              startTimeMs: 1000 + index,
+            })),
+            {
+              pid: 910000,
+              ppid: "server",
+              command: "node unrelated.js",
+              cpuPercent: 99,
+              residentBytes: 999,
+              startTimeMs: 1000,
+            },
+          ]),
+        );
+        const refresh = vi.fn(() => ({
+          health: { native: { status: "unavailable" } },
+          processes: [],
+        }));
+        const telemetry = Layer.mock(ResourceTelemetry.ResourceTelemetry)({
+          refresh: Effect.sync(refresh) as never,
+        });
+        const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { lineage: { parentThreadId: null }, activeProviderThreadId: null },
+              providerThreads: [
+                {
+                  id: "fixture-provider",
+                  pendingBackgroundTasks: [{ taskId: "cpp", kind: "command", command }],
+                },
+              ],
+              turnItems: [],
+            } as never),
+        });
+        const read = () =>
+          Effect.flatMap(BackgroundTasks, (tasks) =>
+            tasks.processes({ threadId: ThreadId.make("fixture-thread") }),
+          ).pipe(
+            Effect.provide(
+              backgroundTasksLayer.pipe(
+                Layer.provideMerge(Layer.mergeAll(dependencies, telemetry, threads)),
+              ),
+            ),
+          );
+        const previous = process.env.T3CODE_DEV_PROCESS_FIXTURE;
+        try {
+          delete process.env.T3CODE_DEV_PROCESS_FIXTURE;
+          assert.deepEqual((yield* read()).processGroups, []);
+          process.env.T3CODE_DEV_PROCESS_FIXTURE = fixture;
+          const result = yield* read();
+          assert.deepEqual(result.runningTaskIds, ["cpp"]);
+          assert.equal(result.processGroups.length, 1);
+          const group = result.processGroups[0]!;
+          assert.equal(group.label, "cc1plus");
+          assert.equal(group.count, 16);
+          assert.equal(group.members?.length, 16);
+          assert.deepEqual(result.usage, { cpuPercent: 801, residentBytes: 3300 });
+          assert.equal(refresh.mock.calls.length, 1);
+          NodeFS.writeFileSync(fixture, "invalid JSON");
+          assert.deepEqual((yield* read()).processGroups, []);
+        } finally {
+          if (previous === undefined) delete process.env.T3CODE_DEV_PROCESS_FIXTURE;
+          else process.env.T3CODE_DEV_PROCESS_FIXTURE = previous;
+          NodeFS.rmSync(fixture, { force: true });
+        }
+      }),
+  );
 
   const insertItem = (id: string, threadId: string, payload: string) =>
     Effect.gen(function* () {

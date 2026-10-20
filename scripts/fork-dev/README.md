@@ -1,164 +1,139 @@
-# Mock data for the T3 Code dev instance
+# Feature examples for the fork's dev preview
 
-Rebuilds `~/Workspaces-Dev` (four Git repos, one plain folder) and the `fork-sandbox` dev database
-with mock projects, threads, timelines and sidebar sections, then leaves the `t3-dev` unit
-running. Together they cover most sidebar and chat states:
+The seed rebuilds the mock projects in `~/Workspaces-Dev` and the `fork-sandbox` dev database.
+There are eight labeled projects, 56 threads and 88 synthetic processes. Hover a sidebar role
+title to read that thread's **Check:** name; every orchestrator's name summarizes its project's
+checklist. Expand a thread to see its commands, process groups and nested agents.
 
-- **Sidebar rows:** Working, Waiting, Done, idle, settled, Approval, Input, Failed, Limited,
-  snoozed, Woke, pinned, archived, and plan mode.
-- **Background tasks:** a server, a watcher, a Python job and a monitor.
-- **Thread families:** one repository orchestrator per project, direct workers, and nested helpers.
-- **Pull requests:** open, draft, merged and closed, including 123 PRs on the aurora orchestrator.
-- **Roles:** explicit roles keep only the repository coordinator labeled Orchestrator. Direct
-  Implementors have separate worktrees; Reviewers, Investigators and Checkers share the main
-  checkout. Nested native helpers share their parent's checkout.
-- **Questions:** a Claude single-choice question and a Codex multi-select question
-  ("Choose the release checks for borealis 1.2").
-- **Task list:** the aurora-web orchestrator's Claude task list, shown above the composer.
-- **Issues:** real issues and PRs in `tannerpolley/t3code-sandbox` (see below).
+## Project checklist
 
-## Project layout
+1. **01 · Processes and background work** — expand the C++ Implementor: `ccache`, `c++` and
+   `cc1plus` each fold **16 members** into one row. Open a member caret and click a process for
+   its command details. Compare the Vite `node`/`esbuild` groups, Rust's **12 `rustc`** members,
+   and its nested Checker's **eight pytest xdist workers**. The finished benchmark Checker has
+   only processes and background work, with no child agents: a Python job, multiprocessing
+   workers, a log writer and a monitor. Check CPU, memory, running marks, elapsed times and
+   command output. The Rust thread has processes followed by a dashed separator before agents.
+2. **02 · Thread families and separators** — one orchestrator above Implementors, Reviewer,
+   Investigator and Checker. Newer Implementors sort first within their role. Helpers stay
+   nested below their parent. In **Family style → Lines**, solid lines separate families and
+   dashed lines mark checkout changes; the standalone Investigator supplies another family.
+3. **03 · Roles and native subagents** — explicit app-owned roles beside native Claude
+   `general-purpose`, `Explore`, `code-reviewer` and Codex `worker`, `explorer`, `tester` agents.
+   Compare role-column alignment and inspect the generic native agent's label. This fixture
+   uses the existing `nativeSubagentRole` mapping from the checkout being seeded, so the
+   parallel change that labels generic native agents **Worker** can be checked after merging.
+4. **04 · Statuses and attention** — Working, Waiting (a completed parent with an active child),
+   Done/unseen, idle/visited, settled, Approval, Input, Failed, Limited, future snooze, expired
+   snooze/Woke, pinned and archived. Standalone rows keep finished examples discoverable;
+   enable the relevant settled, snoozed or archived filter to see parked threads. Open the
+   usage-limit row for its reset card; auto-resume is off.
+5. **05 · PR badges and checkpoint diffs** — the orchestrator has **123 PRs**. Dedicated rows
+   show open/passing/review-required, draft/failing/conflicting, merged/approved and closed
+   snapshots. The login-fix row has a checkpoint Diff with before/after files, a rich answer,
+   and a completed inline shell result. All these PRs are mock snapshots.
+6. **06 · Questions, plans and task lists** — the Claude orchestrator has completed, running and
+   pending tasks above the composer. Open the Claude question for single-choice questions and
+   a custom answer, the Codex Checker for multi-select release gates, and the standalone plugin
+   plan for plan mode and the proposed-plan card.
+7. **07 · Sections and plain folders** — under **Folder sections → Plain folders**, inspect a
+   project with no Git metadata and a deliberately long settled thread title. **Feature
+   showcases** uses folder icons; the **INBOX** is empty. The GitHub project is deliberately
+   unsectioned, supplying the **Other projects** example.
+8. **08 · GitHub issues · t3code-sandbox** — the real private repository stays at
+   `GitHub/t3code-sandbox`. Its orchestrator is paused with publishing off. Issue Implementors
+   #6 (Working), #7 (Input) and #15 (finished, real PR #24) retain their separate worktrees.
+   Open the Issues roadmap for blue working/input rows and red dependency blocks; inspect
+   Thread details for linked issues and PRs. Finished children may require Activity view or a
+   direct thread route.
 
-Each project has one main-checkout orchestrator above its workers in Projects with the default
-activity order. Workers stay nested across checkouts: Implementors, Reviewers, Investigators,
-Checkers, then other roles, newest creation first within a role. In **Family style → Lines**,
-dashed lines mark checkout changes and solid lines separate families.
+Every project has one main-checkout orchestrator. Implementors with separate checkouts precede
+main-checkout Reviewers, Investigators and Checkers; native helpers share their parent's checkout.
+Titles explain expected behavior; they do not change sidebar sorting or role inference.
 
-- **aurora-web (APPS):** “Coordinate the sidebar gradient redesign”; gradient-header Implementor
-  with a nested token investigator, a Reviewer, two main-checkout Investigators and a Checker.
-  Historical Implementors retain merged, usage-limited and archived examples in separate
-  worktrees. Standalone threads keep the snoozed e2e Implementor and pinned roadmap Investigator
-  visible. “Fix login timeout on slow networks” is a standalone Implementor with Done/unseen,
-  the open PR and checkpoint diff. The orchestrator carries the 123-PR badge and task list.
-- **borealis-cli (APPS):** “Coordinate borealis 1.2”; separate worktrees for JSON output, TOML and
-  branch cleanup (Approval), a packaging Investigator with a nested wheel Checker, and the
-  multi-select release-checks Checker. The one standalone Investigator retains the plugin plan.
-- **cascade-sim (RESEARCH → EXPERIMENTS):** “Run the 10k-cell solver benchmark campaign”; two
-  Implementors in distinct worktrees, a nested kernel profiler, main-checkout Reviewers,
-  Investigators (including the charting question) and the benchmark Checker with background work.
-  One standalone settled Investigator retains the long boundary-condition title.
-- **delta-notes (OTHER PROJECTS):** “Coordinate turbulence research notes”; a main-folder
-  Investigator, plus one standalone settled Investigator for the weekly log. This is a plain
-  folder, without Git or worktrees.
-- **echo-playground (OTHER PROJECTS):** “Coordinate playground experiments”; a pattern-matching
-  Implementor in its own worktree, plus a main-checkout parser Checker.
-  Standalone Implementors retain the failed CI run and closed PR, and the README badges Woke
-  (expired snooze) example.
-- **t3code-sandbox (GitHub sandbox):** “Coordinate t3code-sandbox issues”; the real #6, #7 and #15
-  issue Implementors each have their own local worktree, with #15 linked to real PR #24.
-  `github.py` and the passive repository orchestration settings are unchanged.
+## Rebuild and restore
 
-The empty INBOX section stays available for section review. Finished children remain hidden in
-Projects unless held by pending work; their states and timelines are retained. `shot.mjs` opens
-such examples by route when they have no visible row (including the usage-limited child), keeping
-all existing screenshot titles usable.
-
-## Rerun
-
-From the main checkout:
+Run from the checkout containing the seed code you intend to use:
 
 ```sh
-scripts/fork-dev/seed.sh        # full rebuild: repos, fresh database, all rows
-scripts/fork-dev/seed.sh start  # start t3-dev on the existing database (after a reboot), then live
-scripts/fork-dev/seed.sh live   # after any t3-dev restart: bring back live work
-python3 scripts/fork-dev/github.py  # sandbox issues and PRs; seed.sh runs it
-node scripts/fork-dev/shot.mjs  # optional: headless screenshots
-node scripts/fork-dev/icon-review.cjs  # optional: every icon in use, as shots/icon-review.html
+scripts/fork-dev/seed.sh        # full rebuild: mock repos, fresh database, all examples
+scripts/fork-dev/seed.sh start  # start on existing data, then restore live work
+scripts/fork-dev/seed.sh live   # restore live work after any server restart
+scripts/fork-dev/preview.sh open  # owner's action: preview current main in fork-sandbox
+scripts/fork-dev/preview.sh close
 ```
 
-After changing this fixture layout, run **`scripts/fork-dev/seed.sh` with no arguments**;
-`start` and `live` do not rebuild thread lineage or worktrees. A full rebuild stops `t3-dev`,
-deletes the dev database and `environment-id`, and starts the unit again. Rerun it every few days: thread times are relative to the seed, and after three idle days
-the server auto-settles unsettled threads.
+After changing the layout, run a **full rebuild**. `start` and `live` do not rebuild projects,
+lineage or worktrees. The server always executes code from `fork-sandbox`, so that checkout must
+also contain the sampler change. `preview.sh open` puts it on `main` and starts it using main's
+seed. The orchestrator should merge changes before rebuilding the owner's preview.
 
-Generated output (Claude task files, screenshots) goes to `~/Workspaces-Dev/.t3-dev-fixture/`,
-outside the repository.
+A full rebuild removes only the seed's known old/new mock directories, replaces the dev
+`statev2.sqlite` and environment ID, and starts `t3-dev`. It preserves the GitHub sandbox clone.
+`github.py` still runs first to maintain the real sandbox issues/PRs. Reseed every few days:
+timestamps are relative to seed time and the server auto-settles inactive threads after three days.
+Generated files live in `~/Workspaces-Dev/.t3-dev-fixture/`, outside the repository.
 
-## Things that are not obvious
+## Process fixture
 
-- **Restarts cancel live work.** Server startup and shutdown cancel the following:
-  - running runs and native subagents;
-  - background tasks: the dev server, the `dist/` watcher, and the benchmark job and its monitor;
-  - pending approvals.
+Only `seed.sh`'s `start_dev` opts the **t3-dev unit** into
+`T3CODE_DEV_PROCESS_FIXTURE=~/Workspaces-Dev/.t3-dev-fixture/processes.json` (an absolute path).
+Full rebuild and `start` use that launcher; `preview.sh open` calls `start`. `live` rewrites the
+fixture with fresh process times alongside the running command rows and output files.
 
-  A restart, including a dev-watch reload, clears them. Run `seed.sh live` to bring them back.
+The JSON contains fake PIDs, parent PIDs, command lines, start times, CPU percentages and resident
+bytes. A root parent of `"server"` resolves to the current server PID when sampled. Commands
+match the seeded running commands exactly, so the real attribution and `groupSpawnedProcesses`
+code computes groups, members and totals. Nothing launches those commands. The fixture also
+works when native telemetry is unhealthy; a missing/invalid fixture yields no process sample.
+With the variable unset, normal native telemetry is unchanged. No production launcher sets it.
+These samples affect thread process rows and task usage, not the environment's real process monitor.
 
-- **What survives restarts:**
-  - pending questions, which are answered by message;
-  - the open delegated-task cards, which keep their parents Waiting.
-- **Mock content still triggers real actions when you use it.** These all start a real Claude or
-  Codex turn, like typing a message in the dev app:
-  - answering a pending question;
-  - choosing Implement on the plan;
-  - choosing "Resume at reset" on the usage-limited thread.
+## Offline checks
 
-  Nothing runs on its own. No mock row has a provider session, child threads have no node fork,
-  and the usage-limit recovery is pre-armed with auto-resume off.
+These do not start a server, touch the running preview, access GitHub or read the live T3 home:
 
-- **Approvals and Stop fail harmlessly.** They need a live provider session, which mock threads
-  don't have.
-- **Background output files:**
-  - Codex task output lives under the dev server's `userdata/logs/background-tasks`.
-  - Claude task output lives in `~/Workspaces-Dev/.t3-dev-fixture/tasks/`.
+```sh
+python3 -m py_compile scripts/fork-dev/seed.py scripts/fork-dev/check.py
+python3 scripts/fork-dev/check.py
+# Optional: copy an empty migrated database into the check's temporary sandbox, then base/live/live:
+python3 scripts/fork-dev/check.py /absolute/path/to/empty-migrated.sqlite
+```
 
-  Opening a task's output or following it in a terminal shows that fake text.
+The check uses temporary files and local Git checkpoints, validates project owners, parentage,
+labels, native types, process commands, sections and PR states. With the optional database it also
+checks SQL writes, repeated live restoration, SQLite integrity and foreign keys. It never modifies
+the supplied database. `shot.mjs` keeps direct routes to labeled examples for optional screenshots;
+`icon-review.cjs` produces the optional icon inventory.
 
-- **Child threads appear in the Projects view only while active.** Running children, children
-  with pending work, and children waiting on you are listed under their parent. Finished
-  children are hidden in that view.
-- **Start command.** `seed.sh` starts `t3-dev` with `T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=0`.
-  Without it, the dev runner adds a project for its own `apps/server` folder.
-- **Settings.** The seed sets `worktreesDirectory: "project-local"` and
-  `addProjectBaseDirectory: ~/Workspaces-Dev` in the dev `settings.json`, so worktrees created in
-  the UI go to `<repo>/.worktrees` like the seeded ones.
-- **Fake remotes, PRs and issues.**
-  - Origins are `https://github.com/t3-dev-mock/<repo>.git`. No branch tracks them, so nothing
-    fetches.
-  - PR state comes from seeded snapshots. GitHub lookups for these repos return 404 and log
-    warnings, but the snapshots are kept.
-  - The linked issue shows in Thread details. Its body and the Issues page need GitHub, so they
-    stay empty.
-- **Sandbox issues (`github.py`).** Creates, only when missing, the showcase set in
-  `tannerpolley/t3code-sandbox`: parent #13 with sub-issues #14–#16 and #18 (#16 has sub-issue
-  #17), blocked-by chains #15←#14, #16←#15, #19←#13 and #3, closed as completed (#14) and not
-  planned (#18), PRs #23 (merged, closes #14), #24 (open, closes #15) and #25 (draft, closes
-  #16), milestone `02 - Release 1.0`, `priority: high` (#19, #20), and two cross-project inbox
-  items (#21, #22: `external`, `from:<project>`, with T3 source markers). Older data: #1–#11
-  and PR #12.
-  - **Run it before the database is rebuilt** (seed.sh does). The dev server's issue inbox
-    labels any issue opened after it started watching as `external` and `priority: high` _on
-    GitHub_, even with repository work paused. That happened once on 2026-10-14; `github.py`
-    resets the labels it owns.
-- **Issues pane.** The Issues page lists every repository the `gh` login owns, so it shows the
-  owner's real repositories too, and takes 15–40 s to load. The mock projects' fake remotes
-  have no issues; open the sandbox from its project, its orchestrator's Thread details, or
-  `/issues?host=github.com&repository=tannerpolley/t3code-sandbox`.
-- **Process groups can't be mocked.** The resource monitor samples only the server's own
-  process tree, so the spawned-process rows need a real agent command. Running command rows
-  (`pnpm` under the gradient header Implementor) and background tasks do show.
-- **GitHub sandbox (real data, read-only).** `seed.sh` clones the owner's private test repository
-  `tannerpolley/t3code-sandbox` into `GitHub/t3code-sandbox` once, then only fetches.
-  - **What the seed reads:** `seed.py` reads the repository's ID and the IDs and titles of the
-    issues it links (#6, #7, #15) with `gh api` GET requests. `github.py` runs separately first.
-  - **What it seeds:** a repository orchestrator thread, plus issue workers on #6, #7 and #15
-    (#15 finished in the local worktree `.worktrees/fix-absolute-zero`, linked to PR #24).
-    - #6 has a live run, so it is "working".
-    - #7 has a pending question, so it is "waiting on you".
-    - Both turn blue in the Issues roadmap view.
-  - **Why it stays passive:**
-    - **Paused:** `paused = 1` stops admission and the reconcile loop.
-    - **No milestones:** an empty milestone list keeps the root out of the 60-second scheduler.
-    - **Publishing off:** both publish flags are 0, so no status or closeout comment is ever
-      queued.
-    - **No minimum override:** `worker_limit` is 1, the database minimum.
-  - **What starts real work:** "Resume repository work" or "Work through milestone" in the
-    Issues pane would start real agents.
-  - **Where the colors show:**
-    - **Issues panel, roadmap view:** blocked issues are red and #6 and #7 are blue. Open it from
-      the orchestrator's Thread details, Issues, "Browse all issues", with Roadmap view on.
-    - **Full Issues page:** always shows milestones. Closed issues are gray there with the Closed
-      filter on.
-- **Protected worktrees.** Each worktree has an uncommitted change, which keeps storage cleanup
-  from removing it.
-- **Views.** The Projects view is the `sidebarMode` UI state (`t3code:ui-state:v1`). It is not a
-  client setting. `shot.mjs` sets it before taking screenshots.
+## Traps and real actions
+
+- **Restarts cancel live work:** running runs, native subagents, background tasks and approvals.
+  Run `seed.sh live` after startup recovery. Pending questions and open delegated-task cards
+  survive. Only a unit launched by the updated `seed.sh` has the fixture variable.
+- **Mock controls can start real agents:** answering a question, selecting **Implement** on a
+  plan or selecting **Resume at reset** on the Limited row sends a real turn. Nothing starts
+  automatically: there are no provider sessions or node forks, and usage recovery has
+  auto-resume disabled. Stop/approval responses require a live provider session and fail
+  harmlessly for these rows. Process-detail actions follow mock output; the PIDs are synthetic.
+- **Output:** Codex logs are under the dev server's `userdata/logs/background-tasks`; Claude
+  output files are under the fixture's `tasks/` directory. They contain sample text.
+- **Settings:** `worktreesDirectory: "project-local"` and `addProjectBaseDirectory` point new
+  worktrees at the mock workspace. Worktree README edits prevent storage cleanup from deleting
+  them. `T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=0` prevents an extra server project.
+- **Fake remotes:** `https://github.com/t3-dev-mock/<repo>.git` identifies mock repos; no branch
+  tracks them. GitHub lookups return 404 and log warnings; seeded PR snapshots remain.
+- **Real GitHub sandbox:** `github.py` maintains the existing issue hierarchy (#13–#20), blocked
+  chains, completed/not-planned examples, milestone `02 - Release 1.0`, priority labels,
+  cross-project inbox issues #21/#22, and PRs #23 (merged), #24 (open), #25 (draft), as well as
+  older #1–#12 data. Run it before starting the fresh database: the issue inbox labels newly
+  observed issues on GitHub even while repository work is paused. The repository clone only
+  fetches; `seed.py` uses read-only API calls for repository/linked-issue metadata.
+- **Passive repository work:** `paused=1`, no milestones, worker limit 1 (the minimum), and both
+  publish flags off prevent admission, scheduled work and comments. **Resume repository work**
+  or **Work through milestone** starts real agents.
+- **Issues pane:** lists the `gh` account's real repositories too and can take 15–40 seconds.
+  Use the sandbox project or `/issues?host=github.com&repository=tannerpolley/t3code-sandbox`.
+  Roadmap shows dependency/worker colors; the full page shows gray closed rows with Closed on.
+- **Views:** Projects nests active children and hides finished ones; Activity and direct routes
+  retain the finished examples. The section and ordering fixtures exercise the real client.

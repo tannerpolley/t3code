@@ -37,6 +37,7 @@ import {
   type OrchestrationV2StopBackgroundTaskError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -46,6 +47,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import { readDevProcessFixture } from "./devProcessFixture.ts";
 import { findBackgroundTaskSession, stopBackgroundTask } from "./BackgroundTaskStop.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -355,6 +357,10 @@ const withTaskCommands = Effect.fn("orchestration.withTaskCommands")(function* (
 
 /** A fresh sample of the processes under this server, or null while the monitor is unavailable. */
 const sampleProcesses = Effect.gen(function* () {
+  const fixturePath = process.env.T3CODE_DEV_PROCESS_FIXTURE;
+  if (fixturePath) {
+    return yield* readDevProcessFixture(fixturePath);
+  }
   const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
   const current = yield* Effect.option(telemetry.refresh);
   return Option.isNone(current) || current.value.health.native.status !== "healthy"
@@ -459,6 +465,7 @@ const make = Effect.gen(function* () {
     | ThreadManagement.ThreadManagementService
     | ProviderSessionManager.ProviderSessionManagerV2
     | ResourceTelemetry.ResourceTelemetry
+    | FileSystem.FileSystem
   >();
   // Every thread's poll would otherwise take its own sample, and the monitor samples one at a
   // time; callers within a poll interval share one, waiting on it while it is taken.

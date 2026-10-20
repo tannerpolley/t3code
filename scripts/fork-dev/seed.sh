@@ -21,6 +21,7 @@ start_dev() {
     --property=Restart=on-failure --property=RestartSec=3 --working-directory="$SANDBOX" \
     --setenv=PATH="$SANDBOX/node_modules/.bin:$PATH" --setenv=T3CODE_BUNDLED_DEV=1 \
     --setenv=T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=0 \
+    --setenv=T3CODE_DEV_PROCESS_FIXTURE="$ROOT/.t3-dev-fixture/processes.json" \
     --setenv=T3CODE_PORT_OFFSET=860 \
     --setenv=VITE_APP_STAGE_LABEL=Alpha \
     node scripts/dev-runner.ts dev
@@ -58,17 +59,7 @@ make_repo() { # relative path, then the worktree branches it keeps
   commit README.md "# $name" "Initial commit"
   commit README.md "Mock project for reviewing T3 Code UI changes." "Describe the project"
   commit CHANGELOG.md "## 1.1.0" "Start a changelog"
-  g branch release/1.2
-  g branch fix/login-timeout
   commit src/main.txt "entry point for $name" "Add the entry point"
-  g branch feature/sidebar-gradient
-  g branch experiment/fast-solver
-  commit CHANGELOG.md "## 1.1.1" "Note the 1.1.1 fixes"
-  for branch in release/1.2 fix/login-timeout feature/sidebar-gradient experiment/fast-solver; do
-    g checkout -q "$branch"
-    commit "notes/${branch//\//-}.md" "Work on $branch" "Work in progress on $branch"
-  done
-  g checkout -q main
   # Fake origin: gives the project a repository identity; no branch tracks it, so nothing fetches.
   g remote add origin "https://github.com/t3-dev-mock/$name.git"
   g update-ref refs/remotes/origin/main main
@@ -87,17 +78,18 @@ make_repo() { # relative path, then the worktree branches it keeps
 build_workspace() {
   local dir
   for dir in Apps/aurora-web Apps/borealis-cli Research/cascade-sim Research/delta-notes \
-    Scratch/echo-playground; do
+    Scratch/echo-playground Showcase/processes Showcase/families Showcase/roles \
+    Showcase/statuses Showcase/badges Showcase/workflow Notes/sections; do
     rm -rf "${ROOT:?}/$dir"
   done
-  make_repo Apps/aurora-web feature/sidebar-gradient fix/login-timeout chore/vite-7 \
-    refactor/theme-layers fix/e2e-flake experiment/canvas
-  make_repo Apps/borealis-cli feature/json-status refactor/toml chore/stale-branches
-  make_repo Research/cascade-sim experiment/fast-solver experiment/numba-kernel
-  make_repo Scratch/echo-playground experiment/pattern-matching ci/matrix docs/badges
-  mkdir -p "$ROOT/Research/delta-notes"
-  printf '# Turbulence closures\n\n- k-epsilon vs k-omega SST\n' >"$ROOT/Research/delta-notes/closures.md"
-  printf '# Weekly log\n\n- Week 41: mock entries only\n' >"$ROOT/Research/delta-notes/weekly-log.md"
+  make_repo Showcase/processes build/cpp dev/vite build/rust
+  make_repo Showcase/families feature/newer feature/older
+  make_repo Showcase/roles feature/worker
+  make_repo Showcase/statuses feature/working chore/stale-branches ci/matrix refactor/theme-layers
+  make_repo Showcase/badges fix/login-timeout experiment/fast-solver
+  make_repo Showcase/workflow
+  mkdir -p "$ROOT/Notes/sections"
+  printf '# Plain-folder notes\n\nNo Git repository; inspect the folder subsection.\n' >"$ROOT/Notes/sections/notes.md"
 }
 
 # The owner's GitHub test repository, for the Issues pane. Read-only: clone once, then fetch.
