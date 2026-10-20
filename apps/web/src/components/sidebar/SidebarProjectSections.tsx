@@ -1238,10 +1238,11 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
 });
 
 function ProjectDragPreview(props: { readonly project: SidebarProjectSnapshot | null }) {
+  const folderAppearance = useProjectFolderAppearance(props.project?.projectKey ?? null);
   if (props.project === null) return null;
   return (
     <div className="fork-sidebar-project-preview flex h-7 w-[min(20rem,calc(100vw-2rem))] min-w-0 items-center gap-2 rounded-md border border-sidebar-border bg-sidebar px-2 text-sm text-sidebar-foreground shadow-lg">
-      <ProjectFavicon className="size-4 shrink-0" project={props.project} />
+      <ProjectFavicon className="size-4 shrink-0" project={props.project} {...folderAppearance} />
       <span className="fork-sidebar-title min-w-0 flex-1 truncate font-medium">
         {props.project.displayName}
       </span>
