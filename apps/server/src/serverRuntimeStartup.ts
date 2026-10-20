@@ -40,6 +40,7 @@ import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts
 import * as ProjectService from "./project/ProjectService.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -146,19 +147,15 @@ export const makeCommandGate = Effect.gen(function* () {
   } satisfies CommandGate;
 });
 
-const recordStartupHeartbeat = Effect.gen(function* () {
+export const recordStartupHeartbeat = Effect.gen(function* () {
   const analytics = yield* AnalyticsService.AnalyticsService;
-  const projects = yield* ProjectService.ProjectService;
-  const threads = yield* ThreadManagement.ThreadManagementService;
+  const projects = yield* ProjectStore.ProjectStoreV2;
+  const threads = yield* ProjectionStore.ProjectionStoreV2;
 
   const { threadCount, projectCount } = yield* Effect.all({
-    projects: projects.snapshot,
-    threads: threads.getShellSnapshot(),
+    projectCount: projects.count,
+    threadCount: threads.countThreads,
   }).pipe(
-    Effect.map(({ projects: projectSnapshot, threads: shellSnapshot }) => ({
-      projectCount: projectSnapshot.projects.length,
-      threadCount: shellSnapshot.threads.length + shellSnapshot.archivedThreads.length,
-    })),
     Effect.catch((cause) =>
       Effect.logWarning("failed to gather V2 startup counts for telemetry", {
         cause,

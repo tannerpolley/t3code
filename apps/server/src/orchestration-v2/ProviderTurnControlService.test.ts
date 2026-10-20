@@ -224,6 +224,7 @@ it.effect(
           getRecentUsageLimitChildren: () => Effect.succeed([]),
           isUsageLimitFailureReleased: () => Effect.succeed(false),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
+          countThreads: Effect.die("unused countThreads"),
           readShellSnapshot: () => Effect.die("unused readShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),

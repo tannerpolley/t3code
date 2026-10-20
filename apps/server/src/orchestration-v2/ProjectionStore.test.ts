@@ -1,4 +1,7 @@
 import { assert, it, vi } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import {
   EnvironmentId,
   EventId,
@@ -60,6 +63,7 @@ const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.U
 
 const traceSqlStatements = () => {
   const statements: Array<string> = [];
+  const connections: Array<unknown> = [];
   const tracer = Tracer.make({
     span(options) {
       const span = new Tracer.NativeSpan(options);
@@ -67,12 +71,15 @@ const traceSqlStatements = () => {
       span.end = (endTime, exit) => {
         end(endTime, exit);
         const query = span.attributes.get("db.query.text");
-        if (typeof query === "string") statements.push(query);
+        if (typeof query === "string") {
+          statements.push(query);
+          connections.push(span.attributes.get("db.connection"));
+        }
       };
       return span;
     },
   });
-  return { statements, tracer };
+  return { statements, tracer, connections };
 };
 
 const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate")(function* (
@@ -7196,4 +7203,184 @@ it.effect("native subagent child shells report the subagent status (SQL)", () =>
 
 it.effect("native subagent child shells report the subagent status (memory)", () =>
   assertNativeSubagentChildShell().pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
+it.effect("runtime discovery preserves queued-run rules while searching the recovery index", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const expected: ThreadId[] = [];
+    for (const [suffix, status, payload, visible, recover] of [
+      ["unheld", "queued", "{}", true, true],
+      ["held", "queued", '{"queueHeld":true}', true, false],
+      ["numeric-held", "queued", '{"queueHeld":1}', true, false],
+      ["false", "queued", '{"queueHeld":false}', true, true],
+      ["null", "queued", '{"queueHeld":null}', true, true],
+      ["string", "queued", '{"queueHeld":"1"}', true, true],
+      ["invalid", "queued", "invalid", true, true],
+      ["preparing", "preparing", '{"queueHeld":true}', true, true],
+      ["starting", "starting", "{}", true, true],
+      ["running", "running", "{}", true, true],
+      ["waiting", "waiting", "{}", true, true],
+      ["ended", "completed", "{}", true, false],
+      ["deleted", "queued", "{}", false, false],
+      ["archived", "queued", "{}", true, true],
+    ] as const) {
+      const id = yield* addRolledBackRecoveryCandidate(`queue-${suffix}`);
+      // Isolate run discovery from unfinished-item recovery.
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${id}`;
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = ${status}, payload_json = ${payload} WHERE thread_id = ${id}`;
+      if (!visible)
+        yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '2026-10-20' WHERE thread_id = ${id}`;
+      if (suffix === "archived")
+        yield* sql`UPDATE orchestration_v2_projection_threads SET archived_at = '2026-10-20' WHERE thread_id = ${id}`;
+      if (recover) expected.push(id);
+    }
+    const { statements, tracer } = traceSqlStatements();
+    const actual = yield* store.getRecoveryThreadIds("runtime").pipe(Effect.withTracer(tracer));
+    assert.sameMembers([...actual], expected);
+    const query = statements.find((statement) =>
+      statement.includes("WITH pending_provider_threads"),
+    )!;
+    const legacy = query
+      .replace(
+        "status IN ('queued', 'preparing', 'starting', 'running', 'waiting')\n                  AND status IN",
+        "status IN",
+      )
+      .replace(
+        "status IN ('queued', 'preparing', 'starting', 'running', 'waiting')\n                  AND status = 'queued'",
+        "status = 'queued'",
+      );
+    assert.notEqual(query, legacy);
+    const previous = yield* sql.unsafe<{ thread_id: string }>(legacy);
+    assert.deepEqual(
+      actual,
+      previous.map((row) => ThreadId.make(row.thread_id)),
+    );
+    const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`);
+    assert.equal(
+      plan.filter(
+        (row) =>
+          row.detail.includes("SEARCH orchestration_v2_projection_runs USING") &&
+          row.detail.includes("recovery_idx"),
+      ).length,
+      2,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("subagent discovery retains usage-limit failures behind held continuations", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const child = yield* addRolledBackRecoveryCandidate("limit-discovery");
+    yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${child}`;
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json,
+      '$.lineage.relationshipToParent', 'subagent', '$.lineage.parentThreadId', 'parent', '$.forkedFrom', json('{"type":"node"}'))
+      WHERE thread_id = ${child}`;
+    yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'queued', payload_json = '{"queueHeld":true}' WHERE thread_id = ${child}`;
+    assert.deepEqual(yield* store.getRecoveryThreadIds("subagent-results"), []);
+    yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+      (turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json)
+      VALUES ('limit-discovery', ${child}, 1, 'error', 'completed', '2026-10-20', '{"failure":{"class":"usage_limit"}}')`;
+    const { statements, tracer } = traceSqlStatements();
+    assert.deepEqual(
+      yield* store.getRecoveryThreadIds("subagent-results").pipe(Effect.withTracer(tracer)),
+      [child],
+    );
+    const query = statements.find((statement) => statement.includes("SELECT child.thread_id"))!;
+    const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`);
+    assert.ok(
+      plan.some((row) =>
+        row.detail.includes(
+          "SEARCH error USING INDEX orchestration_v2_projection_turn_items_usage_limit_idx",
+        ),
+      ),
+    );
+    yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{"failure":{"class":"unknown"}}' WHERE turn_item_id = 'limit-discovery'`;
+    assert.deepEqual(yield* store.getRecoveryThreadIds("subagent-results"), []);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  ["memory", ProjectionStore.layerMemory],
+  ["SQL", layerTest],
+] as const)("%s thread count matches visible shells, including archived threads", ([, layer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    assert.equal(yield* store.countThreads, 0);
+    const active = yield* addRolledBackRecoveryCandidate("count-active");
+    const archived = yield* addRolledBackRecoveryCandidate("count-archived");
+    const deleted = yield* addRolledBackRecoveryCandidate("count-deleted");
+    const now = yield* DateTime.now;
+    for (const [id, type, change] of [
+      [archived, "thread.archived", { archivedAt: now }],
+      [deleted, "thread.deleted", { deletedAt: now }],
+    ] as const) {
+      const thread = yield* store.getThread(id);
+      yield* store.apply({
+        id: EventId.make(`count:${id}`),
+        type,
+        threadId: id,
+        occurredAt: now,
+        payload: { ...thread, ...change },
+      });
+    }
+    const shells = yield* store.getShellSnapshot();
+    assert.deepEqual(
+      shells.threads.map((t) => t.id),
+      [active],
+    );
+    assert.deepEqual(
+      shells.archivedThreads.map((t) => t.id),
+      [archived],
+    );
+    assert.equal(yield* store.countThreads, shells.threads.length + shells.archivedThreads.length);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("recovery discovery uses the reader and sees each preceding commit", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-startup-queries-" });
+    const persistence = SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"));
+    yield* Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const child = yield* addRolledBackRecoveryCandidate("reader-discovery");
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${child}`;
+      yield* sql.withTransaction(
+        sql`UPDATE orchestration_v2_projection_runs SET status = 'running' WHERE thread_id = ${child}`,
+      );
+      const first = traceSqlStatements();
+      assert.deepEqual(
+        yield* store.getRecoveryThreadIds("runtime").pipe(Effect.withTracer(first.tracer)),
+        [child],
+      );
+      assert.deepEqual(first.connections, ["reader"]);
+      // Runtime recovery commits terminal runs before delegated discovery starts.
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE thread_id = ${child}`;
+          yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json,
+          '$.lineage.relationshipToParent', 'subagent', '$.lineage.parentThreadId', 'parent', '$.forkedFrom', json('{"type":"node"}'))
+          WHERE thread_id = ${child}`;
+          assert.deepEqual(yield* store.getRecoveryThreadIds("subagent-results"), [child]);
+        }),
+      );
+      const after = traceSqlStatements();
+      yield* Effect.gen(function* () {
+        assert.deepEqual(yield* store.getRecoveryThreadIds("runtime"), []);
+        assert.deepEqual(yield* store.getRecoveryThreadIds("subagent-results"), [child]);
+        assert.deepEqual(yield* store.getRecoveryThreadIds("delegated-completions"), []);
+        assert.equal(yield* store.countThreads, 1);
+      }).pipe(Effect.withTracer(after.tracer));
+      assert.deepEqual(after.connections, ["reader", "reader", "reader", "reader"]);
+    }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(persistence))));
+  }).pipe(
+    Effect.scoped,
+    Effect.provideService(Statement.SpanPropagationEnabled, true),
+    Effect.provide(NodeServices.layer),
+  ),
 );

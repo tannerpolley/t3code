@@ -35,6 +35,7 @@ import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
@@ -159,7 +160,8 @@ it.effect.each([
             capabilities: { repositoryIdentity: true },
           }),
         }),
-        Layer.mock(ProjectStore.ProjectStoreV2)({}),
+        Layer.mock(ProjectStore.ProjectStoreV2)({ count: Effect.succeed(0) }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({ countThreads: Effect.succeed(0) }),
         Layer.mock(ProjectService.ProjectService)({
           bootstrap: () =>
             scenario === "project-failure"
@@ -418,4 +420,50 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
     ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
     assert.deepStrictEqual(pulled, ["/inherited"]);
   }),
+);
+
+it.effect.each([false, true])(
+  "records startup counts with the existing failure fallback: %s",
+  (fail) =>
+    Effect.gen(function* () {
+      const records: Array<{
+        event: string;
+        properties: Readonly<Record<string, unknown>> | undefined;
+      }> = [];
+      yield* ServerRuntimeStartup.recordStartupHeartbeat.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              count: fail
+                ? Effect.fail(
+                    new ProjectStore.ProjectStoreV2Error({
+                      operation: "count",
+                      cause: "count failed",
+                    }),
+                  )
+                : Effect.succeed(3),
+            }),
+            Layer.mock(ProjectionStore.ProjectionStoreV2)({ countThreads: Effect.succeed(7) }),
+            Layer.mock(AnalyticsService.AnalyticsService)({
+              record: (event, properties) =>
+                Effect.sync(() => {
+                  records.push({ event, properties });
+                }),
+              recordOwners: () => Effect.void,
+            }),
+            FileSystem.layerNoop({}),
+            Path.layer,
+            Layer.mock(ServerSecretStore.ServerSecretStore)({ get: () => Effect.succeedNone }),
+          ),
+        ),
+      );
+      assert.deepEqual(records, [
+        {
+          event: "server.boot.heartbeat",
+          properties: fail
+            ? { threadCount: 0, projectCount: 0 }
+            : { threadCount: 7, projectCount: 3 },
+        },
+      ]);
+    }),
 );

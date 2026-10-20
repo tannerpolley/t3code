@@ -20,6 +20,7 @@ import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
@@ -137,9 +138,11 @@ it.effect("parks automatic pull until activation without delaying command readin
           }),
         }),
         Layer.mock(ProjectStore.ProjectStoreV2)({
+          count: Effect.succeed(snapshot.projects.length),
           listShells: () => Effect.succeed(snapshot.projects),
         }),
         Layer.mock(ProjectService.ProjectService)({ snapshot: Effect.succeed(snapshot) }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({ countThreads: Effect.succeed(0) }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getShellSnapshot: () =>
             Effect.succeed({

@@ -37,6 +37,43 @@ const tableNames = Effect.gen(function* () {
 });
 
 describe("fork migration ledger", () => {
+  it.effect("indexes usage-limit errors without changing lookup results on upgrade", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toForkMigrationInclusive: 17 });
+      for (const [id, threadId, type, payload] of [
+        ["limit", "child", "error", '{"failure":{"class":"usage_limit"}}'],
+        ["other-thread", "other", "error", '{"failure":{"class":"usage_limit"}}'],
+        ["other-error", "child", "error", '{"failure":{"class":"unknown"}}'],
+        ["non-error", "child", "text", '{"failure":{"class":"usage_limit"}}'],
+        ["no-class", "child", "error", "{}"],
+      ]) {
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items
+            (turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json)
+          VALUES (${id}, ${threadId}, 1, ${type}, 'completed', '2026-10-20', ${payload})
+        `;
+      }
+      const lookup = sql`
+        SELECT turn_item_id FROM orchestration_v2_projection_turn_items error
+        WHERE error.thread_id = 'child' AND error.type = 'error'
+          AND json_extract(error.payload_json, '$.failure.class') = 'usage_limit'
+      `;
+      const before = yield* lookup;
+      assert.deepEqual(before, [{ turn_item_id: "limit" }]);
+      yield* runMigrations();
+      assert.deepEqual(yield* lookup, before);
+      const [query, params] = lookup.compile();
+      const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+      assert.ok(
+        plan.some((row) =>
+          row.detail.includes("orchestration_v2_projection_turn_items_usage_limit_idx"),
+        ),
+      );
+      assert.deepEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect.each([6, 2])(
     "moves a fork build's %s migrations to the fork ledger, then applies upstream 57+",
     (count) =>
@@ -133,6 +170,7 @@ describe("fork migration ledger", () => {
           { migration_id: 15, name: "IssueInbox" },
           { migration_id: 16, name: "IssueQueue" },
           { migration_id: 17, name: "ProjectArtifacts" },
+          { migration_id: 19, name: "UsageLimitRecoveryIndex" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class ProjectStoreV2Error extends Schema.TaggedError<ProjectStoreV2Error>()(
   "ProjectStoreV2Error",
@@ -82,6 +83,7 @@ export class ProjectStoreV2 extends Context.Service<
       readonly projectIds?: ReadonlyArray<ProjectId>;
       readonly includeDeleted?: boolean;
     }) => Effect.Effect<ReadonlyArray<ProjectRow>, ProjectStoreV2Error>;
+    readonly count: Effect.Effect<number, ProjectStoreV2Error>;
     /** Workspace roots match by exact string; callers normalize before asking. */
     readonly findActiveByWorkspaceRoot: (
       workspaceRoot: string,
@@ -262,6 +264,13 @@ export const make = Effect.gen(function* () {
     apply,
     get,
     list,
+    count: sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM projection_projects WHERE deleted_at IS NULL
+    `.pipe(
+      NodeSqliteClient.readOnly,
+      Effect.map((rows) => rows[0]!.count),
+      mapError("count"),
+    ),
     findActiveByWorkspaceRoot,
     getShell: (projectId) => get(projectId).pipe(Effect.map(Option.map(toShell))),
     listShells: (options) =>

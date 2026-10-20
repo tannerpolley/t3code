@@ -97,6 +97,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
@@ -474,6 +475,7 @@ export interface ProjectionStoreV2Shape {
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
+  readonly countThreads: Effect.Effect<number, ProjectionStoreV2Error>;
   /**
    * Callers that combine the shell with other reads run this inside their own
    * transaction and the returned decode after it commits, so the shared
@@ -4434,13 +4436,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       THEN json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
                       ELSE 0 END
                 )
+                -- SQLite needs the partial recovery index's full status predicate.
                 SELECT thread_id FROM orchestration_v2_projection_runs
-                WHERE status IN ('preparing', 'starting', 'running', 'waiting')
+                WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                  AND status IN ('preparing', 'starting', 'running', 'waiting')
                 UNION
                 -- A held queue already went through recovery; rereading it on
                 -- every boot costs a projection read per held thread.
                 SELECT thread_id FROM orchestration_v2_projection_runs
-                WHERE status = 'queued'
+                WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                  AND status = 'queued'
                   AND CASE WHEN json_valid(payload_json)
                     THEN json_extract(payload_json, '$.queueHeld') IS NOT 1
                     ELSE 1 END
@@ -4521,6 +4526,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         `;
         return rows.map((row) => ThreadId.make(row.thread_id));
       },
+      // Each discovery is a fresh read after prior recovery commits, never a held snapshot.
+      NodeSqliteClient.readOnly,
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
     );
 
@@ -7106,6 +7113,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       apply,
       getShellSnapshot,
+      countThreads: sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
+      `.pipe(
+        NodeSqliteClient.readOnly,
+        Effect.map((rows) => rows[0]!.count),
+        Effect.mapError(shellSnapshotReadError),
+      ),
       readShellSnapshot,
       getThreadShell,
       getThread,
@@ -7159,6 +7173,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
     const sequence = yield* Ref.make(0);
 
     const service: ProjectionStoreV2Shape = {
+      countThreads: Ref.get(replayState).pipe(
+        Effect.map(
+          (state) =>
+            [...state.projections.values()].filter((p) => p.thread.deletedAt === null).length,
+        ),
+      ),
       getIssueWorkCommentState: () => Effect.succeed(null),
       getIssueCommentReceipt: () => Effect.succeed(null),
       // Returns every live top-level thread; selectTitleRefreshThreads applies the rules.

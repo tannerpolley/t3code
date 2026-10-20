@@ -53,3 +53,47 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
     );
   },
 );
+
+it.effect("project count matches the snapshot's non-deleted rows", () =>
+  Effect.gen(function* () {
+    const projects = yield* ProjectStore.ProjectStoreV2;
+    assert.equal(yield* projects.count, 0);
+    for (const [index, deleted] of [false, false, true].entries()) {
+      const projectId = ProjectId.make(`count-project-${index}`);
+      const base = {
+        sequence: index + 1,
+        eventId: EventId.make(`count-project-created-${index}`),
+        aggregateKind: "project" as const,
+        aggregateId: projectId,
+        occurredAt: "2026-10-20T00:00:00.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      };
+      yield* projects.apply({
+        ...base,
+        type: "project.created",
+        payload: {
+          projectId,
+          title: "Count project",
+          workspaceRoot: `/tmp/count-${index}`,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: base.occurredAt,
+          updatedAt: base.occurredAt,
+        },
+      });
+      if (deleted)
+        yield* projects.apply({
+          ...base,
+          type: "project.deleted",
+          payload: { projectId, deletedAt: base.occurredAt },
+        });
+    }
+    assert.equal(yield* projects.count, 2);
+    assert.equal(yield* projects.count, (yield* projects.list()).length);
+  }).pipe(
+    Effect.provide(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+  ),
+);
