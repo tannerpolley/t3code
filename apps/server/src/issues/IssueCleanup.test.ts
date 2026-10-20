@@ -1,11 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
-  RuntimeRequestId,
-  ProviderDriverKind,
-  ProjectId,
-  RunId,
-  ProviderSessionId,
   type OrchestrationV2ThreadShell,
   type IssueCleanupInput,
   type IssueDetailResult,
@@ -13,15 +8,13 @@ import {
 } from "@t3tools/contracts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import type { GitHubPullRequestCore } from "@t3tools/source-control-github/server/gitHubPullRequestJson";
-import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as ServerConfig from "../config.ts";
-import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
-import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -33,10 +26,7 @@ const layerGit = GitVcsDriver.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-const fixture = Effect.fn("test.issueCleanupFixture")(function* (
-  legacyPr = true,
-  relativePath = ".worktrees/worker",
-) {
+const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-issue-cleanup-repo-" });
@@ -55,7 +45,7 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (
   yield* git(["commit", "-am", "issue work"]);
   const base = (yield* git(["rev-parse", "HEAD"])).stdout.trim();
   yield* git(["checkout", "main"]);
-  const worktreePath = path.join(cwd, relativePath);
+  const worktreePath = path.join(cwd, ".worktrees/worker");
   yield* fs.makeDirectory(path.join(cwd, ".worktrees"));
   const thread: OrchestrationV2ThreadShell = {
     ...liveThreadShell(ThreadId.make("worker"), { activeRunId: null }),
@@ -117,48 +107,22 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (
       ],
     },
   };
-  const threads: OrchestrationV2ThreadShell[] = [thread];
-  let liveSession = false;
+  let beforeDelete = Effect.void;
   let prBase = "main";
   let prState: "merged" | "closed" | "open" = "merged";
   const cleanupLayer = IssueCleanup.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(GitVcsDriver.GitVcsDriver, driver),
-        Layer.mock(IssueRoadmap.IssueRoadmap)({ detail: () => Effect.succeed(detail) }),
-        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-          isLive: () => Effect.succeed(liveSession),
+        Layer.succeed(GitVcsDriver.GitVcsDriver, {
+          ...driver,
+          deleteLocalBranch: (input) =>
+            beforeDelete.pipe(Effect.andThen(driver.deleteLocalBranch(input))),
         }),
+        Layer.mock(IssueRoadmap.IssueRoadmap)({ detail: () => Effect.succeed(detail) }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadShell: () => Effect.succeed(thread),
-          getShellSnapshot: () =>
-            Effect.succeed({
-              schemaVersion: 1,
-              snapshotSequence: 0,
-              threads: threads.filter((t) => t.archivedAt === null),
-              archivedThreads: threads.filter((t) => t.archivedAt !== null),
-            }),
-          getThreadRecords: () =>
-            Effect.succeed({
-              ...idleThreadProjection(thread),
-              providerSessions: [
-                {
-                  id: ProviderSessionId.make("session"),
-                  driver: ProviderDriverKind.make("codex"),
-                  providerInstanceId: thread.providerInstanceId,
-                  status: "ready" as const,
-                  cwd: worktreePath,
-                  model: "gpt-5",
-                  capabilities: CodexProviderCapabilitiesV2,
-                  createdAt: thread.createdAt,
-                  updatedAt: thread.updatedAt,
-                  lastError: null,
-                },
-              ],
-            }),
         }),
         Layer.mock(ProjectStore.ProjectStoreV2)({
-          list: () => Effect.succeed([]),
           get: () =>
             Effect.succeed(
               Option.some({
@@ -197,9 +161,11 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (
     worktreePath,
     detail,
     thread,
-    threads,
-    liveSession: (live: boolean) => {
-      liveSession = live;
+    checkoutBeforeDelete: () => {
+      beforeDelete = git(["worktree", "add", worktreePath, "issue-work"]).pipe(
+        Effect.asVoid,
+        Effect.orDie,
+      );
     },
     prBase: (base: string) => {
       prBase = base;
@@ -221,7 +187,13 @@ it.effect(
         "confirmation-required",
       );
       yield* f.git(["worktree", "add", f.worktreePath, "issue-work"]);
-      assert.equal((yield* f.cleanup(f.input).pipe(Effect.flip)).code, "checked-out");
+      const checkedOut = yield* f.cleanup(f.input).pipe(Effect.flip);
+      assert.equal(checkedOut.code, "checked-out");
+      assert.equal(
+        checkedOut.message,
+        "Checked out in worker; remove the worktree or switch its branch first.",
+      );
+      assert.isTrue(yield* (yield* FileSystem.FileSystem).exists(f.worktreePath));
       assert.equal(
         (yield* f.cleanup({ ...f.input, confirmUnmerged: true }).pipe(Effect.flip)).code,
         "checked-out",
@@ -249,33 +221,6 @@ it.effect(
       yield* f.git(["checkout", "main"]);
       assert.equal((yield* f.cleanup(f.input).pipe(Effect.flip)).code, "unmerged");
       yield* f.cleanup({ ...f.input, confirmUnmerged: true });
-    }).pipe(Effect.scoped, Effect.provide(layerGit)),
-);
-
-it.effect(
-  "removes only a confirmed clean linked worktree and refuses stale targets and dirty worktrees",
-  () =>
-    Effect.gen(function* () {
-      const f = yield* fixture();
-      const path = yield* Path.Path;
-      const fs = yield* FileSystem.FileSystem;
-      const input = { ...f.input, action: "remove-worktree" as const };
-      yield* f.git(["worktree", "add", f.worktreePath, "issue-work"]);
-      assert.equal(
-        (yield* f
-          .cleanup({ ...input, expectedWorktreePath: "/another/worktree" })
-          .pipe(Effect.flip)).code,
-        "work-changed",
-      );
-      yield* f.git(["config", "status.showUntrackedFiles", "no"]);
-      const file = path.join(f.worktreePath, "untracked");
-      yield* fs.writeFileString(file, "keep me");
-      assert.equal((yield* f.cleanup(input).pipe(Effect.flip)).code, "dirty-worktree");
-      assert.equal(yield* fs.readFileString(file), "keep me");
-      yield* fs.remove(file);
-      yield* f.cleanup(input);
-      assert.isFalse(yield* fs.exists(f.worktreePath));
-      yield* f.cleanup(f.input);
     }).pipe(Effect.scoped, Effect.provide(layerGit)),
 );
 
@@ -321,89 +266,13 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(layerGit)),
 );
 
-it.effect(
-  "refuses an idle parent's cleanup while any thread sharing its real workspace has activity",
-  () =>
-    Effect.gen(function* () {
-      const f = yield* fixture();
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* f.git(["worktree", "add", f.worktreePath, "issue-work"]);
-      const alias = path.join(f.cwd, "worker-alias");
-      yield* fs.symlink(f.worktreePath, alias);
-      const child: OrchestrationV2ThreadShell = {
-        ...f.thread,
-        id: ThreadId.make("child"),
-        worktreePath: alias,
-        lineage: {
-          rootThreadId: f.thread.id,
-          parentThreadId: f.thread.id,
-          relationshipToParent: "subagent",
-        },
-      };
-      const cases: Partial<OrchestrationV2ThreadShell>[] = [
-        { status: "running", activeRunId: RunId.make("child-run") },
-        { status: "starting" },
-        { status: "waiting" },
-        { status: "queued" },
-        {
-          pendingRuntimeRequest: {
-            id: RuntimeRequestId.make("pending"),
-            kind: "user_input",
-            createdAt: f.thread.createdAt,
-          },
-        },
-        { activityRunStatus: "running" },
-        { pendingBackgroundTasks: [{ taskId: "command", kind: "command" }] },
-        { pendingBackgroundTasks: [{ taskId: "monitor", kind: "monitor" }] },
-        {
-          status: "running",
-          archivedAt: f.thread.createdAt,
-          projectId: ProjectId.make("unrelated-project"),
-          lineage: {
-            rootThreadId: ThreadId.make("child"),
-            parentThreadId: null,
-            relationshipToParent: null,
-          },
-        },
-      ];
-      for (const activity of cases) {
-        f.threads.splice(1, 1, { ...child, ...activity });
-        assert.equal(
-          (yield* f.cleanup({ ...f.input, action: "remove-worktree" }).pipe(Effect.flip)).code,
-          "work-active",
-        );
-        assert.isTrue(yield* fs.exists(f.worktreePath));
-      }
-      f.threads.splice(1);
-      f.liveSession(true);
-      assert.equal(
-        (yield* f.cleanup({ ...f.input, action: "remove-worktree" }).pipe(Effect.flip)).code,
-        "work-active",
-      );
-      f.liveSession(false);
-      yield* f.cleanup({ ...f.input, action: "remove-worktree" });
-      assert.isFalse(yield* fs.exists(f.worktreePath));
-    }).pipe(Effect.scoped, Effect.provide(layerGit)),
-);
-
-it.effect("refuses registered worktrees outside .worktrees, including symlink escapes", () =>
+it.effect("surfaces Git's refusal when a branch is checked out after the initial check", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    for (const symlink of [false, true]) {
-      const f = yield* fixture(true, symlink ? ".worktrees/worker" : "outside-worker");
-      yield* f.git(["worktree", "add", f.worktreePath, "issue-work"]);
-      const outside = path.join(f.cwd, "escaped-worker");
-      if (symlink) {
-        yield* fs.rename(f.worktreePath, outside);
-        yield* fs.symlink(outside, f.worktreePath);
-      }
-      assert.equal(
-        (yield* f.cleanup({ ...f.input, action: "remove-worktree" }).pipe(Effect.flip)).code,
-        "work-changed",
-      );
-      assert.isTrue(yield* fs.exists(f.worktreePath));
-    }
+    const f = yield* fixture();
+    f.checkoutBeforeDelete();
+    const error = yield* f.cleanup(f.input).pipe(Effect.flip);
+    assert.equal(error.code, "checked-out");
+    assert.equal(error.worktreeName, "worker");
+    assert.equal((yield* f.git(["show-ref", "--verify", "refs/heads/issue-work"])).exitCode, 0);
   }).pipe(Effect.scoped, Effect.provide(layerGit)),
 );
