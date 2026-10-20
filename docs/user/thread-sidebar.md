@@ -362,8 +362,8 @@ Implementors unless their parent gives them another role. Forks keep their sourc
 role. A native provider subagent takes its role from its agent type: Codex's manager
 is an Orchestrator; reviewer types are Reviewers; explorer or researcher types are
 Investigators; tester or checker types are Checkers; and every other type, including
-the default agents, is an Implementor. Role icons appear in thread rows and the chat
-header.
+the default agents, is an Implementor. Role icons appear in the chat header, and in
+thread rows when you turn them on in **Settings → Customizations → Sidebar & projects**.
 
 Native provider subagents have a bot icon before their role icon and run on their
 own. They cannot take messages; use **Open parent** to direct them. App-owned child
@@ -392,11 +392,11 @@ With **Codex-style sidebar** enabled on web and desktop, the Projects view align
 role, provider, model, effort, name, time, and work status. Model names show up to six
 characters, with versions such as 5.5 and 6.1 lined up; hover the model for its full
 name. Running child agents show by default; a row you open or close keeps your choice for that view.
-Processes and commands alone only reveal a caret: open it to see the Processes summary. Child rows keep the same columns as their parent. A thread with
-child agents and everything under it share one tint color, so each group stands out;
-deeper rows take a slightly stronger shade. A thread without children has no tint.
+Processes and commands alone only reveal a caret: open it to see the Processes summary. Child rows keep the same columns as their parent. A solid line separates
+each thread with child agents, and everything under it, from the rows around it; a dashed line
+separates an orchestrator from its workers.
 In **Settings → Customizations → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
-Choose **Family style → Lines** for solid separators between families and dashed separators between orchestrators and their workers, or keep **Colors** for tints.
+Choose **Family style → Colors** to tint each family instead, with deeper rows a slightly stronger shade.
 Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 
