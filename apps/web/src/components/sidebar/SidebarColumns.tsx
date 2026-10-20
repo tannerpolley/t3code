@@ -130,6 +130,7 @@ export function SidebarThreadColumns(props: {
     role: !settings.codexStyleSidebar || settings.sidebarShowRole,
     provider: !settings.codexStyleSidebar || settings.sidebarShowProvider,
     model: !settings.codexStyleSidebar || settings.sidebarShowModel,
+    version: !settings.codexStyleSidebar || settings.sidebarShowModel,
     effort: !settings.codexStyleSidebar || settings.sidebarShowEffort,
     issue: !settings.codexStyleSidebar || settings.sidebarShowIssueBadge,
     pr: !settings.codexStyleSidebar || settings.sidebarShowPullRequestBadge,
@@ -163,9 +164,11 @@ export function SidebarThreadColumns(props: {
         <span className="sidebar-thread-effort">{props.effort}</span>
       ) : null}
       <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
-        {props.name}
+        <span className="min-w-0 truncate">{props.name}</span>
+        {props.count === undefined ? null : (
+          <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
+        )}
       </span>
-      <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       {columns.issue !== false ? (
         <span className={cn("sidebar-thread-badge sidebar-thread-issue", props.trailingClassName)}>
           {props.issue}
@@ -207,17 +210,24 @@ export function sidebarThreadName(name: string, title: string): ReactNode {
   );
 }
 
-/** The model's name and version cells, with the whole label on hover. */
+/** The model's name and version cells, with the whole label on the name's hover. */
 function SidebarThreadModel(props: { readonly label: string | undefined }) {
-  if (!props.label) return <span className="sidebar-thread-model" />;
+  if (!props.label) {
+    return (
+      <>
+        <span className="sidebar-thread-model" />
+        <span className="sidebar-thread-version" />
+      </>
+    );
+  }
   const { name, version } = splitSidebarModelLabel(props.label);
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="sidebar-thread-model" />}>
-        <span className="sidebar-thread-model-part">{name}</span>
-        <span className="sidebar-thread-model-part">{version}</span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.label}</TooltipPopup>
-    </Tooltip>
+    <>
+      <Tooltip>
+        <TooltipTrigger render={<span className="sidebar-thread-model" />}>{name}</TooltipTrigger>
+        <TooltipPopup side="top">{props.label}</TooltipPopup>
+      </Tooltip>
+      <span className="sidebar-thread-version">{version}</span>
+    </>
   );
 }

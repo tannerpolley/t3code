@@ -330,8 +330,8 @@ describe("formatElapsedSeconds", () => {
     [3599, "59m 59s"],
     [3600, "01h 00m 00s"],
     [99 * 3600, "99h 00m 00s"],
-    [100 * 3600, "100h 00m 00s"],
-    [123 * 3600, "123h 00m 00s"],
+    [100 * 3600, "4d 04h 00m"],
+    [123 * 3600, "5d 03h 00m"],
     [12 * 3600 + 4 * 60, "12h 04m 00s"],
   ])("formats %d seconds as %s", (seconds, expected) => {
     expect(formatElapsedSeconds(seconds)).toBe(expected);

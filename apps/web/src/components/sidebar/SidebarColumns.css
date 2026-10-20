@@ -36,13 +36,12 @@
  * The model's name and version in fixed parts with no gap, so every version starts at the same x.
  * The parts' ch widths resolve in the container's font, like the model track itself.
  */
+/* The model's name and its version sit in their own columns, so every version starts at the same x. */
 @utility sidebar-thread-model {
-  display: grid;
-  grid-template-columns: var(--sidebar-model-name-width) var(--sidebar-model-version-width);
-  align-items: center;
-  min-width: 0;
+  @apply min-w-0 truncate;
+  font-size: 0.6875rem;
 }
-@utility sidebar-thread-model-part {
+@utility sidebar-thread-version {
   @apply min-w-0 truncate;
   font-size: 0.6875rem;
   font-variant-numeric: tabular-nums;
@@ -52,7 +51,10 @@
   @apply min-w-0 truncate;
 }
 @utility sidebar-thread-name {
-  @apply min-w-0 truncate;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
   font-size: inherit;
 }
 @utility sidebar-thread-time {
@@ -69,9 +71,10 @@
   align-items: center;
   overflow: hidden;
 }
+/* A collapsed row's hidden work count follows its title. */
 @utility sidebar-thread-count {
+  flex-shrink: 0;
   font-size: 0.6875rem;
-  text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
@@ -82,7 +85,7 @@
 }
 /* Rows without a model (Processes, commands, processes) start their name at the model's x. */
 .sidebar-thread-name-wide {
-  grid-column: model / count;
+  grid-column: model / issue;
 }
 
 /* Separators overlay rows so changing family style never changes their height. */

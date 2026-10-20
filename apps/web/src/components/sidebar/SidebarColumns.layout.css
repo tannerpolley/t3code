@@ -4,12 +4,7 @@
   inherits: true;
   initial-value: 0px;
 }
-@property --sidebar-model-name-width {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
-@property --sidebar-model-version-width {
+@property --sidebar-version-width {
   syntax: "<length>";
   inherits: true;
   initial-value: 0px;
@@ -19,15 +14,13 @@
   --sidebar-location-width: 0.75rem;
   --sidebar-role-width: 0.75rem;
   --sidebar-provider-width: 1rem;
-  --sidebar-model-width: 8ch;
+  --sidebar-model-width: 5.65ch;
+  --sidebar-version-width: 2.35ch;
   --sidebar-effort-width: 2.5rem;
-  --sidebar-count-width: 1rem;
   --sidebar-issue-width: 2.25rem;
   --sidebar-pr-width: 2.25rem;
   --sidebar-time-width: 4.4375rem;
   --sidebar-work-width: 0.875rem;
-  --sidebar-model-name-width: 5.65ch;
-  --sidebar-model-version-width: 2.35ch;
   --sidebar-column-gap: 3px;
   container: sidebar-columns / inline-size;
   min-width: 0;
@@ -49,13 +42,16 @@
     ) [model] var(--sidebar-model-track, var(--sidebar-model-width)) var(
       --sidebar-model-gap,
       var(--sidebar-column-gap)
+    ) [version] var(--sidebar-version-track, var(--sidebar-version-width)) var(
+      --sidebar-version-gap,
+      var(--sidebar-column-gap)
     ) [effort] var(--sidebar-effort-track, var(--sidebar-effort-width)) var(
       --sidebar-effort-gap,
       var(--sidebar-column-gap)
-    ) [name] minmax(0, 1fr) var(--sidebar-name-gap, var(--sidebar-column-gap)) [count] var(
-      --sidebar-count-track,
-      var(--sidebar-count-width)
-    ) var(--sidebar-count-gap, var(--sidebar-column-gap)) [issue] var(
+    ) [name] minmax(0, max-content) var(
+      --sidebar-name-gap,
+      var(--sidebar-column-gap)
+    ) [spacer] minmax(0, 1fr) var(--sidebar-spacer-gap, var(--sidebar-column-gap)) [issue] var(
       --sidebar-issue-track,
       var(--sidebar-issue-width)
     ) var(--sidebar-issue-gap, var(--sidebar-column-gap)) [pr] var(
@@ -85,14 +81,17 @@
 .sidebar-thread-model {
   grid-column: model;
 }
+.sidebar-thread-version {
+  grid-column: version;
+}
 .sidebar-thread-effort {
   grid-column: effort;
 }
 .sidebar-thread-name {
   grid-column: name;
 }
-.sidebar-thread-count {
-  grid-column: count;
+.sidebar-thread-spacer {
+  grid-column: spacer;
 }
 .sidebar-thread-issue {
   grid-column: issue;
@@ -106,7 +105,7 @@
 .sidebar-thread-work {
   grid-column: work;
 }
-@container sidebar-columns (width < calc(17.5625rem + 33px + 18ch)) {
+@container sidebar-columns (width < calc(16.5625rem + 36px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
@@ -115,12 +114,15 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(15.0625rem + 30px + 18ch)) {
+@container sidebar-columns (width < calc(14.0625rem + 33px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-model-track: 0px;
     --sidebar-model-gap: 0px;
+    --sidebar-version-track: 0px;
+    --sidebar-version-gap: 0px;
   }
-  .sidebar-thread-model {
+  .sidebar-thread-model,
+  .sidebar-thread-version {
     display: none;
   }
 }
