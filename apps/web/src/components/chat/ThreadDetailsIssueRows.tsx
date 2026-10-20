@@ -152,7 +152,7 @@ function IssueRows({
     >
       {/* The heading is the section's own collapse toggle, so no row inside repeats it. */}
       <div className="mb-1 flex min-h-8 min-w-0 items-center justify-between gap-2 px-1.5">
-        <h3 id="thread-details-issues-heading" className="min-w-0">
+        <h3 className="min-w-0">
           <button
             type="button"
             aria-expanded={open}
