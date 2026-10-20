@@ -43,6 +43,7 @@ function layerExecutorFor(input: {
   readonly continueAfterRestart?: boolean;
   readonly changes?: Partial<IssueChangeService.IssueChangeService["Service"]>;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
+  readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -75,19 +76,18 @@ function layerExecutorFor(input: {
     Layer.succeed(
       ProviderTurnStartService.ProviderTurnStartServiceV2,
       ProviderTurnStartService.ProviderTurnStartServiceV2.of({
-        start: () =>
-          Effect.gen(function* () {
-            yield* record("start");
-            if (
-              input.failFirstStart !== undefined &&
-              (yield* Ref.getAndSet(input.failFirstStart, false))
-            ) {
-              return yield* new ProviderTurnStartService.ProviderTurnStartError({
-                runId,
-                cause: "simulated first start failure",
-              });
-            }
-          }),
+        start: Effect.fn("EffectWorkerTestHarness.start")(function* () {
+          yield* record("start");
+          if (
+            input.failFirstStart !== undefined &&
+            (yield* Ref.getAndSet(input.failFirstStart, false))
+          ) {
+            return yield* new ProviderTurnStartService.ProviderTurnStartError({
+              runId,
+              cause: "simulated first start failure",
+            });
+          }
+        }),
       }),
     ),
     Layer.succeed(
@@ -96,7 +96,9 @@ function layerExecutorFor(input: {
     ),
     Layer.succeed(
       CheckpointRollbackService.CheckpointRollbackServiceV2,
-      CheckpointRollbackService.CheckpointRollbackServiceV2.of({ execute: () => Effect.void }),
+      CheckpointRollbackService.CheckpointRollbackServiceV2.of({
+        execute: input.rollback ?? (() => Effect.void),
+      }),
     ),
     Layer.succeed(
       RuntimeRequestService.RuntimeRequestServiceV2,

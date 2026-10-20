@@ -52,6 +52,7 @@ import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -163,6 +164,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
       layerEventSinkProvided,
       IdAllocator.layer,
       layerProviderEventIngestorProvided,
+      TurnItemPositionStore.layer,
     ),
   ),
 );
@@ -303,6 +305,7 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
     Layer.mergeAll(
       layerThreadLaunchProvided,
       layerThreadManagementProvided,
+      layerManagedProjectFoldersProvided,
       layerSecretRequestsProvided,
       IssueWorkStore.layer,
     ),
@@ -421,7 +424,13 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   UsageLimitRecoveryWorker.layer.pipe(
-    Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided)),
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectionStore.layer,
+        layerThreadManagementProvided,
+        layerOrchestratorProvided,
+      ),
+    ),
   ),
   DontAskModeWorker.workerLive.pipe(
     Layer.provide(
@@ -434,4 +443,8 @@ export const layerProduction = Layer.mergeAll(
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
-).pipe(Layer.provide(Scheduler.layer), Layer.provideMerge(layerEventInfrastructure));
+).pipe(
+  Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),
+  Layer.provide(Scheduler.layer),
+  Layer.provideMerge(layerEventInfrastructure),
+);

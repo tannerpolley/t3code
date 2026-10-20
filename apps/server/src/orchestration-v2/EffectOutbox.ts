@@ -98,6 +98,9 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     scopeId: CheckpointScopeId,
   }),
   Schema.Struct({
+    type: Schema.Literal("scheduled-tasks.cleanup"),
+  }),
+  Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
   }),
   Schema.Struct({
@@ -156,6 +159,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-session.detach",
   "provider-thread.rollback",
   "checkpoint.capture",
+  "scheduled-tasks.cleanup",
   "terminal.cleanup",
   "preview.cleanup",
   "attachment.cleanup",
@@ -440,8 +444,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         Effect.mapError((cause) => new EffectOutboxError({ operation, cause })),
       );
 
-    const nextClaimableAt = (lane?: EffectWorkerLane) =>
-      Effect.gen(function* () {
+    const nextClaimableAt = Effect.fn("EffectOutbox.nextClaimableAt")(
+      function* (lane: EffectWorkerLane | undefined) {
         const rows = yield* sql<{ readonly available_at: string | null }>`
           SELECT MIN(candidate.available_at) AS available_at
           FROM orchestration_v2_effect_outbox AS candidate
@@ -457,21 +461,23 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           });
         }
         return parsed;
-      }).pipe(
-        Effect.mapError((cause) =>
-          isEffectOutboxError(cause)
-            ? cause
-            : new EffectOutboxError({ operation: "next-claimable", cause }),
+      },
+      (effect) =>
+        effect.pipe(
+          Effect.mapError((cause) =>
+            isEffectOutboxError(cause)
+              ? cause
+              : new EffectOutboxError({ operation: "next-claimable", cause }),
+          ),
         ),
-      );
+    );
 
     const service: EffectOutboxV2Shape = {
       awaitAvailableInLane: (lane) =>
         Queue.take(lane === "lifecycle" ? available : independentAvailable[lane]),
-      nextClaimableAt: nextClaimableAt(),
-      nextClaimableAtInLane: nextClaimableAt,
-      enqueue: (effects) =>
-        Effect.gen(function* () {
+      nextClaimableAtInLane: (lane) => nextClaimableAt(lane),
+      enqueue: Effect.fn("EffectOutbox.enqueue")(
+        function* (effects) {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
           yield* Effect.forEach(
@@ -506,7 +512,9 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             { concurrency: 1, discard: true },
           );
           // EventSink owns the corresponding post-commit notification.
-        }).pipe(Effect.mapError((cause) => new EffectOutboxError({ operation: "enqueue", cause }))),
+        },
+        Effect.mapError((cause) => new EffectOutboxError({ operation: "enqueue", cause })),
+      ),
       get: (effectId) =>
         sql<EffectRow>`
           SELECT *
@@ -538,8 +546,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               : new EffectOutboxError({ operation: "list", cause }),
           ),
         ),
-      cancelUnsettled: ({ threadId, effectTypes, reason }) =>
-        Effect.gen(function* () {
+      cancelUnsettled: Effect.fn("EffectOutbox.cancelUnsettled")(
+        function* ({ threadId, effectTypes, reason }) {
           if (effectTypes.length === 0) return [];
           const now = DateTime.formatIso(yield* DateTime.now);
           const rows = yield* sql<{ readonly effect_id: string }>`
@@ -557,40 +565,36 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             RETURNING effect_id
           `;
           return rows.map(({ effect_id }) => effect_id);
-        }).pipe(
-          Effect.mapError(
-            (cause) => new EffectOutboxError({ operation: "cancel-unsettled", cause }),
-          ),
-        ),
-      signalCancellations: (effectIds) =>
-        Effect.gen(function* () {
-          yield* Effect.forEach(
-            effectIds,
-            (effectId) => {
-              const signal = cancellationSignals.get(effectId);
-              return signal === undefined ? Effect.void : Deferred.succeed(signal, undefined);
-            },
-            { discard: true },
-          );
-          yield* signalSettled(effectIds);
-          if (effectIds.length > 0) yield* notifyAvailable(effectIds.length);
-        }),
+        },
+        Effect.mapError((cause) => new EffectOutboxError({ operation: "cancel-unsettled", cause })),
+      ),
+      signalCancellations: Effect.fn("EffectOutbox.signalCancellations")(function* (effectIds) {
+        yield* Effect.forEach(
+          effectIds,
+          (effectId) => {
+            const signal = cancellationSignals.get(effectId);
+            return signal === undefined ? Effect.void : Deferred.succeed(signal, undefined);
+          },
+          { discard: true },
+        );
+        yield* signalSettled(effectIds);
+        if (effectIds.length > 0) yield* notifyAvailable(effectIds.length);
+      }),
       awaitCancellation: (effectId) => Deferred.await(cancellationSignal(effectId)),
       clearCancellation: (effectId) =>
         Effect.sync(() => {
           cancellationSignals.delete(effectId);
         }),
-      awaitSettled: (effectId) =>
-        Effect.gen(function* () {
-          // Registered before the read, so a settle right after it still resolves.
-          const signal = settledSignals.get(effectId) ?? Deferred.makeUnsafe<void>();
-          settledSignals.set(effectId, signal);
-          const effect = yield* service.get(effectId);
-          if (Option.exists(effect, ({ status }) => status === "pending" || status === "running")) {
-            return yield* Deferred.await(signal);
-          }
-          yield* signalSettled([effectId]);
-        }),
+      awaitSettled: Effect.fn("EffectOutbox.awaitSettled")(function* (effectId) {
+        // Registered before the read, so a settle right after it still resolves.
+        const signal = settledSignals.get(effectId) ?? Deferred.makeUnsafe<void>();
+        settledSignals.set(effectId, signal);
+        const effect = yield* service.get(effectId);
+        if (Option.exists(effect, ({ status }) => status === "pending" || status === "running")) {
+          return yield* Deferred.await(signal);
+        }
+        yield* signalSettled([effectId]);
+      }),
       reconcileAfterProcessLoss: Effect.gen(function* () {
         const now = DateTime.formatIso(yield* DateTime.now);
         const cancelledRows = yield* sql<{ readonly effect_id: string }>`
@@ -626,8 +630,9 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           (cause) => new EffectOutboxError({ operation: "reconcile-process-loss", cause }),
         ),
       ),
-      claimNext: ({ workerId, leaseDurationMs, excludeRestartContinuations = false, lane }) =>
-        Effect.gen(function* () {
+      // The worker polls for the next effect even when there is no work to claim.
+      claimNext: Effect.fnUntraced(
+        function* ({ workerId, leaseDurationMs, excludeRestartContinuations = false, lane }) {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
           const leaseExpiresAt = DateTime.formatIso(
@@ -660,9 +665,12 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           if (row === undefined) return Option.none();
           cancellationSignals.set(row.effect_id, Deferred.makeUnsafe<void>());
           return Option.some(yield* rowToEffect(row));
-        }).pipe(Effect.mapError((cause) => new EffectOutboxError({ operation: "claim", cause }))),
-      succeed: ({ effectId, workerId }) =>
-        Effect.gen(function* () {
+        },
+        Effect.mapError((cause) => new EffectOutboxError({ operation: "claim", cause })),
+      ),
+      nextClaimableAt: nextClaimableAt(undefined),
+      succeed: Effect.fn("EffectOutbox.succeed")(
+        function* ({ effectId, workerId }) {
           const now = DateTime.formatIso(yield* DateTime.now);
           const rows = yield* sql<{ readonly effect_id: string }>`
             UPDATE orchestration_v2_effect_outbox
@@ -684,13 +692,16 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             yield* notifyAvailable();
           }
           return rows.length === 1;
-        }).pipe(
-          Effect.mapError(
-            (cause) => new EffectOutboxError({ operation: "succeed", effectId, cause }),
+        },
+        (effect, { effectId }) =>
+          effect.pipe(
+            Effect.mapError(
+              (cause) => new EffectOutboxError({ operation: "succeed", effectId, cause }),
+            ),
           ),
-        ),
-      retry: ({ effectId, workerId, error, delayMs }) =>
-        Effect.gen(function* () {
+      ),
+      retry: Effect.fn("EffectOutbox.retry")(
+        function* ({ effectId, workerId, error, delayMs }) {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
           const availableAt = DateTime.formatIso(
@@ -715,13 +726,16 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             yield* notifyAvailable();
           }
           return rows.length === 1;
-        }).pipe(
-          Effect.mapError(
-            (cause) => new EffectOutboxError({ operation: "retry", effectId, cause }),
+        },
+        (effect, { effectId }) =>
+          effect.pipe(
+            Effect.mapError(
+              (cause) => new EffectOutboxError({ operation: "retry", effectId, cause }),
+            ),
           ),
-        ),
-      fail: ({ effectId, workerId, error }) =>
-        Effect.gen(function* () {
+      ),
+      fail: Effect.fn("EffectOutbox.fail")(
+        function* ({ effectId, workerId, error }) {
           const now = DateTime.formatIso(yield* DateTime.now);
           const rows = yield* sql<{ readonly effect_id: string }>`
             UPDATE orchestration_v2_effect_outbox
@@ -743,9 +757,14 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             yield* notifyAvailable();
           }
           return rows.length === 1;
-        }).pipe(
-          Effect.mapError((cause) => new EffectOutboxError({ operation: "fail", effectId, cause })),
-        ),
+        },
+        (effect, { effectId }) =>
+          effect.pipe(
+            Effect.mapError(
+              (cause) => new EffectOutboxError({ operation: "fail", effectId, cause }),
+            ),
+          ),
+      ),
       pruneSettled: Effect.gen(function* () {
         const cutoff = DateTime.formatIso(
           DateTime.subtractDuration(yield* DateTime.now, SETTLED_EFFECT_RETENTION),

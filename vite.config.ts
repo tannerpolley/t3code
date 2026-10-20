@@ -2,6 +2,8 @@ import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 
+const DOM_TEST_ENVIRONMENT_ALLOWLIST: Array<string> = [];
+
 const RESTRICTED_IMPORT_PATHS = [
   {
     name: "@t3tools/client-runtime",
@@ -90,6 +92,7 @@ export default defineConfig({
       "**/routeTree.gen.ts",
       "**/*.graphql.ts",
       "packages/source-control-github/schema/**",
+      "apps/server/schema/**",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
@@ -118,6 +121,7 @@ export default defineConfig({
       "**/routeTree.gen.ts",
       "**/*.graphql.ts",
       "packages/source-control-github/schema/**",
+      "apps/server/schema/**",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
@@ -173,10 +177,30 @@ export default defineConfig({
       "t3code/no-unscoped-has": "error",
       "t3code/namespace-node-imports": "error",
       "t3code/prefer-catch-tags": "error",
+      "t3code/prefer-effect-fn": "error",
       "t3code/require-centered-scroll-gutter": "error",
       "t3code/require-suppression-reason": "error",
     },
     overrides: [
+      {
+        files: [
+          "**/*.{test,spec,testkit}.{ts,tsx}",
+          "**/{test,tests,testkit,testing,fixtures,integration}/**",
+          "packages/provider-testing/**",
+        ],
+        rules: { "t3code/prefer-effect-fn": "off" },
+      },
+      {
+        // Warns while the remaining web component tests move to apps/web/test/render.tsx.
+        // Raise to "error" once `vp lint` reports no t3code(require-disposable-render) warnings.
+        files: ["apps/web/**/*.test.tsx"],
+        rules: { "t3code/require-disposable-render": "warn" },
+      },
+      {
+        files: ["apps/**/src/**", "packages/**/src/**"],
+        excludeFiles: DOM_TEST_ENVIRONMENT_ALLOWLIST,
+        rules: { "t3code/no-dom-test-environment": "error" },
+      },
       {
         files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
@@ -379,6 +403,13 @@ export default defineConfig({
         // the manual memo hooks go once the allowlist there is empty.
         files: ["apps/mobile/src/**/*.{ts,tsx}"],
         rules: { "t3code/no-manual-memo": ["error", { allowMemoHooks: true }] },
+      },
+      {
+        // The compiler only compiles a use* function that calls a hook; one that calls none is
+        // silently left as a plain function, so whatever it returns loses its caching.
+        files: ["apps/web/src/**/*.{ts,tsx}", "apps/mobile/src/**/*.{ts,tsx}"],
+        excludeFiles: ["**/*.test.ts", "**/*.test.tsx"],
+        rules: { "t3code/no-hookless-use-function": "error" },
       },
       {
         files: [

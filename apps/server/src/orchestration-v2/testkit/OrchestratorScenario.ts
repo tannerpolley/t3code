@@ -134,6 +134,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "repository.work.continue":
     case "issue.work.start":
     case "thread.create":
+    case "thread.stop":
     case "thread.archive":
     case "thread.unarchive":
     case "thread.delete":

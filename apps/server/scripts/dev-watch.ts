@@ -9,6 +9,7 @@ import * as NodePath from "node:path";
 const packagesDir = NodePath.join(import.meta.dirname, "../../../packages");
 const watchPaths = [
   "src",
+  "package.json",
   ...NodeFS.readdirSync(packagesDir)
     .map((name) => NodePath.join(packagesDir, name, "src"))
     .filter((path) => NodeFS.existsSync(path)),

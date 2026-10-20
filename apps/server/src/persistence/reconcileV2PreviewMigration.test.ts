@@ -45,6 +45,9 @@ describe("V2 preview upgrade", () => {
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
         [63, "DropUnusedV1Projections"],
+        [64, "CanonicalizeThreadPullRequestLinks"],
+        [65, "CodexUsageNativeTurnIndex"],
+        [66, "RepairClientSettlementTimestamps"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -138,6 +141,10 @@ describe("V2 preview upgrade", () => {
         [60, "ThreadSnapshotWindowIndexes"],
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
+        [63, "DropUnusedV1Projections"],
+        [64, "CanonicalizeThreadPullRequestLinks"],
+        [65, "CodexUsageNativeTurnIndex"],
+        [66, "RepairClientSettlementTimestamps"],
       ]);
       // The preview reconciler moves the fork's 56 to 57; the fork ledger then takes it as 1.
       assert.deepStrictEqual(
@@ -229,6 +236,9 @@ describe("V2 preview upgrade", () => {
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
         [63, "DropUnusedV1Projections"],
+        [64, "CanonicalizeThreadPullRequestLinks"],
+        [65, "CodexUsageNativeTurnIndex"],
+        [66, "RepairClientSettlementTimestamps"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

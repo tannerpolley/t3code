@@ -4,7 +4,7 @@ import {
   MIN_SIDEBAR_TEXT_SIZE,
   SidebarTextSize,
 } from "@t3tools/contracts/settings";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings as updateSettings } from "../../hooks/useSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { ForkSettingsRow } from "./ForkSettingsRow";
 import { SettingResetButton } from "./settingsLayout";
@@ -25,7 +25,6 @@ const isSidebarTextSize = Schema.is(SidebarTextSize);
 
 export function ForkSidebarTextSizeSettings() {
   const settings = useClientSettings();
-  const updateSettings = useUpdateClientSettings();
   return TEXT_SIZE_ROWS.map(({ key, searchId }) => {
     const setting = searchableSetting(searchId);
     const size = settings[key];

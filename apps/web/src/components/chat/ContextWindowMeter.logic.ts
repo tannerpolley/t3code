@@ -1,6 +1,7 @@
 import type { ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+  COMPACTION_SUGGESTION_MIN_TOKENS,
   isClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
 import {
@@ -9,9 +10,8 @@ import {
 } from "../../providerInstances";
 import { getTriggerDisplayModelName, type ModelEsque } from "./providerIconUtils";
 
-// An idle-session heuristic when the provider does not report its prompt cache TTL.
-const RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
-const RESUME_COMPACTION_TOKENS = 100_000;
+// Used when the provider did not report its cache TTL: Claude's 1h cache plus slack.
+const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
 
 export function providerSupportsManualCompaction(
   provider: ProviderInstanceEntry | null | undefined,
@@ -70,8 +70,8 @@ export function shouldOfferResumeCompaction(input: {
   readonly now: string;
 }): boolean {
   if (
-    (input.provider !== "claudeAgent" && input.provider !== "codex") ||
-    (input.usedTokens ?? 0) < RESUME_COMPACTION_TOKENS
+    input.provider !== "claudeAgent" ||
+    (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
   ) {
     return false;
   }
@@ -81,7 +81,7 @@ export function shouldOfferResumeCompaction(input: {
   return (
     Number.isFinite(updatedAt) &&
     Number.isFinite(now) &&
-    now - updatedAt >= (input.promptCacheTtlMs ?? RESUME_COMPACTION_FALLBACK_MS)
+    now - updatedAt >= (input.promptCacheTtlMs ?? CLAUDE_RESUME_COMPACTION_FALLBACK_MS)
   );
 }
 
@@ -105,7 +105,7 @@ export function formatContextWindowCompactionMessage(
   autoCompactThreshold?: number | null,
 ): string {
   if (typeof autoCompactThreshold === "number" && autoCompactThreshold > 0) {
-    return `Compacts automatically at ${autoCompactThreshold.toLocaleString("en-US")} tokens.`;
+    return `Compacts automatically at about ${autoCompactThreshold.toLocaleString("en-US")} tokens.`;
   }
   return modelDisplayName
     ? `Context for ${modelDisplayName} compacts automatically when needed.`

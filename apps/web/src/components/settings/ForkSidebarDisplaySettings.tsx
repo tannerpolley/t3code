@@ -1,4 +1,4 @@
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings as updateSettings } from "../../hooks/useSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ForkSettingsRow } from "./ForkSettingsRow";
@@ -17,7 +17,6 @@ const DISPLAY_ROWS = [
 
 export function ForkSidebarDisplaySettings() {
   const settings = useClientSettings();
-  const updateSettings = useUpdateClientSettings();
   if (!settings.codexStyleSidebar) return null;
   return (
     <SettingsSection title="Sidebar & projects">

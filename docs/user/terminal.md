@@ -33,3 +33,15 @@ the agent's context once, on its next normal turn or when you steer an active tu
 Compacting a conversation leaves results for the next normal turn. When several results
 are waiting, the newest are shared first within a 16 KiB limit; earlier results wait for
 a later turn.
+
+## fish
+
+T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal
+replies. This disables optional fish features that depend on those replies.
+T3 Code's exported `fish_features` also hides any universal flags you set with
+`set -U fish_features`.
+
+To preserve those flags or enable queries with `query-term`, include them in
+`fish_features` in the environment that launches T3 Code. A shell export applies
+when you launch T3 Code from that shell; it does not configure a desktop app
+launched from the Dock or Finder. Enabling queries can restore the startup wait.

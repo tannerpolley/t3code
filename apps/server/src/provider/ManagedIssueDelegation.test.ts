@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
-import { codexThreadRuntimeParams } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import {
   claudeEffectiveQueryPolicyKey,
   claudeMcpQueryOverrides,
@@ -9,28 +8,7 @@ import {
   makeClaudeQueryOptions,
 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 
-describe("repository-managed native delegation", () => {
-  it("overrides native spawning only for managed Codex sessions", () => {
-    const threadId = ThreadId.make("managed-codex");
-    const session = {
-      environmentId: EnvironmentId.make("managed-environment"),
-      threadId,
-      providerSessionId: "managed-session",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      endpoint: "http://127.0.0.1:43123/mcp",
-      authorizationHeader: "Bearer test-token",
-      browserToolsAvailable: false,
-    };
-    assert.isUndefined(
-      codexThreadRuntimeParams({ mcpSession: session }).config["features.multi_agent"],
-    );
-    const managed = codexThreadRuntimeParams({
-      mcpSession: { ...session, managedIssue: true },
-    }).config;
-    assert.isFalse(managed["features.multi_agent"]);
-    assert.isFalse(managed["features.multi_agent_v2"]);
-  });
-
+describe("repository-managed Claude delegation", () => {
   it("removes Claude spawning tools in bypass mode and changes the live-query reuse key", () => {
     const threadId = ThreadId.make("managed-claude");
     const session = {

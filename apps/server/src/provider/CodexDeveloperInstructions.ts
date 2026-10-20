@@ -4,9 +4,16 @@ import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeI
 
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
-  t3OrchestrationBaseInstructions,
+  t3OrchestrationSections,
   t3ModelRolesInstructions,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
+
+/**
+ * Codex cuts the middle out of any `additionalContext` value over 1,000 tokens,
+ * which it counts as UTF-8 bytes divided by four. It does this silently, so
+ * every value built here has to fit.
+ */
+export const CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES = 4_000;
 
 const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = `## T3 Code devices
 
@@ -184,7 +191,7 @@ In Default mode, make reasonable assumptions for routine, reversible choices. Wh
 export interface CodexRuntimeInfo {
   readonly model: string;
   readonly modelName?: string | undefined;
-  readonly reasoningEffort: string;
+  readonly reasoningEffort?: string | undefined;
 }
 
 export function buildCodexDeveloperInstructions(interactionMode: ProviderInteractionMode): string {
@@ -206,12 +213,15 @@ export function buildCodexAdditionalContext(
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
   const roles = t3ModelRolesInstructions(modelRoles).trim();
-  // Separate keys keep each value under Codex's per-entry token cap.
+  const orchestrationSections = t3OrchestrationSections(managedIssue);
+  // Codex silently truncates any individual value over 1,000 tokens.
   return {
-    t3_code_orchestration: {
-      kind: "application",
-      value: t3OrchestrationBaseInstructions(managedIssue),
-    },
+    ...Object.fromEntries(
+      orchestrationSections.map((section, index) => [
+        `t3_code_orchestration_${String(index + 1).padStart(2, "0")}`,
+        { kind: "application" as const, value: section },
+      ]),
+    ),
     t3_code_runtime: {
       kind: "application",
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),

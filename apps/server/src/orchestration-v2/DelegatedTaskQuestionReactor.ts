@@ -82,8 +82,9 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const handle: DelegatedTaskQuestionReactor["Service"]["handle"] = (event) =>
-    Effect.gen(function* () {
+  // Runs for every domain event; most events return before any work is needed.
+  const handle: DelegatedTaskQuestionReactor["Service"]["handle"] = Effect.fnUntraced(
+    function* (event) {
       const prompt = yield* delegatedRequestPromptEvent(projections, event);
       if (prompt !== undefined) return yield* handle(prompt);
       if (event.type === "run.updated") {
@@ -183,14 +184,17 @@ const make = Effect.gen(function* () {
         return;
       }
       yield* wakeParent(task, request);
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("waking the parent of a delegated task question failed", {
-          threadId: event.threadId,
-          cause,
-        }),
+    },
+    (effect, event) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("waking the parent of a delegated task question failed", {
+            threadId: event.threadId,
+            cause,
+          }),
+        ),
       ),
-    );
+  );
 
   const start: DelegatedTaskQuestionReactor["Service"]["start"] = () =>
     forkParked(

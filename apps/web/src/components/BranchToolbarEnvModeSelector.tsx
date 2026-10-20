@@ -20,6 +20,9 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { useAtomValue } from "@effect/atom-react";
+import { shortcutLabelForCommand } from "../keybindings";
+import { primaryServerKeybindingsAtom } from "../state/server";
 
 const RETURN_TO_ROOT_SELECT_VALUE = "return-to-root";
 
@@ -51,6 +54,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   onUsePreviousWorktree,
 }: BranchToolbarEnvModeSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
+  const shortcutLabel = shortcutLabelForCommand(
+    useAtomValue(primaryServerKeybindingsAtom),
+    "composer.workspace",
+  );
   const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
   const envModeItems = [
     {
@@ -150,6 +157,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           {effectiveEnvMode === "worktree"
             ? resolveEnvModeLabel("worktree")
             : resolveCurrentWorkspaceLabel(activeWorktreePath)}
+          {shortcutLabel ? ` · ${shortcutLabel}` : null}
         </TooltipPopup>
       </Tooltip>
       <SelectPopup

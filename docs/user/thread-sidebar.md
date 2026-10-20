@@ -159,7 +159,7 @@ spot where the thread will land. Drops into either section keep the position you
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
 settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
-or **Settled** to drag a parked thread back into either live section. Each drop saves; **Done** returns to the thread list.
+or **Settled** to drag a parked thread back into either live section. Each drop saves; close the sheet to return to the thread list.
 **Move up** and **Move down** are also available in the thread menu. The server
 saves the order, so it survives a refresh and appears on your other connected devices.
 
@@ -227,7 +227,8 @@ Press `Escape` while dragging to cancel.
 
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
-thread. Work in progress, pending questions or approvals, and live background work
+thread. An empty thread's inactivity counts from when it was created.
+Work in progress, pending questions or approvals, and live background work
 prevent automatic settlement. An open pull request does not prevent inactivity
 settlement unless you turn on **Keep threads with a PR** in **Settings → General**,
 but an old closed or merged pull request does not settle work you
@@ -280,6 +281,14 @@ Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 
 On web and desktop, choose **Usage limit recovery** in **Settings → General**:
+
+When the provider reports a reset time, choose **Resume at reset** to schedule a
+continuation. You can cancel it from the thread. Enable **Auto-resume limited
+threads** in **Settings → General** on web and desktop, or **Settings → Thread
+behavior** on mobile, to schedule limit stops by default.
+The environment must be running when the reset arrives; it resumes overdue
+continuations after a restart. Stopping the thread, sending a new message,
+archiving, or settling it prevents a pending continuation from starting.
 
 - **Off** leaves recovery to you.
 - **Wait for reset** snoozes and continues limited threads when the reported allowance returns.
@@ -409,3 +418,7 @@ see the thread's name.
 
 Widen the sidebar to compare all columns. As it narrows, effort disappears
 first, followed by model. The caret, name, and work status remain.
+
+A snoozed thread keeps working and stays hidden until its wake time, even while
+its agent wakes itself for background work. It comes back early only when it needs
+an approval or answer from you, when a run fails, or when you send it a message.

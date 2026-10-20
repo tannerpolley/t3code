@@ -4,7 +4,11 @@ import {
   SidebarThreadColumns,
   sidebarThreadName,
 } from "../sidebar/SidebarColumns";
-import { shortModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  deriveProviderSubagentStatus,
+  formatModelSelectionEffort,
+  shortModelSelectionEffort,
+} from "@t3tools/client-runtime/state/thread-execution";
 import { useAtomValue } from "@effect/atom-react";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { ThreadLocationIcon } from "../ThreadLocationIcon";
@@ -23,7 +27,6 @@ import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
 import {
   deriveWorkflowGroups,
   projectedSubagentsToRuntime,
@@ -50,6 +53,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   isOrchestrationV2WorkActive,
+  isProviderNativeSubagentThread,
   NodeId,
   type EnvironmentId,
   type OrchestrationV2PendingBackgroundTask,
@@ -238,9 +242,9 @@ function currentSubagent<Agent extends RuntimeSubagent>(
   agent: Agent | undefined,
   childThread: OrchestrationV2ThreadShell | null | undefined,
 ): Agent | undefined {
+  if (!agent || !childThread || isOrchestrationV2WorkActive(agent.status)) return agent;
   const liveStatus =
-    childThread?.activityRunStatus ?? (childThread?.status === "queued" ? "queued" : null);
-  if (!agent || !childThread) return agent;
+    childThread.activityRunStatus ?? (childThread.status === "queued" ? "queued" : null);
   const newerRun =
     childThread.latestRunRequestedAt &&
     DateTime.toEpochMillis(childThread.latestRunRequestedAt) >
@@ -275,6 +279,9 @@ export function ThreadRelationshipsPanel(props: {
   const relationshipShells = useThreadRelationshipShells(ref);
   const allProjects = useProjects();
   const archived = useArchivedThreadSnapshots([props.environmentId]);
+  const archivedShells = archived.snapshots.find(
+    (entry) => entry.environmentId === props.environmentId,
+  )?.snapshot.threads;
   const lineageDetailsExpandedById = useUiStateStore((store) => store.lineageDetailsExpandedById);
   const setLineageDetailsExpanded = useUiStateStore((store) => store.setLineageDetailsExpanded);
   const lineageAgentsClearedAtById = useUiStateStore((store) => store.lineageAgentsClearedAtById);
@@ -317,9 +324,6 @@ export function ThreadRelationshipsPanel(props: {
   // the panel's hooks where the compiler can cache them.
   const providers = providersByEnvironment.get(props.environmentId);
   const projects = allProjects.filter((project) => project.environmentId === props.environmentId);
-  const archivedShells = archived.snapshots.find(
-    (entry) => entry.environmentId === props.environmentId,
-  )?.snapshot.threads;
   const projected = projection?.subagents ?? [];
   const runtimeSubagents = projectedSubagentsToRuntime(projected);
   const byId = new Map(runtimeSubagents.map((agent) => [agent.id, agent]));
@@ -352,6 +356,19 @@ export function ThreadRelationshipsPanel(props: {
   const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
   const currentThread = projection?.thread ?? graph.nodes.get(props.threadId)?.thread;
   const currentThreadShell = graph.nodes.get(props.threadId)?.thread;
+  const parentThreadId =
+    currentThread?.forkedFrom?.type === "run"
+      ? currentThread.forkedFrom.threadId
+      : currentThread?.lineage.parentThreadId;
+  const parentShell = parentThreadId ? graph.nodes.get(parentThreadId)?.thread : undefined;
+  const parentRef =
+    parentShell && isProviderNativeSubagentThread(parentShell)
+      ? scopeThreadRef(props.environmentId, parentShell.id)
+      : null;
+  const parentProjection = useThreadProjection(parentRef)?.projection;
+  const parentNativeStatus = parentProjection
+    ? deriveProviderSubagentStatus(parentProjection)?.status
+    : undefined;
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
@@ -450,8 +467,8 @@ export function ThreadRelationshipsPanel(props: {
   ];
   const runningCount =
     (projection?.subagents.filter(
-      (agent) => agent.childThreadId === null && isOrchestrationV2WorkActive(agent.status),
-    ).length ?? 0) + active.length;
+      (agent) => agent.childThreadId === null && agent.status === "running",
+    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
   const parentTasks =
     currentThreadShell?.lineage.parentThreadId == null
       ? []
@@ -609,7 +626,10 @@ export function ThreadRelationshipsPanel(props: {
                   const isSubagent = edge.kind === "subagent";
                   const isMergeTarget = threadId === mergeTargetThreadId;
                   const isParent = isParentThreadRelationship(edge, props.threadId);
-                  const rowStatus = threadRelationshipRowStatus(graph, { threadId, edge });
+                  const rowStatus =
+                    (isParent && threadId === parentRef?.threadId
+                      ? (node?.thread?.activityRunStatus ?? parentNativeStatus)
+                      : undefined) ?? threadRelationshipRowStatus(graph, { threadId, edge });
                   const RelationshipIcon = isParent
                     ? CornerLeftUpIcon
                     : isSubagent

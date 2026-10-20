@@ -85,7 +85,7 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
 }: ChatHeaderProps) {
-  const activeProjectName = activeProject?.title;
+  const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const activeProjectKey = activeProject

@@ -5,6 +5,7 @@ import {
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -193,6 +194,8 @@ function claudeAuthStatus(
 // Amazon Bedrock initializes far slower than first-party auth: the SDK boots the Bedrock
 // backend and runs the `awsAuthRefresh` credential hook before returning account info.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+// Native CLI startup on Windows can exceed the shared probe deadline.
+const CLAUDE_VERSION_CHECK_TIMEOUT_MS = 20_000;
 
 export const CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES = [
   "user",
@@ -258,7 +261,7 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
-type ClaudeCapabilitiesProbe = {
+export type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly workspaceId?: string | undefined;
   readonly subscriptionType: string | undefined;
@@ -436,10 +439,13 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
-    Effect.result,
-    Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
+    Effect.tapError((error) =>
+      Effect.logWarning("Claude capability probe failed.", { errorTag: error._tag }),
+    ),
   );
 };
+
+type ClaudeCapabilitiesProbeError = Effect.Error<ReturnType<typeof probeClaudeCapabilities>>;
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
@@ -467,7 +473,10 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
-  const capabilities = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false);
+  const probeResult = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(
+    Effect.result,
+  );
+  const capabilities = Result.isSuccess(probeResult) ? probeResult.success : undefined;
   return {
     ...machineSnapshot,
     skills,
@@ -483,7 +492,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
     claudeSettings: ClaudeSettings,
-  ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
+  ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined, ClaudeCapabilitiesProbeError>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -524,7 +533,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ["--version"],
     resolvedEnvironment,
     cwd,
-  ).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  ).pipe(Effect.timeoutOption(CLAUDE_VERSION_CHECK_TIMEOUT_MS), Effect.result);
 
   if (Result.isFailure(versionProbe)) {
     const error = versionProbe.failure;
@@ -596,9 +605,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
-  const capabilities = resolveCapabilities
-    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+  const probeResult = resolveCapabilities
+    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.result)
     : undefined;
+  const capabilities =
+    probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
+  const probeFailure =
+    probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
   const { skills, plugins } = yield* discoverClaudeSkillsAndPlugins(
     claudeSettings,
     cwd,
@@ -622,12 +635,23 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: parsedVersion,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Could not verify Claude authentication status from initialization result.",
+        message: probeFailure
+          ? Cause.isTimeoutError(probeFailure)
+            ? `Timed out after ${CAPABILITIES_PROBE_TIMEOUT_MS / 1_000}s while checking Claude account status.`
+            : "Claude Agent CLI failed while checking account status."
+          : "Could not verify Claude authentication status from initialization result.",
       },
     });
   }
 
-  if (claudeAuthStatus(capabilities) === "unauthenticated") {
+  // First-party account fields cannot verify custom endpoint credentials.
+  const endpoint = URL.parse(resolvedEnvironment.ANTHROPIC_BASE_URL?.trim() ?? "");
+  const customApiEndpoint =
+    endpoint !== null &&
+    (endpoint.protocol === "http:" || endpoint.protocol === "https:") &&
+    endpoint.hostname !== "" &&
+    endpoint.hostname !== "api.anthropic.com";
+  if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -649,7 +673,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
-    }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+    }) ??
+    apiProviderAuthMetadata(capabilities.apiProvider) ??
+    (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined);
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
@@ -696,11 +722,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-export const makePendingClaudeProvider = (
-  claudeSettings: ClaudeSettings,
-  modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
-): Effect.Effect<ServerProviderDraft> =>
-  Effect.gen(function* () {
+export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingClaudeProvider")(
+  function* (
+    claudeSettings: ClaudeSettings,
+    modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
+  ): Effect.fn.Return<ServerProviderDraft> {
     const checkedAt = yield* nowIso;
     const models = providerModelsFromSettings(
       modelCatalog.models.map((entry) => entry.model),
@@ -737,6 +763,7 @@ export const makePendingClaudeProvider = (
         message: "Claude provider status has not been checked in this session yet.",
       },
     });
-  });
+  },
+);
 
 export { probeClaudeCapabilities };

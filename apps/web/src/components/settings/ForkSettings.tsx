@@ -16,7 +16,7 @@ import {
 import { ChevronRightIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings as updateSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import {
   describeLocalServerHideRule,
@@ -210,7 +210,6 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
 
 function CustomizationSwitchRows({ section }: { readonly section: CustomizationSection }) {
   const settings = useClientSettings();
-  const updateSettings = useUpdateClientSettings();
   return CUSTOMIZATION_SWITCHES.filter((entry) => entry.section === section).map(
     ({ key, searchId, description }) => (
       <SettingsRow
@@ -444,7 +443,6 @@ const SIDEBAR_THREAD_SORT_ORDER_LABELS = {
 
 function ForkGeneralSettings() {
   const settings = useClientSettings();
-  const updateSettings = useUpdateClientSettings();
   return (
     <>
       <CustomizationsGroup title="Sidebar & projects" section="sidebar">
@@ -619,7 +617,6 @@ function ForkGeneralBehaviorRows() {
 
 function ForkAppearanceSettings() {
   const settings = useClientSettings();
-  const updateSettings = useUpdateClientSettings();
   return (
     <>
       <CustomizationsGroup title="Interface & project icons" section="appearance">

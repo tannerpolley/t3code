@@ -529,6 +529,26 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
   return thread.lineage.relationshipToParent === "subagent";
 }
 
+// Subagent threads have no sidebar row, so an open subagent is represented by
+// its nearest non-subagent ancestor. A broken chain (missing parent, cycle,
+// other environment) resolves to the thread itself, which then matches no row.
+export function resolveSidebarRowThreadId(
+  threadId: ThreadId,
+  environmentId: EnvironmentId,
+  threads: readonly Pick<SidebarThreadSummary, "id" | "environmentId" | "lineage">[],
+): ThreadId {
+  const findThread = (id: ThreadId) =>
+    threads.find((thread) => thread.id === id && thread.environmentId === environmentId);
+  const visited = new Set<ThreadId>();
+  let thread = findThread(threadId);
+  while (thread !== undefined && isSidebarSubagentThread(thread)) {
+    if (thread.lineage.parentThreadId === null || visited.has(thread.id)) return threadId;
+    visited.add(thread.id);
+    thread = findThread(thread.lineage.parentThreadId);
+  }
+  return thread?.id ?? threadId;
+}
+
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> &
     Partial<Pick<SidebarThreadSummary, "hasPendingApprovals" | "hasPendingUserInput">> & {
@@ -595,6 +615,7 @@ export interface ThreadStatusPill {
     | "Working"
     | "Connecting"
     | "Completed"
+    | "Failed"
     | "Pending Approval"
     | "Awaiting Input"
     | "Waiting"
@@ -607,6 +628,7 @@ export interface ThreadStatusPill {
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
+  Failed: 3.5,
   Working: 3,
   Connecting: 3,
   Waiting: 2.5,
@@ -626,6 +648,7 @@ type ThreadStatusInput = Pick<
 > & {
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
+  blockedOnThreadWait?: boolean | undefined;
 };
 
 export interface ThreadJumpHintVisibilityController {
@@ -753,6 +776,20 @@ export function resolveThreadStatusMark(
 ): SidebarThreadStatus | "done" {
   const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
   return status === "ready" && hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "done" : status;
+}
+
+/**
+ * A failed latest run the person hasn't looked at since it ended. Unlike a
+ * completion, a thread nobody has opened yet (an automation's, say) counts:
+ * its failure still needs someone.
+ */
+function hasUnseenFailure(thread: ThreadStatusInput): boolean {
+  if (thread.latestRun?.status !== "failed") return false;
+  if (!thread.lastVisitedAt) return true;
+  const completedAt = Date.parse(thread.latestRun.completedAt ?? "");
+  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
+  if (Number.isNaN(completedAt) || Number.isNaN(lastVisitedAt)) return true;
+  return completedAt > lastVisitedAt;
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
@@ -937,7 +974,11 @@ export function shouldRecedeSidebarThread(input: {
 
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
-  "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest" | "runtime"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+  | "pendingSubagentRequest"
+  | "runtime"
+  | "blockedOnThreadWait"
 > &
   Partial<Pick<SidebarThreadSummary, "latestRun">>;
 
@@ -947,6 +988,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   }
   if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
     return "input";
+  }
+  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
+    return "waiting";
   }
   if (
     thread.runtime !== null &&
@@ -1394,7 +1438,10 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.runtime?.status === "running" || thread.runtime?.status === "waiting") {
+  if (
+    (thread.runtime?.status === "running" && thread.blockedOnThreadWait !== true) ||
+    thread.runtime?.status === "waiting"
+  ) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -1416,11 +1463,23 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) {
+  if (
+    (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) ||
+    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
     return {
       label: "Waiting",
       colorClass: "text-sidebar-muted-foreground",
       dotClass: "bg-sidebar-muted-foreground",
+      pulse: false,
+    };
+  }
+
+  if (hasUnseenFailure(thread)) {
+    return {
+      label: "Failed",
+      colorClass: "text-red-600 dark:text-red-300/90",
+      dotClass: "bg-red-500 dark:bg-red-300/90",
       pulse: false,
     };
   }

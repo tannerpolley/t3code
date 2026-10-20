@@ -81,6 +81,7 @@ const otherProject = {
   ...project,
   id: otherProjectId,
   title: "Other",
+  workspaceRoot: "/other-repo",
 } as const;
 
 const adapter = {
@@ -97,6 +98,8 @@ interface HarnessOptions {
   readonly projectRepositoryIdentity?: import("@t3tools/contracts").RepositoryIdentity;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
+  readonly fetchWorktreeBaseCommit?: GitWorkflow.GitWorkflowService["Service"]["fetchWorktreeBaseCommit"];
+  readonly remoteExists?: GitWorkflow.GitWorkflowService["Service"]["remoteExists"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
@@ -223,7 +226,11 @@ function makeHarness(options: HarnessOptions = {}) {
       invalidateLocalStatus: options.invalidateLocalStatus ?? (() => Effect.void),
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
-      remoteExists: () => Effect.succeed(true),
+      fetchWorktreeBaseCommit:
+        options.fetchWorktreeBaseCommit ??
+        (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
+      resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
+      remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
       resolveRemoteTrackingCommit: () =>
@@ -242,6 +249,7 @@ function makeHarness(options: HarnessOptions = {}) {
     options.managedFolders ??
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
         folderForThread: () => Effect.succeed(Option.none()),
       }),
   );
@@ -506,91 +514,91 @@ function reviewHarness(
   };
 }
 
-const createReviewRoot = (repository = "tannerpolley/t3code") =>
-  Effect.gen(function* () {
-    const threads = yield* ThreadManagement.ThreadManagementService;
-    const issue = reviewIssue(1, repository);
-    const rootId = ThreadId.make(`review-root:${repository}`);
-    yield* threads.dispatch({
-      type: "thread.create",
-      commandId: CommandId.make(`review-create:${repository}`),
-      threadId: rootId,
+const createReviewRoot = Effect.fn("test.createReviewRoot")(function* (
+  repository = "tannerpolley/t3code",
+) {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const issue = reviewIssue(1, repository);
+  const rootId = ThreadId.make(`review-root:${repository}`);
+  yield* threads.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make(`review-create:${repository}`),
+    threadId: rootId,
+    projectId,
+    title: "Repository orchestrator",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+    repositoryOrchestration: {
+      host: issue.host,
+      repository,
+      repositoryId: issue.repositoryId,
       projectId,
-      title: "Repository orchestrator",
-      modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      createdBy: "user",
-      creationSource: "web",
-      repositoryOrchestration: {
-        host: issue.host,
-        repository,
-        repositoryId: issue.repositoryId,
-        projectId,
 
-        launchCommandId: CommandId.make(`review-create:${repository}`),
-        revision: 1,
-        paused: false,
-        workerLimit: 4,
-        publishStatusComments: false,
-        publishCloseoutComments: false,
-        milestones: [
-          {
-            number: 1,
-            modelRoleId: "worker",
+      launchCommandId: CommandId.make(`review-create:${repository}`),
+      revision: 1,
+      paused: false,
+      workerLimit: 4,
+      publishStatusComments: false,
+      publishCloseoutComments: false,
+      milestones: [
+        {
+          number: 1,
+          modelRoleId: "worker",
 
-            status: "running",
-            fingerprint: "",
-          },
-        ],
-        suspendedIssues: [],
-      },
-    });
-    yield* threads.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make(`review-start:${repository}`),
-      threadId: rootId,
-      messageId: MessageId.make(`review-start:${repository}`),
-      text: "Start issue work",
-      attachments: [],
-      modelSelection,
-      dispatchMode: { type: "start_immediately" },
-      createdBy: "user",
-      creationSource: "web",
-    });
-    return rootId;
+          status: "running",
+          fingerprint: "",
+        },
+      ],
+      suspendedIssues: [],
+    },
   });
+  yield* threads.dispatch({
+    type: "message.dispatch",
+    commandId: CommandId.make(`review-start:${repository}`),
+    threadId: rootId,
+    messageId: MessageId.make(`review-start:${repository}`),
+    text: "Start issue work",
+    attachments: [],
+    modelSelection,
+    dispatchMode: { type: "start_immediately" },
+    createdBy: "user",
+    creationSource: "web",
+  });
+  return rootId;
+});
 
-const delegateReviewIssue = (
+const delegateReviewIssue = Effect.fn("test.delegateReviewIssue")(function* (
   parentId: ThreadId,
   issue: ReturnType<typeof reviewIssue>,
   key: string,
   selection: import("@t3tools/contracts").ModelSelection = modelSelection,
-) =>
-  Effect.gen(function* () {
-    const threads = yield* ThreadManagement.ThreadManagementService;
-    const parent = yield* threads.getThreadRecords(parentId, ["runs"]);
-    const run = parent.runs.findLast((candidate) =>
-      ["starting", "running", "waiting"].includes(candidate.status),
-    )!;
-    return yield* threads.dispatch({
-      type: "delegated_task.request",
-      commandId: CommandId.make(key),
-      parentThreadId: parentId,
-      parentRunId: run.id,
-      parentNodeId: run.rootNodeId!,
-      issue,
-      task: "Finish issue",
-      modelSelection: selection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      completionWake: "always",
-      createdBy: "agent",
-      creationSource: "mcp",
-    });
+) {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const parent = yield* threads.getThreadRecords(parentId, ["runs"]);
+  const run = parent.runs.findLast((candidate) =>
+    ["starting", "running", "waiting"].includes(candidate.status),
+  )!;
+  return yield* threads.dispatch({
+    type: "delegated_task.request",
+    commandId: CommandId.make(key),
+    parentThreadId: parentId,
+    parentRunId: run.id,
+    parentNodeId: run.rootNodeId!,
+    issue,
+    task: "Finish issue",
+    modelSelection: selection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    completionWake: "always",
+    createdBy: "agent",
+    creationSource: "mcp",
   });
+});
 export {
   adapter,
   createReviewRoot,
