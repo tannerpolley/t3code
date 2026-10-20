@@ -164,19 +164,21 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
       return { reads: [], queueLength: 0 };
     const store = issueWorkStore.value;
     const config = yield* store.configuration(threadId);
-    if (config === null || config.retiredToThreadId !== undefined)
+    if (
+      config === null ||
+      config.paused ||
+      config.handoff !== undefined ||
+      config.retiredToThreadId !== undefined ||
+      (yield* store.slotsInUse(threadId)) >= config.workerLimit ||
+      !(yield* store.queueRootIdle(threadId))
+    )
       return { reads: [], queueLength: 0 };
     const reads: IssueQueueRead[] = [];
     const queue = yield* store.queue(config);
-    const canDeliver =
-      !config.paused &&
-      config.handoff === undefined &&
-      (yield* store.slotsInUse(threadId)) < config.workerLimit &&
-      (yield* store.queueRootIdle(threadId)) &&
-      !queue.some((entry) => entry.noticeRunId !== undefined);
-    let headRead = false;
+    if (queue.some((entry) => entry.noticeRunId !== undefined))
+      return { reads, queueLength: queue.length };
     for (const entry of queue) {
-      if (entry.state === "queued" && (!canDeliver || headRead)) continue;
+      if (entry.state !== "queued") continue;
       const owner = yield* store.currentIssueOwner(entry.issue);
       const pending = yield* store.latestRequest(entry.issue);
       const ownerShell = owner === null ? null : yield* projectionStore.getThreadShell(owner);
@@ -196,7 +198,7 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
           ? read.value.state
           : "refresh-failed";
       reads.push({ issue: entry.issue, outcome });
-      if (entry.state === "queued" && outcome !== "closed") headRead = true;
+      if (outcome !== "closed") break;
     }
     return { reads, queueLength: queue.length };
   });

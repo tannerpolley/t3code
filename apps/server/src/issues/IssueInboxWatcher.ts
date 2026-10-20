@@ -3,13 +3,15 @@
  * records the external part in the inbox tables. Body edits are not tracked. Conditional page-1
  * reads keep an unchanged repository free.
  */
-import type { IssueInboxEventKind, ThreadId } from "@t3tools/contracts";
+import { CommandId, type IssueInboxEventKind, type ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import { readIssueQueue } from "./IssueQueueStore.ts";
 import { IssueService } from "./IssueService.ts";
 import {
   CROSS_PROJECT_LABEL,
@@ -45,6 +47,7 @@ const Labels = Schema.optional(Schema.NullOr(Schema.Array(Schema.Struct({ name: 
 const RawIssue = Schema.Struct({
   number: Schema.Number,
   title: Schema.String,
+  state: Schema.optional(Schema.Literals(["open", "closed"])),
   body: Schema.optional(Schema.NullOr(Schema.String)),
   user: Schema.optional(Author),
   labels: Labels,
@@ -163,6 +166,7 @@ export const isoSeconds = (millis: number) =>
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const issues = yield* IssueService;
+  const threads = yield* ThreadManagementService;
 
   const rest = (
     repo: Pick<WatchedRepository, "host" | "repository">,
@@ -487,6 +491,37 @@ export const make = Effect.gen(function* () {
                   : "",
           occurredAt: event.created_at,
         });
+      }
+
+      // Queue cleanup uses all observed transitions, including T3's own and bot closes.
+      // Dispatch before advancing cursors so a failed removal is retried on the next poll.
+      const states = new Map<number, { state: "open" | "closed"; at: string }>();
+      for (const event of newEvents.toSorted((a, b) => a.id - b.id)) {
+        if (event.event === "closed" || event.event === "reopened")
+          states.set(event.issue!.number, {
+            state: event.event === "closed" ? "closed" : "open",
+            at: event.created_at,
+          });
+      }
+      for (const issue of issueList) {
+        if (issue.state !== undefined && issue.updated_at > (states.get(issue.number)?.at ?? ""))
+          states.set(issue.number, { state: issue.state, at: issue.updated_at });
+      }
+      if ([...states.values()].some(({ state }) => state === "closed")) {
+        for (const entry of yield* readIssueQueue(repo).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        )) {
+          if (states.get(entry.issue.number)?.state !== "closed") continue;
+          yield* threads.dispatch({
+            type: "issue.queue.change",
+            commandId: CommandId.make(
+              `issue-inbox-closed:${repo.host}:${repo.repositoryId}:${entry.requestId}`,
+            ),
+            threadId: repo.rootThreadId,
+            issue: entry.issue,
+            queued: false,
+          });
+        }
       }
 
       // Never stall: a catch-up past the page cap skips to the newest activity read and says so.

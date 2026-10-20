@@ -1619,6 +1619,41 @@ export const layer = Layer.effect(
               )
                 return;
             }
+            if (
+              stored.event.type === "run.updated" &&
+              stored.event.payload.status === "completed"
+            ) {
+              const entry = yield* store.queueNotice(
+                stored.event.threadId,
+                stored.event.payload.id,
+              );
+              const commandId = CommandId.make(`issue-queue-completed:${stored.event.payload.id}`);
+              if (
+                entry !== null &&
+                Option.isNone(yield* commandReceipts.getByCommandId(commandId))
+              ) {
+                const read = yield* issues.workRead(entry.issue).pipe(Effect.option);
+                const closed =
+                  Option.isSome(read) &&
+                  read.value.state === "closed" &&
+                  sameIssueRepository(read.value.issue, entry.issue) &&
+                  read.value.issue.id === entry.issue.id;
+                const owner = yield* store.repositoryOwner(entry.issue);
+                const threadId = owner?.rootThreadId ?? stored.event.threadId;
+                // Even an open or failed read gets a receipt: later run updates must not re-read it.
+                yield* threads.dispatch(
+                  closed
+                    ? {
+                        type: "issue.queue.change",
+                        commandId,
+                        threadId,
+                        issue: entry.issue,
+                        queued: false,
+                      }
+                    : { type: "issue.queue.deliver", commandId, threadId },
+                );
+              }
+            }
             // A notice's failure batch must not immediately remind itself again.
             const noticeRunId =
               (stored.event.type === "run.updated" || stored.event.type === "run.created") &&

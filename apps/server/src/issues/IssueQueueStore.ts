@@ -81,6 +81,24 @@ export const isIssueQueueNoticeRun = Effect.fn("IssueQueueStore.isIssueQueueNoti
   return rows.length > 0;
 });
 
+export const readIssueQueueNotice = Effect.fn("IssueQueueStore.readIssueQueueNotice")(function* (
+  threadId: ThreadId,
+  runId: RunId,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const [row] = yield* sql<{ payload_json: string }>`
+    SELECT request.payload_json FROM orchestration_events event
+    JOIN orchestration_v2_projection_issue_work_requests request
+      ON request.request_id = json_extract(event.payload_json, '$.requestId')
+    WHERE event.aggregate_kind = 'thread' AND event.stream_id = ${threadId}
+      AND event.application_event_version = 2 AND event.event_type = 'issue.queue.updated'
+      AND json_extract(event.payload_json, '$.noticeRunId') = ${runId}
+      AND request.queue_state = 'needs_attention'
+    ORDER BY event.sequence DESC LIMIT 1
+  `;
+  return row === undefined ? null : yield* decode(row.payload_json);
+});
+
 // This projection helper runs within the enclosing event application span.
 export const finishIssueQueueNotice = Effect.fnUntraced(function* (run: OrchestrationV2Run) {
   if (!["completed", "failed", "cancelled", "interrupted"].includes(run.status)) return;

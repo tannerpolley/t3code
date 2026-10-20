@@ -12,7 +12,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { readIssueQueue, isIssueQueueNoticeRun } from "./IssueQueueStore.ts";
+import { readIssueQueue, readIssueQueueNotice, isIssueQueueNoticeRun } from "./IssueQueueStore.ts";
 import { openBlockerSuspensionReason } from "./IssueEligibility.ts";
 
 const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(RepositoryOrchestration));
@@ -49,6 +49,10 @@ export class IssueWorkStore extends Context.Service<
       threadId: ThreadId,
       runId: import("@t3tools/contracts").RunId,
     ) => Effect.Effect<boolean, IssueWorkError>;
+    readonly queueNotice: (
+      threadId: ThreadId,
+      runId: import("@t3tools/contracts").RunId,
+    ) => Effect.Effect<import("@t3tools/contracts").IssueQueueEntry | null, IssueWorkError>;
     readonly queueRootIdle: (threadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
     readonly queuedRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly queue: (
@@ -138,6 +142,11 @@ export const layer = Layer.effect(
     return IssueWorkStore.of({
       isQueueNoticeRun: (threadId, runId) =>
         isIssueQueueNoticeRun(threadId, runId).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.mapError(mapError),
+        ),
+      queueNotice: (threadId, runId) =>
+        readIssueQueueNotice(threadId, runId).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
           Effect.mapError(mapError),
         ),
@@ -291,7 +300,7 @@ export const layer = Layer.effect(
             OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.milestones') plan
             WHERE json_extract(plan.value, '$.status') <> 'complete')
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request
-              WHERE request.host = owner.host AND request.repository_id = owner.repository_id AND request.queue_state IN ('queued', 'needs_attention'))
+              WHERE request.host = owner.host AND request.repository_id = owner.repository_id AND request.queue_state = 'queued')
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request
               LEFT JOIN orchestration_v2_projection_issue_work work ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
               WHERE request.root_thread_id = owner.root_thread_id AND work.owner_thread_id IS NULL AND request.queue_state IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL)

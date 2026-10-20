@@ -7,11 +7,15 @@ import {
   ThreadId,
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
+import * as IssueInbox from "./IssueInbox.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
@@ -552,14 +556,18 @@ it.effect.each([false, true])(
   "closing a reviewed issue removes it when the notice finishes (worker pool full: %s)",
   (full) => {
     let closed = false;
+    const completedReads: number[] = [];
     const refreshed = Layer.mock(IssueService.IssueService)({
       resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
       detail: (input) =>
         Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
       workRead: (input) =>
-        Effect.succeed({
-          ...read(input.number),
-          state: closed && input.number === 1 ? ("closed" as const) : ("open" as const),
+        Effect.sync(() => {
+          if (closed) completedReads.push(input.number);
+          return {
+            ...read(input.number),
+            state: closed && input.number === 1 ? ("closed" as const) : ("open" as const),
+          };
         }),
     });
     return Effect.gen(function* () {
@@ -602,11 +610,54 @@ it.effect.each([false, true])(
       );
       yield* worker.drain();
       assert.deepEqual(yield* store.queue(reference), []);
+      assert.deepEqual(completedReads, [1]);
+      yield* service.reconcile(rootId);
+      yield* service.reconcile(rootId);
+      assert.deepEqual(
+        completedReads.filter((number) => number === 1),
+        [1],
+      );
       assert.lengthOf((yield* threads.getThreadRecords(rootId, ["messages"])).messages, 1);
       assert.isTrue((yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid);
       assert.deepEqual(yield* store.queue(reference), []);
     }).pipe(Effect.provide(harness(refreshed)));
   },
+);
+
+it.effect("an open notice completion is read once and stays in attention", () =>
+  Effect.gen(function* () {
+    const readFinished = yield* Deferred.make<void>();
+    let finishing = false;
+    const completedReads: number[] = [];
+    const issueReads = Layer.mock(IssueService.IssueService)({
+      resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+      detail: (input) =>
+        Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
+      workRead: (input) =>
+        Effect.gen(function* () {
+          if (finishing) {
+            completedReads.push(input.number);
+            yield* Deferred.succeed(readFinished, undefined);
+          }
+          return read(input.number);
+        }),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const run = yield* deliverFirst;
+      yield* service.unqueueIssue(input(2, "withdraw-second"));
+      yield* worker.drain();
+      finishing = true;
+      yield* finish(run, "open-review-completed");
+      yield* Deferred.await(readFinished);
+      yield* worker.drain();
+      for (let pass = 0; pass < 3; pass++) yield* service.reconcile(rootId);
+      assert.deepEqual(completedReads, [1]);
+      assert.equal((yield* store.queue(reference))[0]!.state, "needs_attention");
+    }).pipe(Effect.provide(harness(issueReads)));
+  }),
 );
 
 it.effect(
@@ -870,9 +921,8 @@ it.effect("periodic reconciliation delivers on an idle repository despite refres
   }).pipe(Effect.provide(harness(issueReads).pipe(Layer.provide(scheduler))));
 });
 
-it.effect("periodic refresh removes a closed attention entry without retrying an open one", () => {
-  let closed = false;
-  let unavailable = false;
+it.effect("reconciliation never reads the attention backlog while the root is busy or idle", () => {
+  const refreshed: number[] = [];
   let tick = Effect.void;
   const register: Scheduler.Scheduler["Service"]["register"] = <E, R>(
     name: string,
@@ -884,47 +934,182 @@ it.effect("periodic refresh removes a closed attention entry without retrying an
         tick = work.pipe(Effect.provideContext(context), Effect.orDie);
     });
   const scheduler = Layer.succeed(Scheduler.Scheduler, { register });
-  const refreshed = Layer.mock(IssueService.IssueService)({
-    resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
-    detail: (input) =>
-      Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
+  const issueReads = Layer.mock(IssueService.IssueService)({
     workRead: (input) =>
-      unavailable
-        ? Effect.fail(
-            new IssueReadError({
-              code: "rate-limited",
-              operation: "detail",
-              message: "Rate limited",
-            }),
-          )
-        : Effect.succeed({
-            ...read(input.number),
-            state: closed ? ("closed" as const) : ("open" as const),
-          }),
+      Effect.sync(() => {
+        refreshed.push(input.number);
+        return read(input.number);
+      }),
   });
   return Effect.gen(function* () {
     const service = yield* IssueWorkService.IssueWorkService;
     const threads = yield* ThreadManagement.ThreadManagementService;
     const store = yield* IssueWorkStore.IssueWorkStore;
+    const sink = yield* EventSink.EventSinkV2;
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-    const run = yield* deliverFirst;
-    yield* service.unqueueIssue(input(2, "withdraw-second"));
+    yield* createRoot(false);
+    yield* sink.write({
+      events: Array.from({ length: 100 }, (_, index) => ({
+        id: EventId.make(`attention:${index}`),
+        type: "issue.queue.updated" as const,
+        threadId: rootId,
+        occurredAt: DateTime.makeUnsafe(0),
+        payload: {
+          requestId: CommandId.make(`attention:${index}`),
+          issue: issue(index + 1),
+          state: "needs_attention" as const,
+        },
+      })),
+    });
+    yield* threads.dispatch({
+      type: "message.dispatch",
+      threadId: rootId,
+      commandId: CommandId.make("busy-root"),
+      messageId: MessageId.make("busy-root"),
+      text: "Other work",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
     yield* worker.drain();
-    yield* finish(run, "review-without-action");
+    assert.isFalse(yield* store.queueRootIdle(rootId));
+    for (let pass = 0; pass < 3; pass++) yield* service.reconcile(rootId);
+    assert.deepEqual(refreshed, []);
+    const run = (yield* threads.getThreadRecords(rootId, ["runs"])).runs[0]!;
+    yield* finish(run, "other-work-completed");
     yield* worker.drain();
-    assert.equal((yield* store.queue(reference))[0]!.state, "needs_attention");
-    assert.include(yield* store.activeRoots(), rootId);
-    unavailable = true;
-    yield* service.reconcile(rootId);
-    assert.equal((yield* store.queue(reference))[0]!.state, "needs_attention");
-    closed = true;
-    unavailable = false;
+    assert.isTrue(yield* store.queueRootIdle(rootId));
+    assert.notInclude(yield* store.activeRoots(), rootId);
     yield* tick;
-    yield* worker.drain();
-    assert.deepEqual(yield* store.queue(reference), []);
-    assert.lengthOf((yield* threads.getThreadRecords(rootId, ["messages"])).messages, 1);
-  }).pipe(Effect.provide(harness(refreshed).pipe(Layer.provide(scheduler))));
+    for (let pass = 0; pass < 3; pass++) yield* service.reconcile(rootId);
+    assert.deepEqual(refreshed, []);
+    assert.lengthOf(yield* store.queue(reference), 100);
+  }).pipe(Effect.provide(harness(issueReads).pipe(Layer.provide(scheduler))));
 });
+
+it.effect.each(["external", "own", "bot", "listing"] as const)(
+  "inbox closes remove queued and attention entries through replayable queue commands (%s)",
+  (origin) => {
+    let closed = false;
+    let listingCaughtUp = false;
+    const github = Layer.mock(IssueService.IssueService)({
+      resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+      detail: (input) =>
+        Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
+      workRead: (input) => Effect.succeed(read(input.number)),
+      repositoryRest: (input) =>
+        Effect.succeed({
+          status: 200,
+          etag: null,
+          nextPage: null,
+          body: JSON.stringify(
+            !closed
+              ? []
+              : input.path.startsWith("issues/events") && origin !== "listing"
+                ? [
+                    ...[1, 2].map((number) => ({
+                      id: number,
+                      event: "closed",
+                      created_at: "1970-01-01T00:00:01Z",
+                      actor: {
+                        login: origin === "bot" ? "automation[bot]" : "owner",
+                        type: origin === "bot" ? "Bot" : "User",
+                      },
+                      issue: { number, title: `Issue ${number}`, html_url: issue(number).url },
+                    })),
+                    ...["closed", "reopened"].map((event, index) => ({
+                      id: index + 3,
+                      event,
+                      created_at: "1970-01-01T00:00:01Z",
+                      actor: { login: "owner", type: "User" },
+                      issue: { number: 3, title: "Issue 3", html_url: issue(3).url },
+                    })),
+                  ]
+                : input.path.startsWith("issues?")
+                  ? [1, 2, 3].map((number) => ({
+                      ...issue(number),
+                      state:
+                        number === 3 && (origin === "listing" || listingCaughtUp)
+                          ? "open"
+                          : "closed",
+                      html_url: issue(number).url,
+                      created_at: "1969-12-31T23:59:00Z",
+                      updated_at: "1970-01-01T00:00:00Z",
+                    }))
+                  : [],
+          ),
+        }),
+    });
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      yield* createRoot(false);
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        threadId: rootId,
+        commandId: CommandId.make("busy-root"),
+        messageId: MessageId.make("busy-root"),
+        text: "Other work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      for (const number of [1, 2, 3]) yield* service.queueIssue(input(number));
+      const attention = (yield* store.queue(reference))[1]!;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("attention"),
+            type: "issue.queue.updated",
+            threadId: rootId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...attention, state: "needs_attention" },
+          },
+        ],
+      });
+      const inbox = yield* IssueInbox.make;
+      yield* inbox.pollDue;
+      if (origin === "own") {
+        const sql = yield* SqlClient.SqlClient;
+        for (const number of [1, 2])
+          yield* sql`INSERT INTO issue_inbox_write_receipts
+            (host, repository, issue_number, kind, started_at, finished_at)
+            VALUES ('github.com', 'owner/repo', ${number}, 'closed', 1000, 1000)`;
+      }
+      closed = true;
+      yield* TestClock.adjust("2 minutes");
+      yield* inbox.pollDue;
+      yield* worker.drain();
+      listingCaughtUp = true;
+      assert.deepEqual(
+        (yield* inbox.list(reference)).events
+          .filter((event) => event.issueNumber <= 2)
+          .map((event) => event.kind),
+        origin === "external" ? ["closed", "closed"] : [],
+      );
+      assert.deepEqual(
+        (yield* store.queue(reference)).map((entry) => entry.issue.number),
+        [3],
+      );
+      yield* TestClock.adjust("2 minutes");
+      yield* inbox.pollDue;
+      assert.deepEqual(
+        (yield* store.queue(reference)).map((entry) => entry.issue.number),
+        [3],
+      );
+      assert.isTrue((yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid);
+      assert.deepEqual(
+        (yield* store.queue(reference)).map((entry) => entry.issue.number),
+        [3],
+      );
+    }).pipe(Effect.provide(harness(github)));
+  },
+);
 
 it.effect.each([false, true])(
   "refreshes a new head when the previous candidate is claimed during refresh (failed refresh: %s)",
