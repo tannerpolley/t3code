@@ -47,10 +47,10 @@ export interface SqliteClientConfig {
    */
   readonly checkpointWorker?: boolean | undefined;
   /**
-   * How long writes wait for a checkpoint that a reader holds back. Another
-   * process can keep one read transaction open for minutes (a full scan, or a
-   * copy of the whole database); after this, writes go ahead and the WAL grows
-   * until that reader finishes. Default 1 second.
+   * How long writes wait at a time for the checkpoint to catch up. A reader in
+   * another process can hold it back for minutes (a long scan, or a copy of the
+   * whole database); after this, writes go ahead and the WAL grows until the
+   * checkpoint moves again. Default 1 second.
    */
   readonly checkpointPauseLimit?: Duration.Input | undefined;
 }
@@ -660,9 +660,11 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   type Waiter = { resume: () => void; cancelled: boolean };
   const waiters: Array<Waiter> = [];
   let elected: Waiter | undefined;
-  // Set once writes have waited pauseLimitMs on a backlog; cleared when the WAL
+  // Set once writes have waited pauseLimitMs on a backlog. Cleared when the
+  // checkpoint moves again, so writes pause for it to catch up, or once the WAL
   // is back under its bounds. A truncate still pauses writes, but only briefly.
   let overflowing = false;
+  let overflowCheckpointed = 0;
   let pauseTimer: ReturnType<typeof setTimeout> | undefined;
   const backlogged = () => blocked || log >= CHECKPOINT_BACKPRESSURE_FRAMES;
   const gated = () =>
@@ -670,7 +672,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     !writer.isTransaction &&
     (unknown || truncate !== undefined || (!overflowing && backlogged()));
   const wake = () => {
-    if (overflowing && !backlogged()) overflowing = false;
+    if (overflowing && (!backlogged() || checkpointed > overflowCheckpointed)) overflowing = false;
     if (!gated() && elected === undefined) {
       elected = waiters.shift();
       elected?.resume();
@@ -679,7 +681,10 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       // @effect-diagnostics-next-line globalTimers:off -- A wall-clock bound on waiting for another process, like the worker's own timers; a test clock must not stall it.
       pauseTimer ??= setTimeout(() => {
         pauseTimer = undefined;
-        if (backlogged()) overflowing = true;
+        if (backlogged()) {
+          overflowing = true;
+          overflowCheckpointed = checkpointed;
+        }
         wake();
       }, pauseLimitMs);
       pauseTimer.unref();
@@ -899,8 +904,12 @@ const make = Effect.fn("makeWithDatabase")(function* (
         ? yield* startCheckpointWorker(
             options.filename,
             db,
-            Duration.toMillis(
-              Duration.fromInputUnsafe(options.checkpointPauseLimit ?? Duration.seconds(1)),
+            // Node fires a longer timeout, Infinity included, after 1 ms.
+            Math.min(
+              Duration.toMillis(
+                Duration.fromInputUnsafe(options.checkpointPauseLimit ?? Duration.seconds(1)),
+              ),
+              2 ** 31 - 1,
             ),
           )
         : undefined;

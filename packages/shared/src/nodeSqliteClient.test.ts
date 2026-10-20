@@ -1016,8 +1016,8 @@ const blockCheckpointBehindReader = (
 ) =>
   Effect.gen(function* () {
     yield* sql.unsafe("PRAGMA journal_size_limit = 1").unprepared;
-    yield* sql.unsafe("CREATE TABLE entries(value INTEGER PRIMARY KEY)").unprepared;
-    yield* sql.unsafe("CREATE TABLE pages(payload BLOB)").unprepared;
+    yield* sql.unsafe("CREATE TABLE IF NOT EXISTS entries(value INTEGER PRIMARY KEY)").unprepared;
+    yield* sql.unsafe("CREATE TABLE IF NOT EXISTS pages(payload BLOB)").unprepared;
     const reader = yield* Effect.acquireRelease(
       Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
       (database) => Effect.sync(() => database.close()),
@@ -1764,31 +1764,58 @@ it.effect.each(["successful", "failed"] as const)(
   { skip: !supportsNoopCheckpoint },
 );
 
-it.effect(
-  "lets writes past a reader that holds the checkpoint back, then bounds the WAL again",
-  () =>
-    withCheckpointClient(
-      (sql, filename) =>
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const worker = startedWorkers.at(-1)!;
-          const { reader, checkpointRequests } = yield* blockCheckpointBehindReader(
-            sql,
-            filename,
-            worker,
-          );
-          // Another process can hold one snapshot for minutes; writes stop waiting for it.
-          yield* sql`INSERT INTO entries VALUES (1)`;
-          assert.equal(reader.prepare("SELECT COUNT(*) AS count FROM entries").get()?.count, 0);
-          const truncated = waitForTruncateCompletion(worker);
-          checkpointRequests.release();
-          reader.exec("ROLLBACK");
-          yield* Effect.promise(() => truncated);
-          assert.equal(Number((yield* fs.stat(`${filename}-wal`)).size), 0);
-          yield* sql`INSERT INTO entries VALUES (2)`;
-          assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM entries`, [{ count: 2 }]);
-        }),
-      { checkpointPauseLimit: 0 },
-    ),
-  { skip: !supportsNoopCheckpoint },
-);
+it.effect("lets writes past a reader that holds the checkpoint back, then pauses them again", () => {
+  const limit = 123_456;
+  const pauses: Array<() => void> = [];
+  const realSetTimeout = globalThis.setTimeout;
+  const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+  // Only the pause limit is faked; every other timer runs for real.
+  setTimeoutSpy.mockImplementation(((callback: () => void, delay?: number, ...args: unknown[]) => {
+    // @effect-diagnostics-next-line globalTimers:off -- Stands in for the client's own wall-clock timer.
+    if (delay !== limit) return realSetTimeout(callback, delay, ...args);
+    pauses.push(callback);
+    return { unref: () => {}, ref: () => {} } as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout);
+  return withCheckpointClient(
+    (sql, filename) =>
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Effect.sync(() => setTimeoutSpy.mockRestore()));
+        const fs = yield* FileSystem.FileSystem;
+        const worker = startedWorkers.at(-1)!;
+        const first = yield* blockCheckpointBehindReader(sql, filename, worker);
+        const held = yield* Effect.forkChild(sql`INSERT INTO entries VALUES (1)`, {
+          startImmediately: true,
+        });
+        yield* eventLoopTurn;
+        assert.isUndefined(held.pollUnsafe());
+        assert.lengthOf(pauses, 1);
+        // Another process can hold one snapshot for minutes; at the limit, writes go ahead.
+        pauses[0]!();
+        yield* Fiber.join(held);
+        assert.equal(first.reader.prepare("SELECT COUNT(*) AS count FROM entries").get()?.count, 0);
+
+        const truncated = waitForTruncateCompletion(worker);
+        first.checkpointRequests.release();
+        first.reader.exec("ROLLBACK");
+        yield* Effect.promise(() => truncated);
+        assert.equal(Number((yield* fs.stat(`${filename}-wal`)).size), 0);
+        // The next backlog needs its checkpoint request queued, so none may still be in flight.
+        yield* checkpointWorkerReply(worker);
+
+        // Once the WAL is bounded again, a new backlog pauses writes again.
+        const second = yield* blockCheckpointBehindReader(sql, filename, worker);
+        const paused = yield* Effect.forkChild(sql`INSERT INTO entries VALUES (2)`, {
+          startImmediately: true,
+        });
+        yield* eventLoopTurn;
+        assert.isUndefined(paused.pollUnsafe());
+        assert.lengthOf(pauses, 2);
+        second.checkpointRequests.release();
+        second.reader.exec("ROLLBACK");
+        yield* checkpointWorkerReply(worker);
+        yield* Fiber.join(paused);
+        assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM entries`, [{ count: 2 }]);
+      }),
+    { checkpointPauseLimit: limit },
+  );
+}, { skip: !supportsNoopCheckpoint });
