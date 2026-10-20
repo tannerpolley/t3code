@@ -154,7 +154,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(17.5625rem + 39px + 18ch)) {
+@container sidebar-columns (width < calc(17.5625rem + 39px + 12ch)) {
   .sidebar-thread-columns {
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
@@ -163,7 +163,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(15.0625rem + 36px + 18ch)) {
+@container sidebar-columns (width < calc(15.0625rem + 36px + 12ch)) {
   .sidebar-thread-columns {
     --sidebar-model-track: 0px;
     --sidebar-model-gap: 0px;
@@ -175,7 +175,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(15.0625rem + 30px + 10ch)) {
+@container sidebar-columns (width < calc(15.0625rem + 30px + 4ch)) {
   .sidebar-thread-columns {
     --sidebar-issue-track: 0px;
     --sidebar-issue-gap: 0px;

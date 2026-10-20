@@ -3,8 +3,9 @@
  * font (as the title budget does).
  */
 const titleCh = 11;
-// With role icons, thread titles are empty, but command and process labels still need this much.
-const labelCh = 10;
+// With role icons, thread titles are empty, so only command and process labels need room: enough
+// for a short program name such as "node", which keeps icons from costing more than names.
+const labelCh = 4;
 
 export const sidebarColumnLayout = {
   tracks: {

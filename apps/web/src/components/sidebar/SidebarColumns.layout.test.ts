@@ -42,13 +42,15 @@ describe("sidebar width budget", () => {
     expect(optionalColumns(31.1)).toEqual(["model", "effort", "issue"]);
   });
 
-  it("keeps room for command and process labels when icons hide the role name", () => {
-    expect(optionalColumns(24.3, "icon")).toEqual([]);
-    expect(optionalColumns(24.6, "icon")).toEqual(["issue"]);
-    expect(optionalColumns(28.7, "icon")).toEqual(["issue"]);
-    expect(optionalColumns(29.1, "icon")).toEqual(["model", "issue"]);
-    expect(optionalColumns(31.3, "icon")).toEqual(["model", "issue"]);
-    expect(optionalColumns(31.7, "icon")).toEqual(["model", "effort", "issue"]);
+  it("admits optional columns sooner with role icons, keeping room for short command labels", () => {
+    expect(optionalColumns(21.3, "icon")).toEqual([]);
+    expect(optionalColumns(21.6, "icon")).toEqual(["issue"]);
+    expect(optionalColumns(25.7, "icon")).toEqual(["issue"]);
+    expect(optionalColumns(26, "icon")).toEqual(["model", "issue"]);
+    expect(optionalColumns(28.6, "icon")).toEqual(["model", "effort", "issue"]);
+    for (const rem of [21.6, 26, 28.6]) {
+      expect(optionalColumns(rem, "icon").length).toBeGreaterThan(optionalColumns(rem).length);
+    }
   });
 
   it("never overflows the default 16rem sidebar once every optional column has dropped", () => {
