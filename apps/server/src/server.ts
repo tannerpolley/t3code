@@ -41,6 +41,7 @@ import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as IssueCleanup from "./issues/IssueCleanup.ts";
 import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
 import * as IssueLinks from "./issues/IssueLinks.ts";
 import * as IssueService from "./issues/IssueService.ts";
@@ -717,12 +718,20 @@ const layerCommandReadiness = HttpRouter.middleware(
   { global: true },
 );
 
+const layerIssueRoadmap = IssueRoadmap.layer.pipe(
+  Layer.provideMerge(IssueLinks.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+  Layer.provideMerge(layerIssueService),
+);
 const layerRouterServices = Layer.mergeAll(
   ProjectArtifacts.layer,
   ThreadWorkspaceService.layer,
-  IssueRoadmap.layer.pipe(
-    Layer.provideMerge(IssueLinks.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
-    Layer.provideMerge(layerIssueService),
+  layerIssueRoadmap,
+  IssueCleanup.layer.pipe(
+    Layer.provide(layerIssueRoadmap),
+    Layer.provide(ProjectionStoreV2.layer),
+    Layer.provide(ProjectStore.layer),
+    Layer.provide(GitVcsDriver.layer),
+    Layer.provide(SourceControlBuiltInDrivers.layer),
   ),
 );
 const layerRouterRequestContext = Layer.effectContext(

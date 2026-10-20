@@ -108,7 +108,7 @@ function IssuesRouteView() {
   const isNarrow = useMediaQuery("max-md");
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   useIssuePageCopyShortcut();
-  const repositories = useIssueRepositoryTargets();
+  const repositories = useIssueRepositoryTargets(search.environmentId);
   const { repositoryTargets } = repositories;
   const originThreadRef = useMemo<ScopedThreadRef | null>(
     () =>
@@ -158,19 +158,6 @@ function IssuesRouteView() {
     [navigate],
   );
 
-  const showAllRepositories = useCallback(
-    () =>
-      updateSearch({
-        host: undefined,
-        repository: undefined,
-        number: undefined,
-        selectedEnvironmentId: undefined,
-        selectedHost: undefined,
-        selectedRepository: undefined,
-        selectedNumber: undefined,
-      }),
-    [updateSearch],
-  );
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, ISSUES_PANEL_REF),
   );
@@ -366,7 +353,6 @@ function IssuesRouteView() {
       repositories={repositories}
       search={search}
       onSearchChange={updateSearch}
-      onShowAllRepositories={showAllRepositories}
       selectedIssue={activeIssueSurface}
       onSelectIssue={selectIssue}
       onRefresh={refreshDetail}

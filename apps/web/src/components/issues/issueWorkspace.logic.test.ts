@@ -102,6 +102,7 @@ describe("issue workspace filtering", () => {
     const preferences = { ...DEFAULT_ISSUE_FILTER_PREFERENCES, open: false, closed: true };
     const state = issueStateFilter(preferences)!;
     expect(issueListStateFor(state)).toBe("all");
+    expect(issueListStateFor(state, true)).toBe("all");
     const closed = issue(3, "Shipped", { state: "closed" });
     expect(
       filterAndSortIssues([...rows, closed], {
@@ -144,7 +145,7 @@ describe("issue workspace filtering", () => {
     }
   });
 
-  it("matches the repository name so one search finds a repository's issues", () => {
+  it("does not match repository names when searching issues", () => {
     const filters = {
       query: "acme/app",
       state: "all" as const,
@@ -152,8 +153,10 @@ describe("issue workspace filtering", () => {
       assignee: "all" as const,
       sort: "number" as const,
     };
-    expect(filterAndSortIssues(rows, filters, "acme/app").map((row) => row.number)).toEqual([2, 1]);
-    expect(filterAndSortIssues(rows, filters, "acme/other")).toEqual([]);
+    expect(filterAndSortIssues(rows, filters).map((row) => row.number)).toEqual([]);
+    expect(
+      filterAndSortIssues(rows, { ...filters, query: "Documentation" }).map((row) => row.number),
+    ).toEqual([1]);
   });
 });
 

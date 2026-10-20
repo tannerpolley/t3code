@@ -242,7 +242,7 @@ it("combines closing PRs with linked threads' PRs, deduplicates identity and fol
   };
   const review = withLiveIssueWork(closing, [thread]);
   expect(review.issues[0]?.pullRequests?.map((pr) => pr.number)).toEqual([10, 11]);
-  expect(section(review)).toBe("in-review");
+  expect(section(review)).toBe("in-progress");
   expect(
     section(
       withLiveIssueWork(closing, [
@@ -286,7 +286,7 @@ it("drops PRs from unlinked, dismissed and archived threads instead of retaining
     ...list,
     issues: [{ ...list.issues[0]!, closingPullRequests: [], pullRequests: [pr] }],
   };
-  expect(section(withLiveIssueWork(source, [thread]))).toBe("in-review");
+  expect(section(withLiveIssueWork(source, [thread]))).toBe("in-progress");
   for (const changed of [
     { ...unlinkedRoot, pullRequests: thread.pullRequests },
     { ...thread, archivedAt: root.updatedAt },
@@ -299,7 +299,7 @@ it("drops PRs from unlinked, dismissed and archived threads instead of retaining
   // Merely observing a closing PR never associates the observing thread's activity.
   const observed = { ...unlinkedRoot, pullRequests: thread.pullRequests, runtime: running.runtime };
   const closing = { ...source, issues: [{ ...source.issues[0]!, closingPullRequests: [pr] }] };
-  expect(section(withLiveIssueWork(closing, [observed]))).toBe("in-review");
+  expect(section(withLiveIssueWork(closing, [observed]))).toBe("in-progress");
 });
 
 it("counts a directly linked subagent, but inherited children do not make a settled parent run", () => {
@@ -401,7 +401,7 @@ it("overlays compact sidebar status with the same live work and PR observations"
   const progress = (shells: Parameters<typeof indexIssueWork>[0]) =>
     issueProgress(overlay.summary(summary, scope, environmentId, indexIssueWork(shells)));
   expect(progress([working])).toBe("in_progress");
-  expect(progress([root])).toBe("in_review");
+  expect(progress([root])).toBe("in_progress");
   expect(
     progress([
       {
@@ -425,4 +425,28 @@ it("overlays compact sidebar status with the same live work and PR observations"
       ),
     ),
   ).toBe("completed");
+});
+
+it("retains archived worker and PR details on closed issues while preserving their closed state", () => {
+  const source = {
+    ...list,
+    issues: list.issues.map((issue) => ({ ...issue, state: "closed" as const })),
+  };
+  const thread = {
+    ...root,
+    hasPendingApprovals: true,
+    archivedAt: root.updatedAt,
+    branch: "fix",
+    worktreePath: "/repo/worker",
+    pullRequests: [pr],
+  };
+  const result = withLiveIssueWork(source, [thread]);
+  expect(result.issues[0]?.liveWork?.[0]).toMatchObject({
+    threadId: root.id,
+    branch: "fix",
+    worktreePath: "/repo/worker",
+    status: "idle",
+  });
+  expect(result.issues[0]?.pullRequests?.[0]?.number).toBe(pr.number);
+  expect(issueProgress(result.issues[0]!)).toBe("completed");
 });

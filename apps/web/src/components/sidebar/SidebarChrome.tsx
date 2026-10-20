@@ -17,6 +17,7 @@ import {
   useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { useIssuePageScope } from "../issues/useIssuePageScope";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import {
@@ -230,6 +231,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
+  const issuePageScope = useIssuePageScope();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -244,7 +246,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
   const handleIssuesClick = () => {
     closeMobileSidebar();
-    void navigate({ to: "/issues", search: {} });
+    void navigate({ to: "/issues", search: issuePageScope });
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();

@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentAuthorizationError as EnvironmentAuthorizationErrorClass,
   IssueReadError as IssueReadErrorClass,
+  type EnvironmentId,
   type IssueSummary,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -13,13 +14,14 @@ import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import { cn } from "~/lib/utils";
 import {
   selectThreadRightPanelState,
   useRightPanelStore,
   type IssueSurface,
 } from "~/rightPanelStore";
-import { useAllEnvironmentShellsBootstrapped } from "~/state/entities";
+import { useAllEnvironmentShellsBootstrapped, useThreadShell, useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import {
   useLiveIssueWork,
@@ -142,7 +144,7 @@ type IssuePagingState = {
 };
 
 /** The repositories every issue-capable environment can read, merged across environments. */
-export function useIssueRepositoryTargets() {
+export function useIssueRepositoryTargets(preferredEnvironmentId?: EnvironmentId) {
   const { environments } = useEnvironments();
   const environmentsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const environmentLabels = useMemo(
@@ -166,14 +168,17 @@ export function useIssueRepositoryTargets() {
   );
   const capableEnvironmentList = useMemo(
     () =>
-      [...capableEnvironmentIds].toSorted((left, right) =>
-        (environmentLabels.get(left) ?? left).localeCompare(environmentLabels.get(right) ?? right),
+      [...capableEnvironmentIds].toSorted(
+        (left, right) =>
+          Number(right === preferredEnvironmentId) - Number(left === preferredEnvironmentId) ||
+          (environmentLabels.get(left) ?? left).localeCompare(
+            environmentLabels.get(right) ?? right,
+          ),
       ),
-    [capableEnvironmentIds, environmentLabels],
+    [capableEnvironmentIds, environmentLabels, preferredEnvironmentId],
   );
   const issueRepositories = useIssueRepositories(capableEnvironmentList);
-  // ponytail: when two environments share a GitHub account, the first (by label) reads each
-  // repository. Per-environment sections if that ever matters.
+  // Prefer the current thread’s environment when repositories overlap across connections.
   const repositoryTargets = useMemo(
     () =>
       mergeIssueRepositoryTargets(
@@ -222,7 +227,6 @@ export function IssueBrowser({
   repositories,
   search,
   onSearchChange,
-  onShowAllRepositories,
   selectedIssue = null,
   onSelectIssue,
   onRefresh,
@@ -234,8 +238,6 @@ export function IssueBrowser({
   readonly repositories: ReturnType<typeof useIssueRepositoryTargets>;
   readonly search: IssueBrowserSearch;
   readonly onSearchChange: (patch: IssueBrowserSearch) => void;
-  /** Clears a repository scope. */
-  readonly onShowAllRepositories?: () => void;
   readonly selectedIssue?: IssueTarget | null;
   readonly onSelectIssue: (target: IssueTarget) => void;
   readonly onRefresh?: () => void;
@@ -252,13 +254,8 @@ export function IssueBrowser({
     capabilitiesKnown,
   } = repositories;
   const [preferences, setPreferences] = useIssueFilterPreferences();
-  const [savedViews, setViews] = useIssueViews();
-  const views = useMemo<typeof savedViews>(
-    () => (variant === "panel" ? savedViews : {}),
-    [variant, savedViews],
-  );
+  const [views, setViews] = useIssueViews();
   const stateFilter = issueStateFilter(preferences);
-  const listState = issueListStateFor(stateFilter ?? "open");
   const explicitScope = search.repository !== undefined;
   const urlRepository = useMemo(
     () =>
@@ -309,7 +306,7 @@ export function IssueBrowser({
             !repositoryKnownEmpty(
               target,
               views[repositoryKey(target.host, target.repository)] === "roadmap"
-                ? "open"
+                ? "all"
                 : (stateFilter ?? "open"),
             ),
         )
@@ -323,12 +320,12 @@ export function IssueBrowser({
             input: {
               host: target.host,
               repository: target.repository,
-              state: roadmapView ? "open" : listState,
+              state: issueListStateFor(stateFilter ?? "open", roadmapView),
               roadmap: true,
             },
           };
         }),
-    [explicitScope, listState, shownRepositories, stateFilter, views],
+    [explicitScope, shownRepositories, stateFilter, views],
   );
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const generationRef = useRef(0);
@@ -497,13 +494,7 @@ export function IssueBrowser({
     const snapshot =
       cachedSnapshot === null ? null : liveIssueWork(cachedSnapshot, target.environmentId);
     const error = scopeKey === null ? null : (issueErrors.get(scopeKey) ?? null);
-    const filteredIssues = snapshot
-      ? filterAndSortIssues(
-          snapshot.issues,
-          views[key] === "roadmap" ? { ...filters, state: "open" } : filters,
-          target.repository,
-        )
-      : [];
+    const filteredIssues = snapshot ? filterAndSortIssues(snapshot.issues, filters) : [];
     const settled = scopeKey === null || (snapshot !== null && snapshot.issuesComplete && !error);
     const count = filteredIssues.length;
     const pinned = preferences.pinned.includes(key);
@@ -516,7 +507,7 @@ export function IssueBrowser({
       sameRepository(selectedIssue, target)
         ? selectedIssue.number
         : undefined;
-    const entryState = views[key] === "roadmap" ? "open" : filters.state;
+    const entryState = filters.state;
     const countLabel: ReactNode =
       scopeKey === null ? (
         `0 ${stateNoun(0, entryState)}`
@@ -561,8 +552,7 @@ export function IssueBrowser({
     const message = (text: string) => (
       <p className="py-1.5 ps-6 pe-4 text-xs text-muted-foreground">{text}</p>
     );
-    if (scopeKey === null)
-      return message(`No ${views[entry.key] === "roadmap" ? "open" : filters.state} issues`);
+    if (scopeKey === null) return message(`No ${filters.state} issues`);
     if (snapshot === null && error === null) {
       return (
         <div className="flex items-center gap-2 py-1.5 ps-6 text-xs text-muted-foreground">
@@ -594,7 +584,7 @@ export function IssueBrowser({
     const groups = groupIssuesByMilestone(snapshot.milestones, filteredIssues)
       .map((group) => ({
         ...group,
-        issues: filterAndSortIssues(group.issues, filters, entry.repository),
+        issues: filterAndSortIssues(group.issues, filters),
       }))
       .filter((group) => !narrowed || group.issues.length > 0);
     const pending =
@@ -779,13 +769,6 @@ export function IssueBrowser({
     );
   });
 
-  const showAllRepositories =
-    onShowAllRepositories && repositoryTargets.length > 0 ? (
-      <Button onClick={onShowAllRepositories} size="xs" variant="outline">
-        Show all repositories
-      </Button>
-    ) : null;
-
   const listContent = !capabilitiesKnown ? (
     <div className="flex min-h-56 items-center justify-center">
       <Spinner className="size-4" />
@@ -820,7 +803,6 @@ export function IssueBrowser({
           This repository is not one you own or administer on GitHub.
         </EmptyDescription>
       </EmptyHeader>
-      {showAllRepositories}
     </Empty>
   ) : repositoryTargets.length === 0 ? (
     <Empty className="min-h-56 flex-none">
@@ -873,7 +855,7 @@ export function IssueBrowser({
     <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
       <header
         className={cn(
-          "shrink-0 border-b border-border/60 px-4 py-3",
+          "@container/issues-header shrink-0 border-b border-border/60 px-4 py-3",
           variant === "page" && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
       >
@@ -883,14 +865,14 @@ export function IssueBrowser({
           <Heading
             ref={headingRef}
             tabIndex={-1}
-            className="min-w-0 flex-1 text-base font-semibold outline-none"
+            className="min-w-0 flex-1 truncate text-base font-semibold outline-none"
           >
-            Issues
+            {urlRepository?.repository ?? "Issues"}
           </Heading>
           {viewerLogins.map((login) => (
             <span
               key={login}
-              className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:inline-flex"
+              className="hidden items-center gap-1.5 text-xs text-muted-foreground @xl/issues-header:inline-flex"
             >
               <span aria-hidden className="size-1.5 rounded-full bg-success" />
               {login}
@@ -905,28 +887,32 @@ export function IssueBrowser({
             <RefreshCwIcon aria-hidden className={cn(refreshing && "animate-spin")} />
             Refresh
           </Button>
-        </div>
-        <div className="mt-2 flex items-center gap-2">
-          <InputGroup className="min-w-0 flex-1">
-            <InputGroupAddon>
-              <SearchIcon aria-hidden />
-            </InputGroupAddon>
-            <InputGroupInput
-              aria-label="Find a repository or issue"
-              onChange={(event) => onSearchChange({ issueQuery: event.target.value || undefined })}
-              placeholder="Find a repository or issue"
-              type="search"
-              value={query}
-            />
-          </InputGroup>
+          <div className="min-w-16 w-44 shrink">
+            <InputGroup>
+              <InputGroupAddon>
+                <SearchIcon aria-hidden />
+              </InputGroupAddon>
+              <InputGroupInput
+                aria-label="Find an issue"
+                onChange={(event) =>
+                  onSearchChange({ issueQuery: event.target.value || undefined })
+                }
+                placeholder="Find an issue"
+                size="sm"
+                type="search"
+                value={query}
+              />
+            </InputGroup>
+          </div>
           <IssueFilterMenu
+            singleRepository={explicitScope}
             host={explicitScope ? "" : (search.host ?? "")}
             hosts={explicitScope ? [] : hosts}
             onChange={setPreferences}
             onHostChange={(host) => onSearchChange({ host: host || undefined })}
             preferences={preferences}
             view={
-              variant === "panel" && scopedKey !== null
+              scopedKey !== null
                 ? {
                     value: views[scopedKey] ?? "milestones",
                     onChange: (value) =>
@@ -936,7 +922,7 @@ export function IssueBrowser({
             }
           />
           {stateFilter !== null && repositoryEntries.length > 0 ? (
-            <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:inline">
+            <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground @lg/issues-header:inline">
               {totalCount}
               {totalIncomplete ? "+" : ""}{" "}
               {stateNoun(
@@ -948,11 +934,6 @@ export function IssueBrowser({
             </span>
           ) : null}
         </div>
-        {explicitScope && urlRepository !== null && showAllRepositories ? (
-          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-            {showAllRepositories}
-          </div>
-        ) : null}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto pt-3">{listContent}</div>
     </section>
@@ -961,12 +942,19 @@ export function IssueBrowser({
 
 /**
  * The issue list as a right-panel surface beside a thread; an issue opens in a tab next to it.
- * The tab's saved scope narrows it to one repository until "Show all repositories" widens it.
+ * The tab keeps its repository scope, falling back to its thread's project.
  * The newest issue tab stays selected, so returning to the list reopens the tree where it was.
  */
 export function IssueListPanel({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
-  const repositories = useIssueRepositoryTargets();
+  const repositories = useIssueRepositoryTargets(threadRef.environmentId);
   const [search, setSearch] = useState<IssueBrowserSearch>({});
+  const thread = useThreadShell(threadRef);
+  const projects = useProjects();
+  const project = projects.find(
+    (project) =>
+      project.id === thread?.projectId && project.environmentId === threadRef.environmentId,
+  );
+  const projectScope = threadIssueRepository(project?.repositoryIdentity);
   const scope = useRightPanelStore(
     (state) =>
       selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces.find(
@@ -983,14 +971,8 @@ export function IssueListPanel({ threadRef }: { readonly threadRef: ScopedThread
     <IssueBrowser
       variant="panel"
       repositories={repositories}
-      search={scope === null ? search : { ...search, ...scope }}
+      search={{ ...search, ...(scope ?? projectScope) }}
       onSearchChange={(patch) => setSearch((current) => ({ ...current, ...patch }))}
-      {...(scope === null
-        ? {}
-        : {
-            onShowAllRepositories: () =>
-              useRightPanelStore.getState().openIssueList(threadRef, null),
-          })}
       selectedIssue={lastIssue?.kind === "issue" ? lastIssue : null}
       onSelectIssue={(target) => useRightPanelStore.getState().openIssue(threadRef, target)}
     />

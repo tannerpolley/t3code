@@ -21,6 +21,7 @@ export function issueRoadmap(
   milestones: readonly IssueMilestone[],
   issues: readonly IssueSummary[],
   queuedNumbers: readonly number[] = [],
+  now = Date.now(),
 ) {
   const open = issues.filter((issue) => issue.state === "open");
   const byNumber = new Map(open.map((issue) => [issue.number, issue]));
@@ -109,38 +110,83 @@ export function issueRoadmap(
     for (const number of component) ordered.push({ issue: byNumber.get(number)!, cycle });
     for (const next of outgoing[id]!) if (--incoming[next]! === 0) insert(next);
   }
+  const queueOrder = new Map(queuedNumbers.map((number, index) => [number, index]));
   const sections = [
-    { id: "in-progress", title: "In progress", rows: [] as typeof ordered },
-    { id: "in-review", title: "In review", rows: [] as typeof ordered },
     { id: "ready", title: "Ready", rows: [] as typeof ordered },
+    { id: "queued", title: "Queued", rows: [] as typeof ordered },
+    { id: "in-progress", title: "In progress", rows: [] as typeof ordered },
     { id: "blocked", title: "Blocked", rows: [] as typeof ordered },
+    { id: "done", title: "Done", rows: [] as typeof ordered },
+    { id: "closed", title: "Closed", rows: [] as typeof ordered },
   ];
-  // An open blocker wins over linked work, as in issueProgress, so the section matches the icon.
+  // Queue membership keeps its explicit order; dependency warnings remain visible on queued rows.
   for (const row of ordered) {
     const progress = issueProgress(row.issue);
-    const section =
-      progress === "blocked"
+    const section = queueOrder.has(row.issue.number)
+      ? 1
+      : progress === "blocked"
         ? 3
         : progress === "in_progress"
-          ? 0
-          : progress === "in_review"
-            ? 1
-            : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
-              ? 3
-              : 2;
+          ? 2
+          : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
+            ? 3
+            : 0;
     sections[section]!.rows.push(row);
   }
-  const queueOrder = new Map(queuedNumbers.map((number, index) => [number, index]));
-  const queued = ordered
-    .filter((row) => queueOrder.has(row.issue.number))
-    .sort(
-      (left, right) => queueOrder.get(left.issue.number)! - queueOrder.get(right.issue.number)!,
-    );
-  return [
-    { id: "queued", title: "Queued", rows: queued },
-    ...sections.map((section) => ({
-      ...section,
-      rows: section.rows.filter((row) => !queueOrder.has(row.issue.number)),
-    })),
-  ];
+  sections[1]!.rows.sort(
+    (left, right) => queueOrder.get(left.issue.number)! - queueOrder.get(right.issue.number)!,
+  );
+  for (const issue of issues
+    .filter((issue) => issue.state === "closed")
+    .toSorted(
+      (a, b) =>
+        (Date.parse(b.closedAt ?? "") || 0) - (Date.parse(a.closedAt ?? "") || 0) ||
+        b.number - a.number,
+    )) {
+    sections[recentlyDone(issue, now) ? 4 : 5]!.rows.push({ issue, cycle: false });
+  }
+  return sections;
+}
+
+const RECENTLY_DONE_MS = 24 * 60 * 60 * 1000;
+
+function recentlyDone(issue: IssueSummary, now: number) {
+  if (issue.state !== "closed" || issue.closedAt == null) return false;
+  const elapsed = now - Date.parse(issue.closedAt);
+  return elapsed >= 0 && elapsed < RECENTLY_DONE_MS;
+}
+
+// The snapshot changes only at closure or expiry; returning the wall clock would render forever.
+export function createIssueRoadmapClock(issues: readonly IssueSummary[]) {
+  const boundaries = issues
+    .flatMap((issue) => {
+      if (issue.state !== "closed" || issue.closedAt == null) return [];
+      const closed = Date.parse(issue.closedAt);
+      return Number.isFinite(closed) ? [closed, closed + RECENTLY_DONE_MS] : [];
+    })
+    .sort((a, b) => a - b);
+  const snapshot = () => {
+    const now = Date.now();
+    return boundaries.findLast((time) => time <= now) ?? 0;
+  };
+  const subscribe = (onChange: () => void) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
+    const schedule = () => {
+      if (disposed) return;
+      const now = Date.now();
+      const next = boundaries.find((time) => time > now);
+      if (next === undefined) return;
+      timer = setTimeout(() => {
+        onChange();
+        schedule();
+      }, next - now);
+    };
+    schedule();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  };
+  return { subscribe, snapshot };
 }

@@ -252,27 +252,40 @@ and their marks follow the same rules as on web and desktop.
 
 Drag an issue onto the composer or type `#` to reference a repository issue in chat.
 
-When a connected environment has GitHub Issues support, open **Issues** from the sidebar. It lists
-issues from every repository your GitHub account owns and every organization repository you
-administer, whether or not the repository is a T3 Code project. Repositories you only collaborate
-on, including the upstream of a fork, are left out. The Milestones view groups issues by owner,
+When a connected environment has GitHub Issues support, open **Issues** from the sidebar. From a
+thread, it opens that project’s repository. Without a current repository, it lists issues from every
+repository your GitHub account owns and every organization repository you administer, whether or
+not the repository is a T3 Code project. Repositories you only collaborate on, including the upstream
+of a fork, are left out. The Milestones view groups issues by owner,
 then repository and milestone; your own account comes first.
 
 Use **Filter** to choose what is shown: open and closed issues; archived, forked, empty, public,
 private, personal, and organization repositories; milestone and assignment; and how issues are
 sorted. Open issues are shown by default, with archived, forked, and empty repositories hidden.
-Filter choices are remembered in that browser. The search box matches repository names and issue
-details.
+Filter choices are remembered in that browser. The compact search box matches issue numbers, titles
+and other issue details. Search, Filter and Refresh share the header row. An Issues tab opened from a thread stays scoped to that project’s
+repository.
 
 In the Issues pane, turn on **Roadmap view** for a repository (at the top of **Filter** when the
-pane shows one repository) for its open issues in dependency order, with **In progress**,
-**In review**, **Ready**, and **Blocked** sections. Within a section, open blockers and sub-issues
-come before the issues that depend on them; closed blockers no longer hold work back. The view
-choice is remembered per repository. **In progress** follows a linked thread's running indicator;
-waiting for a question or approval does not count as running. With no running agent, an open linked
-pull request puts the issue **In review**. An open blocker keeps the issue **Blocked**. GitHub Project
-status does not change these sections or the issue icon. A thread’s own linked pull request also
-associates it with the issues that GitHub identifies that pull request as closing.
+pane shows one repository) for dependency order, with **Ready**, **Queued**, **In progress**,
+**Done**, and **Closed** sections. **Blocked** stays between In progress and Done, with red
+warnings for open dependencies. Within a section, open blockers and sub-issues come before the
+issues that depend on them; closed blockers no longer hold work back. The view choice is remembered
+per repository. **In progress** follows a linked thread’s running indicator or an open linked PR;
+waiting for a question or approval alone does not count as running. GitHub Project status does not
+change these sections or the issue icon. A thread’s own linked pull request also associates it
+with the issues that GitHub identifies that pull request as closing.
+
+Include **Closed** in Filter to see completed and closed issues. **Done** shows those closed in the
+last 24 hours, with their closure reason and time and attached PR numbers, titles, states and links.
+At 24 hours they move to **Closed**, which starts collapsed. Archived worker links remain available
+on closed issues. Open a worker from its row, or confirm **Remove worktree** to remove a clean linked
+worktree. Uncommitted and untracked changes prevent removal. Confirm **Delete local branch** to
+remove a branch after its PR is merged. A branch checked out in any worktree cannot be deleted;
+remove the worktree or switch its branch first. Unmerged work, including local commits added after
+the PR merged, needs a separate explicit confirmation before deletion. These actions affect only
+the local repository; they do not delete remote branches.
+
 Select a pull request on an issue row to open it, or select the count to choose among several.
 These links follow **Open pull requests in T3 Code**; middle-click opens them in the browser.
 Select a work indicator to open its linked thread; hover to see the thread's branch, worktree and

@@ -37,6 +37,7 @@ import * as InlineShellRuns from "./terminal/InlineShellRuns.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
 import * as IssueInbox from "./issues/IssueInbox.ts";
 import * as IssueLinks from "./issues/IssueLinks.ts";
+import * as IssueCleanup from "./issues/IssueCleanup.ts";
 import * as IssueRoadmap from "./issues/IssueRoadmap.ts";
 import * as IssueService from "./issues/IssueService.ts";
 import * as IssueWorkService from "./issues/IssueWorkService.ts";
@@ -462,6 +463,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(IssueInbox.IssueInbox)({}),
   Layer.mock(IssueLinks.IssueLinks)({}),
   Layer.mock(IssueRoadmap.IssueRoadmap)({}),
+  Layer.mock(IssueCleanup.IssueCleanup)({}),
   Layer.mock(IssueService.IssueService)({}),
   Layer.mock(IssueWorkService.IssueWorkService)({}),
   Layer.mock(SidebarLayout.SidebarLayoutService)({}),

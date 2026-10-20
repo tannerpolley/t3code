@@ -21,7 +21,7 @@ export function indexIssueWork(shells: readonly EnvironmentThreadShell[]) {
   const issues = new Map<string, Map<number, EnvironmentThreadShell[]>>();
   for (const thread of shells) {
     threads.set(threadKey(thread.environmentId, thread.id), thread);
-    if (thread.linkedIssue === undefined || thread.archivedAt !== null) continue;
+    if (thread.linkedIssue === undefined) continue;
     const key = scopeKey(thread.environmentId, thread.linkedIssue);
     let repository = issues.get(key);
     if (repository === undefined) issues.set(key, (repository = new Map()));
@@ -33,6 +33,7 @@ export function indexIssueWork(shells: readonly EnvironmentThreadShell[]) {
 }
 type IssueWorkIndex = ReturnType<typeof indexIssueWork>;
 type WorkSummary = Pick<IssueSummary, "number"> & {
+  readonly state?: IssueSummary["state"];
   readonly liveWork?:
     | readonly Pick<
         NonNullable<IssueSummary["liveWork"]>[number],
@@ -85,7 +86,7 @@ export function createLiveIssueWorkOverlay() {
     if (previous !== undefined && sameItems(previous.threads, threads)) return previous.result as T;
     const active = threads
       .filter((thread) => thread !== undefined)
-      .filter((thread) => thread.archivedAt === null);
+      .filter((thread) => issue.state === "closed" || thread.archivedAt === null);
     const inheritedIds = new Set(
       (issue.liveWork ?? []).filter((work) => work.inherited).map((work) => work.threadId),
     );
@@ -101,9 +102,9 @@ export function createLiveIssueWorkOverlay() {
           .filter((pr) => pr.source !== "stack-dismissed")
           .map((pr) => pr.url),
         status:
-          status === "working" && !inheritedIds.has(thread.id)
+          status === "working" && thread.archivedAt === null && !inheritedIds.has(thread.id)
             ? ("working" as const)
-            : status === "approval" || status === "input"
+            : thread.archivedAt === null && (status === "approval" || status === "input")
               ? ("waiting_on_you" as const)
               : ("idle" as const),
       };

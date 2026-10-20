@@ -53,7 +53,7 @@ it("splits closed issues the way GitHub closes them", () => {
   expect(issueProgress({ state: "open", stateReason: "reopened" })).toBe("open");
 });
 
-it("puts open and draft PRs In review after running work, while blockers and closed issues win", () => {
+it("puts open and draft PRs In progress after running work, while blockers and closed issues win", () => {
   const pr = {
     host: "github.com",
     repository: "acme/repo",
@@ -63,9 +63,9 @@ it("puts open and draft PRs In review after running work, while blockers and clo
     state: "open" as const,
     isDraft: false,
   };
-  expect(issueProgress({ state: "open", pullRequests: [pr] })).toBe("in_review");
+  expect(issueProgress({ state: "open", pullRequests: [pr] })).toBe("in_progress");
   expect(issueProgress({ state: "open", pullRequests: [{ ...pr, isDraft: true }] })).toBe(
-    "in_review",
+    "in_progress",
   );
   expect(issueProgress({ state: "open", pullRequests: [{ ...pr, state: "merged" }] })).toBe("open");
   expect(issueProgress({ state: "open", pullRequests: [{ ...pr, state: "closed" }] })).toBe("open");
@@ -74,7 +74,7 @@ it("puts open and draft PRs In review after running work, while blockers and clo
   );
   expect(
     issueProgress({ state: "open", pullRequests: [pr], liveWork: [work("waiting_on_you")] }),
-  ).toBe("in_review");
+  ).toBe("in_progress");
   expect(issueProgress({ state: "open", pullRequests: [pr], blockedBy: [blocker("open")] })).toBe(
     "blocked",
   );
