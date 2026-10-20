@@ -20,6 +20,7 @@ export function issueRoadmap(
   scope: IssueRepositoryRef,
   milestones: readonly IssueMilestone[],
   issues: readonly IssueSummary[],
+  queuedNumbers: readonly number[] = [],
 ) {
   const open = issues.filter((issue) => issue.state === "open");
   const byNumber = new Map(open.map((issue) => [issue.number, issue]));
@@ -129,5 +130,17 @@ export function issueRoadmap(
               : 2;
     sections[section]!.rows.push(row);
   }
-  return sections;
+  const queueOrder = new Map(queuedNumbers.map((number, index) => [number, index]));
+  const queued = ordered
+    .filter((row) => queueOrder.has(row.issue.number))
+    .sort(
+      (left, right) => queueOrder.get(left.issue.number)! - queueOrder.get(right.issue.number)!,
+    );
+  return [
+    { id: "queued", title: "Queued", rows: queued },
+    ...sections.map((section) => ({
+      ...section,
+      rows: section.rows.filter((row) => !queueOrder.has(row.issue.number)),
+    })),
+  ];
 }

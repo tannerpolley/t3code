@@ -1,3 +1,6 @@
+import { IssueQueueAction } from "./IssueQueueAction";
+import { parseIssueUrl, knownGitHubHosts } from "~/lib/openIssueLink";
+import { useProjects } from "~/state/entities";
 import { startIssueDrag } from "./issueComposerContext";
 import type { EnvironmentId, IssueActor, IssueSummary } from "@t3tools/contracts";
 import { ListChecksIcon, MessageSquareIcon } from "lucide-react";
@@ -64,6 +67,8 @@ export function IssueRow({
   readonly className?: string;
   readonly referenceLabel?: string;
 }) {
+  const projects = useProjects();
+  const reference = parseIssueUrl(issue.url, knownGitHubHosts(projects));
   const projectChips = issueProjectChips(issue.projects);
   const assignees = issue.assignees.slice(0, 3);
   return (
@@ -147,6 +152,9 @@ export function IssueRow({
               Assigned to {issue.assignees.map((assignee) => assignee.login).join(", ")}
             </TooltipPopup>
           </Tooltip>
+        ) : null}
+        {environmentId !== undefined && reference !== null ? (
+          <IssueQueueAction environmentId={environmentId} reference={reference} issue={issue} />
         ) : null}
         <IssuePullRequests
           pullRequests={issue.pullRequests}

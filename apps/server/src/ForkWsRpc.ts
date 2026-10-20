@@ -51,6 +51,8 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
         [ORCHESTRATION_V2_WS_METHODS.stopBackgroundTask]: (input) => backgroundTasks.stop(input),
         [ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput]: (input) =>
           Stream.unwrap(backgroundTasks.subscribeOutput(input)),
+        [WS_METHODS.issuesQueue]: (input) => issueWork.queueIssue(input),
+        [WS_METHODS.issuesUnqueue]: (input) => issueWork.unqueueIssue(input),
         [WS_METHODS.issuesStart]: (input) => issueWork.start(input),
         [WS_METHODS.issuesWorkStatus]: (input) => issueWork.workStatus(input),
         [WS_METHODS.issuesWorkMilestone]: (input) => issueWork.workMilestone(input),

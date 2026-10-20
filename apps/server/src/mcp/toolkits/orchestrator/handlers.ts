@@ -35,6 +35,20 @@ const handlers = {
       return yield* service.workMilestone(scope, input);
     }),
   ),
+  queue_issue: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.queueIssue(scope, input);
+    }),
+  ),
+  unqueue_issue: McpToolAccess.writes((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.unqueueIssue(scope, input);
+    }),
+  ),
   get_repository_orchestration: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

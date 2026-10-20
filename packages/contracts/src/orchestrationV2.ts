@@ -47,6 +47,7 @@ import {
 import { ModelSelection } from "./modelSelection.ts";
 import {
   IssueWorkRequested,
+  IssueQueueEntry,
   IssueWorkCancelled,
   RepositoryWorkRestored,
   RepositoryOrchestration,
@@ -1702,6 +1703,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("issue.queue.updated"),
+    payload: IssueQueueEntry,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("issue.github-comment.recorded"),
     payload: IssueGithubCommentRecorded,
   }),
@@ -2545,6 +2551,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("issue.queue.updated"),
+    payload: IssueQueueEntry,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("issue.github-comment.recorded"),
     payload: IssueGithubCommentRecorded,
   }),
@@ -3193,6 +3204,18 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("issue.queue.change"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    issue: ThreadLinkedIssue,
+    queued: Schema.Boolean,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("issue.queue.deliver"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
   Schema.Struct({
     type: Schema.Literal("issue.work.cancel"),
     commandId: CommandId,

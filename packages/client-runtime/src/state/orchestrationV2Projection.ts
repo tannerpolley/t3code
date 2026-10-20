@@ -223,6 +223,7 @@ export function applyOrchestrationV2ProjectionEvent(
   switch (event.type) {
     case "issue.work.cancelled":
     case "repository.work.restored":
+    case "issue.queue.updated":
     case "issue.work.requested":
     case "issue.github-comment.recorded":
       return projection;

@@ -1,5 +1,7 @@
 import {
   CommandId,
+  ThreadId,
+  type IssueQueueInput,
   type OrchestrationV2ServerCommand,
   DEFAULT_REPOSITORY_WORK_SETTINGS,
   IssueWorkError,
@@ -18,7 +20,6 @@ import {
   type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
   type RepositoryOrchestration,
-  type ThreadId,
   type ProjectId,
   type IssueWorkRead,
   type ThreadLinkedIssue,
@@ -74,6 +75,12 @@ const encodeToolArgument = Schema.encodeEffect(Schema.fromJsonString(Schema.Unkn
 export class IssueWorkService extends Context.Service<
   IssueWorkService,
   {
+    readonly queueIssue: (
+      input: IssueQueueInput,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
+    readonly unqueueIssue: (
+      input: IssueQueueInput,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly start: (
       input: IssueWorkStartInput,
     ) => Effect.Effect<IssueWorkStartResult, IssueWorkError>;
@@ -615,8 +622,58 @@ export const layer = Layer.effect(
           rootThreadId: owner?.rootThreadId ?? null,
           orchestration: owner === null ? null : yield* store.configuration(owner.rootThreadId),
           slotsInUse: owner === null ? 0 : yield* store.slotsInUse(owner.rootThreadId),
+          queue: yield* store.queue(input),
         };
       });
+    const deliverQueuedIssue = (rootThreadId: ThreadId, key: string) =>
+      threads
+        .dispatch({
+          type: "issue.queue.deliver",
+          commandId: CommandId.make(`issue-queue-delivery:${rootThreadId}:${key}`),
+          threadId: rootThreadId,
+        })
+        .pipe(Effect.mapError(mapError), Effect.asVoid);
+    const changeQueue = Effect.fn("IssueWorkService.changeQueue")(function* (
+      input: IssueQueueInput,
+      queued: boolean,
+    ) {
+      const receipt = yield* commandReceipts
+        .getByCommandId(input.clientRequestId)
+        .pipe(Effect.mapError(mapError));
+      const issue = yield* issues.resolveLinkedIssue(input).pipe(Effect.mapError(mapError));
+      if (queued && Option.isNone(receipt)) {
+        const detail = yield* issues.detail(input).pipe(Effect.mapError(mapError));
+        if (detail.issue.state !== "open")
+          return yield* new IssueWorkError({
+            code: "invalid-request",
+            message: "Only open issues can be queued.",
+          });
+      }
+      const owner = yield* store.repositoryOwner(issue);
+      // A repository mailbox persists requests before its first orchestrator exists.
+      const threadId = Option.isSome(receipt)
+        ? receipt.value.threadId
+        : (owner?.rootThreadId ?? ThreadId.make(`issue-queue:${issue.host}:${issue.repositoryId}`));
+      yield* threads
+        .dispatch({
+          type: "issue.queue.change",
+          commandId: input.clientRequestId,
+          threadId,
+          issue,
+          queued,
+        })
+        .pipe(Effect.mapError(mapError));
+      if (owner !== null)
+        yield* deliverQueuedIssue(owner.rootThreadId, input.clientRequestId).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Issue queue delivery deferred", {
+              root: owner.rootThreadId,
+              cause,
+            }),
+          ),
+        );
+      return yield* repositoryStatus(input);
+    });
     const update = (
       rootThreadId: ThreadId,
       config: RepositoryOrchestration,
@@ -790,6 +847,13 @@ export const layer = Layer.effect(
             });
         }
         if (draining) return yield* drainHandoff(rootThreadId);
+        if ((yield* store.queue(config)).some((entry) => entry.state === "queued"))
+          yield* deliverQueuedIssue(
+            rootThreadId,
+            eventSequence === undefined
+              ? `reconcile:${yield* ids.allocate.command({ fixtureName: "issue-queue", commandName: "reconcile" }).pipe(Effect.mapError(mapError))}`
+              : String(eventSequence),
+          );
         // Once an ancestor has a durable thread, deliver its selected sub-issues there.
         for (const request of yield* store.pendingRequests(rootThreadId)) {
           const read = refreshRequests
@@ -1466,6 +1530,8 @@ export const layer = Layer.effect(
             publishing: yield* store.publishing(owner, issue),
           };
         }),
+      queueIssue: (input) => changeQueue(input, true),
+      unqueueIssue: (input) => changeQueue(input, false),
       start: (input) => start(input),
       startWorker,
       cancelRequest,
@@ -1515,9 +1581,22 @@ export const layer = Layer.effect(
           (stored) =>
             !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
             (stored.event.type === "thread.created" ||
-              stored.event.type === "subagent.updated" ||
-              stored.event.type === "runtime-request.updated" ||
-              stored.event.type === "provider-thread.updated" ||
+              (stored.event.type === "thread.metadata-updated" &&
+                stored.event.payload.repositoryOrchestration !== undefined) ||
+              stored.event.type === "thread.unarchived" ||
+              stored.event.type === "thread.settled" ||
+              stored.event.type === "repository.work.restored" ||
+              (stored.event.type === "issue.queue.updated" &&
+                stored.event.payload.state === "queued" &&
+                stored.event.payload.noticeRunId === undefined) ||
+              (stored.event.type === "subagent.updated" &&
+                ["completed", "failed", "interrupted", "cancelled"].includes(
+                  stored.event.payload.status,
+                )) ||
+              (stored.event.type === "runtime-request.updated" &&
+                stored.event.payload.status !== "pending") ||
+              (stored.event.type === "provider-thread.updated" &&
+                (stored.event.payload.pendingBackgroundTasks?.length ?? 0) === 0) ||
               ((stored.event.type === "run.updated" || stored.event.type === "run.created") &&
                 ["queued", "preparing", "completed", "failed", "interrupted", "cancelled"].includes(
                   stored.event.payload.status,
@@ -1525,21 +1604,52 @@ export const layer = Layer.effect(
         ),
         Stream.runForEach((stored) =>
           Effect.gen(function* () {
+            if (stored.event.type === "thread.metadata-updated") {
+              const receipt =
+                stored.commandId == null
+                  ? Option.none()
+                  : yield* commandReceipts.getByCommandId(stored.commandId);
+              if (
+                Option.isNone(receipt) ||
+                ![
+                  "repository.work.update",
+                  "repository.work.handoff",
+                  "repository.work.restore",
+                ].includes(receipt.value.commandType)
+              )
+                return;
+            }
+            // A notice's failure batch must not immediately remind itself again.
+            const noticeRunId =
+              (stored.event.type === "run.updated" || stored.event.type === "run.created") &&
+              stored.event.payload.status !== "completed"
+                ? stored.event.payload.id
+                : stored.event.type === "provider-thread.updated"
+                  ? stored.event.runId
+                  : undefined;
+            if (
+              noticeRunId !== undefined &&
+              (yield* store.isQueueNoticeRun(stored.event.threadId, noticeRunId))
+            )
+              return;
             const shell = yield* threads
               .getThreadShell(stored.event.threadId)
               .pipe(Effect.mapError(mapError));
             const repository =
-              shell?.linkedIssue ?? (yield* store.configuration(stored.event.threadId));
+              (stored.event.type === "issue.queue.updated"
+                ? stored.event.payload.issue
+                : shell?.linkedIssue) ?? (yield* store.configuration(stored.event.threadId));
             if (repository == null) return;
             const owner = yield* store.repositoryOwner(repository);
-            // Root events and delivery/request updates matter only while a handoff drains.
+            // Root availability also releases one queued notice.
             if (
               owner !== null &&
               (shell?.linkedIssue === undefined ||
                 stored.event.type === "subagent.updated" ||
                 stored.event.type === "runtime-request.updated" ||
                 stored.event.type === "provider-thread.updated") &&
-              (yield* store.configuration(owner.rootThreadId))?.handoff?.status !== "draining"
+              (yield* store.configuration(owner.rootThreadId))?.handoff?.status !== "draining" &&
+              (yield* store.queue(repository)).length === 0
             )
               return;
             if (owner !== null) {
@@ -1554,6 +1664,18 @@ export const layer = Layer.effect(
         ),
         Effect.forkScoped,
       );
+    }
+    // Recover persisted notices once; further attempts are driven by availability events.
+    if (Option.isSome(sink)) {
+      for (const root of yield* store.queuedRoots())
+        yield* deliverQueuedIssue(
+          root,
+          `startup:${yield* sink.value.latestSequence().pipe(Effect.orDie)}`,
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Issue queue recovery failed", { root, cause }),
+          ),
+        );
     }
     return service;
   }),

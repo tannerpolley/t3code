@@ -78,12 +78,24 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:decide-change",
       tag: WS_METHODS.issueChangesDecide,
     }),
+    queueIssue: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:queue",
+      tag: WS_METHODS.issuesQueue,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
+    }),
+    unqueueIssue: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:unqueue",
+      tag: WS_METHODS.issuesUnqueue,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
+    }),
     repositoryStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:repository-status",
       tag: WS_METHODS.issuesRepositoryStatus,
       staleTimeMs: 5_000,
       refreshIntervalMs: 5_000,
-      refreshTrigger,
+      refreshTrigger: linkRefreshTrigger,
     }),
     workMilestone: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:milestone",

@@ -73,9 +73,9 @@ describe("live roadmap", () => {
         issue(423),
       ],
     );
-    expect(numbers(sections[2]!.rows)).toEqual([423, 431]);
-    expect(numbers(sections[3]!.rows)).toEqual([432, 434, 439, 435]);
-    const blocked = numbers(sections[3]!.rows);
+    expect(numbers(sections[3]!.rows)).toEqual([423, 431]);
+    expect(numbers(sections[4]!.rows)).toEqual([432, 434, 439, 435]);
+    const blocked = numbers(sections[4]!.rows);
     expect(blocked.indexOf(439)).toBeLessThan(blocked.indexOf(435));
   });
   it("orders an open child before its parent, ignores closed children and closed blockers, and excludes closed issues", () => {
@@ -89,8 +89,8 @@ describe("live roadmap", () => {
         issue(5, { state: "closed", parent: ref(1) }),
       ],
     );
-    expect(numbers(sections[2]!.rows)).toEqual([2, 7, 1]);
-    expect(sections[3]!.rows).toEqual([]);
+    expect(numbers(sections[3]!.rows)).toEqual([2, 7, 1]);
+    expect(sections[4]!.rows).toEqual([]);
   });
   it("uses milestone group order, then Project Priority, then oldest issue number for available nodes", () => {
     const alpha = milestone(2, "Alpha"),
@@ -110,7 +110,7 @@ describe("live roadmap", () => {
         issue(3, { milestone: alpha }),
       ],
     );
-    expect(numbers(sections[2]!.rows)).toEqual([7, 8, 9, 3, 2, 1]);
+    expect(numbers(sections[3]!.rows)).toEqual([7, 8, 9, 3, 2, 1]);
   });
   it("dependency order beats priority and milestone order in the same section", () => {
     const alpha = milestone(1, "Alpha"),
@@ -129,7 +129,7 @@ describe("live roadmap", () => {
         issue(3, { milestone: zeta, parent: ref(2), liveWork: work("working") }),
       ],
     );
-    expect(numbers(sections[0]!.rows)).toEqual([3, 2]);
+    expect(numbers(sections[1]!.rows)).toEqual([3, 2]);
   });
   it("shows external and unloaded open blockers without giving an external issue number an ordering edge", () => {
     const sections = issueRoadmap(
@@ -141,7 +141,7 @@ describe("live roadmap", () => {
         issue(7, { blockedBy: [ref(1000)] }),
       ],
     );
-    expect(numbers(sections[3]!.rows)).toEqual([1, 2, 7]);
+    expect(numbers(sections[4]!.rows)).toEqual([1, 2, 7]);
   });
   it("numbers cycles deterministically, including child/blocker cycles and self edges, without badging their descendants", () => {
     const sections = issueRoadmap(
@@ -155,7 +155,7 @@ describe("live roadmap", () => {
         issue(1),
       ],
     );
-    expect(numbers(sections[2]!.rows)).toEqual([1, 9]);
+    expect(numbers(sections[3]!.rows)).toEqual([1, 9]);
     expect(
       sections
         .flatMap((section) => section.rows)
@@ -163,8 +163,8 @@ describe("live roadmap", () => {
         .map((row) => row.issue.number)
         .sort((a, b) => a - b),
     ).toEqual([3, 4, 9]);
-    expect(numbers(sections[3]!.rows)).toEqual([3, 4, 2]);
-    expect(sections[3]!.rows.find((row) => row.issue.number === 2)?.cycle).toBe(false);
+    expect(numbers(sections[4]!.rows)).toEqual([3, 4, 2]);
+    expect(sections[4]!.rows.find((row) => row.issue.number === 2)?.cycle).toBe(false);
   });
   it("keeps only running agents In progress, open PRs In review, and blockers ahead of both", () => {
     const first = issueRoadmap(
@@ -190,6 +190,7 @@ describe("live roadmap", () => {
       ],
     );
     expect(first.map((section) => numbers(section.rows))).toEqual([
+      [],
       [7, 11],
       [8, 12],
       [2, 3, 9, 13, 14],
@@ -210,6 +211,28 @@ describe("live roadmap", () => {
         issue(4),
       ],
     );
-    expect(refreshed.map((section) => numbers(section.rows))).toEqual([[], [], [1, 2, 3, 4], []]);
+    expect(refreshed.map((section) => numbers(section.rows))).toEqual([
+      [],
+      [],
+      [],
+      [1, 2, 3, 4],
+      [],
+    ]);
   });
+});
+
+it("puts queued issues first in insertion order and removes them from their other sections", () => {
+  const sections = issueRoadmap(
+    scope,
+    [],
+    [issue(1), issue(2, { blockedBy: [ref(99)] }), issue(3), issue(4, { state: "closed" })],
+    [2, 1, 4],
+  );
+  expect(sections.map((section) => [section.title, numbers(section.rows)])).toEqual([
+    ["Queued", [2, 1]],
+    ["In progress", []],
+    ["In review", []],
+    ["Ready", [3]],
+    ["Blocked", []],
+  ]);
 });

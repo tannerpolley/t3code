@@ -166,10 +166,10 @@ export const enqueueIssueStatusEffects = (input: {
       LEFT JOIN orchestration_v2_projection_issue_work work
         ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
       WHERE request.root_thread_id = ${threadId}
-        AND json_type(request.payload_json, '$.cancellation') IS NULL
+        AND request.queue_state IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL
         AND (work.owner_thread_id IS NULL OR request.attempt_key = work.owner_thread_id)
         AND request.rowid = (SELECT max(latest.rowid) FROM orchestration_v2_projection_issue_work_requests latest
-          WHERE latest.host = request.host AND latest.repository_id = request.repository_id AND latest.issue_id = request.issue_id)
+          WHERE latest.host = request.host AND latest.repository_id = request.repository_id AND latest.issue_id = request.issue_id AND latest.queue_state IS NULL)
     `;
       for (const row of queued) add((yield* decodeRequest(row.payload_json)).issue);
     }

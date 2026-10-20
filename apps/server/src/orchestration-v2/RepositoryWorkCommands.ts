@@ -300,7 +300,6 @@ export function makeRepositoryWorkCommands({
 
   const continueWork = (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "repository.work.continue" }>,
-    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) =>
     Effect.gen(function* () {
       const projection = yield* projectionStore
@@ -315,15 +314,6 @@ export function makeRepositoryWorkCommands({
           commandType: command.type,
           cause: "This thread is not a repository orchestrator.",
         });
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.metadata-updated",
-        threadId: command.threadId,
-        occurredAt: yield* DateTime.now,
-        payload: projection.thread,
-      });
     });
 
   const handoff = (

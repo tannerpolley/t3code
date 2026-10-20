@@ -3,6 +3,7 @@ import type {
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import { makeIssueQueueCommands } from "../issues/IssueQueueCommands.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { canWakeDelegatedRequest } from "./DelegatedRequestWake.ts";
 import { supportsManagedIssueWork, managedIssueProviderError } from "../issues/IssueEligibility.ts";
@@ -115,7 +116,12 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { IssueReadSnapshots, makeIssueWorkDispatch } from "./IssueWorkDispatch.ts";
+import {
+  IssueReadSnapshots,
+  IssueQueueReads,
+  IssueQueueRefreshRequired,
+  makeIssueWorkDispatch,
+} from "./IssueWorkDispatch.ts";
 import { makeIssueWorkRecovery } from "./IssueWorkRecovery.ts";
 import { makeIssueWorkCommands, type DelegatedTaskRequest } from "./IssueWorkCommands.ts";
 import { makeRepositoryWorkCommands } from "./RepositoryWorkCommands.ts";
@@ -164,6 +170,8 @@ import {
   usageLimitSwitchResultRun,
   usageLimitSwitchMessageId,
 } from "./usageLimitRecoveryPending.ts";
+
+const isIssueQueueRefreshRequired = Schema.is(IssueQueueRefreshRequired);
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -521,6 +529,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.stop":
     case "provider.switch":
       return command.threadId;
+    case "issue.queue.change":
+    case "issue.queue.deliver":
     case "issue.work.cancel":
     case "repository.work.restore":
     case "issue.work.start":
@@ -997,7 +1007,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
-  const { threadExecutor, threadDispatch, readIssueSnapshots } = yield* makeIssueWorkDispatch;
+  const { threadExecutor, threadDispatch, readIssueSnapshots, readIssueQueueSnapshots } =
+    yield* makeIssueWorkDispatch;
   const issueWorkRecovery = yield* makeIssueWorkRecovery;
 
   const mapDispatchError =
@@ -11871,6 +11882,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     dispatchDelegatedTaskRequest,
   });
 
+  const issueQueue = makeIssueQueueCommands({ ...forkCommandHooks, dispatchMessage });
+
   const repositoryWork = makeRepositoryWorkCommands({
     recordSubagentFollowup: (command, events) =>
       recordSubagentFollowup(command, events).pipe(mapDispatchError(command)),
@@ -12175,6 +12188,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.merge_back":
         yield* dispatchThreadMergeBack(command, events);
         break;
+      case "issue.queue.change":
+        yield* issueQueue.change(command, events);
+        break;
+      case "issue.queue.deliver":
+        yield* issueQueue.deliver(command, events, effects);
+        break;
       case "issue.work.cancel":
         yield* issueWork.cancel(command, events);
         break;
@@ -12185,7 +12204,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* repositoryWork.update(command, events, effects);
         break;
       case "repository.work.continue":
-        yield* repositoryWork.continueWork(command, events);
+        yield* repositoryWork.continueWork(command);
         break;
       case "repository.work.handoff":
         yield* repositoryWork.handoff(command, events, effects);
@@ -12384,6 +12403,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const plan = yield* dispatchOnce(command).pipe(
         Effect.flatMap((planned) =>
           planned.events.length > 0 ||
+          command.type === "issue.queue.change" ||
+          command.type === "issue.queue.deliver" ||
+          command.type === "repository.work.continue" ||
           command.type === "thread.background-work.settle" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop"
@@ -12398,7 +12420,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
         Effect.catch((cause) =>
           Effect.gen(function* () {
-            if (cause._tag === "OrchestratorThreadAboveModeLimitError") return yield* cause;
+            if (
+              cause._tag === "OrchestratorThreadAboveModeLimitError" ||
+              (cause._tag === "OrchestratorDispatchError" &&
+                isIssueQueueRefreshRequired(cause.cause))
+            )
+              return yield* cause;
             const rejectedAt = yield* DateTime.now;
             const receipt = yield* eventSink
               .commitRejectedCommand({
@@ -12459,6 +12486,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
+        if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
+          for (const threadId of yield* issueWorkStore.value
+            .workerThreads(command.threadId)
+            .pipe(mapDispatchError(command)))
+            yield* mapDispatchError(command)(startNextQueuedRun(threadId));
+        }
         return {
           sequence: resultSequence,
           storedEvents: [],
@@ -12548,6 +12581,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const needsReads =
       command.type === "issue.work.start" ||
+      command.type === "issue.queue.deliver" ||
       command.type === "delegated_task.request" ||
       command.type === "message.dispatch" ||
       command.type === "prepared-run.retry" ||
@@ -12556,6 +12590,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const receipt = needsReads
       ? yield* commandReceipts.getByCommandId(command.commandId).pipe(mapDispatchError(command))
       : Option.none();
+    if (command.type === "issue.queue.deliver" && Option.isNone(receipt)) {
+      let attempts = 1;
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        const preflight = yield* readIssueQueueSnapshots(command.threadId).pipe(
+          mapDispatchError(command),
+        );
+        if (attempt === 0) attempts = Math.max(1, preflight.queueLength);
+        const result = yield* threadDispatch
+          .withLock(
+            command.threadId,
+            dispatchWithReceiptEffect(command).pipe(
+              Effect.provideService(IssueQueueReads, preflight.reads),
+            ),
+          )
+          .pipe(Effect.result);
+        if (result._tag === "Success") return result.success;
+        if (
+          result.failure._tag !== "OrchestratorDispatchError" ||
+          !isIssueQueueRefreshRequired(result.failure.cause)
+        )
+          return yield* Effect.fail(result.failure);
+      }
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The issue queue kept changing during refresh. Retry delivery.",
+      });
+    }
     const issueReads =
       needsReads &&
       (Option.isNone(receipt) ||

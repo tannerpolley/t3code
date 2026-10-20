@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
-import { CommandId, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { CommandId, ProjectId, RunId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelRoleId } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
@@ -144,10 +144,26 @@ export const RepositoryWorkRestored = Schema.Struct({
   repositoryOrchestration: RepositoryOrchestration,
 });
 
+export const IssueQueueInput = Schema.Struct({
+  ...IssueRef.fields,
+  clientRequestId: CommandId,
+});
+export type IssueQueueInput = typeof IssueQueueInput.Type;
+
+export const IssueQueueEntry = Schema.Struct({
+  requestId: CommandId,
+  issue: ThreadLinkedIssue,
+  state: Schema.Literals(["queued", "needs_attention", "removed"]),
+  noticeRunId: Schema.optional(RunId),
+  notifiedAt: Schema.optional(Schema.String),
+});
+export type IssueQueueEntry = typeof IssueQueueEntry.Type;
+
 export const RepositoryWorkResult = Schema.Struct({
   rootThreadId: Schema.NullOr(ThreadId),
   orchestration: Schema.NullOr(RepositoryOrchestration),
   slotsInUse: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  queue: Schema.optional(Schema.Array(IssueQueueEntry)),
 });
 export type RepositoryWorkResult = typeof RepositoryWorkResult.Type;
 

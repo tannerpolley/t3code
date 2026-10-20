@@ -3,6 +3,11 @@ import {
   USAGE_LIMIT_SWITCH_HOLD_MS,
   USAGE_LIMIT_SWITCH_RELEASE_MARGIN_MS,
 } from "./usageLimitRecoveryPending.ts";
+import {
+  applyIssueQueueEvent,
+  claimQueuedIssue,
+  finishIssueQueueNotice,
+} from "../issues/IssueQueueStore.ts";
 import { IssueWorkCancelled, IssueWorkRequested } from "@t3tools/contracts";
 import { pendingRoutedRequestThreadIds } from "./ForkProjectionReads.ts";
 import { applyThreadPullRequestLinkUpdate } from "@t3tools/shared/threadPullRequests";
@@ -867,6 +872,7 @@ export function applyToProjection(
   };
 
   switch (event.type) {
+    case "issue.queue.updated":
     case "issue.work.cancelled":
     case "repository.work.restored":
     case "issue.work.requested":
@@ -2124,6 +2130,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 );
               }
               return;
+            case "issue.queue.updated":
+              yield* applyIssueQueueEvent(event).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
+              return;
             case "issue.work.cancelled": {
               const payload = yield* encodeIssueCancellation(event.payload);
               yield* sql`
@@ -2136,6 +2147,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "issue.work.requested": {
               const request = event.payload;
+              yield* claimQueuedIssue(request.issue).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
               if (request.issueThreadId === null) {
                 yield* sql`
                   INSERT INTO orchestration_v2_projection_issue_work
@@ -2239,6 +2253,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               }
               if (event.type === "thread.created" && event.payload.linkedIssue !== undefined) {
                 const issue = event.payload.linkedIssue;
+                yield* claimQueuedIssue(issue).pipe(
+                  Effect.provideService(SqlClient.SqlClient, sql),
+                );
                 yield* sql`
                   INSERT INTO orchestration_v2_projection_issue_work
                     (host, repository_id, issue_id, issue_number, repository, node_id, issue_url,
@@ -2295,7 +2312,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     SET root_thread_id = ${event.threadId},
                         payload_json = json_set(payload_json, '$.rootThreadId', ${event.threadId})
                     WHERE root_thread_id IN ${sql.in(owner.handoffHistory!.map((entry) => entry.threadId))}
-                      AND json_type(payload_json, '$.cancellation') IS NULL
+                      AND queue_state IS NULL AND json_type(payload_json, '$.cancellation') IS NULL
                       AND NOT EXISTS (
                         SELECT 1 FROM orchestration_v2_projection_issue_work work
                         WHERE work.host = orchestration_v2_projection_issue_work_requests.host
@@ -2359,6 +2376,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }
             case "run.created":
             case "run.updated": {
+              yield* finishIssueQueueNotice(event.payload).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
               const payloadJson = yield* encodeRunPayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
@@ -7029,13 +7049,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT work.owner_thread_id, work.status_comment_id,
             COALESCE((SELECT json_type(request.payload_json, '$.cancellation') IS NOT NULL
               FROM orchestration_v2_projection_issue_work_requests request
-              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id
+              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id AND request.queue_state IS NULL
               ORDER BY request.rowid DESC LIMIT 1), 0) AS request_cancelled,
             (SELECT root_thread_id FROM orchestration_v2_projection_issue_work_requests request
-              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id
+              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id AND request.queue_state IS NULL
               ORDER BY request.rowid DESC LIMIT 1) AS request_root_id,
             (SELECT attempt_key FROM orchestration_v2_projection_issue_work_requests request
-              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id
+              WHERE request.host = work.host AND request.repository_id = work.repository_id AND request.issue_id = work.issue_id AND request.queue_state IS NULL
               ORDER BY request.rowid DESC LIMIT 1) AS attempt_key,
             (SELECT json_extract(effect.payload_json, '$.writeKey') FROM orchestration_v2_effect_outbox effect
               WHERE effect.effect_type = 'issue.github.comment' AND json_extract(effect.payload_json, '$.operation') = 'status_sync'

@@ -74,6 +74,7 @@ import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { issueEnvironment, useLiveIssueSummary } from "~/state/issues";
 import { useEnvironmentQuery } from "~/state/query";
+import { IssueQueueAction } from "./IssueQueueAction";
 import { IssueStartAction } from "./IssueStartAction";
 import { IssueChangeCards } from "./IssueChangeCards";
 
@@ -666,6 +667,7 @@ export function IssueDetailPanel({
           updated={<span>updated {formatRelativeTimeLabel(issue.updatedAt)}</span>}
           branchLine={
             <div className="flex min-w-0 flex-1 flex-wrap items-start justify-end gap-1.5">
+              <IssueQueueAction environmentId={environmentId} reference={reference} issue={issue} />
               <IssueStartAction
                 key={`${environmentId}:${issueKey}`}
                 environmentId={environmentId}

@@ -1845,6 +1845,16 @@ it.effect(
         (yield* threads.getThreadRecords(child, ["runs"])).runs[0]!.status,
         "interrupted",
       );
+      yield* (yield* EventSink.EventSinkV2).stream({ eventType: "subagent.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "subagent.updated" &&
+            stored.event.payload.childThreadId === child &&
+            stored.event.payload.result !== null,
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
       const suspensions = (yield* store.configuration(root))!.suspendedIssues;
       assert.lengthOf(suspensions, 2);
       yield* service.reconcile(root);
@@ -2263,6 +2273,23 @@ it.effect(
     return Effect.gen(function* () {
       const threads = yield* ThreadManagement.ThreadManagementService;
       const sink = yield* EventSink.EventSinkV2;
+      const continued = new Map<string, Deferred.Deferred<void>>();
+      const milestone = (key: string) => {
+        if (!continued.has(key)) continued.set(key, Deferred.makeUnsafe<void>());
+        return continued.get(key)!;
+      };
+      const dispatch = threads.dispatch;
+      const tracked = vi
+        .spyOn(threads, "dispatch")
+        .mockImplementation((command) =>
+          dispatch(command).pipe(
+            Effect.tap(() =>
+              command.type === "repository.work.continue"
+                ? Deferred.succeed(milestone(String(command.commandId)), undefined)
+                : Effect.void,
+            ),
+          ),
+        );
       const root = yield* createReviewRoot();
       const child = yield* delegateReviewIssue(root, reviewIssue(1), "burst-child");
       const childId = child.storedEvents.find((stored) => stored.event.type === "thread.created")!
@@ -2270,7 +2297,6 @@ it.effect(
       const run = (yield* threads.getThreadRecords(childId, ["runs"])).runs[0]!;
       const now = yield* DateTime.now;
       const before = workRead.mock.calls.length;
-      const sequence = yield* sink.latestSequence();
       const events = Array.from({ length: 24 }, (_, i) => ({
         id: EventId.make(`burst-prepare:${i}`),
         type: "run.updated" as const,
@@ -2281,13 +2307,12 @@ it.effect(
       }));
       const committed = yield* sink.write({ events });
       const lastSequence = committed.at(-1)!.sequence;
-      yield* sink
-        .stream({ afterSequence: sequence, threadId: root, eventType: "thread.metadata-updated" })
-        .pipe(
-          Stream.filter((stored) => String(stored.commandId).endsWith(`:event:${lastSequence}`)),
-          Stream.take(1),
-          Stream.runDrain,
-        );
+      const config = (yield* (yield* IssueWorkStore.IssueWorkStore).configuration(root))!;
+      yield* Deferred.await(
+        milestone(`issue-admission:${root}:${config.revision}:event:${lastSequence}`),
+      );
+      tracked.mockRestore();
+      assert.equal(yield* sink.latestSequence(), lastSequence);
       assert.equal(workRead.mock.calls.length - before, 0);
     }).pipe(Effect.provide(harness.layer));
   },

@@ -98,6 +98,7 @@ export function existingThreadIdsForCommand(
     // while a thread is open, so keeping them off the import path matters.
     case "thread.visit":
     case "thread.mark-unread":
+    case "issue.queue.change":
       return [];
     case "repository.work.restore":
       return [command.threadId, command.targetThreadId];
@@ -710,13 +711,17 @@ const make = Effect.gen(function* () {
 
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
+      case "issue.queue.deliver":
       case "message.dispatch":
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((projection) =>
             assertProviderInstanceEnabled({
               projectId: projection.thread.projectId,
               commandId: command.commandId,
-              instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+              instanceId: (command.type === "message.dispatch"
+                ? (command.modelSelection ?? projection.thread.modelSelection)
+                : projection.thread.modelSelection
+              ).instanceId,
             }),
           ),
         );

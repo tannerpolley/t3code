@@ -7,6 +7,7 @@ import type {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { sameIssueRepository } from "../issues/IssueEligibility.ts";
 import * as IssueService from "../issues/IssueService.ts";
@@ -20,6 +21,21 @@ export class IssueReadSnapshots extends Context.Reference<ReadonlyArray<IssueWor
   {
     defaultValue: (): ReadonlyArray<IssueWorkRead> => [],
   },
+) {}
+
+type IssueQueueRead = {
+  readonly issue: ThreadLinkedIssue;
+  readonly outcome: "open" | "closed" | "worked" | "refresh-failed";
+};
+
+export class IssueQueueReads extends Context.Reference<ReadonlyArray<IssueQueueRead>>(
+  "t3/issues/QueuePlanningReads",
+  { defaultValue: () => [] },
+) {}
+
+export class IssueQueueRefreshRequired extends Schema.TaggedError<IssueQueueRefreshRequired>()(
+  "IssueQueueRefreshRequired",
+  {},
 ) {}
 
 /** Dispatch lock keys the current fiber already holds. */
@@ -141,5 +157,51 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
       return reads;
     });
 
-  return { threadExecutor, threadDispatch, readIssueSnapshots };
+  const readIssueQueueSnapshots = Effect.fn("IssueWorkDispatch.readIssueQueueSnapshots")(function* (
+    threadId: ThreadId,
+  ) {
+    if (Option.isNone(issueReads) || Option.isNone(issueWorkStore))
+      return { reads: [], queueLength: 0 };
+    const store = issueWorkStore.value;
+    const config = yield* store.configuration(threadId);
+    if (
+      config === null ||
+      config.paused ||
+      config.handoff !== undefined ||
+      config.retiredToThreadId !== undefined ||
+      (yield* store.slotsInUse(threadId)) >= config.workerLimit ||
+      !(yield* store.queueRootIdle(threadId))
+    )
+      return { reads: [], queueLength: 0 };
+    const reads: IssueQueueRead[] = [];
+    const queue = yield* store.queue(config);
+    if (queue.some((entry) => entry.noticeRunId !== undefined))
+      return { reads, queueLength: queue.length };
+    for (const entry of queue) {
+      if (entry.state !== "queued") continue;
+      const owner = yield* store.currentIssueOwner(entry.issue);
+      const pending = yield* store.latestRequest(entry.issue);
+      const ownerShell = owner === null ? null : yield* projectionStore.getThreadShell(owner);
+      if (
+        owner === null
+          ? pending !== null && pending.cancellation === undefined
+          : ownerShell?.activeRunId != null || !(yield* store.resultAvailable(owner))
+      ) {
+        reads.push({ issue: entry.issue, outcome: "worked" });
+        continue;
+      }
+      const read = yield* issueReads.value.workRead(entry.issue).pipe(Effect.option);
+      const outcome =
+        Option.isSome(read) &&
+        sameIssueRepository(read.value.issue, entry.issue) &&
+        read.value.issue.id === entry.issue.id
+          ? read.value.state
+          : "refresh-failed";
+      reads.push({ issue: entry.issue, outcome });
+      if (outcome !== "closed") break;
+    }
+    return { reads, queueLength: queue.length };
+  });
+
+  return { threadExecutor, threadDispatch, readIssueSnapshots, readIssueQueueSnapshots };
 });

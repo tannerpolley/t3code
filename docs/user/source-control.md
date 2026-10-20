@@ -307,6 +307,15 @@ worker exists; use the repository's orchestrator link on the Issues page to open
 **Linked issue** in thread details opens the issue beside that thread. A worker marked done may
 still need review, publishing, or merge approval; T3 does not automatically close the GitHub issue.
 
+Use **Add to queue** on an open issue’s row or detail panel to put it in the repository’s
+ordered **Queued** section. When the registered orchestrator is idle and a worker slot is free,
+it receives the next issue and an instruction to start an implementor. Each notice waits for the
+previous orchestrator turn to finish. An issue stays queued until a worker claims it. If the
+orchestrator finishes without starting it, the row shows **Orchestrator didn’t start it**; use
+**Retry** to remind it again, or **Remove from queue** to withdraw it. Failed or interrupted
+notices are retried when the orchestrator is next available. Repository pause and the **Workers** limit apply. Without a
+registered orchestrator, the queue waits. Claimed work is managed through its orchestrator or worker.
+
 To change how much issue work runs at once, edit **Workers** at the top of the repository on the
 Issues pane. The limit starts at 4 and can be set from 1 to 32; **Workers** shows how many slots
 are in use. Raising it starts eligible queued work. Lowering it lets current workers finish and

@@ -163,6 +163,8 @@ describe("command permissions", () => {
           WS_METHODS.issuesRestoreRoot,
           WS_METHODS.issuesInboxMarkRead,
           WS_METHODS.issuesSetWorkerLimit,
+          WS_METHODS.issuesQueue,
+          WS_METHODS.issuesUnqueue,
         ]) {
           const recovery = createCommandPermissions(runtime, method);
           expect(registry.get(recovery.permissionAtom(env))).toBe(true);
@@ -188,6 +190,9 @@ describe("command permissions", () => {
           client: {
             [WS_METHODS.issuesCancelRequest]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesCancelRequest)),
+            [WS_METHODS.issuesQueue]: () => Effect.sync(() => calls.push(WS_METHODS.issuesQueue)),
+            [WS_METHODS.issuesUnqueue]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesUnqueue)),
             [WS_METHODS.issuesSetWorkerLimit]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesSetWorkerLimit)),
             [WS_METHODS.issuesRestoreRoot]: () =>
@@ -239,16 +244,22 @@ describe("command permissions", () => {
               input: { ...scope, workerLimit: 8, expectedRevision: 2 },
             }),
           );
-          expect([cancelled._tag, restored._tag, limited._tag]).toEqual([
-            outcome,
-            outcome,
-            outcome,
-          ]);
+          const queued = yield* Effect.promise(() =>
+            issues.queueIssue.run(registry, { environmentId, input: { ...scope, number: 1 } }),
+          );
+          const unqueued = yield* Effect.promise(() =>
+            issues.unqueueIssue.run(registry, { environmentId, input: { ...scope, number: 1 } }),
+          );
+          expect([cancelled._tag, restored._tag, limited._tag, queued._tag, unqueued._tag]).toEqual(
+            [outcome, outcome, outcome, outcome, outcome],
+          );
         }
         expect(calls).toEqual([
           WS_METHODS.issuesCancelRequest,
           WS_METHODS.issuesRestoreRoot,
           WS_METHODS.issuesSetWorkerLimit,
+          WS_METHODS.issuesQueue,
+          WS_METHODS.issuesUnqueue,
         ]);
       }),
     ),

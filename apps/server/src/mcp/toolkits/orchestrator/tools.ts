@@ -31,6 +31,7 @@ import {
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
   RepositoryWorkInput,
+  IssueQueueInput,
   RepositoryWorkControlInput,
   RepositoryWorkerLimitInput,
   RepositoryHandoffRequestInput,
@@ -317,9 +318,27 @@ export const OrchestratorToolkit = Toolkit.make(
     failureMode: "return",
     dependencies,
   }).annotate(Tool.Destructive, true),
+  Tool.make("queue_issue", {
+    description:
+      "Add an open issue to the repository's ordered queue. When its registered orchestrator is idle and a worker slot is free, T3 sends it one issue notice to start a managed implementor. Without an orchestrator the queue waits. Calling this for a needs_attention entry retries its notice. clientRequestId makes retries idempotent.",
+    parameters: IssueQueueInput,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, true),
+  Tool.make("unqueue_issue", {
+    description:
+      "Remove an issue from the repository queue. This does not interrupt its notice or a claimed worker. clientRequestId makes retries idempotent.",
+    parameters: IssueQueueInput,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, true),
   Tool.make("get_repository_orchestration", {
     description:
-      "Read repository ownership, worker limit, slots in use, pause state and milestone progress.",
+      "Read repository ownership, worker limit, slots in use, pause state, milestone progress and the ordered issue queue, including noticeRunId, notifiedAt and needs_attention entries where the orchestrator completed without claiming a worker.",
     parameters: IssueRepositoryRef,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

@@ -202,6 +202,7 @@ import {
 import {
   IssueWorkError,
   IssueWorkStartInput,
+  IssueQueueInput,
   IssueWorkStartResult,
   IssueWorkStatusInput,
   IssueWorkStatusResult,
@@ -595,6 +596,8 @@ export const WS_METHODS = {
   issuesUnlink: "issues.unlink",
   issuesSubscribeLinkRefreshes: "issues.subscribeLinkRefreshes",
   issuesStart: "issues.start",
+  issuesQueue: "issues.queue",
+  issuesUnqueue: "issues.unqueue",
   issuesWorkStatus: "issues.workStatus",
   issuesWorkMilestone: "issues.workMilestone",
   issuesRepositoryStatus: "issues.repositoryStatus",
@@ -1081,6 +1084,17 @@ const WsIssuesUnlinkRpc = Rpc.make(WS_METHODS.issuesUnlink, {
   payload: Schema.Struct({ ...IssueLinkInput.fields, threadId: ThreadId }),
   success: IssueLinkResult,
   error: Schema.Union([IssueLinkError, EnvironmentAuthorizationError]),
+});
+
+const WsIssuesQueueRpc = Rpc.make(WS_METHODS.issuesQueue, {
+  payload: IssueQueueInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+const WsIssuesUnqueueRpc = Rpc.make(WS_METHODS.issuesUnqueue, {
+  payload: IssueQueueInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
 });
 
 const WsIssuesStartRpc = Rpc.make(WS_METHODS.issuesStart, {
@@ -2191,6 +2205,8 @@ const forkWsRpcs = [
   WsIssuesUnlinkRpc,
   WsIssuesSubscribeLinkRefreshesRpc,
   WsIssuesStartRpc,
+  WsIssuesQueueRpc,
+  WsIssuesUnqueueRpc,
   WsIssuesWorkStatusRpc,
   WsIssuesWorkMilestoneRpc,
   WsIssuesRepositoryStatusRpc,
@@ -2428,6 +2444,8 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issuesUnlink,
   WS_METHODS.issuesSubscribeLinkRefreshes,
   WS_METHODS.issuesStart,
+  WS_METHODS.issuesQueue,
+  WS_METHODS.issuesUnqueue,
   WS_METHODS.issuesWorkStatus,
   WS_METHODS.issuesWorkMilestone,
   WS_METHODS.issuesRepositoryStatus,

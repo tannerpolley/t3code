@@ -127,6 +127,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "capabilities",
   ),
   delegate_task: tool(["Delegate", "Delegating", "Delegated", "a child task"], "delegate"),
+  queue_issue: tool(["Queue", "Queuing", "Queued", "an issue"], "issue-work"),
+  unqueue_issue: tool(["Remove", "Removing", "Removed", "an issue from the queue"], "issue-work"),
   work_through_milestone: tool(["Start", "Starting", "Started", "milestone work"], "issue-work"),
   get_repository_orchestration: tool(
     ["Check", "Checking", "Checked", "repository orchestration"],

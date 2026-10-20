@@ -154,6 +154,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryWorkInput,
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
+  readonly queueIssue: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").IssueQueueInput,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
+  readonly unqueueIssue: (
+    scope: McpInvocationScope,
+    input: import("@t3tools/contracts").IssueQueueInput,
+  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly repositoryStatus: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").IssueRepositoryRef,
@@ -1819,6 +1827,22 @@ const make = Effect.gen(function* () {
         return yield* failure("orchestration_error", "Issue work is unavailable.");
       return yield* issueWork.value
         .workMilestone(input)
+        .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+    }),
+    queueIssue: Effect.fn("OrchestratorMcpService.queueIssue")(function* (scope, input) {
+      yield* requireRepositoryController(scope);
+      if (Option.isNone(issueWork))
+        return yield* failure("orchestration_error", "Issue work is unavailable.");
+      return yield* issueWork.value
+        .queueIssue(input)
+        .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+    }),
+    unqueueIssue: Effect.fn("OrchestratorMcpService.unqueueIssue")(function* (scope, input) {
+      yield* requireRepositoryController(scope);
+      if (Option.isNone(issueWork))
+        return yield* failure("orchestration_error", "Issue work is unavailable.");
+      return yield* issueWork.value
+        .unqueueIssue(input)
         .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
     }),
     repositoryStatus: Effect.fn("OrchestratorMcpService.repositoryStatus")(
