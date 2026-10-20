@@ -18,6 +18,7 @@ import type {
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import type { UnknownError } from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
@@ -47,6 +48,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { canonicalWorkspacePath } from "./workspace/workspacePath.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -238,19 +240,37 @@ const make = Effect.gen(function* () {
       !path.isAbsolute(relative)
     );
   };
-  const hasTerminal = (worktreePath: string) =>
-    [...liveTerminals.values()]
-      .flatMap((entries) => [...entries.values()])
-      .some((terminal) => {
-        if (terminal.status !== "starting" && terminal.status !== "running") return false;
-        const cwd = path.resolve(terminal.cwd);
-        return (
+  const makeCanonicalPath = () => {
+    const identities = new Map<string, string>();
+    // One cache per operation avoids resolving every thread again for each candidate.
+    return Effect.fnUntraced(function* (target: string) {
+      const resolved = path.resolve(target);
+      const cached = identities.get(resolved);
+      if (cached !== undefined) return cached;
+      const canonical = yield* Effect.try(() => canonicalWorkspacePath(resolved, isWindows));
+      identities.set(resolved, canonical);
+      return canonical;
+    });
+  };
+  const hasTerminal = Effect.fnUntraced(function* (
+    worktreePath: string,
+    canonicalPath: ReturnType<typeof makeCanonicalPath>,
+  ) {
+    for (const entries of liveTerminals.values()) {
+      for (const terminal of entries.values()) {
+        if (terminal.status !== "starting" && terminal.status !== "running") continue;
+        const cwd = yield* canonicalPath(terminal.cwd);
+        if (
           (terminal.worktreePath !== null &&
-            path.resolve(terminal.worktreePath) === worktreePath) ||
+            (yield* canonicalPath(terminal.worktreePath)) === worktreePath) ||
           cwd === worktreePath ||
           inside(worktreePath, cwd)
-        );
-      });
+        )
+          return true;
+      }
+    }
+    return false;
+  });
 
   const measureWorktree = Effect.fn("storageCleanup.measureWorktree")(
     function* (worktreePath: string) {
@@ -310,16 +330,11 @@ const make = Effect.gen(function* () {
   const containsProjectRoot = Effect.fn("StorageCleanup.containsProjectRoot")(function* (
     worktreePath: string,
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
+    canonicalPath: ReturnType<typeof makeCanonicalPath>,
   ) {
     for (const project of projects) {
-      const projectPath = path.resolve(project.workspaceRoot);
-      if (pathKey(projectPath) === pathKey(worktreePath) || inside(worktreePath, projectPath))
-        return true;
-      const realPath = yield* fs
-        .realPath(projectPath)
-        .pipe(Effect.orElseSucceed(() => projectPath));
-      if (pathKey(realPath) === pathKey(worktreePath) || inside(worktreePath, realPath))
-        return true;
+      const projectPath = yield* canonicalPath(project.workspaceRoot);
+      if (projectPath === worktreePath || inside(worktreePath, projectPath)) return true;
     }
     return false;
   });
@@ -328,6 +343,7 @@ const make = Effect.gen(function* () {
     roots: ReadonlyArray<string>,
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
     entries: StorageCleanupReportEntry[],
+    canonicalPath: ReturnType<typeof makeCanonicalPath>,
   ) {
     // Include deleted and archived threads, even those without a branch or project.
     const rows = yield* sql<{ worktreePath: string }>`
@@ -340,7 +356,7 @@ const make = Effect.gen(function* () {
       const resolved = path.resolve(row.worktreePath);
       referenced.add(pathKey(resolved));
       referenced.add(
-        pathKey(yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved))),
+        yield* canonicalPath(resolved).pipe(Effect.orElseSucceed(() => pathKey(resolved))),
       );
     }
     const referencedAncestors = new Set<string>();
@@ -356,8 +372,8 @@ const make = Effect.gen(function* () {
       ),
       (project) => {
         const resolved = path.resolve(project.workspaceRoot);
-        return fs.realPath(resolved).pipe(
-          Effect.orElseSucceed(() => resolved),
+        return canonicalPath(resolved).pipe(
+          Effect.orElseSucceed(() => pathKey(resolved)),
           Effect.map((realPath) => [resolved, realPath]),
         );
       },
@@ -685,6 +701,7 @@ const make = Effect.gen(function* () {
   const managedRoots = Effect.fn("StorageCleanup.managedRoots")(function* (
     serverSettings: ServerSettings,
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
+    canonicalPath: ReturnType<typeof makeCanonicalPath>,
     additionalRoots: ReadonlyArray<string> = [],
   ) {
     const roots: Array<string> = [];
@@ -704,7 +721,7 @@ const make = Effect.gen(function* () {
       repositoryRoots,
     )) {
       const root = yield* fs.exists(directory).pipe(
-        Effect.flatMap((exists) => (exists ? fs.realPath(directory) : Effect.succeed(null))),
+        Effect.flatMap((exists) => (exists ? canonicalPath(directory) : Effect.succeed(null))),
         Effect.orElseSucceed(() => null),
       );
       if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
@@ -718,6 +735,7 @@ const make = Effect.gen(function* () {
     now: number,
     snapshot: Effect.Success<ReturnType<typeof readThreads>>,
     roots: ReadonlyArray<string>,
+    canonicalPath: ReturnType<typeof makeCanonicalPath>,
     thread:
       | OrchestrationV2ThreadShell
       | (typeof OrchestrationV2AppThreadJson.Type & { readonly workspaceRoot: string }),
@@ -732,6 +750,7 @@ const make = Effect.gen(function* () {
       : configured;
     if (!explicit && !worktreeCleanupEnabled(settings)) return [];
     const worktreePath = path.resolve(thread.worktreePath!);
+    const worktreeIdentity = yield* canonicalPath(worktreePath);
     const activityAt = Math.max(...group.map(storageCleanupActivityAt));
     const deleted = "workspaceRoot" in thread;
     const project = deleted
@@ -763,16 +782,17 @@ const make = Effect.gen(function* () {
         return keep("thread is running or has pending work");
       if (group.some((member) => member.branch !== thread.branch))
         return keep("a subagent thread's branch differs from this worktree's branch");
-      if (hasTerminal(worktreePath)) return keep("open terminal");
+      if (yield* hasTerminal(worktreeIdentity, canonicalPath)) return keep("open terminal");
       // Roots are canonical, so compare canonical paths. A symlinked parent
       // (a linked drive) is fine; a symlinked worktree directory is not.
-      const realPath = yield* fs.realPath(worktreePath);
-      const realParent = yield* fs.realPath(path.dirname(worktreePath));
-      if (realPath !== path.join(realParent, path.basename(worktreePath)))
+      const realParent = yield* canonicalPath(path.dirname(worktreePath));
+      if (worktreeIdentity !== pathKey(path.join(realParent, path.basename(worktreePath))))
         return keep("worktree is a symbolic link");
-      if (!roots.some((root) => inside(root, realPath)))
+      if (!roots.some((root) => inside(root, worktreeIdentity)))
         return keep("outside the managed worktree folder");
-      if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects]))
+      if (
+        yield* containsProjectRoot(worktreeIdentity, [project, ...snapshot.projects], canonicalPath)
+      )
         return keep("contains a project checkout");
       if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
         return keep("not a linked worktree");
@@ -895,12 +915,16 @@ const make = Effect.gen(function* () {
       // worktree takes seconds on large databases.
       const blockedSinceCheck = Effect.fnUntraced(function* () {
         const latestProjects = yield* projectStore.listShells();
-        if (yield* containsProjectRoot(worktreePath, [project, ...latestProjects]))
+        if (
+          yield* containsProjectRoot(worktreeIdentity, [project, ...latestProjects], canonicalPath)
+        )
           return "contains a project checkout";
-        const latest = (yield* projections.getThreadWorktreePaths({
-          includeArchived: true,
-        })).filter((entry) => path.resolve(entry.worktreePath) === worktreePath);
-        if (hasTerminal(worktreePath)) return "open terminal";
+        const latest = yield* Effect.filter(
+          yield* projections.getThreadWorktreePaths({ includeArchived: true }),
+          (entry) =>
+            canonicalPath(entry.worktreePath).pipe(Effect.map((key) => key === worktreeIdentity)),
+        );
+        if (yield* hasTerminal(worktreeIdentity, canonicalPath)) return "open terminal";
         if (deleted) {
           if (
             latest.length > 0 ||
@@ -921,11 +945,14 @@ const make = Effect.gen(function* () {
           );
           const latestGroup = latestShells.filter((shell) => shell !== null);
           const latestOwner = worktreeOwner(latestGroup);
+          const latestPaths = yield* Effect.forEach(latestGroup, (shell) =>
+            shell.worktreePath === null ? Effect.succeed(null) : canonicalPath(shell.worktreePath),
+          );
           if (
             latestGroup.length !== group.length ||
             latestOwner?.id !== thread.id ||
             latestOwner?.branch !== thread.branch ||
-            latestGroup.some((shell) => {
+            latestGroup.some((shell, index) => {
               const previous = group.find((member) => member.id === shell.id);
               return (
                 previous === undefined ||
@@ -933,7 +960,7 @@ const make = Effect.gen(function* () {
                 !Equal.equals(shell.settledAt, previous.settledAt) ||
                 (shell.settledAt !== null && !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
                 !storageCleanupThreadIdle(shell, now) ||
-                path.resolve(shell.worktreePath!) !== worktreePath ||
+                latestPaths[index] !== worktreeIdentity ||
                 storageCleanupActivityAt(shell) !== storageCleanupActivityAt(previous)
               );
             })
@@ -951,9 +978,9 @@ const make = Effect.gen(function* () {
         // A stored session can stay ready after its runtime was released,
         // for example once every thread detached; only a live one holds it.
         for (const session of sessions) {
-          const cwd = path.resolve(session.cwd);
+          const cwd = yield* canonicalPath(session.cwd);
           if (
-            (cwd === worktreePath || inside(worktreePath, cwd)) &&
+            (cwd === worktreeIdentity || inside(worktreeIdentity, cwd)) &&
             (yield* providerSessions.isLive(session.id))
           )
             return "provider session is still open";
@@ -1029,40 +1056,49 @@ const make = Effect.gen(function* () {
     return entries;
   });
 
-  const removeWorktreeNow = Effect.fn("StorageCleanup.removeWorktreeNow")(function* (input: {
-    readonly projectId: ProjectId;
-    readonly worktreePath: string;
-  }): Effect.fn.Return<WorktreeRemovalResult, ServerSettingsError> {
-    const serverSettings = yield* settingsService.getSettings;
-    const snapshot = yield* readThreads().pipe(Effect.orElseSucceed(() => null));
-    const keep = (reason: string): WorktreeRemovalResult => ({ outcome: "kept", reason });
-    if (snapshot === null) return keep("Could not inspect threads");
-    const project = snapshot.projects.find((project) => project.id === input.projectId);
-    if (project === undefined) return keep("Project is unavailable");
-    const worktreePath = path.resolve(input.worktreePath);
-    const group = snapshot.threads.filter(
-      (thread) =>
-        thread.worktreePath !== null && path.resolve(thread.worktreePath) === worktreePath,
-    );
-    const thread = worktreeOwner(group) ?? group[0];
-    if (thread === undefined) return keep("No thread uses this worktree");
-    if (thread.projectId !== input.projectId) return keep("Project does not own this worktree");
-    const roots = yield* managedRoots(serverSettings, snapshot.projects);
-    const entries = yield* removeWorktree(
-      serverSettings,
-      yield* Clock.currentTimeMillis,
-      snapshot,
-      roots,
-      thread,
-      group,
-      new Map(),
-      new Map(),
-      true,
-    );
-    const entry = entries.find((entry) => entry.outcome === "removed") ?? entries.at(-1);
-    if (entry === undefined) return keep("Worktree no longer exists");
-    return { outcome: entry.outcome === "removed" ? "removed" : "kept", reason: entry.reason };
-  });
+  const removeWorktreeNow = Effect.fn("StorageCleanup.removeWorktreeNow")(
+    function* (input: {
+      readonly projectId: ProjectId;
+      readonly worktreePath: string;
+    }): Effect.fn.Return<WorktreeRemovalResult, ServerSettingsError | UnknownError> {
+      const serverSettings = yield* settingsService.getSettings;
+      const snapshot = yield* readThreads().pipe(Effect.orElseSucceed(() => null));
+      const keep = (reason: string): WorktreeRemovalResult => ({ outcome: "kept", reason });
+      if (snapshot === null) return keep("Could not inspect threads");
+      const project = snapshot.projects.find((project) => project.id === input.projectId);
+      if (project === undefined) return keep("Project is unavailable");
+      const canonicalPath = makeCanonicalPath();
+      const worktreePath = yield* canonicalPath(input.worktreePath);
+      const group = yield* Effect.filter(snapshot.threads, (thread) =>
+        thread.worktreePath === null
+          ? Effect.succeed(false)
+          : canonicalPath(thread.worktreePath).pipe(Effect.map((key) => key === worktreePath)),
+      );
+      const thread = worktreeOwner(group) ?? group[0];
+      if (thread === undefined) return keep("No thread uses this worktree");
+      if (thread.projectId !== input.projectId) return keep("Project does not own this worktree");
+      const roots = yield* managedRoots(serverSettings, snapshot.projects, canonicalPath);
+      const entries = yield* removeWorktree(
+        serverSettings,
+        yield* Clock.currentTimeMillis,
+        snapshot,
+        roots,
+        canonicalPath,
+        thread,
+        group,
+        new Map(),
+        new Map(),
+        true,
+      );
+      const entry = entries.find((entry) => entry.outcome === "removed") ?? entries.at(-1);
+      if (entry === undefined) return keep("Worktree no longer exists");
+      return { outcome: entry.outcome === "removed" ? "removed" : "kept", reason: entry.reason };
+    },
+    Effect.catchTags({
+      UnknownError: () =>
+        Effect.succeed({ outcome: "kept" as const, reason: "Could not resolve workspace paths" }),
+    }),
+  );
 
   const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
     serverSettings: ServerSettings,
@@ -1082,21 +1118,29 @@ const make = Effect.gen(function* () {
       ),
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
+    const canonicalPath = makeCanonicalPath();
     const roots = yield* managedRoots(
       serverSettings,
       snapshot.projects,
+      canonicalPath,
       deletedThreads.map((thread) => thread.workspaceRoot),
     );
 
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const defaultBranches = new Map<string, string | null>();
-    const groups = Map.groupBy(
-      snapshot.threads.filter((thread) => thread.worktreePath !== null),
-      (thread) => path.resolve(thread.worktreePath!),
-    );
+    const groups = new Map<string, OrchestrationV2ThreadShell[]>();
+    for (const thread of snapshot.threads) {
+      if (thread.worktreePath === null) continue;
+      const key = yield* canonicalPath(thread.worktreePath);
+      const group = groups.get(key) ?? [];
+      group.push(thread);
+      groups.set(key, group);
+    }
     const candidates = [
       ...[...groups.values()].map((group) => worktreeOwner(group) ?? group[0]!),
-      ...deletedThreads.filter((thread) => !groups.has(path.resolve(thread.worktreePath!))),
+      ...(yield* Effect.filter(deletedThreads, (thread) =>
+        canonicalPath(thread.worktreePath!).pipe(Effect.map((key) => !groups.has(key))),
+      )),
     ];
     for (const thread of candidates) {
       const results = yield* removeWorktree(
@@ -1104,8 +1148,9 @@ const make = Effect.gen(function* () {
         now,
         snapshot,
         roots,
+        canonicalPath,
         thread,
-        groups.get(path.resolve(thread.worktreePath!)) ?? [],
+        groups.get(yield* canonicalPath(thread.worktreePath!)) ?? [],
         refreshedDefaultRefs,
         defaultBranches,
       );
@@ -1116,6 +1161,7 @@ const make = Effect.gen(function* () {
       roots,
       yield* projectStore.list({ includeDeleted: true }),
       entries,
+      canonicalPath,
     );
   });
 

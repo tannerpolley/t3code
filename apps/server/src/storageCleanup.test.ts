@@ -19,6 +19,7 @@ import {
   StorageCleanupReport,
   type WorktreeKeepWhen,
   type StorageCleanupSettings,
+  type TerminalSummary,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
@@ -299,6 +300,9 @@ const makeCleanupFixture = (
     let sessionLive = true;
     let fullStatusCalls = 0;
     let snapshotReads = 0;
+    let publishTerminal: Parameters<
+      TerminalManager.TerminalManager["Service"]["subscribeMetadata"]
+    >[0];
     const snapshotRead = yield* Deferred.make<void>();
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
@@ -397,7 +401,13 @@ const makeCleanupFixture = (
         invalidateStatus: () => Effect.void,
       } as unknown as GitManager.GitManager["Service"]),
       Effect.provideService(TerminalManager.TerminalManager, {
-        subscribeMetadata: () => Effect.succeed(() => {}),
+        subscribeMetadata: (
+          listener: Parameters<TerminalManager.TerminalManager["Service"]["subscribeMetadata"]>[0],
+        ) =>
+          Effect.sync(() => {
+            publishTerminal = listener;
+            return () => {};
+          }),
       } as unknown as TerminalManager.TerminalManager["Service"]),
       Effect.provideService(ServerActivation, Deferred.await(activated)),
     );
@@ -458,6 +468,8 @@ const makeCleanupFixture = (
       setOpenSessionCwd: (cwd: string | null) => {
         openSessionCwd = cwd;
       },
+      setTerminals: (terminals: TerminalSummary[]) =>
+        publishTerminal({ type: "snapshot", terminals }),
       fullStatusCalls: () => fullStatusCalls,
       snapshotReads: () => snapshotReads,
       snapshotRead,
@@ -2344,11 +2356,38 @@ describe("explicit worktree removal", () => {
     () =>
       runCleanupTest(
         Effect.gen(function* () {
-          const f = yield* makeCleanupFixture("project-local");
+          const fs = yield* FileSystem.FileSystem;
+          const rootsChecked = yield* Deferred.make<void>();
+          let managedRoot: string | undefined;
+          let checkout: string | undefined;
+          let checkoutChecked = false;
+          const f = yield* makeCleanupFixture("project-local").pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              exists: (target) => {
+                if (target === checkout) checkoutChecked = true;
+                return fs
+                  .exists(target)
+                  .pipe(
+                    Effect.tap(() =>
+                      target === managedRoot
+                        ? Deferred.succeed(rootsChecked, undefined)
+                        : Effect.void,
+                    ),
+                  );
+              },
+            }),
+          );
+          managedRoot = `${f.repo}/.worktrees`;
+          checkout = f.worktree;
+          f.disable();
+          const aliasRoot = yield* f.fs.makeTempDirectoryScoped({ prefix: "cleanup-alias-" });
+          yield* f.fs.symlink(f.repo, `${aliasRoot}/repo`);
+          const alias = `${aliasRoot}/repo/.worktrees/feature`;
           const leased = yield* Deferred.make<void>();
           const resume = yield* Deferred.make<void>();
           const start = yield* withWorkspaceLease(
-            f.worktree,
+            alias,
             Effect.gen(function* () {
               yield* Deferred.succeed(leased, undefined);
               yield* Deferred.await(resume);
@@ -2358,8 +2397,10 @@ describe("explicit worktree removal", () => {
           const removal = yield* f.service
             .removeWorktreeNow(request(f.worktree))
             .pipe(Effect.forkChild);
-          yield* Deferred.await(f.snapshotRead);
-          f.setThreads([shell({ branch: "feature", worktreePath: f.worktree, status: "running" })]);
+          yield* Deferred.await(rootsChecked);
+          expect(checkoutChecked).toBe(false);
+          expect(yield* fs.exists(f.worktree)).toBe(true);
+          f.setThreads([shell({ branch: "feature", worktreePath: alias, status: "running" })]);
           yield* Deferred.succeed(resume, undefined);
           yield* Fiber.join(start);
           expect(yield* Fiber.join(removal)).toEqual({
@@ -2372,17 +2413,21 @@ describe("explicit worktree removal", () => {
   );
 
   it.live.each([false, true])(
-    "refuses an active thread sharing an idle thread's checkout (subagent: %s)",
+    "refuses removal through either alias of a shared active checkout (subagent: %s)",
     (subagent) =>
       runCleanupTest(
         Effect.gen(function* () {
           const f = yield* makeCleanupFixture("project-local");
+          f.disable();
+          const aliasRoot = yield* f.fs.makeTempDirectoryScoped({ prefix: "cleanup-alias-" });
+          yield* f.fs.symlink(f.repo, `${aliasRoot}/repo`);
+          const alias = `${aliasRoot}/repo/.worktrees/feature`;
           f.setThreads([
             shell({ branch: "feature", worktreePath: f.worktree }),
             shell({
               id: ThreadId.make("thread-2"),
               branch: "feature",
-              worktreePath: f.worktree,
+              worktreePath: alias,
               status: "running",
               ...(subagent
                 ? {
@@ -2395,10 +2440,21 @@ describe("explicit worktree removal", () => {
                 : {}),
             }),
           ]);
-          expect(yield* f.service.removeWorktreeNow(request(f.worktree))).toEqual({
-            outcome: "kept",
-            reason: subagent ? "Thread is running or has pending work" : "Shared by 2 threads",
+          for (const target of [f.worktree, alias]) {
+            expect(yield* f.service.removeWorktreeNow(request(target))).toEqual({
+              outcome: "kept",
+              reason: subagent ? "Thread is running or has pending work" : "Shared by 2 threads",
+            });
+          }
+          f.setSettings({
+            storageCleanup: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, worktreeAfterDays: 0 },
           });
+          expect((yield* f.service.runNow).entries).toEqual([
+            expect.objectContaining({
+              outcome: "kept",
+              reason: subagent ? "Thread is running or has pending work" : "Shared by 2 threads",
+            }),
+          ]);
           expect(yield* f.fs.exists(f.worktree)).toBe(true);
         }),
       ),
@@ -2424,6 +2480,68 @@ describe("explicit worktree removal", () => {
     ),
   );
 
+  it.live.each(["idle", "project-checkout", "missing-project-checkout"] as const)(
+    "checks an aliased checkout against canonical project roots (%s)",
+    (state) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const f = yield* makeCleanupFixture("project-local");
+          f.disable();
+          const aliasRoot = yield* f.fs.makeTempDirectoryScoped({ prefix: "cleanup-alias-" });
+          yield* f.fs.symlink(f.repo, `${aliasRoot}/repo`);
+          const alias = `${aliasRoot}/repo/.worktrees/feature`;
+          f.setThreads([shell({ branch: "feature", worktreePath: alias })]);
+          if (state !== "idle")
+            f.setProjectRoots([
+              f.repo,
+              state === "project-checkout" ? f.worktree : `${f.worktree}/missing/checkout`,
+            ]);
+          expect(yield* f.service.removeWorktreeNow(request(f.worktree))).toEqual(
+            state === "idle"
+              ? { outcome: "removed", reason: "Requested by owner" }
+              : { outcome: "kept", reason: "Contains a project checkout" },
+          );
+          expect(yield* f.fs.exists(f.worktree)).toBe(state !== "idle");
+        }),
+      ),
+  );
+
+  it.live.each(["worktreePath", "cwd", "nested-cwd"] as const)(
+    "keeps a checkout with an aliased terminal %s",
+    (location) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const f = yield* makeCleanupFixture("project-local");
+          f.disable();
+          const aliasRoot = yield* f.fs.makeTempDirectoryScoped({ prefix: "cleanup-alias-" });
+          yield* f.fs.symlink(f.repo, `${aliasRoot}/repo`);
+          const alias = `${aliasRoot}/repo/.worktrees/feature`;
+          yield* f.fs.makeDirectory(`${f.worktree}/dist`);
+          yield* f.setTerminals([
+            {
+              threadId: "other-thread",
+              terminalId: "default",
+              status: "running",
+              cwd:
+                location === "worktreePath" ? f.repo : location === "cwd" ? alias : `${alias}/dist`,
+              worktreePath: location === "worktreePath" ? alias : null,
+              pid: 1,
+              exitCode: null,
+              exitSignal: null,
+              hasRunningSubprocess: false,
+              label: "Shell",
+              updatedAt: DateTime.formatIso(at(0)),
+            },
+          ]);
+          expect(yield* f.service.removeWorktreeNow(request(f.worktree))).toEqual({
+            outcome: "kept",
+            reason: "Open terminal",
+          });
+          expect(yield* f.fs.exists(f.worktree)).toBe(true);
+        }),
+      ),
+  );
+
   it.live.each(["tracked.txt", "notes.txt", ".env"])(
     "keeps local changes in %s even if automatic cleanup discards untracked files",
     (name) =>
@@ -2441,17 +2559,26 @@ describe("explicit worktree removal", () => {
       ),
   );
 
-  it.live("keeps an idle checkout with a live provider session", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const f = yield* makeCleanupFixture("project-local");
-        f.setOpenSessionCwd(f.worktree);
-        expect(yield* f.service.removeWorktreeNow(request(f.worktree))).toEqual({
-          outcome: "kept",
-          reason: "Provider session is still open",
-        });
-        expect(yield* f.fs.exists(f.worktree)).toBe(true);
-      }),
-    ),
+  it.live.each(["physical", "alias", "nested-alias"] as const)(
+    "keeps an idle checkout with a live provider session (%s)",
+    (location) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const f = yield* makeCleanupFixture("project-local");
+          f.disable();
+          const aliasRoot = yield* f.fs.makeTempDirectoryScoped({ prefix: "cleanup-alias-" });
+          yield* f.fs.symlink(f.repo, `${aliasRoot}/repo`);
+          const alias = `${aliasRoot}/repo/.worktrees/feature`;
+          yield* f.fs.makeDirectory(`${f.worktree}/nested`);
+          f.setOpenSessionCwd(
+            location === "physical" ? f.worktree : location === "alias" ? alias : `${alias}/nested`,
+          );
+          expect(yield* f.service.removeWorktreeNow(request(f.worktree))).toEqual({
+            outcome: "kept",
+            reason: "Provider session is still open",
+          });
+          expect(yield* f.fs.exists(f.worktree)).toBe(true);
+        }),
+      ),
   );
 });

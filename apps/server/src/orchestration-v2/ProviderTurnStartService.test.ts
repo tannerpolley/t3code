@@ -732,14 +732,17 @@ function makeLocalCommandHarness(input: {
 }
 
 effectIt.effect.each(["cleanup-first", "startup-first"])(
-  "coordinates provider startup with %s",
+  "coordinates provider startup through an alias with %s through the physical path",
   (order) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-start-" });
-      const worktreePath = path.join(workspaceRoot, "project", "worktree");
-      yield* fileSystem.makeDirectory(worktreePath, { recursive: true });
+      const physicalPath = path.join(workspaceRoot, "project", "worktree");
+      yield* fileSystem.makeDirectory(physicalPath, { recursive: true });
+      const alias = path.join(workspaceRoot, "linked");
+      yield* fileSystem.symlink(path.join(workspaceRoot, "project"), alias);
+      const worktreePath = path.join(alias, "worktree");
       const release = yield* Deferred.make<void>();
       const openEntered = yield* Deferred.make<void>();
       const harness = makeLocalCommandHarness({
@@ -763,7 +766,7 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
       );
       let cleanupEntered = false;
       const cleanupEffect = withWorkspaceLease(
-        worktreePath,
+        physicalPath,
         Effect.gen(function* () {
           cleanupEntered = true;
           if (order === "cleanup-first") yield* Deferred.await(release);
@@ -771,7 +774,7 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
             expect(harness.projection().providerSessions).toHaveLength(1);
             expect(harness.projection().runs.at(-1)?.status).toBe("running");
           }
-          yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
+          yield* fileSystem.remove(physicalPath, { recursive: true, force: true });
         }),
       );
       const cleanup =
