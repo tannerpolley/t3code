@@ -13,6 +13,8 @@ type DisplayedFamilyRow = {
   readonly key: string;
   readonly familyKey: string;
   readonly workspace: string | null;
+  readonly thread: SidebarThreadSummary | null;
+  readonly topLevel: boolean;
 };
 
 export function sidebarSubagentRowKey(
@@ -40,6 +42,8 @@ export function collectDisplayedFamilyRows(input: {
       key,
       familyKey,
       workspace: thread.worktreePath,
+      thread,
+      topLevel: parent === undefined,
     });
     const rows = describeSidebarBackgroundWork(
       parent === undefined
@@ -67,6 +71,8 @@ export function collectDisplayedFamilyRows(input: {
           key: sidebarSubagentRowKey(thread.environmentId, thread.id, row),
           familyKey,
           workspace: thread.worktreePath,
+          thread: null,
+          topLevel: false,
         });
     }
   };
@@ -75,7 +81,9 @@ export function collectDisplayedFamilyRows(input: {
 }
 
 /** One marker per boundary, using only rows that are actually displayed in this project. */
-export function resolveSidebarFamilySeparators(rows: readonly DisplayedFamilyRow[]) {
+export function resolveSidebarFamilySeparators(
+  rows: readonly Pick<DisplayedFamilyRow, "key" | "familyKey" | "workspace">[],
+) {
   const familySizes = new Map<string, number>();
   for (const row of rows) familySizes.set(row.familyKey, (familySizes.get(row.familyKey) ?? 0) + 1);
   const separators = new Map<string, SidebarFamilySeparator>();

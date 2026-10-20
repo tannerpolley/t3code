@@ -1,6 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { expect, it } from "vite-plus/test";
+import { resolveLocationLeads } from "../Sidebar.logic";
 import { makeThreadFixture } from "../../test-fixtures";
 import {
   collectDisplayedFamilyRows,
@@ -116,4 +117,33 @@ it("compares only displayed rows, following role order, nesting and expansion", 
       expandedByKey: { [key(worker)]: false },
     }).map((row) => row.key),
   ).toEqual([key(parent), key(worker), key(reviewer), key(standalone)]);
+});
+
+it("puts a checkout's lead icon on its first displayed implementor", () => {
+  const parent = makeThreadFixture({ id: ThreadId.make("orchestrator") });
+  const worker = (id: string, createdAt: string) =>
+    makeThreadFixture({
+      environmentId: parent.environmentId,
+      id: ThreadId.make(id),
+      worktreePath: "/wt/shared",
+      createdAt,
+      lineage: {
+        rootThreadId: parent.id,
+        parentThreadId: parent.id,
+        relationshipToParent: "subagent",
+      },
+    });
+  const older = worker("older", "2026-09-23T09:00:00.000Z");
+  const newer = worker("newer", "2026-09-23T11:00:00.000Z");
+  const parentKey = scopedThreadKey(scopeThreadRef(parent.environmentId, parent.id));
+  const leads = (expanded: boolean) =>
+    resolveLocationLeads(
+      collectDisplayedFamilyRows({
+        threads: [parent],
+        runningSubagentsByParentKey: new Map([[parentKey, [older, newer]]]),
+        expandedByKey: { [parentKey]: expanded },
+      }).flatMap(({ thread, topLevel }) => (thread === null ? [] : [{ thread, topLevel }])),
+    );
+  expect([...leads(true).values()].map((thread) => thread.id)).toEqual([parent.id, newer.id]);
+  expect([...leads(false).values()].map((thread) => thread.id)).toEqual([parent.id]);
 });

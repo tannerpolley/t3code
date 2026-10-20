@@ -43,6 +43,7 @@ describe("describeSidebarBackgroundWork", () => {
     const nativeFixture = makeThreadFixture({
       id: ThreadId.make("native-child"),
       title: "Explore natively",
+      createdAt: "2026-09-23T11:00:00.000Z",
       lineage: {
         rootThreadId: ThreadId.make("parent"),
         parentThreadId: ThreadId.make("parent"),
@@ -90,16 +91,16 @@ describe("describeSidebarBackgroundWork", () => {
     expect(rows[0]).not.toHaveProperty("childThreadId");
   });
 
-  it("orders native and app-owned workers by effective role, then newest activity", () => {
+  it("orders native and app-owned workers by effective role, then newest creation, independent of streaming activity", () => {
     const worker = (
       id: string,
       role: ThreadRole | undefined,
-      updatedAt: string,
+      createdAt: string,
       native = false,
     ) => ({
       ...runningChild,
       id: ThreadId.make(id),
-      updatedAt,
+      createdAt,
       source: {
         ...runningChild.source,
         role,
@@ -116,10 +117,10 @@ describe("describeSidebarBackgroundWork", () => {
       worker("implementor-old", "implementor", old),
       worker("other", "orchestrator", recent),
       worker("implementor-recent", undefined, recent, true),
-      worker("reviewer-recent", "reviewer", recent),
       worker("reviewer-tied", "reviewer", recent),
+      worker("reviewer-recent", "reviewer", recent),
     ];
-    expect(describeSidebarBackgroundWork([], children).map((row) => row.taskId)).toEqual([
+    const expected = [
       "implementor-recent",
       "implementor-old",
       "reviewer-recent",
@@ -128,7 +129,15 @@ describe("describeSidebarBackgroundWork", () => {
       "investigator",
       "checker",
       "other",
-    ]);
+    ];
+    expect(describeSidebarBackgroundWork([], children).map((row) => row.taskId)).toEqual(expected);
+    const streamingChildren = children.map((child) => ({
+      ...child,
+      updatedAt: child.id === "implementor-old" ? "2026-09-23T12:00:00.000Z" : old,
+    }));
+    expect(describeSidebarBackgroundWork([], streamingChildren).map((row) => row.taskId)).toEqual(
+      expected,
+    );
     expect(children[0]?.id).toBe("investigator");
   });
 

@@ -21,14 +21,15 @@ running. Together they cover most sidebar and chat states:
 
 Each project has one main-checkout orchestrator above its workers in Projects with the default
 activity order. Workers stay nested across checkouts: Implementors, Reviewers, Investigators,
-Checkers, then other roles, newest activity first within a role. In **Family style → Lines**,
+Checkers, then other roles, newest creation first within a role. In **Family style → Lines**,
 dashed lines mark checkout changes and solid lines separate families.
 
 - **aurora-web (APPS):** “Coordinate the sidebar gradient redesign”; gradient-header Implementor
   with a nested token investigator, a Reviewer, two main-checkout Investigators and a Checker.
-  Historical Implementors retain merged, usage-limited, snoozed and archived examples in separate
-  worktrees. One standalone Implementor, “Fix login timeout on slow networks”, keeps Done/unseen,
-  the open PR and checkpoint diff available. The orchestrator carries the 123-PR badge and task list.
+  Historical Implementors retain merged, usage-limited and archived examples in separate
+  worktrees. Standalone threads keep the snoozed e2e Implementor and pinned roadmap Investigator
+  visible. “Fix login timeout on slow networks” is a standalone Implementor with Done/unseen,
+  the open PR and checkpoint diff. The orchestrator carries the 123-PR badge and task list.
 - **borealis-cli (APPS):** “Coordinate borealis 1.2”; separate worktrees for JSON output, TOML and
   branch cleanup (Approval), a packaging Investigator with a nested wheel Checker, and the
   multi-select release-checks Checker. The one standalone Investigator retains the plugin plan.
@@ -40,8 +41,9 @@ dashed lines mark checkout changes and solid lines separate families.
   Investigator, plus one standalone settled Investigator for the weekly log. This is a plain
   folder, without Git or worktrees.
 - **echo-playground (OTHER PROJECTS):** “Coordinate playground experiments”; a pattern-matching
-  Implementor and README Implementor in separate worktrees, plus a main-checkout parser Checker.
-  One standalone Implementor retains the failed CI run and closed PR.
+  Implementor in its own worktree, plus a main-checkout parser Checker.
+  Standalone Implementors retain the failed CI run and closed PR, and the README badges Woke
+  (expired snooze) example.
 - **t3code-sandbox (GitHub sandbox):** “Coordinate t3code-sandbox issues”; the real #6, #7 and #15
   issue Implementors each have their own local worktree, with #15 linked to real PR #24.
   `github.py` and the passive repository orchestration settings are unchanged.

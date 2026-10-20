@@ -3094,14 +3094,19 @@ export default function Sidebar() {
     return grouped;
   })();
 
-  const projectThreadOrder = collectVisibleProjectThreadOrder({
-    projects: projectGroups,
-    sections: sidebarProjectSections,
-    otherProjectsExpanded: sidebarOtherProjectsExpanded,
-    isProjectExpanded,
-    threadsByProjectKey: sidebarProjectThreadsByKey,
-    getThreadKey: threadShellKey,
-  });
+  const projectThreadOrderText = useUiStateStore((state) =>
+    collectVisibleProjectThreadOrder({
+      projects: projectGroups,
+      sections: sidebarProjectSections,
+      otherProjectsExpanded: sidebarOtherProjectsExpanded,
+      isProjectExpanded,
+      threadsByProjectKey: sidebarProjectThreadsByKey,
+      runningSubagentsByParentKey,
+      expandedByKey: state.sidebarWorkExpandedById,
+    }).join("\0"),
+  );
+  const projectThreadOrder =
+    projectThreadOrderText === "" ? [] : projectThreadOrderText.split("\0");
   const allThreadByKey = new Map(
     threads.map((thread) => [threadShellKey(thread), thread] as const),
   );

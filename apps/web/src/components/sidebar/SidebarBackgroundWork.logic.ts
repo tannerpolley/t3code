@@ -136,7 +136,7 @@ export function groupBackgroundWorkTaskRows(rows: ReadonlyArray<BackgroundWorkTa
  * those roster entries pair with running children by count. Commands started by a child sit
  * beneath that child while staying on the parent provider's roster.
  *
- * A thread keeps its own background tasks first, then workers by role and newest activity.
+ * A thread keeps its own background tasks first, then workers by role and newest creation.
  * Roster-only subagents have no role, so they follow the known workers.
  */
 export function describeSidebarBackgroundWork(
@@ -163,7 +163,8 @@ export function describeSidebarBackgroundWork(
   const orderedChildren = runningChildren.toSorted(
     (a, b) =>
       roleOrder[effectiveThreadRole(a.source)] - roleOrder[effectiveThreadRole(b.source)] ||
-      Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
+      Date.parse(b.createdAt) - Date.parse(a.createdAt) ||
+      a.id.localeCompare(b.id),
   );
   const childRows: BackgroundWorkTaskRow[] = orderedChildren.map((child) => {
     const currentStatus = resolveSidebarThreadStatus(child);

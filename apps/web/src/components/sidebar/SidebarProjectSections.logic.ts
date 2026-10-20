@@ -1,4 +1,7 @@
 import { sidebarSectionChildOrder } from "@t3tools/shared/sidebarLayout";
+import type { SidebarThreadSummary } from "../../types";
+import { collectDisplayedFamilyRows } from "./SidebarFamilySeparators.logic";
+
 /** A rendered sidebar section as the drop logic sees it; `custom` is false for "Other projects". */
 export interface ProjectDropSection {
   readonly id: string;
@@ -35,13 +38,14 @@ export interface ProjectThreadSection {
  * Thread rows in the Projects view's visible order. The Activity view has its own
  * shelves and paging; this list follows section, subsection, project, then thread order.
  */
-export function collectVisibleProjectThreadOrder<TThread>(input: {
+export function collectVisibleProjectThreadOrder(input: {
   readonly projects: readonly { readonly projectKey: string }[];
   readonly sections: readonly ProjectThreadSection[];
   readonly otherProjectsExpanded: boolean;
   readonly isProjectExpanded: (projectKey: string) => boolean;
-  readonly threadsByProjectKey: ReadonlyMap<string, readonly TThread[]>;
-  readonly getThreadKey: (thread: TThread) => string;
+  readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
+  readonly expandedByKey: Readonly<Record<string, boolean>>;
 }): string[] {
   const projectKeys = new Set(input.projects.map((project) => project.projectKey));
   const claimedProjectKeys = new Set<string>();
@@ -56,8 +60,12 @@ export function collectVisibleProjectThreadOrder<TThread>(input: {
   const threadKeys: string[] = [];
   const appendProjectThreads = (projectKey: string) => {
     if (!input.isProjectExpanded(projectKey)) return;
-    for (const thread of input.threadsByProjectKey.get(projectKey) ?? []) {
-      threadKeys.push(input.getThreadKey(thread));
+    for (const row of collectDisplayedFamilyRows({
+      threads: input.threadsByProjectKey.get(projectKey) ?? [],
+      runningSubagentsByParentKey: input.runningSubagentsByParentKey,
+      expandedByKey: input.expandedByKey,
+    })) {
+      if (row.thread !== null) threadKeys.push(row.key);
     }
   };
 

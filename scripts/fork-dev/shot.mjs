@@ -35,7 +35,8 @@ const threadIdsByTitle = new Map(
       "python3",
       [
         "-c",
-        "import json, sqlite3, sys; db = sqlite3.connect(sys.argv[1] + '?mode=ro', uri=True); " +
+        "import json, sqlite3, sys; from pathlib import Path; " +
+          "db = sqlite3.connect(Path(sys.argv[1]).as_uri() + '?mode=ro', uri=True); " +
           "print(json.dumps(db.execute('SELECT title, thread_id FROM orchestration_v2_projection_threads').fetchall()))",
         NodePath.join(userdata, "statev2.sqlite"),
       ],
@@ -64,7 +65,17 @@ const threadRow = (page, title) =>
     .locator(`button[aria-label^="${title.replaceAll('"', '\\"')}, "]`)
     .first();
 
-const browser = await chromium.launch();
+const browser = await chromium.launch().catch((error) => {
+  if (!String(error).includes("Executable doesn't exist")) throw error;
+  const cache = NodePath.join(NodeOS.homedir(), ".cache/ms-playwright");
+  const executablePath = NodeFS.globSync("chromium_headless_shell-*/**/chrome-headless-shell", {
+    cwd: cache,
+  })
+    .map((path) => NodePath.join(cache, path))
+    .sort((a, b) => NodeFS.statSync(b).mtimeMs - NodeFS.statSync(a).mtimeMs)[0];
+  if (!executablePath) throw error;
+  return chromium.launch({ executablePath });
+});
 const onlyIssues = process.argv[2] === "issues";
 // Projects view is what the owner reviews; Activity view also shows branch labels.
 for (const mode of onlyIssues ? [] : ["projects", "activity"]) {

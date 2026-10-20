@@ -1083,30 +1083,22 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
     familySeparatorsText === "" ? [] : JSON.parse(familySeparatorsText);
   const familySeparators =
     familySeparatorsText === "" ? undefined : new Map(familySeparatorEntries);
-  // Each location's lead thread, over every shown row: threads and their running subagents.
-  const locationLeads = (() => {
-    if (!codexStyle) return null;
-    const keyOf = (thread: SidebarThreadSummary) =>
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    const descendants = (
-      thread: SidebarThreadSummary,
-    ): { readonly thread: SidebarThreadSummary; readonly topLevel: boolean }[] =>
-      (props.runningSubagentsByParentKey.get(keyOf(thread)) ?? []).flatMap((child) => [
-        { thread: child, topLevel: false },
-        ...descendants(child),
-      ]);
-    return resolveLocationLeads(
-      props.threads.flatMap((thread) => [{ thread, topLevel: true }, ...descendants(thread)]),
-    );
-  })();
-  // One set per distinct list of leads, so rows re-render only when a lead changes.
-  const leadKeyList =
-    locationLeads === null
-      ? null
-      : [...locationLeads.values()]
-          .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
-          .join("\n");
-  const locationLeadKeys = leadKeyList === null ? undefined : new Set(leadKeyList.split("\n"));
+  // Only the displayed lead keys subscribe this project to expansion changes.
+  const leadKeyList = useUiStateStore((state) => {
+    if (!codexStyle || !props.isProjectExpanded) return "";
+    const rows = collectDisplayedFamilyRows({
+      ...props,
+      expandedByKey: state.sidebarWorkExpandedById,
+    });
+    return [
+      ...resolveLocationLeads(
+        rows.flatMap(({ thread, topLevel }) => (thread === null ? [] : [{ thread, topLevel }])),
+      ).values(),
+    ]
+      .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
+      .join("\n");
+  });
+  const locationLeadKeys = codexStyle ? new Set(leadKeyList.split("\n")) : undefined;
 
   return (
     // Rows stay put while dragging; the drop line shows where this one lands.
