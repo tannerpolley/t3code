@@ -60,8 +60,11 @@ or creation time.
 
 Choose **New section** to group projects. A section's menu can add a subsection,
 choose its color or folder icons, add an existing project, or create a new project
-folder. Move a project between sections by dragging its row or choosing a section
-from its menu. Removing a project clears its saved conversations after confirmation
+folder. Choose **Add folder as subsection…** to use an existing folder's name without
+entering a label; adding a project there starts in that folder, even after you
+rename the subsection. Drag subsections and projects above or below each other
+inside their parent section. Move a project between sections by dragging its row or
+choosing a section from its menu. Removing a project clears its saved conversations after confirmation
 and keeps its files on disk.
 
 Sections, their order and nesting, project placement, and section and project

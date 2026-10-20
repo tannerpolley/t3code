@@ -184,6 +184,12 @@ function sanitizeSidebarProjectSections(value: unknown): SidebarProjectSection[]
           ? { parentId: candidate.parentId }
           : {}),
         ...(candidate.folderIcons === true ? { folderIcons: true } : {}),
+        ...(typeof candidate.folderPath === "string" && candidate.folderPath.trim()
+          ? { folderPath: candidate.folderPath.trim() }
+          : {}),
+        ...(Array.isArray(candidate.childOrder)
+          ? { childOrder: sanitizeStringArray(candidate.childOrder) }
+          : {}),
       },
     ];
   });
@@ -678,7 +684,11 @@ interface UiStateStore extends UiState {
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   setSidebarOtherProjectsExpanded: (expanded: boolean) => void;
-  addSidebarProjectSection: (name: string, parentId?: string) => void;
+  addSidebarProjectSection: (
+    name: string,
+    parentId?: string,
+    folderPath?: string,
+  ) => Promise<boolean>;
   organizeSidebarSectionsByFolder: (
     projects: readonly FolderOrganizedProject[],
     root: string,
@@ -691,6 +701,7 @@ interface UiStateStore extends UiState {
   setSidebarProjectSectionExpanded: (sectionId: string, expanded: boolean) => void;
   moveProjectToSidebarProjectSection: (projectKey: string, sectionId: string | null) => void;
   reorderSidebarProjectSectionProjects: (sectionId: string, projectKeys: readonly string[]) => void;
+  reorderSidebarSectionChildren: (sectionId: string, childOrder: readonly string[]) => void;
   reorderSidebarProjectSections: (sectionIds: readonly string[]) => void;
   setLineageDetailsExpanded: (keys: readonly string[], expanded: boolean) => void;
   setLineageAgentsClearedAt: (key: string, clearedAt: string | null) => void;
@@ -737,13 +748,14 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setSidebarMode: (mode) => set((state) => setSidebarMode(state, mode)),
   setSidebarOtherProjectsExpanded: (expanded) =>
     sendSidebarMutation({ type: "otherExpanded", expanded }),
-  addSidebarProjectSection: (name, parentId) =>
+  addSidebarProjectSection: (name, parentId, folderPath) =>
     sendSidebarMutation({
       type: "add",
       section: {
         id: randomUUID(),
         name: name.trim().slice(0, 80),
         ...(parentId === undefined ? {} : { parentId }),
+        ...(folderPath === undefined ? {} : { folderPath }),
       },
     }),
   organizeSidebarSectionsByFolder: (projects, root, onlyUnsorted = false) =>
@@ -761,6 +773,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     sendSidebarMutation({ type: "move", projectKeys: [projectKey], sectionId }),
   reorderSidebarProjectSectionProjects: (sectionId, projectKeys) =>
     sendSidebarMutation({ type: "sectionProjectsOrder", sectionId, projectKeys }),
+  reorderSidebarSectionChildren: (sectionId, childOrder) =>
+    sendSidebarMutation({ type: "sectionChildrenOrder", sectionId, childOrder }),
   reorderSidebarProjectSections: (sectionIds) =>
     sendSidebarMutation({ type: "sectionsOrder", sectionIds }),
   setLineageDetailsExpanded: (keys, expanded) =>

@@ -57,6 +57,21 @@ export function projectSidebarLayout(input: {
         ...section,
         id: sidebarSectionKey(environmentId, section.id),
         projectKeys: keys,
+        ...(section.childOrder === undefined
+          ? {}
+          : {
+              childOrder: [
+                ...new Set(
+                  section.childOrder.flatMap((key) =>
+                    key.startsWith("section:")
+                      ? [`section:${sidebarSectionKey(environmentId, key.slice(8))}`]
+                      : rowKey(key)
+                        ? [rowKey(key)!]
+                        : [],
+                  ),
+                ),
+              ],
+            }),
         ...(section.parentId === undefined
           ? {}
           : { parentId: sidebarSectionKey(environmentId, section.parentId) }),
@@ -123,6 +138,13 @@ export function migrateSidebarLayout(
   const claimed = new Set<string>();
   const sections = legacy.sidebarProjectSections.map((section) => ({
     ...section,
+    ...(section.childOrder === undefined
+      ? {}
+      : {
+          childOrder: section.childOrder.flatMap((key) =>
+            key.startsWith("section:") ? [key] : resolve([key]),
+          ),
+        }),
     projectKeys: resolve(section.projectKeys).filter((id) => {
       if (claimed.has(id)) return false;
       claimed.add(id);

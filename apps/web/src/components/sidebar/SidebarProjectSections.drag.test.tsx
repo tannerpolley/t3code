@@ -46,13 +46,25 @@ const emptySection = { id: "tools", name: "Tools", collapsed: false, projectKeys
 const send = vi.fn<(mutation: SidebarLayoutMutation) => Promise<boolean>>(async () => true);
 let root: Root;
 let container: HTMLDivElement;
+let mixedRows: readonly string[] | null = null;
 
 beforeEach(() => {
+  mixedRows = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   // jsdom has no layout; give the real sortable registrations fixed, non-overlapping rows.
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
     this: HTMLElement,
   ) {
+    if (mixedRows) {
+      const header = this.dataset.testid;
+      const label =
+        header === "sidebar-project-section-idaes"
+          ? "IDAES"
+          : this.querySelector(":scope > div > button > span.truncate")?.textContent;
+      const index = mixedRows.indexOf(label ?? "");
+      if (index >= 0) return new DOMRect(12, 28 + index * 32, 288, 28);
+      return new DOMRect(0, 0, 300, 240);
+    }
     const name = this.querySelector(":scope > div > button > span.truncate")?.textContent;
     const index = names.indexOf(name ?? "");
     if (index >= 0) return new DOMRect(12, 28 + index * 32, 288, 32);
@@ -82,11 +94,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function render() {
+async function render(
+  sections: ComponentProps<typeof SidebarProjectSections>["sections"] = [section, emptySection],
+) {
   const noop = () => {};
   const props: ComponentProps<typeof SidebarProjectSections> = {
     projects,
-    sections: [section, emptySection],
+    sections,
     selectedProjectKey: null,
     activeThreadKey: null,
     isProjectExpanded: () => false,
@@ -187,3 +201,45 @@ it("still reorders top-level sections", async () => {
     sectionIds: ["tools", "applications"],
   });
 });
+
+it.each([
+  { drag: "IDAES", from: 1, to: 0, order: ["section:idaes", 0, 1, 2, 3, 4] },
+  { drag: "IDAES", from: 1, to: 2, order: [0, 1, "section:idaes", 2, 3, 4] },
+  { drag: "t3code", from: 0, to: 1, order: ["section:idaes", 0, 1, 2, 3, 4] },
+  { drag: "stimulant-tracker", from: 2, to: 1, order: [0, 1, "section:idaes", 2, 3, 4] },
+])(
+  "drags $drag from mixed row $from to $to and saves the shared order",
+  async ({ drag, from, to, order }) => {
+    mixedRows = [names[0]!, "IDAES", ...names.slice(1)];
+    await render([
+      {
+        ...section,
+        childOrder: [
+          projects[0]!.projectKey,
+          "section:idaes",
+          ...projects.slice(1).map((p) => p.projectKey),
+        ],
+      },
+      { id: "idaes", name: "IDAES", parentId: section.id, collapsed: true, projectKeys: [] },
+    ]);
+    const rowLabels = [...container.querySelectorAll("button[aria-expanded]")]
+      .map((button) => button.querySelector("span")?.textContent)
+      .filter((label) => label !== undefined);
+    expect(rowLabels).toEqual(["Applications", ...mixedRows]);
+    const button = [...container.querySelectorAll("button[aria-expanded]")].find(
+      (candidate) => candidate.querySelector("span")?.textContent === drag,
+    )!;
+    const fromY = 42 + from * 32,
+      toY = 42 + to * 32;
+    await pointer(button, "pointerdown", fromY);
+    await pointer(document, "pointermove", fromY + 8);
+    await pointer(document, "pointermove", toY);
+    expect(container.querySelector("li[aria-hidden]")).not.toBeNull();
+    await pointer(document, "pointerup", toY);
+    expect(send).toHaveBeenCalledExactlyOnceWith({
+      type: "sectionChildrenOrder",
+      sectionId: section.id,
+      childOrder: order.map((key) => (typeof key === "number" ? projects[key]!.projectKey : key)),
+    });
+  },
+);

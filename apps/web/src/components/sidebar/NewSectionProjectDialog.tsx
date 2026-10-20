@@ -42,6 +42,7 @@ export interface NewSectionProjectTarget {
   readonly sectionId: string;
   readonly sectionName: string;
   readonly parentName?: string | undefined;
+  readonly folderPath?: string | undefined;
 }
 
 /**
@@ -69,6 +70,7 @@ export function NewSectionProjectDialog(props: {
     target.parentName === undefined
       ? [target.sectionName]
       : [target.parentName, target.sectionName],
+    target.folderPath,
   );
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const initRepository = useAtomCommand(vcsEnvironment.init, { reportFailure: false });

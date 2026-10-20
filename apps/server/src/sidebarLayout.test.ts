@@ -7,6 +7,7 @@ import {
   SidebarLayoutRecord,
   type SidebarLayoutMutation,
 } from "@t3tools/contracts";
+import { sidebarSectionChildOrder } from "@t3tools/shared/sidebarLayout";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -279,6 +280,105 @@ it.effect("a move to a concurrently deleted section does not discard other batch
       assert.deepEqual(after.layout.sidebarProjectSections[0]!.projectKeys, ["b"]);
       // A rejected operation by itself remains a no-op.
       assert.deepEqual(yield* service.update({ revision: 0, operations: [invalid] }), after);
+    }),
+  ),
+);
+
+it.effect("round-trips mixed child order and folder paths while old layouts keep their order", () =>
+  run(
+    Effect.gen(function* () {
+      const service = yield* Sidebar.SidebarLayoutService;
+      const sql = yield* SqlClient.SqlClient;
+      const oldLayout = {
+        ...EMPTY_SIDEBAR_LAYOUT,
+        sidebarProjectSections: [
+          { id: "work", name: "Engineering", projectKeys: ["a", "b"], collapsed: false },
+          { id: "old", parentId: "work", name: "Old", projectKeys: [], collapsed: false },
+        ],
+      };
+      yield* sql`INSERT INTO sidebar_layout (id, revision, layout_json) VALUES (1, 1, ${JSON.stringify(oldLayout)})`;
+      assert.deepEqual((yield* service.get).layout, oldLayout);
+      assert.deepEqual(
+        sidebarSectionChildOrder(
+          oldLayout.sidebarProjectSections[0]!,
+          oldLayout.sidebarProjectSections,
+        ),
+        ["section:old", "a", "b"],
+      );
+      yield* service.update({
+        revision: 1,
+        operations: [
+          {
+            type: "add",
+            section: {
+              id: "idaes",
+              name: "IDAES",
+              parentId: "work",
+              folderPath: "/engineering/IDAES",
+            },
+          },
+          {
+            type: "sectionChildrenOrder",
+            sectionId: "work",
+            childOrder: [
+              "a",
+              "section:idaes",
+              "b",
+              "section:old",
+              "a",
+              "foreign",
+              "section:missing",
+            ],
+          },
+          { type: "rename", sectionId: "idaes", name: "Models" },
+          {
+            type: "add",
+            section: {
+              id: "too-deep",
+              name: "Nested",
+              parentId: "idaes",
+              folderPath: "/engineering/IDAES/deep",
+            },
+          },
+        ],
+      });
+      const saved = (yield* service.get).layout;
+      assert.deepEqual(saved.sidebarProjectSections[0]!.childOrder, [
+        "a",
+        "section:idaes",
+        "b",
+        "section:old",
+      ]);
+      assert.equal(saved.sidebarProjectSections[2]!.folderPath, "/engineering/IDAES");
+      assert.equal(saved.sidebarProjectSections[2]!.name, "Models");
+      assert.equal(saved.sidebarProjectSections.length, 3);
+      const rows = yield* sql<{
+        layout_json: string;
+      }>`SELECT layout_json FROM sidebar_layout WHERE id = 1`;
+      assert.deepEqual(yield* decodeLayout(JSON.parse(rows[0]!.layout_json)), saved);
+      // This is the same path used by project.create/update, including the MCP tools.
+      yield* service.withProjectChange(
+        { projectId: "a", sectionId: "idaes" },
+        (persist) => persist,
+      );
+      assert.deepEqual((yield* service.get).layout.sidebarProjectSections[0]!.childOrder, [
+        "section:idaes",
+        "b",
+        "section:old",
+      ]);
+      yield* service.withProjectChange({ projectId: "a", sectionId: "work" }, (persist) => persist);
+      assert.deepEqual((yield* service.get).layout.sidebarProjectSections[0]!.childOrder, [
+        "section:idaes",
+        "b",
+        "section:old",
+        "a",
+      ]);
+      yield* service.withProjectChange({ projectId: "a", deleted: true }, (persist) => persist);
+      yield* service.update({ revision: 0, operations: [{ type: "delete", sectionId: "idaes" }] });
+      assert.deepEqual((yield* service.get).layout.sidebarProjectSections[0]!.childOrder, [
+        "b",
+        "section:old",
+      ]);
     }),
   ),
 );

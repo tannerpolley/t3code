@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { projectFolderNameProblem, sectionFolderPath } from "./sectionProjectPath";
+import {
+  folderSubsectionInput,
+  projectFolderNameProblem,
+  sectionFolderPath,
+} from "./sectionProjectPath";
 
 describe("sectionFolderPath", () => {
   it("nests a subsection's folder inside its section's under the root", () => {
@@ -31,4 +35,19 @@ describe("projectFolderNameProblem", () => {
     expect(projectFolderNameProblem("..")).not.toBeNull();
     expect(projectFolderNameProblem("a/b")).not.toBeNull();
   });
+});
+
+it("uses the selected folder basename and keeps its path after a rename or root setting change", () => {
+  const folder = folderSubsectionInput("/engineering/IDAES/")!;
+  expect(folder).toEqual({ name: "IDAES", folderPath: "/engineering/IDAES" });
+  expect(sectionFolderPath("/different-root", ["Engineering", "Models"], folder.folderPath)).toBe(
+    "/engineering/IDAES",
+  );
+  expect(sectionFolderPath("", ["Renamed"], folder.folderPath)).toBe("/engineering/IDAES");
+  expect(folderSubsectionInput("C:\\Engineering\\IDAES\\")).toEqual({
+    name: "IDAES",
+    folderPath: "C:\\Engineering\\IDAES",
+  });
+  expect(folderSubsectionInput("/")).toBeNull();
+  expect(folderSubsectionInput("C:\\")).toBeNull();
 });

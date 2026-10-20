@@ -353,3 +353,44 @@ describe("shared sidebar projection", () => {
     });
   });
 });
+
+it("projects mixed child order into scoped row keys without losing the chosen folder", () => {
+  const snapshot = groups([project("a"), project("b")], "separate");
+  const saved = {
+    ...EMPTY_SIDEBAR_LAYOUT,
+    sidebarProjectSections: [
+      {
+        id: "work",
+        name: "Work",
+        projectKeys: ["a", "b"],
+        collapsed: false,
+        childOrder: ["a", "section:idaes", "b"],
+      },
+      {
+        id: "idaes",
+        name: "Renamed",
+        projectKeys: [],
+        collapsed: false,
+        parentId: "work",
+        folderPath: "/engineering/IDAES",
+      },
+    ],
+  };
+  const projected = projectSidebarLayout({
+    layouts: new Map([[local, saved]]),
+    groups: snapshot,
+    primaryEnvironmentId: local,
+  });
+  expect(projected.sidebarProjectSections[0]!.childOrder).toEqual([
+    snapshot[0]!.projectKey,
+    `section:${sidebarSectionKey(local, "idaes")}`,
+    snapshot[1]!.projectKey,
+  ]);
+  expect(projected.sidebarProjectSections[1]!.folderPath).toBe("/engineering/IDAES");
+  const migrated = migrateSidebarLayout(projected, snapshot, local, true);
+  expect(migrated.sidebarProjectSections[0]!.childOrder).toEqual([
+    "a",
+    `section:${sidebarSectionKey(local, "idaes")}`,
+    "b",
+  ]);
+});

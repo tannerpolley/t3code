@@ -10,6 +10,7 @@ const COMMAND_PALETTE_OPEN_EVENT = "t3code:open-command-palette";
 export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-thread-in";
   readonly sectionId?: string;
+  readonly folderSubsection?: boolean;
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
 }

@@ -1,3 +1,4 @@
+import { sidebarSectionChildOrder } from "@t3tools/shared/sidebarLayout";
 import { useSidebarWorkExpansion } from "./useSidebarWorkExpansion";
 import {
   collectDisplayedFamilyRows,
@@ -157,6 +158,7 @@ import { toastManager } from "../ui/toast";
 import { NewSectionProjectDialog, type NewSectionProjectTarget } from "./NewSectionProjectDialog";
 import {
   resolveProjectDrop,
+  resolveSubsectionDrop,
   type ProjectDrop,
   type ProjectDropOver,
 } from "./SidebarProjectSections.logic";
@@ -179,6 +181,8 @@ type SidebarProjectSectionRender = {
   /** Set on this section itself, as its menu shows it. */
   readonly ownFolderIcons: boolean;
   readonly parentId: string | undefined;
+  readonly childOrder?: readonly string[] | undefined;
+  readonly folderPath?: string | undefined;
 };
 
 type ProjectDragData = {
@@ -220,7 +224,10 @@ function projectDropOverOf(
   const data = over?.data.current as SidebarProjectDragData | undefined;
   if (!over || !data) return null;
   if (data.type === "project") return { type: "project", projectKey: String(over.id) };
-  return { type: "section", sectionId: data.sectionId ?? UNGROUPED_SECTION_ID };
+  return {
+    type: data.type === "section" ? "section-header" : "section",
+    sectionId: data.sectionId ?? UNGROUPED_SECTION_ID,
+  };
 }
 
 function projectSectionName(section: SidebarProjectSectionRender): string {
@@ -293,6 +300,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const reorderSectionProjects = useUiStateStore(
     (store) => store.reorderSidebarProjectSectionProjects,
   );
+  const reorderChildren = useUiStateStore((store) => store.reorderSidebarSectionChildren);
   const reorderSections = useUiStateStore((store) => store.reorderSidebarProjectSections);
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
   const [projectDrop, setProjectDrop] = useState<ProjectDrop | null>(null);
@@ -306,13 +314,19 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     readonly id: string;
     readonly name: string;
     readonly parentId: string | undefined;
+    readonly folderPath?: string | undefined;
   }) => {
     const parentName =
       section.parentId === undefined
         ? undefined
         : sections.find((candidate) => candidate.id === section.parentId)?.name;
     setNewProjectDialog((current) => ({
-      target: { sectionId: section.id, sectionName: section.name, parentName },
+      target: {
+        sectionId: section.id,
+        sectionName: section.name,
+        parentName,
+        folderPath: section.folderPath,
+      },
       open: true,
       id: (current?.id ?? 0) + 1,
     }));
@@ -343,6 +357,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         folderIcons,
         ownFolderIcons: section.folderIcons === true,
         parentId: section.parentId,
+        childOrder: section.childOrder,
+        folderPath: section.folderPath,
       });
     }
     const ungroupedProjectKeys = projects
@@ -463,13 +479,17 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     const activeData = event.active.data.current as SidebarProjectDragData | undefined;
     const over = projectDropOverOf(event.over);
     setProjectDrop(
-      activeData?.type === "project" && over
-        ? resolveProjectDrop({
-            projectKey: String(event.active.id),
-            over,
-            sections: renderedSections,
-          })
-        : null,
+      !over
+        ? null
+        : activeData?.type === "project"
+          ? resolveProjectDrop({
+              projectKey: String(event.active.id),
+              over,
+              sections: renderedSections,
+            })
+          : activeData?.type === "section"
+            ? resolveSubsectionDrop(activeData.sectionId, over, renderedSections)
+            : null,
     );
   };
 
@@ -492,6 +512,15 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       return;
 
     if (activeData.type === "section") {
+      const activeSection = sections.find((section) => section.id === activeData.sectionId);
+      if (activeSection?.parentId !== undefined) {
+        const over = projectDropOverOf(event.over);
+        const drop = over
+          ? resolveSubsectionDrop(activeData.sectionId, over, renderedSections)
+          : null;
+        if (drop?.childOrder) reorderChildren(drop.sectionId, drop.childOrder);
+        return;
+      }
       const targetSectionId = sectionIdFromDragData(overData);
       if (
         targetSectionId === null ||
@@ -500,9 +529,13 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       ) {
         return;
       }
-      const currentIds = sections.map((section) => section.id);
+      const targetSection = sections.find((s) => s.id === targetSectionId);
+      const topTargetId = targetSection?.parentId ?? targetSectionId;
+      const currentIds = sections
+        .filter((s) => s.parentId === undefined)
+        .map((section) => section.id);
       const fromIndex = currentIds.indexOf(activeData.sectionId);
-      const toIndex = currentIds.indexOf(targetSectionId);
+      const toIndex = currentIds.indexOf(topTargetId);
       if (fromIndex >= 0 && toIndex >= 0) {
         reorderSections(arrayMove(currentIds, fromIndex, toIndex));
       }
@@ -519,7 +552,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       return;
     }
     if (activeData.sectionId !== drop.sectionId) moveProject(projectKey, drop.sectionId);
-    reorderSectionProjects(drop.sectionId, [...drop.projectKeys]);
+    if (drop.childOrder) reorderChildren(drop.sectionId, drop.childOrder);
+    else reorderSectionProjects(drop.sectionId, [...drop.projectKeys]);
   };
 
   return (
@@ -642,7 +676,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly folderColors: boolean;
   /** Where a dragged project would land; this section shows it when it is the target. */
   readonly projectDrop: ProjectDrop | null;
-  /** Rendered inside this section, before its projects; empty for subsections themselves. */
+  /** Immediate subsections; empty for subsections themselves. */
   readonly subsections: readonly SidebarProjectSectionRender[];
   readonly onNewSubsection: (parent: { readonly id: string; readonly name: string }) => void;
   readonly onNewProjectInSection: (section: SidebarProjectSectionRender) => void;
@@ -683,6 +717,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   });
   const expanded = !props.section.collapsed;
   const sectionProjectKeys = expanded ? props.section.projectKeys : [];
+  const childOrder = expanded ? sidebarSectionChildOrder(props.section, props.subsections) : [];
   const drop = props.projectDrop?.sectionId === props.section.id ? props.projectDrop : null;
   // A line marks the landing spot; a section with no visible order highlights instead.
   const highlighted = drop !== null && (drop.beforeKey === undefined || !expanded);
@@ -708,11 +743,21 @@ const ProjectSection = memo(function ProjectSection(props: {
         <ul
           className={props.codexStyle ? undefined : "ms-3 border-sidebar-border/60 border-s ps-1"}
         >
-          {props.subsections.map((subsection) => (
-            <ProjectSection key={subsection.id} {...props} section={subsection} subsections={[]} />
-          ))}
-          <SortableContext items={[...sectionProjectKeys]} strategy={verticalListSortingStrategy}>
-            {sectionProjectKeys.map((projectKey) => {
+          <SortableContext
+            items={childOrder.map((key) =>
+              key.startsWith("section:") ? sectionDragId(key.slice(8)) : key,
+            )}
+            strategy={verticalListSortingStrategy}
+          >
+            {childOrder.map((projectKey) => {
+              const subsection = props.subsections.find((s) => `section:${s.id}` === projectKey);
+              if (subsection)
+                return (
+                  <Fragment key={projectKey}>
+                    {drop?.beforeKey === projectKey ? <ProjectDropLine /> : null}
+                    <ProjectSection {...props} section={subsection} subsections={[]} />
+                  </Fragment>
+                );
               const project = props.projectByKey.get(projectKey);
               return project ? (
                 <Fragment key={projectKey}>
@@ -782,8 +827,7 @@ function SortableSectionHeader(props: {
       type: "section",
       sectionId: section.id,
     } satisfies SectionDragData,
-    // Only top-level sections reorder; subsections keep the order they were made in.
-    disabled: !canWrite || !section.custom || section.parentId !== undefined,
+    disabled: !canWrite || !section.custom,
     id: sectionDragId(section.id),
   });
   const {
@@ -796,7 +840,7 @@ function SortableSectionHeader(props: {
     transition,
   } = sortable;
   const { codexStyle } = props;
-  const draggable = canWrite && section.custom && section.parentId === undefined;
+  const draggable = canWrite && section.custom;
   const expanded = !section.collapsed;
 
   return (
@@ -807,10 +851,11 @@ function SortableSectionHeader(props: {
         isDragging && "z-10 opacity-70",
       )}
       data-testid={`sidebar-project-section-${section.id}`}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition,
-      }}
+      style={
+        section.parentId === undefined
+          ? { transform: CSS.Translate.toString(transform), transition }
+          : undefined
+      }
     >
       {/* Codex style drags a custom section by its whole header and shows the caret on hover;
           otherwise a grip button drags it. */}
@@ -902,6 +947,21 @@ function SortableSectionHeader(props: {
                 <FilePlusIcon />
                 New project…
               </MenuItem>
+              {props.onNewSubsection ? (
+                <MenuItem
+                  disabled={!canWrite || !placementReady}
+                  onClick={() =>
+                    openCommandPalette({
+                      open: "add-project",
+                      sectionId: section.id,
+                      folderSubsection: true,
+                    })
+                  }
+                >
+                  <FolderTreeIcon />
+                  Add folder as subsection…
+                </MenuItem>
+              ) : null}
               {props.onNewSubsection ? (
                 <MenuItem disabled={!canWrite} onClick={() => props.onNewSubsection?.(section)}>
                   <FolderTreeIcon />

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectVisibleProjectThreadOrder,
   resolveProjectDrop,
+  resolveSubsectionDrop,
   type ProjectDropSection,
   type ProjectThreadSection,
 } from "./SidebarProjectSections.logic";
@@ -106,4 +107,45 @@ describe("collectVisibleProjectThreadOrder", () => {
       }),
     ).toEqual([]);
   });
+});
+
+it("orders subsections alongside projects and keeps body drops as moves into the subsection", () => {
+  const sections = [
+    { id: "work", custom: true, projectKeys: ["a", "b"], childOrder: ["a", "section:idaes", "b"] },
+    { id: "idaes", custom: true, parentId: "work", projectKeys: ["c"] },
+  ];
+  expect(
+    resolveSubsectionDrop("idaes", { type: "project", projectKey: "a" }, sections)?.childOrder,
+  ).toEqual(["section:idaes", "a", "b"]);
+  expect(
+    resolveSubsectionDrop("idaes", { type: "project", projectKey: "b" }, sections)?.childOrder,
+  ).toEqual(["a", "b", "section:idaes"]);
+  expect(
+    resolveProjectDrop({
+      projectKey: "a",
+      over: { type: "section-header", sectionId: "idaes" },
+      sections,
+    })?.childOrder,
+  ).toEqual(["section:idaes", "a", "b"]);
+  expect(
+    resolveProjectDrop({
+      projectKey: "b",
+      over: { type: "section-header", sectionId: "idaes" },
+      sections,
+    })?.childOrder,
+  ).toEqual(["a", "b", "section:idaes"]);
+  expect(
+    resolveProjectDrop({ projectKey: "a", over: { type: "section", sectionId: "idaes" }, sections })
+      ?.projectKeys,
+  ).toEqual(["c", "a"]);
+  expect(
+    collectVisibleProjectThreadOrder({
+      projects: ["a", "b", "c"].map((projectKey) => ({ projectKey })),
+      sections: sections.map((s) => ({ ...s, collapsed: false })),
+      otherProjectsExpanded: true,
+      isProjectExpanded: () => true,
+      threadsByProjectKey: new Map(["a", "b", "c"].map((key) => [key, [key]])),
+      getThreadKey: (key) => key,
+    }),
+  ).toEqual(["a", "c", "b"]);
 });

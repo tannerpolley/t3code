@@ -11,6 +11,8 @@ export const SidebarProjectSection = Schema.Struct({
   color: Schema.optionalKey(ProjectIconColor),
   parentId: Schema.optionalKey(TrimmedNonEmptyString),
   folderIcons: Schema.optionalKey(Schema.Boolean),
+  folderPath: Schema.optionalKey(TrimmedNonEmptyString),
+  childOrder: Schema.optionalKey(ForwardCompatibleArray(TrimmedNonEmptyString)),
 });
 export type SidebarProjectSection = typeof SidebarProjectSection.Type;
 const SidebarProjectExpansion = Schema.Record(Schema.String, Schema.Unknown).pipe(
@@ -53,6 +55,7 @@ export const SidebarLayoutMutation = Schema.Union([
       id,
       name: SidebarProjectSection.fields.name,
       parentId: Schema.optionalKey(id),
+      folderPath: SidebarProjectSection.fields.folderPath,
     }),
   }),
   Schema.Struct({
@@ -86,6 +89,11 @@ export const SidebarLayoutMutation = Schema.Union([
     type: Schema.Literal("sectionProjectsOrder"),
     sectionId: id,
     projectKeys: Schema.Array(id),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("sectionChildrenOrder"),
+    sectionId: id,
+    childOrder: Schema.Array(id),
   }),
   Schema.Struct({ type: Schema.Literal("sectionsOrder"), sectionIds: Schema.Array(id) }),
   Schema.Struct({
