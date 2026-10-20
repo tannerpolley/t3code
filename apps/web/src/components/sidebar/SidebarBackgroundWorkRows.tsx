@@ -264,7 +264,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                     )
                   : undefined
               }
-              nameIsRole={row.kind === "subagent" && row.child !== undefined}
               name={
                 <span className="flex min-w-0 items-center gap-2">
                   <RowLabel
@@ -273,7 +272,9 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   >
                     {row.kind === "subagent" && row.child ? (
                       <SidebarProjectThreadName thread={row.child} badges={false}>
-                        {sidebarThreadTitle(row.child.source)}
+                        <span className="sidebar-role-title">
+                          {sidebarThreadTitle(row.child.source)}
+                        </span>
                       </SidebarProjectThreadName>
                     ) : (
                       name
@@ -392,14 +393,12 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               </div>
             );
 
-          const separator = sidebarWorkSeparator(
-            props.familySeparators?.get(
-              sidebarSubagentRowKey(props.environmentId, props.threadId, row),
-            ),
-            rows,
-            index,
-            props.processCount ?? (props.columns ? afterTasksAt : 0),
+          const familySeparator = props.familySeparators?.get(
+            sidebarSubagentRowKey(props.environmentId, props.threadId, row),
           );
+          const separator = props.columns
+            ? sidebarWorkSeparator(familySeparator, rows, index, props.processCount ?? afterTasksAt)
+            : familySeparator;
           return (
             <li
               ref={nested?.ref}
@@ -412,6 +411,11 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               }
               className={cn(
                 row.kind !== "subagent" && "group/shell",
+                !props.columns &&
+                  index > 0 &&
+                  row.kind === "subagent" &&
+                  rows[index - 1]!.kind !== "subagent" &&
+                  "border-t border-sidebar-border/40",
                 "fork-sidebar-agent-item relative",
               )}
               style={

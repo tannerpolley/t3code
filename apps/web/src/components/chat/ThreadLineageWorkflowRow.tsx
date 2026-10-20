@@ -109,7 +109,6 @@ function WorkflowMemberRow({
           }
         >
           <SidebarThreadColumns
-            nameIsRole={thread != null}
             location={
               thread
                 ? threadLocationCell(thread.source, <ThreadLocationIcon thread={thread} />)
@@ -121,7 +120,7 @@ function WorkflowMemberRow({
             effort={shortModelSelectionEffort(member.effort ?? null)}
             name={
               <span className="flex min-w-0 items-center gap-1.5">
-                <span className="min-w-0 flex-1 truncate">
+                <span className={cn("min-w-0 flex-1 truncate", thread && "sidebar-role-title")}>
                   {thread
                     ? sidebarThreadName(member.title, sidebarThreadTitle(thread.source))
                     : member.title}

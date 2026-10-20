@@ -1468,10 +1468,11 @@ const SidebarProjectThreadRow = memo(
                   effort={shortModelSelectionEffort(
                     formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
                   )}
-                  nameIsRole
                   name={
                     <SidebarProjectThreadName thread={props.thread} badges={false}>
-                      {sidebarThreadTitle(props.thread.source)}
+                      <span className="sidebar-role-title">
+                        {sidebarThreadTitle(props.thread.source)}
+                      </span>
                     </SidebarProjectThreadName>
                   }
                   count={workCount > 0 && !workOpen ? workCount : undefined}

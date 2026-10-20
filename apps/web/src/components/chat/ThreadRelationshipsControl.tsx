@@ -761,7 +761,6 @@ export function ThreadRelationshipsPanel(props: {
                   );
                   const relationshipContent = redesign ? (
                     <SidebarThreadColumns
-                      nameIsRole={node?.thread != null}
                       location={
                         node?.thread
                           ? threadLocationCell(
@@ -792,7 +791,12 @@ export function ThreadRelationshipsPanel(props: {
                       effort={shortModelSelectionEffort(effortLabel)}
                       name={
                         <span className="flex min-w-0 items-center gap-1">
-                          <span className="min-w-0 flex-1 truncate">
+                          <span
+                            className={cn(
+                              "min-w-0 flex-1 truncate",
+                              node?.thread && "sidebar-role-title",
+                            )}
+                          >
                             {node?.thread
                               ? sidebarThreadName(threadTitle, sidebarThreadTitle(node.thread))
                               : threadTitle}

@@ -83,6 +83,10 @@
 .sidebar-thread-name-wide {
   grid-column: model / count;
 }
+/* Icon role display hides a title that only repeats the role; the role icon names it on hover. */
+[data-sidebar-role-display="icon"] .sidebar-role-title {
+  display: none;
+}
 
 /* Separators overlay rows so changing family style never changes their height. */
 [data-family-separator]::before {

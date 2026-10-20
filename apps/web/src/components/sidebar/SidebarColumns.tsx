@@ -109,8 +109,6 @@ export function SidebarThreadColumns(props: {
   readonly model?: string | undefined;
   readonly effort?: ReactNode;
   readonly name: ReactNode;
-  /** The name contains only the role, which icon mode already explains. */
-  readonly nameIsRole?: boolean | undefined;
   /** The row has no model or effort, so its name starts in the model's column. */
   readonly wideName?: boolean | undefined;
   readonly count?: number | undefined;
@@ -164,7 +162,7 @@ export function SidebarThreadColumns(props: {
         <span className="sidebar-thread-effort">{props.effort}</span>
       ) : null}
       <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
-        {props.nameIsRole && columns.roleDisplay === "icon" ? null : props.name}
+        {props.name}
       </span>
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       {columns.issue !== false ? (
