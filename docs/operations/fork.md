@@ -87,3 +87,4 @@ It checks for staged builds shortly after startup and every four minutes while r
   - fork logic lives in fork-owned files, joined to upstream files by small hook points;
   - fork migrations use their own ledger (`ForkMigrations.ts`), and fork RPCs their own group (`ForkWsRpc.ts`).
 - Measure conflicts before a sync with `git merge-tree --write-tree --name-only --no-messages main upstream/main`.
+- Conflict resolution can drop fork code without a conflict marker or a failing test: the 2026-10-20 sync lost 23 fork behaviors that its review missed. Before merging a sync into `main`, run `scripts/fork-sync/lost-fork-code.py main <upstream commit merged> <sync branch>`. It lists fork-added lines the merge no longer has and fork files nothing imports any more. Judge every flagged hunk: restyled (keep), replaced by upstream's own version (drop the fork code, citing upstream's), or dropped (restore it). The sync review checks those judgments.
