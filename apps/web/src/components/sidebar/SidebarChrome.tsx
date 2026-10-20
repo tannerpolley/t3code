@@ -6,7 +6,7 @@ import {
   MessageCircleQuestionMarkIcon,
   SettingsIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -192,13 +192,14 @@ function SidebarDontAskModeItem() {
               aria-pressed={on}
               onClick={() => updateSettings({ dontAskMode: !on })}
               size="icon"
+              // On: the orange the sidebar uses for the questions and approvals it would answer.
+              style={
+                on
+                  ? ({ "--sidebar-icon-color": "var(--warning-foreground)" } as CSSProperties)
+                  : undefined
+              }
             >
-              {/* On: the orange the sidebar uses for questions and approvals it would answer. */}
-              {on ? (
-                <MessageCircleOffIcon className="text-warning-foreground" />
-              ) : (
-                <MessageCircleQuestionMarkIcon className="text-sidebar-muted-foreground" />
-              )}
+              {on ? <MessageCircleOffIcon /> : <MessageCircleQuestionMarkIcon />}
             </SidebarMenuButton>
           }
         />
