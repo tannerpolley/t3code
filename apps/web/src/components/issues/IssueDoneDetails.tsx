@@ -1,10 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  IssueCleanupInput,
-  IssueRepositoryRef,
-  IssueSummary,
-} from "@t3tools/contracts";
+import type { EnvironmentId, IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { useState } from "react";
@@ -79,15 +74,17 @@ function IssueWorkCleanup({
   );
   const [busy, setBusy] = useState(false);
   const [unmerged, setUnmerged] = useState(false);
-  const [removed, setRemoved] = useState<readonly string[]>([]);
-  const remove = async (action: IssueCleanupInput["action"], confirmUnmerged = false) => {
+  const [removed, setRemoved] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const remove = async (confirmUnmerged = false) => {
+    setFailure(null);
     setBusy(true);
     const result = await cleanup({
       environmentId,
       input: {
         ...reference,
         threadId: work.threadId,
-        action,
+        action: "delete-branch",
         expectedBranch: work.branch,
         expectedWorktreePath: work.worktreePath,
         confirmed: true,
@@ -104,6 +101,7 @@ function IssueWorkCleanup({
         error.code === "unmerged"
       )
         setUnmerged(true);
+      setFailure(formatEnvironmentQueryError(result.cause));
       toastManager.add({
         type: "error",
         title: "Could not clean up issue work",
@@ -111,7 +109,7 @@ function IssueWorkCleanup({
       });
       return;
     }
-    setRemoved((current) => [...current, action]);
+    setRemoved(true);
     setUnmerged(false);
   };
   return (
@@ -128,12 +126,12 @@ function IssueWorkCleanup({
       >
         Open worker · {work.title}
       </Button>
-      {work.branch && !removed.includes("delete-branch") ? (
+      {work.branch && !removed ? (
         <Button
           size="xs"
           variant="ghost"
           disabled={!permitted || busy || work.status !== "idle"}
-          {...confirm.props("branch", () => void remove("delete-branch", unmerged))}
+          {...confirm.props("branch", () => void remove(unmerged))}
         >
           {confirm.isArmed("branch")
             ? unmerged
@@ -145,17 +143,7 @@ function IssueWorkCleanup({
           · {work.branch}
         </Button>
       ) : null}
-      {work.worktreePath && !removed.includes("remove-worktree") ? (
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={!permitted || busy || work.status !== "idle"}
-          title={work.worktreePath}
-          {...confirm.props("worktree", () => void remove("remove-worktree"))}
-        >
-          {confirm.isArmed("worktree") ? "Confirm remove worktree?" : "Remove worktree"}
-        </Button>
-      ) : null}
+      {failure ? <p role="status">{failure}</p> : null}
     </div>
   );
 }

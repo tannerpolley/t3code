@@ -1,9 +1,5 @@
 import { IssueCleanupError, type IssueCleanupInput } from "@t3tools/contracts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
-import * as Clock from "effect/Clock";
-import * as FileSystem from "effect/FileSystem";
-import { storageCleanupThreadIdle } from "../storageCleanup.ts";
-import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -25,13 +21,37 @@ const unavailable = (cause: unknown) => new IssueCleanupError({ code: "unavailab
 
 const make = Effect.gen(function* () {
   const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
-  const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const roadmap = yield* IssueRoadmap.IssueRoadmap;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const github = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+  // Worktree removal belongs to StorageCleanup's leased path; issue #64 will reuse it.
+  const ensureBranchNotCheckedOut = Effect.fn("IssueCleanup.ensureBranchNotCheckedOut")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    const worktrees = yield* git
+      .execute({
+        cwd,
+        operation: "IssueCleanup.branchWorktrees",
+        args: ["worktree", "list", "--porcelain", "-z"],
+      })
+      .pipe(Effect.mapError(unavailable));
+    if (worktrees.stdoutTruncated) return yield* new IssueCleanupError({ code: "unavailable" });
+    const entry = worktrees.stdout
+      .split("\0\0")
+      .map((record) => record.split("\0"))
+      .find((fields) => fields.includes(`branch refs/heads/${branch}`));
+    if (entry) {
+      const workspace = entry.find((field) => field.startsWith("worktree "))?.slice(9);
+      return yield* new IssueCleanupError({
+        code: "checked-out",
+        ...(workspace ? { worktreeName: path.basename(workspace) } : {}),
+      });
+    }
+  });
 
   const cleanup = Effect.fn("IssueCleanup.cleanup")(function* (input: IssueCleanupInput) {
     if (!input.confirmed) return yield* new IssueCleanupError({ code: "confirmation-required" });
@@ -56,89 +76,10 @@ const make = Effect.gen(function* () {
     if (Option.isNone(project)) return yield* new IssueCleanupError({ code: "unavailable" });
     const cwd = project.value.workspaceRoot;
 
-    if (input.action === "remove-worktree") {
-      if (!thread.worktreePath) return yield* new IssueCleanupError({ code: "work-changed" });
-      const paths = yield* git.listWorktreePaths(cwd).pipe(Effect.mapError(unavailable));
-      const target = yield* fs.realPath(thread.worktreePath).pipe(Effect.mapError(unavailable));
-      const root = yield* fs.realPath(cwd).pipe(Effect.mapError(unavailable));
-      const registered = yield* Effect.forEach(paths, (entry) =>
-        fs.realPath(entry).pipe(Effect.mapError(unavailable)),
-      );
-      if (registered[0] === target || root === target)
-        return yield* new IssueCleanupError({ code: "main-worktree" });
-      if (!registered.includes(target))
-        return yield* new IssueCleanupError({ code: "work-changed" });
-      const managedRoot = yield* fs
-        .realPath(path.join(cwd, ".worktrees"))
-        .pipe(Effect.mapError(unavailable));
-      const relative = path.relative(managedRoot, target);
-      if (
-        !relative ||
-        relative === ".." ||
-        relative.startsWith(`..${path.sep}`) ||
-        path.isAbsolute(relative)
-      )
-        return yield* new IssueCleanupError({ code: "work-changed" });
-      const status = yield* git
-        .execute({
-          cwd: target,
-          operation: "IssueCleanup.worktreeStatus",
-          args: ["status", "--porcelain=v1", "--untracked-files=all"],
-        })
-        .pipe(Effect.mapError(unavailable));
-      if (status.stdout.length > 0 || status.stdoutTruncated)
-        return yield* new IssueCleanupError({ code: "dirty-worktree" });
-      const snapshot = yield* projections.getShellSnapshot().pipe(Effect.mapError(unavailable));
-      const allProjects = yield* projects
-        .list({ includeDeleted: true })
-        .pipe(Effect.mapError(unavailable));
-      const now = yield* Clock.currentTimeMillis;
-      for (const candidate of [...snapshot.threads, ...snapshot.archivedThreads]) {
-        const workspace =
-          candidate.worktreePath ??
-          allProjects.find((project) => project.projectId === candidate.projectId)?.workspaceRoot;
-        if (!workspace) return yield* new IssueCleanupError({ code: "unavailable" });
-        const realWorkspace = yield* fs.realPath(workspace).pipe(
-          Effect.catchTags({
-            PlatformError: (error) =>
-              error.reason._tag === "NotFound"
-                ? Effect.succeed(null)
-                : Effect.fail(unavailable(error)),
-          }),
-        );
-        if (realWorkspace !== target) continue;
-        if (
-          !storageCleanupThreadIdle({ ...candidate, worktreePath: workspace }, now) ||
-          candidate.activityRunStatus != null
-        )
-          return yield* new IssueCleanupError({ code: "work-active" });
-        const records = yield* projections
-          .getThreadRecords(candidate.id, ["providerSessions"])
-          .pipe(Effect.mapError(unavailable));
-        for (const session of records.providerSessions) {
-          if (yield* sessions.isLive(session.id))
-            return yield* new IssueCleanupError({ code: "work-active" });
-        }
-      }
-      // Never force: Git rechecks dirtiness and worktree locks at the point of removal.
-      return yield* git
-        .removeWorktree({ cwd, path: target, force: false })
-        .pipe(Effect.mapError(unavailable));
-    }
-
     const branch = thread.branch;
     if (!branch || branch.startsWith("-"))
       return yield* new IssueCleanupError({ code: "work-changed" });
-    const worktrees = yield* git
-      .execute({
-        cwd,
-        operation: "IssueCleanup.branchWorktrees",
-        args: ["worktree", "list", "--porcelain", "-z"],
-      })
-      .pipe(Effect.mapError(unavailable));
-    if (worktrees.stdoutTruncated) return yield* new IssueCleanupError({ code: "unavailable" });
-    if (worktrees.stdout.split("\0").includes(`branch refs/heads/${branch}`))
-      return yield* new IssueCleanupError({ code: "checked-out" });
+    yield* ensureBranchNotCheckedOut(cwd, branch);
     const head = yield* git
       .execute({
         cwd,
@@ -234,9 +175,14 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(unavailable));
     if (current.stdout !== head.stdout)
       return yield* new IssueCleanupError({ code: "work-changed" });
-    yield* git
-      .deleteLocalBranch({ cwd, refName: branch, force: true })
-      .pipe(Effect.mapError(unavailable));
+    yield* git.deleteLocalBranch({ cwd, refName: branch, force: true }).pipe(
+      Effect.catchTags({
+        GitCommandError: (cause) =>
+          ensureBranchNotCheckedOut(cwd, branch).pipe(
+            Effect.andThen(Effect.fail(unavailable(cause))),
+          ),
+      }),
+    );
   });
   return IssueCleanup.of({ cleanup });
 });
