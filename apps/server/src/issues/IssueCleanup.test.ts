@@ -18,6 +18,7 @@ import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as StorageCleanup from "../storageCleanup.ts";
 import * as IssueCleanup from "./IssueCleanup.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
 
@@ -117,6 +118,9 @@ const fixture = Effect.fn("test.issueCleanupFixture")(function* (legacyPr = true
           ...driver,
           deleteLocalBranch: (input) =>
             beforeDelete.pipe(Effect.andThen(driver.deleteLocalBranch(input))),
+        }),
+        Layer.mock(StorageCleanup.StorageCleanup)({
+          removeWorktreeNow: () => Effect.succeed({ outcome: "kept", reason: "Open terminal" }),
         }),
         Layer.mock(IssueRoadmap.IssueRoadmap)({ detail: () => Effect.succeed(detail) }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -275,4 +279,26 @@ it.effect("surfaces Git's refusal when a branch is checked out after the initial
     assert.equal(error.worktreeName, "worker");
     assert.equal((yield* f.git(["show-ref", "--verify", "refs/heads/issue-work"])).exitCode, 0);
   }).pipe(Effect.scoped, Effect.provide(layerGit)),
+);
+
+it.effect(
+  "requires consent and current closed issue work before requesting leased cleanup, and returns the kept reason",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const input = { ...f.input, action: "remove-worktree" as const };
+      assert.equal(
+        (yield* f.cleanup({ ...input, confirmed: false }).pipe(Effect.flip)).code,
+        "confirmation-required",
+      );
+      assert.equal(
+        (yield* f.cleanup({ ...input, expectedWorktreePath: "/changed" }).pipe(Effect.flip)).code,
+        "work-changed",
+      );
+      Object.assign(f.detail.issue, { state: "open" });
+      assert.equal((yield* f.cleanup(input).pipe(Effect.flip)).code, "not-closed");
+      Object.assign(f.detail.issue, { state: "closed" });
+      assert.deepEqual(yield* f.cleanup(input), { outcome: "kept", reason: "Open terminal" });
+      assert.equal((yield* f.git(["show-ref", "--verify", "refs/heads/issue-work"])).exitCode, 0);
+    }).pipe(Effect.scoped, Effect.provide(layerGit)),
 );

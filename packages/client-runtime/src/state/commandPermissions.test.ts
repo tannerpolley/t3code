@@ -331,9 +331,9 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect(
-    "issue cleanup checks source-control permission at execution in the destination environment",
-    () =>
+  it.effect.each(["delete-branch", "remove-worktree"] as const)(
+    "issue cleanup (%s) checks source-control permission at execution in the destination environment",
+    (action) =>
       Effect.scoped(
         Effect.gen(function* () {
           const registry = yield* setup;
@@ -374,7 +374,7 @@ describe("command permissions", () => {
             repository: "owner/repo",
             number: 1,
             threadId: ThreadId.make("worker"),
-            action: "delete-branch" as const,
+            action,
             expectedBranch: "work",
             expectedWorktreePath: null,
             confirmed: true,

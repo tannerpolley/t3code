@@ -188,7 +188,7 @@ import {
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
-import { IssueCleanupInput, IssueCleanupError } from "./issueCleanup.ts";
+import { IssueCleanupInput, IssueCleanupError, IssueCleanupResult } from "./issueCleanup.ts";
 import { IssueLinkInput, IssueLinkResult, IssueLinkError } from "./issueLinks.ts";
 import {
   IssueRef,
@@ -1085,7 +1085,7 @@ const WsIssuesSetStateRpc = Rpc.make(WS_METHODS.issuesSetState, {
 });
 const WsIssuesCleanupRpc = Rpc.make(WS_METHODS.issuesCleanup, {
   payload: IssueCleanupInput,
-  success: Schema.Void,
+  success: IssueCleanupResult,
   error: Schema.Union([IssueCleanupError, EnvironmentAuthorizationError]),
 });
 const WsIssuesUnlinkRpc = Rpc.make(WS_METHODS.issuesUnlink, {

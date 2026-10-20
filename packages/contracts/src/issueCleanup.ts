@@ -2,15 +2,29 @@ import * as Schema from "effect/Schema";
 import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { IssueRef } from "./issue.ts";
 
-export const IssueCleanupInput = Schema.Struct({
+const cleanupFields = {
   ...IssueRef.fields,
   threadId: ThreadId,
-  action: Schema.Literal("delete-branch"),
   expectedBranch: Schema.NullOr(TrimmedNonEmptyString),
   expectedWorktreePath: Schema.NullOr(TrimmedNonEmptyString),
   confirmed: Schema.Boolean,
-  confirmUnmerged: Schema.Boolean,
+};
+export const IssueCleanupInput = Schema.Union([
+  Schema.Struct({
+    ...cleanupFields,
+    action: Schema.Literal("delete-branch"),
+    confirmUnmerged: Schema.Boolean,
+  }),
+  Schema.Struct({ ...cleanupFields, action: Schema.Literal("remove-worktree") }),
+]);
+export const WorktreeRemovalResult = Schema.Struct({
+  outcome: Schema.Literals(["removed", "kept"]),
+  reason: Schema.String,
 });
+export type WorktreeRemovalResult = typeof WorktreeRemovalResult.Type;
+export const IssueCleanupResult = Schema.Union([Schema.Void, WorktreeRemovalResult]);
+export type IssueCleanupResult = typeof IssueCleanupResult.Type;
+
 export type IssueCleanupInput = typeof IssueCleanupInput.Type;
 
 export class IssueCleanupError extends Schema.TaggedError<IssueCleanupError>()(

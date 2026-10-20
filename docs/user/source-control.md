@@ -279,7 +279,10 @@ with the issues that GitHub identifies that pull request as closing.
 Include **Closed** in Filter to see completed and closed issues. **Done** shows those closed in the
 last 24 hours, with their closure reason and time and attached PR numbers, titles, states and links.
 At 24 hours they move to **Closed**, which starts collapsed. Archived worker links remain available
-on closed issues. Open a worker from its row, or confirm **Delete local branch** to remove a branch
+on closed issues. Open a worker from its row, or confirm **Remove worktree** to remove its local
+checkout while keeping its branch. Removal checks for active workers, shared worktrees, open terminals
+and provider sessions, and local changes; a refusal appears on the row. This explicit action does not
+wait for Storage cleanup's age or policy thresholds. Confirm **Delete local branch** to remove a branch
 after its PR is merged. A branch checked out in any worktree cannot be deleted;
 remove the worktree or switch its branch first. Unmerged work, including local commits added after
 the PR merged, needs a separate explicit confirmation before deletion. These actions affect only

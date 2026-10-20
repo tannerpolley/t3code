@@ -1,4 +1,8 @@
-import { IssueCleanupError, type IssueCleanupInput } from "@t3tools/contracts";
+import {
+  IssueCleanupError,
+  type IssueCleanupResult,
+  type IssueCleanupInput,
+} from "@t3tools/contracts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -8,12 +12,15 @@ import * as Option from "effect/Option";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as StorageCleanup from "../storageCleanup.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
 
 export class IssueCleanup extends Context.Service<
   IssueCleanup,
   {
-    readonly cleanup: (input: IssueCleanupInput) => Effect.Effect<void, IssueCleanupError>;
+    readonly cleanup: (
+      input: IssueCleanupInput,
+    ) => Effect.Effect<IssueCleanupResult, IssueCleanupError>;
   }
 >()("t3/issues/IssueCleanup") {}
 
@@ -25,9 +32,9 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const storageCleanup = yield* StorageCleanup.StorageCleanup;
   const github = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
-  // Worktree removal belongs to StorageCleanup's leased path; issue #64 will reuse it.
   const ensureBranchNotCheckedOut = Effect.fn("IssueCleanup.ensureBranchNotCheckedOut")(function* (
     cwd: string,
     branch: string,
@@ -75,6 +82,14 @@ const make = Effect.gen(function* () {
     const project = yield* projects.get(thread.projectId).pipe(Effect.mapError(unavailable));
     if (Option.isNone(project)) return yield* new IssueCleanupError({ code: "unavailable" });
     const cwd = project.value.workspaceRoot;
+
+    if (input.action === "remove-worktree") {
+      if (thread.worktreePath === null)
+        return yield* new IssueCleanupError({ code: "work-changed" });
+      return yield* storageCleanup
+        .removeWorktreeNow({ projectId: thread.projectId, worktreePath: thread.worktreePath })
+        .pipe(Effect.mapError(unavailable));
+    }
 
     const branch = thread.branch;
     if (!branch || branch.startsWith("-"))
