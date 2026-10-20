@@ -255,6 +255,7 @@ import {
 } from "./ThreadStatusIndicators";
 import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
 import {
+  type ProjectFolderAppearance,
   resolveProjectFolderAppearance,
   useProjectFolderAppearance,
 } from "../projectFolderAppearance";
@@ -923,6 +924,7 @@ function SidebarProviderStack(props: {
 function SidebarThreadTooltip({
   thread,
   project,
+  projectFolderAppearance,
   projectDisplayName,
   environmentLabel,
   environmentMachine,
@@ -937,6 +939,7 @@ function SidebarThreadTooltip({
 }: {
   thread: SidebarThreadSummary;
   project: ProjectFaviconProject | null;
+  projectFolderAppearance: ProjectFolderAppearance;
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
@@ -973,7 +976,13 @@ function SidebarThreadTooltip({
       >
         {projectDisplayName ? (
           <div className="flex min-w-0 items-center gap-2">
-            {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
+            {project ? (
+              <ProjectFavicon
+                project={project}
+                className="size-3 shrink-0"
+                {...projectFolderAppearance}
+              />
+            ) : null}
             <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
           </div>
         ) : null}
@@ -1302,6 +1311,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
   composer: ComposerThreadDraftState;
   project: ProjectFaviconProject | null;
+  projectKey: string | null;
   projectDisplayName: string | null;
   isActive: boolean;
   onNavigate: (draftId: DraftId) => void;
@@ -1309,6 +1319,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
   const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
+  const projectFolderAppearance = useProjectFolderAppearance(props.projectKey);
   const promptPreview =
     replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
       .trim()
@@ -1376,7 +1387,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
             {props.project ? (
-              <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+              <ProjectFavicon
+                project={props.project}
+                className="size-4 shrink-0"
+                {...projectFolderAppearance}
+              />
             ) : null}
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
               {props.projectDisplayName}
@@ -1416,6 +1431,7 @@ interface SidebarDraftRowData {
 
 const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
+  logicalProjectKeyByScopedProjectRef: ReadonlyMap<string, string>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
@@ -1481,6 +1497,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             draftId={draftId}
             composer={composer}
             project={props.projectByKey.get(projectKey) ?? null}
+            projectKey={props.logicalProjectKeyByScopedProjectRef.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
             isActive={draftId === props.routeDraftId}
             onNavigate={props.onNavigateToDraft}
@@ -1753,6 +1770,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <SidebarThreadTooltip
       thread={thread}
       project={props.project}
+      projectFolderAppearance={projectFolderAppearance}
       projectDisplayName={props.projectDisplayName}
       environmentLabel={props.environmentLabel}
       environmentMachine={props.environmentMachine}
@@ -2293,7 +2311,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {props.project ? (
-                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+                <ProjectFavicon
+                  project={props.project}
+                  className="size-4 shrink-0"
+                  {...projectFolderAppearance}
+                />
               ) : null}
               {props.projectDisplayName ? (
                 <span
@@ -2516,6 +2538,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   isSettled: boolean;
   thread: SidebarThreadSummary;
   project: EnvironmentProject | null;
+  projectKey: string | null;
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
@@ -2530,6 +2553,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
 }) {
   const { thread } = props;
+  const projectFolderAppearance = useProjectFolderAppearance(props.projectKey);
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
     statusLabel: null,
@@ -2622,6 +2646,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           {props.project ? (
             <ProjectFavicon
               project={props.project}
+              {...projectFolderAppearance}
               className={cn(
                 "size-4 shrink-0 transition-opacity",
                 props.isSettled &&
@@ -2673,6 +2698,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
         <SidebarThreadTooltip
           thread={thread}
           project={props.project}
+          projectFolderAppearance={projectFolderAppearance}
           projectDisplayName={props.projectDisplayName}
           environmentLabel={props.environmentLabel}
           environmentMachine={props.environmentMachine}
@@ -4975,6 +5001,11 @@ export default function Sidebar() {
                         project={
                           projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                         }
+                        projectKey={
+                          logicalProjectKeyByScopedProjectRef.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
+                        }
                         projectDisplayName={
                           projectDisplayNameByKey.get(
                             `${thread.environmentId}:${thread.projectId}`,
@@ -5170,6 +5201,7 @@ export default function Sidebar() {
                         <SidebarDraftBlock
                           key="draft-sessions"
                           projectByKey={projectByKey}
+                          logicalProjectKeyByScopedProjectRef={logicalProjectKeyByScopedProjectRef}
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
                           routeDraftId={routeDraftIdForRows}
