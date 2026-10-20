@@ -27,8 +27,11 @@ export const sidebarColumnLayout = {
     work: 0.875,
   },
   gapPx: 3,
-  /** Optional columns in the order a narrowing sidebar drops them; a group drops together. */
-  dropOrder: [["effort"], ["model", "version"]],
+  /**
+   * Optional columns in the order a narrowing sidebar drops them; a group drops together. The badge
+   * slots go last, so a very narrow sidebar still has room for its title, time and status.
+   */
+  dropOrder: [["effort"], ["model", "version"], ["issue", "pr"]],
   rowPaddingRem: 1,
   titleCh: 10,
   titleFontRem: 0.75,

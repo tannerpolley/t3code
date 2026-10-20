@@ -18,15 +18,29 @@ const optionalColumns = (sidebarRem: number) => {
     if (container < budget.rem * 16 + budget.px + budget.ch * ch)
       for (const column of group) hidden.add(column);
   }
-  return ["model", "effort"].filter((column) => !hidden.has(column));
+  return ["model", "effort", "issue"].filter((column) => !hidden.has(column));
+};
+/** Title width left in a row once every optional column has dropped. */
+const minimumTitlePx = (sidebarRem: number) => {
+  const all = new Set(sidebarColumnLayout.dropOrder.flat());
+  const budget = sidebarColumnBudget(all);
+  return (
+    sidebarRem * 16 -
+    40 -
+    (budget.rem * 16 + budget.px + (budget.ch - sidebarColumnLayout.titleCh) * ch)
+  );
 };
 
 describe("sidebar width budget", () => {
   it("protects ten title characters before admitting optional columns", () => {
     expect(optionalColumns(16)).toEqual([]);
-    expect(optionalColumns(28)).toEqual([]);
-    expect(optionalColumns(29)).toEqual(["model"]);
-    expect(optionalColumns(31.5)).toEqual(["model", "effort"]);
+    expect(optionalColumns(26)).toEqual(["issue"]);
+    expect(optionalColumns(29)).toEqual(["model", "issue"]);
+    expect(optionalColumns(31.5)).toEqual(["model", "effort", "issue"]);
+  });
+
+  it("never overflows the default 16rem sidebar once every optional column has dropped", () => {
+    expect(minimumTitlePx(16)).toBeGreaterThan(0);
   });
 });
 

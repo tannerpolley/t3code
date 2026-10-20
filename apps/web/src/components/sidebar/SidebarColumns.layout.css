@@ -133,3 +133,15 @@
     display: none;
   }
 }
+@container sidebar-columns (width < calc(15.0625rem + 30px + 10ch)) {
+  .sidebar-thread-columns {
+    --sidebar-issue-track: 0px;
+    --sidebar-issue-gap: 0px;
+    --sidebar-pr-track: 0px;
+    --sidebar-pr-gap: 0px;
+  }
+  .sidebar-thread-issue,
+  .sidebar-thread-pr {
+    display: none;
+  }
+}
