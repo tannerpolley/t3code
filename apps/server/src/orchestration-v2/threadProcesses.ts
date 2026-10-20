@@ -258,7 +258,7 @@ export function groupSpawnedProcesses(input: {
     if (group.members.length < 20) {
       group.members.push({
         pid,
-        commandLine: process.command.trim(),
+        commandLine: process.command.trim().slice(0, 500),
         startedAt,
         cpuPercent: process.cpuPercent,
         residentBytes: process.residentBytes,

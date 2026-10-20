@@ -73,6 +73,10 @@ import {
   type SidebarProcessRows,
 } from "./SidebarThreadProcesses";
 import {
+  sidebarSubagentRowStatus,
+  resolveSidebarProjectStatusMark,
+} from "./SidebarThreadProcesses.logic";
+import {
   SidebarCaretSlot,
   SidebarCaretToggle,
   SidebarTrailingColumns,
@@ -120,7 +124,7 @@ import {
   flattenRunningSubagents,
   resolveLocationLeads,
   resolveSidebarThreadStatus,
-  resolveThreadStatusMark,
+  type SidebarThreadStatus,
   withChildNeeds,
 } from "../Sidebar.logic";
 import { ThreadStatusMark } from "../ThreadStatusMark";
@@ -1300,7 +1304,13 @@ const SidebarProjectThreadRow = memo(
     const localLastVisitedAt = useUiStateStore(
       (state) => state.threadLastVisitedAtById[activeThreadKey],
     );
-    const { status, watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
+    const {
+      status: workStatus,
+      watchRow,
+      workRows,
+      workCount,
+      processRows,
+    } = useSidebarThreadProcesses(
       props.thread,
       threadStatus,
       describeSidebarBackgroundWork(
@@ -1313,7 +1323,13 @@ const SidebarProjectThreadRow = memo(
       ),
     );
     // Finished while you were away and not opened since: a green dot where the spinner was.
-    const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
+    const status = props.codexStyle ? workStatus : threadStatus;
+    const statusMark = resolveSidebarProjectStatusMark(
+      props.thread,
+      localLastVisitedAt,
+      threadStatus,
+      status,
+    );
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
     const hasWork = workCount > 0;
     const { open: workOpen, onToggle: toggleWork } = useSidebarWorkExpansion(
@@ -1591,6 +1607,7 @@ function SidebarSubagentTree(props: {
         return (
           <SidebarSubagentRow
             thread={child}
+            status={sidebarSubagentRowStatus(row, grandchildren)}
             render={render}
             familySeparators={props.familySeparators}
             depth={(props.depth ?? 1) + 1}
@@ -1619,13 +1636,14 @@ function SidebarSubagentTree(props: {
 function SidebarSubagentRow(
   props: Omit<ComponentProps<typeof SidebarSubagentTree>, "processRows"> & {
     readonly thread: SidebarThreadSummary;
+    readonly status: SidebarThreadStatus;
     readonly render: (nested: NestedWork | null) => ReactNode;
   },
 ) {
-  const { thread, rows, render, ...tree } = props;
+  const { thread, status: rowStatus, rows, render, ...tree } = props;
   const { status, watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
     thread,
-    withChildNeeds(resolveSidebarThreadStatus(thread), props.runningChildren),
+    rowStatus,
     rows,
   );
   const { open, onToggle } = useSidebarWorkExpansion(

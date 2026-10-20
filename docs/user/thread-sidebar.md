@@ -335,11 +335,15 @@ thread's agent is running now and the processes those commands and background ta
 started. Each program gets one row: commands of the same program share it, such as `npm ×2`,
 as do processes, such as `python ×10`, and a program already listed as a command is not
 listed again. Each thread shows up to five process groups, with their elapsed time and running
-mark. Expand a group to inspect up to 20 individual processes; click a process for its full
-command, PID, start time, CPU and memory. Group expansion is remembered. A settled thread shows
+mark. Expand a group to inspect up to 20 individual processes; click a process for its
+command (up to 500 characters), PID, start time, CPU and memory. Group expansion is remembered.
+In the Codex-style Projects view, a settled thread shows
 **Waiting on background work** while it has running tasks, commands or sampled processes.
-Commands and processes are sampled only while this setting is on and the thread is visible;
-reported background tasks still affect its status with the setting off.
+An unseen completion keeps its green mark until you open the thread; completion notifications
+still arrive while a command runs in the background.
+Commands and processes are sampled only while this setting is on, the thread is visible and
+its thread state reports running work. Reported background tasks still affect its Projects
+mark with the setting off.
 Claude shows a foreground command's output only when it finishes, and cannot stop it on its
 own; Codex streams it and can.
 

@@ -1028,22 +1028,6 @@ describe("resolveSidebarThreadStatus", () => {
     expect(resolveSidebarThreadStatus(idle)).toBe("ready");
   });
 
-  it("shows known tasks as waiting even without process sampling, preserving urgent states", () => {
-    const pendingBackgroundTasks = [{ taskId: "shell", kind: "command" as const }];
-    const thread = { ...idle, pendingBackgroundTasks };
-    expect(resolveSidebarThreadStatus(thread)).toBe("waiting");
-    expect(
-      resolveSidebarThreadStatus({ ...thread, runtime: { ...runtime, status: "completed" } }),
-    ).toBe("waiting");
-    expect(resolveSidebarThreadStatus({ ...thread, runtime })).toBe("working");
-    expect(resolveSidebarThreadStatus({ ...thread, hasPendingApprovals: true })).toBe("approval");
-    expect(resolveSidebarThreadStatus({ ...thread, hasPendingUserInput: true })).toBe("input");
-    expect(
-      resolveSidebarThreadStatus({ ...thread, runtime: { ...runtime, status: "failed" } }),
-    ).toBe("failed");
-    expect(resolveSidebarThreadStatus({ ...thread, pendingBackgroundTasks: [] })).toBe("ready");
-  });
-
   it("keeps a waiting runtime visible ahead of unread and woke presentation", () => {
     expect(resolveSidebarV2TopStatus({ status: "waiting", isUnread: true, isWoke: true })).toBe(
       "waiting",
@@ -2148,22 +2132,8 @@ describe("navigation after parking a thread", () => {
 
 describe("unseen completion with background work", () => {
   it.each([
-    {
-      kind: "command",
-      status: "waiting",
-      topStatus: "waiting",
-      receded: true,
-      working: false,
-      pill: "Completed",
-    },
-    {
-      kind: "monitor",
-      status: "waiting",
-      topStatus: "waiting",
-      receded: true,
-      working: true,
-      pill: "Waiting",
-    },
+    { kind: "command", status: "ready", topStatus: "done", receded: false, pill: "Completed" },
+    { kind: "monitor", status: "waiting", topStatus: "waiting", receded: true, pill: "Waiting" },
   ] as const)("presents a completed thread with a $kind roster", (expected) => {
     const thread = presentThreadShell(localEnvironmentId, {
       ...makeThreadFixture().source,
@@ -2188,7 +2158,7 @@ describe("unseen completion with background work", () => {
         isSelected: false,
       }),
     ).toBe(expected.receded);
-    expect(isSidebarThreadWorking(thread)).toBe(expected.working);
+    expect(isSidebarThreadWorking(thread)).toBe(expected.receded);
     expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: expected.pill });
   });
 });

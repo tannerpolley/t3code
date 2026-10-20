@@ -16,6 +16,7 @@ import { PROJECTS_WORK_ROW_HEIGHT, SidebarCaretSlot, SidebarThreadColumns } from
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
 import {
   foldThreadWork,
+  hasKnownSidebarWork,
   visibleProcessGroups,
   withRunningProcessWork,
 } from "./SidebarThreadProcesses.logic";
@@ -29,15 +30,17 @@ const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
  * A thread's work rows, with its tasks, running commands and spawned processes folded into one
  * Processes row that starts collapsed. Commands and processes are experimental ("Show running
  * commands and processes"): they poll with task usage's cadence, only while the setting is on,
- * the element given `watchRow` as its ref (the thread's row) is on screen. Settled threads poll
- * too: running commands do not hold the server's turn completion.
+ * work is already known from the thread state, and the element given `watchRow` as its ref
+ * (the thread's row) is on screen.
  */
 export function useSidebarThreadProcesses(
   thread: SidebarThreadSummary,
   status: SidebarThreadStatus,
   rows: ReadonlyArray<BackgroundWorkTaskRow>,
 ) {
-  const wanted = useClientSettings((settings) => settings.runningCommandsAndProcesses);
+  const hasKnownWork = hasKnownSidebarWork(thread, status, rows);
+  const wanted =
+    useClientSettings((settings) => settings.runningCommandsAndProcesses) && hasKnownWork;
   const { listRef, isVisible: enabled } = useBackgroundTaskListVisibility(wanted);
   const query = useEnvironmentQuery(
     enabled
@@ -70,7 +73,7 @@ export function useSidebarThreadProcesses(
   );
   const processCount = work.work.length + processGroups.length + hiddenProcessGroups;
   return {
-    status: withRunningProcessWork(status, data),
+    status: withRunningProcessWork(status, data, hasKnownWork),
     // Only rows that would poll watch their visibility.
     watchRow: wanted ? listRef : undefined,
     workRows: work.rows,

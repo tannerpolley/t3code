@@ -937,7 +937,7 @@ type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest" | "runtime"
 > &
-  Partial<Pick<SidebarThreadSummary, "latestRun" | "pendingBackgroundTasks">>;
+  Partial<Pick<SidebarThreadSummary, "latestRun">>;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
@@ -960,7 +960,6 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return thread.runtime?.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   if (thread.runtime?.status === "idle") return "waiting";
-  if (thread.pendingBackgroundTasks?.length) return "waiting";
   return "ready";
 }
 

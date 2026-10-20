@@ -491,6 +491,75 @@ describe("BackgroundTasks", () => {
       ),
   );
 
+  effectIt.effect(
+    "bounds process member payloads while preserving group totals and hover command",
+    () => {
+      const command = "node /tmp/t3-process-group-parent.cjs";
+      const workerCommand = `python3 /tmp/t3-process-group-worker.py ${"x".repeat(600)}`;
+      const telemetry = Layer.mock(ResourceTelemetry.ResourceTelemetry)({
+        refresh: Effect.succeed({
+          health: { native: { status: "healthy" } },
+          processes: [
+            {
+              identity: { pid: 20, startTimeMs: 1 },
+              ppid: 10,
+              command,
+              cpuPercent: 0,
+              residentBytes: 100,
+            },
+            ...Array.from({ length: 23 }, (_, index) => ({
+              identity: { pid: 100 + index, startTimeMs: 1000 + index },
+              ppid: 20,
+              command: `${workerCommand} --shard ${index}`,
+              cpuPercent: 1,
+              residentBytes: 100,
+            })),
+          ],
+        } as never),
+      });
+      const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: { lineage: { parentThreadId: null }, activeProviderThreadId: null },
+            providerThreads: [
+              {
+                id: "provider-thread",
+                pendingBackgroundTasks: [{ taskId: "workers", kind: "command", command }],
+              },
+            ],
+            turnItems: [],
+          } as never),
+      });
+      return Effect.gen(function* () {
+        const tasks = yield* BackgroundTasks;
+        const result = yield* tasks.processes({ threadId: ThreadId.make("thread-workers") });
+        assert.deepEqual(result.runningTaskIds, ["workers"]);
+        assert.equal(result.processGroups.length, 1);
+        const group = result.processGroups[0]!;
+        assert.equal(group.label, "python");
+        assert.equal(group.count, 23);
+        assert.equal(group.cpuPercent, 23);
+        assert.equal(group.residentBytes, 2300);
+        assert.equal(group.commandLine, `${workerCommand} --shard 0`);
+        assert.equal(group.members?.length, 20);
+        assert.deepEqual(
+          group.members?.map((member) => member.pid),
+          Array.from({ length: 20 }, (_, index) => 100 + index),
+        );
+        assert.ok(
+          group.members?.every((member) => member.commandLine === workerCommand.slice(0, 500)),
+        );
+        assert.deepEqual(result.usage, { cpuPercent: 23, residentBytes: 2400 });
+      }).pipe(
+        Effect.provide(
+          backgroundTasksLayer.pipe(
+            Layer.provideMerge(Layer.mergeAll(dependencies, telemetry, threads)),
+          ),
+        ),
+      );
+    },
+  );
+
   effectIt.effect("shares one process sample across callers within the poll interval", () => {
     let samples = 0;
     const telemetry = Layer.mock(ResourceTelemetry.ResourceTelemetry)({
