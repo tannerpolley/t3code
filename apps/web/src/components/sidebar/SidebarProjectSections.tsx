@@ -62,6 +62,8 @@ import {
 } from "lucide-react";
 import {
   SidebarProjectThreadName,
+  ThreadIssueBadge,
+  ThreadPullRequestBadge,
   SidebarProjectThreadTooltip,
 } from "./SidebarProjectThreadTooltip";
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
@@ -1466,11 +1468,18 @@ const SidebarProjectThreadRow = memo(
                     formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
                   )}
                   name={
-                    <SidebarProjectThreadName thread={props.thread}>
+                    <SidebarProjectThreadName thread={props.thread} badges={false}>
                       {sidebarThreadTitle(props.thread.source)}
                     </SidebarProjectThreadName>
                   }
                   count={workCount > 0 && !workOpen ? workCount : undefined}
+                  issue={
+                    <ThreadIssueBadge
+                      environmentId={props.thread.environmentId}
+                      issue={props.thread.source.linkedIssue}
+                    />
+                  }
+                  pr={<ThreadPullRequestBadge thread={props.thread} />}
                   time={<SidebarThreadTime thread={props.thread} status={status} />}
                   status={<ThreadStatusMark status={statusMark} />}
                 />

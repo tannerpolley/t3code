@@ -22,6 +22,8 @@
   --sidebar-model-width: 8ch;
   --sidebar-effort-width: 2.5rem;
   --sidebar-count-width: 1rem;
+  --sidebar-issue-width: 2rem;
+  --sidebar-pr-width: 1.25rem;
   --sidebar-time-width: 4.4375rem;
   --sidebar-work-width: 0.875rem;
   --sidebar-model-name-width: 5.65ch;
@@ -53,7 +55,13 @@
     ) [name] minmax(0, 1fr) var(--sidebar-name-gap, var(--sidebar-column-gap)) [count] var(
       --sidebar-count-track,
       var(--sidebar-count-width)
-    ) var(--sidebar-count-gap, var(--sidebar-column-gap)) [time] var(
+    ) var(--sidebar-count-gap, var(--sidebar-column-gap)) [issue] var(
+      --sidebar-issue-track,
+      var(--sidebar-issue-width)
+    ) var(--sidebar-issue-gap, var(--sidebar-column-gap)) [pr] var(
+      --sidebar-pr-track,
+      var(--sidebar-pr-width)
+    ) var(--sidebar-pr-gap, var(--sidebar-column-gap)) [time] var(
       --sidebar-time-track,
       var(--sidebar-time-width)
     ) var(--sidebar-time-gap, var(--sidebar-column-gap)) [work] var(
@@ -86,13 +94,19 @@
 .sidebar-thread-count {
   grid-column: count;
 }
+.sidebar-thread-issue {
+  grid-column: issue;
+}
+.sidebar-thread-pr {
+  grid-column: pr;
+}
 .sidebar-thread-time {
   grid-column: time;
 }
 .sidebar-thread-work {
   grid-column: work;
 }
-@container sidebar-columns (width < calc(13.0625rem + 27px + 18ch)) {
+@container sidebar-columns (width < calc(16.3125rem + 33px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
@@ -101,7 +115,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(10.5625rem + 24px + 18ch)) {
+@container sidebar-columns (width < calc(13.8125rem + 30px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-model-track: 0px;
     --sidebar-model-gap: 0px;

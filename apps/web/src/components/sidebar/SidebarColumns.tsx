@@ -119,6 +119,8 @@ export function SidebarThreadColumns(props: {
   /** The row has no model or effort, so its name starts in the model's column. */
   readonly wideName?: boolean | undefined;
   readonly count?: number | undefined;
+  readonly issue?: ReactNode;
+  readonly pr?: ReactNode;
   readonly trailingClassName?: string | undefined;
   readonly time?: ReactNode;
   readonly status?: ReactNode;
@@ -129,6 +131,8 @@ export function SidebarThreadColumns(props: {
     provider: !settings.codexStyleSidebar || settings.sidebarShowProvider,
     model: !settings.codexStyleSidebar || settings.sidebarShowModel,
     effort: !settings.codexStyleSidebar || settings.sidebarShowEffort,
+    issue: !settings.codexStyleSidebar || settings.sidebarShowIssueBadge,
+    pr: !settings.codexStyleSidebar || settings.sidebarShowPullRequestBadge,
   }));
   const style = Object.fromEntries(
     Object.entries(columns).flatMap(([column, visible]) =>
@@ -162,6 +166,16 @@ export function SidebarThreadColumns(props: {
         {props.name}
       </span>
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
+      {columns.issue !== false ? (
+        <span className={cn("sidebar-thread-badge sidebar-thread-issue", props.trailingClassName)}>
+          {props.issue}
+        </span>
+      ) : null}
+      {columns.pr !== false ? (
+        <span className={cn("sidebar-thread-badge sidebar-thread-pr", props.trailingClassName)}>
+          {props.pr}
+        </span>
+      ) : null}
       <span className={cn("sidebar-thread-time", props.trailingClassName)}>{props.time}</span>
       <span className={cn("sidebar-thread-icon sidebar-thread-work", props.trailingClassName)}>
         {props.status}

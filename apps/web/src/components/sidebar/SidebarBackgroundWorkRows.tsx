@@ -49,6 +49,8 @@ import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "../chat/AgentElapsed";
 import {
   SidebarProjectThreadName,
+  ThreadIssueBadge,
+  ThreadPullRequestBadge,
   SidebarProjectThreadTooltip,
 } from "./SidebarProjectThreadTooltip";
 import { SidebarThreadTime } from "./SidebarThreadTime";
@@ -270,7 +272,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                     command={nameDetail}
                   >
                     {row.kind === "subagent" && row.child ? (
-                      <SidebarProjectThreadName thread={row.child}>
+                      <SidebarProjectThreadName thread={row.child} badges={false}>
                         {sidebarThreadTitle(row.child.source)}
                       </SidebarProjectThreadName>
                     ) : (
@@ -281,6 +283,19 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                 </span>
               }
               wideName={row.kind !== "subagent"}
+              issue={
+                row.kind === "subagent" && row.child ? (
+                  <ThreadIssueBadge
+                    environmentId={row.child.environmentId}
+                    issue={row.child.source.linkedIssue}
+                  />
+                ) : undefined
+              }
+              pr={
+                row.kind === "subagent" && row.child ? (
+                  <ThreadPullRequestBadge thread={row.child} />
+                ) : undefined
+              }
               count={toggle && !toggle.open ? toggle.count : undefined}
               time={time}
               status={<ThreadStatusMark status={status} />}
