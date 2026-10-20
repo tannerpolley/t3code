@@ -125,6 +125,7 @@ export function SidebarProcessSummaryRow(props: ProcessRowsProps) {
           <SidebarThreadColumns
             caret={<SidebarCaretSlot open={props.open} />}
             name={name}
+            wideName
             count={count}
           />
         ) : (
@@ -182,7 +183,7 @@ export function SidebarProcessGroupRows(props: ProcessRowsProps) {
           <li key={`process:${group.label}`} style={style}>
             <div className={className}>
               {props.columns ? (
-                <SidebarThreadColumns provider={icon} name={name} />
+                <SidebarThreadColumns provider={icon} name={name} wideName />
               ) : (
                 <>
                   {icon}
@@ -199,6 +200,7 @@ export function SidebarProcessGroupRows(props: ProcessRowsProps) {
             {props.columns ? (
               <SidebarThreadColumns
                 name={<span className="fork-sidebar-title">+{props.hiddenGroupCount} more</span>}
+                wideName
               />
             ) : (
               <span className="fork-sidebar-title">+{props.hiddenGroupCount} more</span>

@@ -263,7 +263,7 @@ export const ForkClientSettingsFields = {
   projectsView: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   codexStyleSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowLocation: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  sidebarShowRole: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarShowRole: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarShowProvider: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowModel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowEffort: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -275,7 +275,7 @@ export const ForkClientSettingsFields = {
     Schema.withDecodingDefault(Effect.succeed("worktree" as const)),
   ),
   sidebarFamilyStyle: Schema.Literals(["colors", "lines"]).pipe(
-    Schema.withDecodingDefault(Effect.succeed("colors" as const)),
+    Schema.withDecodingDefault(Effect.succeed("lines" as const)),
   ),
   sidebarSectionTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   sidebarProjectTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),

@@ -107,6 +107,8 @@ export function SidebarThreadColumns(props: {
   readonly model?: string | undefined;
   readonly effort?: ReactNode;
   readonly name: ReactNode;
+  /** The row has no model or effort, so its name starts in the model's column. */
+  readonly wideName?: boolean | undefined;
   readonly count?: number | undefined;
   readonly trailingClassName?: string | undefined;
   readonly time?: ReactNode;
@@ -141,11 +143,15 @@ export function SidebarThreadColumns(props: {
       {columns.provider !== false ? (
         <span className="sidebar-thread-icon sidebar-thread-provider">{props.provider}</span>
       ) : null}
-      {columns.model !== false ? <SidebarThreadModel label={props.model} /> : null}
-      {columns.effort !== false ? (
+      {columns.model !== false && !props.wideName ? (
+        <SidebarThreadModel label={props.model} />
+      ) : null}
+      {columns.effort !== false && !props.wideName ? (
         <span className="sidebar-thread-effort">{props.effort}</span>
       ) : null}
-      <span className="sidebar-thread-name">{props.name}</span>
+      <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
+        {props.name}
+      </span>
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       <span className={cn("sidebar-thread-time", props.trailingClassName)}>{props.time}</span>
       <span className={cn("sidebar-thread-icon sidebar-thread-work", props.trailingClassName)}>

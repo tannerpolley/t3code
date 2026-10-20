@@ -221,10 +221,10 @@ it("defaults sidebar text sizes for old settings and validates saved sizes and p
   }
 });
 
-it("keeps the sidebar look for old settings and persists display customizations", () => {
+it("defaults to lines without role icons and persists display customizations", () => {
   const visibility = {
     sidebarShowLocation: true,
-    sidebarShowRole: true,
+    sidebarShowRole: false,
     sidebarShowProvider: true,
     sidebarShowModel: true,
     sidebarShowEffort: true,
@@ -234,12 +234,12 @@ it("keeps the sidebar look for old settings and persists display customizations"
   expect(decodeClientSettingsFile("{}")).toMatchObject({
     ...visibility,
     sidebarLocationIconStyle: "worktree",
-    sidebarFamilyStyle: "colors",
+    sidebarFamilyStyle: "lines",
   });
   const saved = {
-    ...Object.fromEntries(Object.keys(visibility).map((key) => [key, false])),
+    ...Object.fromEntries(Object.keys(visibility).map((key) => [key, key === "sidebarShowRole"])),
     sidebarLocationIconStyle: "branch",
-    sidebarFamilyStyle: "lines",
+    sidebarFamilyStyle: "colors",
   };
   expect(encodeClientSettings(decodeClientSettingsFile(JSON.stringify(saved)))).toMatchObject(
     saved,

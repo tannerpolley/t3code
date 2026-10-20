@@ -280,6 +280,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   {sameProgram ? <span className="shrink-0 text-2xs">×{sameProgram}</span> : null}
                 </span>
               }
+              wideName={row.kind !== "subagent"}
               count={toggle && !toggle.open ? toggle.count : undefined}
               time={time}
               status={<ThreadStatusMark status={row.status ?? "working"} />}

@@ -68,8 +68,14 @@
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
-.sidebar-caret-toggle > span {
+/* One caret width for the overlay toggle and the in-row slot, so both carets sit at the same x. */
+.sidebar-caret-toggle > span,
+.sidebar-thread-caret > span {
   width: var(--sidebar-caret-width, 1rem);
+}
+/* Rows without a model (Processes, commands, processes) start their name at the model's x. */
+.sidebar-thread-name-wide {
+  grid-column: model / count;
 }
 
 /* Separators overlay rows so changing family style never changes their height. */
