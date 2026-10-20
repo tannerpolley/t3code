@@ -22,8 +22,8 @@
   --sidebar-model-width: 8ch;
   --sidebar-effort-width: 2.5rem;
   --sidebar-count-width: 1rem;
-  --sidebar-issue-width: 2rem;
-  --sidebar-pr-width: 1.25rem;
+  --sidebar-issue-width: 2.25rem;
+  --sidebar-pr-width: 2.25rem;
   --sidebar-time-width: 4.4375rem;
   --sidebar-work-width: 0.875rem;
   --sidebar-model-name-width: 5.65ch;
@@ -106,7 +106,7 @@
 .sidebar-thread-work {
   grid-column: work;
 }
-@container sidebar-columns (width < calc(16.3125rem + 33px + 18ch)) {
+@container sidebar-columns (width < calc(17.5625rem + 33px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
@@ -115,7 +115,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(13.8125rem + 30px + 18ch)) {
+@container sidebar-columns (width < calc(15.0625rem + 30px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-model-track: 0px;
     --sidebar-model-gap: 0px;

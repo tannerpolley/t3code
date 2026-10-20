@@ -14,9 +14,9 @@ export const sidebarColumnLayout = {
     name: 0,
     count: 1,
     // Every row reserves both badge slots, so issue and pull request icons line up whichever it has:
-    // an issue icon with up to three digits, then a pull request icon with a one-digit count.
-    issue: 2,
-    pr: 1.25,
+    // each fits its icon and three digits (an orchestrator can hold 100+ pull requests).
+    issue: 2.25,
+    pr: 2.25,
     time: 4.4375,
     work: 0.875,
   },

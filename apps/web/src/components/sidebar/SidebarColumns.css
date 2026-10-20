@@ -62,10 +62,12 @@
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
 }
+/* A longer number clips at its slot instead of painting over the time beside it. */
 @utility sidebar-thread-badge {
   display: flex;
   min-width: 0;
   align-items: center;
+  overflow: hidden;
 }
 @utility sidebar-thread-count {
   font-size: 0.6875rem;
