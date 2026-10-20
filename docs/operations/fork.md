@@ -4,8 +4,6 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 everything in [AGENTS.md](../../AGENTS.md). This page adds what is different about the fork.
 Only Codex and Claude matter here; mobile is out of scope.
 
-T3 writes `<stateDir>/provider-usage-limits.json` (`~/.t3/userdata/provider-usage-limits.json` in the installed app) for the owner’s taskbar meter; the GNOME Shell extension reads it.
-
 ## Where work is tracked
 
 Plans and bugs live in the fork's GitHub issues. Issue #1 is the roadmap and maintenance tracker.
