@@ -532,10 +532,15 @@ export const layer: Layer.Layer<
                   ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
                 }),
               );
+              // A provider may learn a native subagent's role after creating its
+              // thread. That late offer only fills the missing role: its snapshot
+              // can predate newer title or model updates. A role is never replaced.
+              const lateRole = existing?.role === undefined ? offered.role : undefined;
               if (
                 existing !== null &&
                 (input.event.createOnly === true ||
-                  (existing.title === offered.title &&
+                  (lateRole === undefined &&
+                    existing.title === offered.title &&
                     modelSelectionsEqual(existing.modelSelection, offered.modelSelection)))
               )
                 return [];
@@ -547,12 +552,14 @@ export const layer: Layer.Layer<
                   payload:
                     existing === null
                       ? offered
-                      : {
-                          ...existing,
-                          title: offered.title,
-                          modelSelection: offered.modelSelection,
-                          updatedAt: now,
-                        },
+                      : lateRole !== undefined
+                        ? { ...existing, role: lateRole, updatedAt: now }
+                        : {
+                            ...existing,
+                            title: offered.title,
+                            modelSelection: offered.modelSelection,
+                            updatedAt: now,
+                          },
                   occurredAt: now,
                 }),
               ];
@@ -658,9 +665,16 @@ export const layer: Layer.Layer<
               const occurredAt = yield* DateTime.now;
               const plan = input.event.plan;
               const previous =
-                plan.kind === "todo_list"
+                plan.kind === "todo_list" || plan.status === "superseded"
                   ? yield* projections.getPlan(plan.threadId, plan.id)
                   : undefined;
+              // Adapters cache proposals, but Implement completes them in persisted state.
+              if (
+                plan.kind === "proposed_plan" &&
+                plan.status === "superseded" &&
+                previous?.status === "completed"
+              )
+                return [];
               const payload =
                 plan.kind === "todo_list"
                   ? withPlanStepDurations(
