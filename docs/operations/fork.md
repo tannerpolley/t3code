@@ -72,6 +72,7 @@ The launcher `~/.local/bin/t3-code` installs a staged build the next time T3 ope
 
 - It waits up to 20 s for a quitting T3 to release the database.
 - It keeps no backup and deletes every older AppImage.
+- After installing, it waits for the old T3 to exit and starts the new one in its own systemd unit. A T3 started while the quitting one still holds its single-instance lock quits silently, and Electron's relaunch also hands over the old AppImage's environment. `~/.local/opt/t3-code/launcher.log` records each relaunch.
 
 Restarting T3 stops every running agent turn, so ask before doing it.
 
