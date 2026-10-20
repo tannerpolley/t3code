@@ -1025,7 +1025,8 @@ function OpenCommandPaletteDialog(props: {
         : sectionFolderPath(
             environmentSettings?.projectFolderRoot?.trim() || baseDirectory,
             parent === undefined ? [section.name] : [parent.name, section.name],
-            section.folderPath,
+            // A saved folder is a path on the section's own environment, not on the one picked here.
+            sectionTarget(sectionId)?.[0] === environmentId ? section.folderPath : undefined,
           );
     if (sectionFolder !== null) {
       return ensureBrowseDirectoryPath(sectionFolder);
