@@ -7,7 +7,6 @@ import {
   type ThreadLinkedIssue,
   type ThreadRole,
 } from "@t3tools/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as DateTime from "effect/DateTime";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { describe, expect, it } from "vite-plus/test";
@@ -40,10 +39,11 @@ const runningChild = makeThreadFixture({
 });
 
 describe("describeSidebarBackgroundWork", () => {
-  it("lists a thread's own tasks, then native subagents, then app-owned children", () => {
+  it("keeps a thread's own tasks first and roster-only subagents after known workers", () => {
     const nativeFixture = makeThreadFixture({
       id: ThreadId.make("native-child"),
       title: "Explore natively",
+      createdAt: "2026-09-23T11:00:00.000Z",
       lineage: {
         rootThreadId: ThreadId.make("parent"),
         parentThreadId: ThreadId.make("parent"),
@@ -69,7 +69,6 @@ describe("describeSidebarBackgroundWork", () => {
         { taskId: "monitor", description: "Watch build", kind: "monitor" },
         { taskId: "unknown", kind: "background_task" },
       ],
-      // groupRunningSubagentsByParent lists native children first.
       [nativeChild, runningChild],
     );
 
@@ -78,33 +77,68 @@ describe("describeSidebarBackgroundWork", () => {
       ["monitor", "monitor"],
       ["unknown", "background_task"],
       [nativeChild.id, "subagent"],
-      ["roster-agent", "subagent"],
       [runningChild.id, "subagent"],
+      ["roster-agent", "subagent"],
     ]);
-    expect(rows[5]).toMatchObject({
+    expect(rows[4]).toMatchObject({
       label: "Review the diff",
       childThreadId: runningChild.id,
       startedAt: "2026-09-23T10:00:00.000Z",
       status: "working",
       child: runningChild,
     });
-    expect(rows[4]).toMatchObject({ childThreadId: null, startedAt: null });
+    expect(rows[5]).toMatchObject({ childThreadId: null, startedAt: null });
     expect(rows[0]).not.toHaveProperty("childThreadId");
   });
 
-  it("leaves out a child listed in another location's section, with no placeholder row", () => {
-    const tasks = [
-      {
-        taskId: "linked-agent",
-        description: "Review the diff",
-        kind: "subagent" as const,
-        childThreadId: runningChild.id,
+  it("orders native and app-owned workers by effective role, then newest creation, independent of streaming activity", () => {
+    const worker = (
+      id: string,
+      role: ThreadRole | undefined,
+      createdAt: string,
+      native = false,
+    ) => ({
+      ...runningChild,
+      id: ThreadId.make(id),
+      createdAt,
+      source: {
+        ...runningChild.source,
+        role,
+        creationSource: native ? ("provider" as const) : ("mcp" as const),
+        lineage: { ...runningChild.source.lineage, relationshipToParent: "subagent" as const },
       },
+    });
+    const old = "2026-09-23T09:00:00.000Z";
+    const recent = "2026-09-23T11:00:00.000Z";
+    const children = [
+      worker("investigator", "investigator", recent, true),
+      worker("checker", "checker", recent),
+      worker("reviewer-old", "reviewer", old),
+      worker("implementor-old", "implementor", old),
+      worker("other", "orchestrator", recent),
+      worker("implementor-recent", undefined, recent, true),
+      worker("reviewer-tied", "reviewer", recent),
+      worker("reviewer-recent", "reviewer", recent),
     ];
-    const moved = new Set([
-      scopedThreadKey(scopeThreadRef(runningChild.environmentId, runningChild.id)),
-    ]);
-    expect(describeSidebarBackgroundWork(tasks, [runningChild], undefined, moved)).toEqual([]);
+    const expected = [
+      "implementor-recent",
+      "implementor-old",
+      "reviewer-recent",
+      "reviewer-tied",
+      "reviewer-old",
+      "investigator",
+      "checker",
+      "other",
+    ];
+    expect(describeSidebarBackgroundWork([], children).map((row) => row.taskId)).toEqual(expected);
+    const streamingChildren = children.map((child) => ({
+      ...child,
+      updatedAt: child.id === "implementor-old" ? "2026-09-23T12:00:00.000Z" : old,
+    }));
+    expect(describeSidebarBackgroundWork([], streamingChildren).map((row) => row.taskId)).toEqual(
+      expected,
+    );
+    expect(children[0]?.id).toBe("investigator");
   });
 
   it("uses the pending-work kind to distinguish waiting from a leftover command", () => {

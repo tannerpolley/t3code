@@ -204,6 +204,18 @@ export function SidebarLayoutSync() {
         case "sectionExpanded":
           if (target) send(destination, { ...mutation, sectionId: target.sectionId });
           break;
+        case "sectionChildrenOrder":
+          if (target)
+            send(destination, {
+              ...mutation,
+              sectionId: target.sectionId,
+              childOrder: mutation.childOrder.flatMap((key) => {
+                if (!key.startsWith("section:")) return ids([key], destination);
+                const child = sectionTargets.get(key.slice(8));
+                return child?.environmentId === destination ? [`section:${child.sectionId}`] : [];
+              }),
+            });
+          break;
         case "sectionProjectsOrder":
           if (target)
             send(destination, {

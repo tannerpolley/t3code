@@ -2,7 +2,12 @@
  * Where a section's projects live on disk: <root>/<Section> or <root>/<Section>/<Subsection>, the
  * same layout Organize by folder reads. Null without a full root path.
  */
-export function sectionFolderPath(root: string, sectionNames: readonly string[]): string | null {
+export function sectionFolderPath(
+  root: string,
+  sectionNames: readonly string[],
+  folderPath?: string,
+): string | null {
+  if (folderPath) return folderPath;
   const trimmed = root.trim();
   if (
     !trimmed.startsWith("/") ||
@@ -19,4 +24,12 @@ export function projectFolderNameProblem(name: string): string | null {
   if (trimmed === "." || trimmed === "..") return "Choose a different name.";
   if (/[/\\\0]/.test(trimmed)) return "A name can't contain slashes.";
   return null;
+}
+
+/** Preserve the chosen folder independently of the subsection's renamable label. */
+export function folderSubsectionInput(path: string) {
+  const folderPath = path.trim().replace(/[/\\]+$/, "");
+  const name = folderPath.split(/[/\\]/).at(-1) ?? "";
+  if (projectFolderNameProblem(name) !== null || /^[A-Za-z]:$/.test(name)) return null;
+  return { name: name.slice(0, 80), folderPath };
 }

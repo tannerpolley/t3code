@@ -60,8 +60,11 @@ or creation time.
 
 Choose **New section** to group projects. A section's menu can add a subsection,
 choose its color or folder icons, add an existing project, or create a new project
-folder. Move a project between sections by dragging its row or choosing a section
-from its menu. Removing a project clears its saved conversations after confirmation
+folder. Choose **Add folder as subsection…** to use an existing folder's name without
+entering a label; adding a project there starts in that folder, even after you
+rename the subsection. Drag subsections and projects above or below each other
+inside their parent section. Move a project between sections by dragging its row or
+choosing a section from its menu. Removing a project clears its saved conversations after confirmation
 and keeps its files on disk.
 
 Sections, their order and nesting, project placement, and section and project
@@ -343,7 +346,16 @@ subagents. It starts collapsed; click it to list them, each named by its program
 thread's agent is running now and the processes those commands and background tasks
 started. Each program gets one row: commands of the same program share it, such as `npm ×2`,
 as do processes, such as `python ×10`, and a program already listed as a command is not
-listed again. Each thread shows up to five process rows.
+listed again. Each thread shows up to five process groups, with their elapsed time and running
+mark. Expand a group to inspect up to 20 individual processes; click a process for its
+command (up to 500 characters), PID, start time, CPU and memory. Group expansion is remembered.
+In the Codex-style Projects view, a settled thread shows
+**Waiting on background work** while it has running tasks, commands or sampled processes.
+An unseen completion keeps its green mark until you open the thread; completion notifications
+still arrive while a command runs in the background.
+Commands and processes are sampled only while this setting is on, the thread is visible and
+its thread state reports running work. Reported background tasks still affect its Projects
+mark with the setting off.
 Claude shows a foreground command's output only when it finishes, and cannot stop it on its
 own; Codex streams it and can.
 
@@ -371,8 +383,8 @@ Implementors unless their parent gives them another role. Forks keep their sourc
 role. A native provider subagent takes its role from its agent type: Codex's manager
 is an Orchestrator; reviewer types are Reviewers; explorer or researcher types are
 Investigators; tester or checker types are Checkers; and every other type, including
-the default agents, is an Implementor. Role icons appear in thread rows and the chat
-header.
+the default agents, is an Implementor. Role icons appear in the chat header, and in
+thread rows when you turn them on in **Settings → Customizations → Sidebar & projects**.
 
 Native provider subagents have a bot icon before their role icon and run on their
 own. They cannot take messages; use **Open parent** to direct them. App-owned child
@@ -401,11 +413,13 @@ With **Codex-style sidebar** enabled on web and desktop, the Projects view align
 role, provider, model, effort, name, time, and work status. Model names show up to six
 characters, with versions such as 5.5 and 6.1 lined up; hover the model for its full
 name. Running child agents show by default; a row you open or close keeps your choice for that view.
-Processes and commands alone only reveal a caret: open it to see the Processes summary. Child rows keep the same columns as their parent. A thread with
-child agents and everything under it share one tint color, so each group stands out;
-deeper rows take a slightly stronger shade. A thread without children has no tint.
+Processes and commands alone only reveal a caret: open it to see the Processes summary. Child rows keep the same columns as their parent. A solid line separates
+each thread with child agents, and everything under it, from the rows around it; a dashed line
+marks each change of checkout between consecutive rows within a family. Workers stay under their
+parent across worktrees, ordered by role: Implementor, Reviewer, Investigator, Checker, then other
+roles, with the newest activity first within each role.
 In **Settings → Customizations → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
-Choose **Family style → Lines** for solid separators between families and dashed separators between orchestrators and their workers, or keep **Colors** for tints.
+Choose **Family style → Colors** to tint each family instead, with deeper rows a slightly stronger shade.
 Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 

@@ -20,7 +20,7 @@ export function setSidebarOtherProjectsExpanded<T extends SidebarLayout>(
 
 export function addSidebarProjectSection<T extends SidebarLayout>(
   state: T,
-  section: Pick<SidebarProjectSection, "id" | "name" | "parentId">,
+  section: Pick<SidebarProjectSection, "id" | "name" | "parentId" | "folderPath">,
 ): T {
   const id = section.id.trim();
   const name = normalizeSidebarProjectSectionName(section.name);
@@ -36,7 +36,14 @@ export function addSidebarProjectSection<T extends SidebarLayout>(
     ...state,
     sidebarProjectSections: [
       ...state.sidebarProjectSections,
-      { id, name, projectKeys: [], collapsed: false, ...(parent ? { parentId: parent.id } : {}) },
+      {
+        id,
+        name,
+        projectKeys: [],
+        collapsed: false,
+        ...(parent ? { parentId: parent.id } : {}),
+        ...(section.folderPath ? { folderPath: section.folderPath } : {}),
+      },
     ],
   };
 }
@@ -164,10 +171,24 @@ export function reorderSidebarProjectSectionProjects<T extends SidebarLayout>(
     ...section.projectKeys.filter((key) => !requested.has(key)),
   ];
   if (nextProjectKeys.every((key, index) => key === section.projectKeys[index])) return state;
+  let projectIndex = 0;
   return {
     ...state,
     sidebarProjectSections: state.sidebarProjectSections.map((candidate) =>
-      candidate.id === sectionId ? { ...candidate, projectKeys: nextProjectKeys } : candidate,
+      candidate.id === sectionId
+        ? {
+            ...candidate,
+            projectKeys: nextProjectKeys,
+            ...(candidate.childOrder === undefined
+              ? {}
+              : {
+                  childOrder: sidebarSectionChildOrder(candidate, state.sidebarProjectSections).map(
+                    (key) =>
+                      candidate.projectKeys.includes(key) ? nextProjectKeys[projectIndex++]! : key,
+                  ),
+                }),
+          }
+        : candidate,
     ),
   };
 }
@@ -264,7 +285,7 @@ export function reorderProjects<T extends SidebarLayout>(
 }
 
 /** Pure operations shared by optimistic clients and the locked sidebar service. */
-export function applySidebarLayoutMutation(
+function applyMutation(
   current: SidebarLayout | undefined,
   mutation: SidebarLayoutMutation,
 ): SidebarLayout | undefined {
@@ -321,6 +342,23 @@ export function applySidebarLayoutMutation(
     }
     case "sectionProjectsOrder":
       return reorderSidebarProjectSectionProjects(state, mutation.sectionId, mutation.projectKeys);
+    case "sectionChildrenOrder": {
+      const section = state.sidebarProjectSections.find((s) => s.id === mutation.sectionId);
+      if (!section) return state;
+      const childOrder = sidebarSectionChildOrder(
+        { ...section, childOrder: mutation.childOrder },
+        state.sidebarProjectSections,
+      );
+      const projects = new Set(section.projectKeys);
+      return {
+        ...state,
+        sidebarProjectSections: state.sidebarProjectSections.map((s) =>
+          s.id === section.id
+            ? { ...s, childOrder, projectKeys: childOrder.filter((key) => projects.has(key)) }
+            : s,
+        ),
+      };
+    }
     case "sectionsOrder":
       return reorderSidebarProjectSections(state, mutation.sectionIds);
     case "projectExpanded":
@@ -345,4 +383,43 @@ export function applySidebarLayoutMutation(
       return organized.changed ? { ...state, sidebarProjectSections: organized.sections } : state;
     }
   }
+}
+
+/** Missing or stale entries keep their existing order; old layouts show subsections first. */
+export function sidebarSectionChildOrder(
+  section: {
+    readonly id: string;
+    readonly projectKeys: readonly string[];
+    readonly childOrder?: readonly string[] | undefined;
+  },
+  subsections: readonly { readonly id: string; readonly parentId?: string | undefined }[],
+): string[] {
+  const fallback = [
+    ...subsections.filter((s) => s.parentId === section.id).map((s) => `section:${s.id}`),
+    ...section.projectKeys,
+  ];
+  const allowed = new Set(fallback);
+  return [
+    ...new Set([...(section.childOrder ?? []).filter((key) => allowed.has(key)), ...fallback]),
+  ];
+}
+
+/** Keep explicit orders free of deleted or moved children after every mutation. */
+export function applySidebarLayoutMutation(
+  current: SidebarLayout | undefined,
+  mutation: SidebarLayoutMutation,
+): SidebarLayout | undefined {
+  const next = applyMutation(current, mutation);
+  if (!next || next === current) return next;
+  return {
+    ...next,
+    sidebarProjectSections: next.sidebarProjectSections.map((section) =>
+      section.childOrder === undefined
+        ? section
+        : {
+            ...section,
+            childOrder: sidebarSectionChildOrder(section, next.sidebarProjectSections),
+          },
+    ),
+  };
 }

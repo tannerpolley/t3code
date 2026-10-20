@@ -13,18 +13,34 @@ const ch = (1337 / 2048) * sidebarColumnLayout.titleFontRem * 16;
 const optionalColumns = (sidebarRem: number) => {
   const container = sidebarRem * 16 - 40;
   const hidden = new Set<string>();
-  for (const column of sidebarColumnLayout.dropOrder) {
+  for (const group of sidebarColumnLayout.dropOrder) {
     const budget = sidebarColumnBudget(hidden);
-    if (container < budget.rem * 16 + budget.px + budget.ch * ch) hidden.add(column);
+    if (container < budget.rem * 16 + budget.px + budget.ch * ch)
+      for (const column of group) hidden.add(column);
   }
-  return ["model", "effort"].filter((column) => !hidden.has(column));
+  return ["model", "effort", "issue"].filter((column) => !hidden.has(column));
+};
+/** Title width left in a row once every optional column has dropped. */
+const minimumTitlePx = (sidebarRem: number) => {
+  const all = new Set(sidebarColumnLayout.dropOrder.flat());
+  const budget = sidebarColumnBudget(all);
+  return (
+    sidebarRem * 16 -
+    40 -
+    (budget.rem * 16 + budget.px + (budget.ch - sidebarColumnLayout.titleCh) * ch)
+  );
 };
 
 describe("sidebar width budget", () => {
   it("protects ten title characters before admitting optional columns", () => {
     expect(optionalColumns(16)).toEqual([]);
-    expect(optionalColumns(25)).toEqual(["model"]);
-    expect(optionalColumns(27.5)).toEqual(["model", "effort"]);
+    expect(optionalColumns(26)).toEqual(["issue"]);
+    expect(optionalColumns(29)).toEqual(["model", "issue"]);
+    expect(optionalColumns(31.5)).toEqual(["model", "effort", "issue"]);
+  });
+
+  it("never overflows the default 16rem sidebar once every optional column has dropped", () => {
+    expect(minimumTitlePx(16)).toBeGreaterThan(0);
   });
 });
 
@@ -82,17 +98,25 @@ const widthPx = (label: string, sizePx: number) =>
 const fits = (labels: readonly string[], sizePx: number, trackPx: number) => {
   for (const label of labels) expect(widthPx(label, sizePx), label).toBeLessThanOrEqual(trackPx);
 };
-const { tracks, modelPartsCh } = sidebarColumnLayout;
+const { tracks } = sidebarColumnLayout;
 
-it("fits every elapsed label up to 99h 59m 59s inside the time track", () => {
-  // Hours past 99 grow a digit and may spill; that is over four days on one turn.
+it("fits every elapsed label up to ten days inside the time track", () => {
+  // From 100 hours the label switches to days, so hours never grow a third digit; two-digit days
+  // overrun the track by a fraction of a pixel.
+  const day = 24 * 3600;
   const samples = [0, 9, 59, 60, 309, 59 * 60 + 59, 3600, 3909, 10 * 3600, 99 * 3600 + 3599];
-  fits(samples.map(formatElapsedSeconds), 10, tracks.time * 16);
+  fits(
+    [...samples, 100 * 3600, 141 * 3600 + 1330, 9 * day + 23 * 3600 + 3599].map(
+      formatElapsedSeconds,
+    ),
+    10,
+    tracks.time * 16,
+  );
+  expect(formatElapsedSeconds(141 * 3600 + 22 * 60 + 10)).toBe("5d 21h 22m");
 });
 
 it("fits six-character model names, their versions and every effort label", () => {
-  expect(modelPartsCh.name + modelPartsCh.version).toBe(tracks.model.ch);
-  fits(["Opus", "Sonnet", "Haiku", "Sol", "Luna", "Astra", "GPT"], 11, modelPartsCh.name * ch);
-  fits(["5.5", "6.1", "8.8"], 11, modelPartsCh.version * ch);
+  fits(["Opus", "Sonnet", "Haiku", "Sol", "Luna", "Astra", "GPT"], 11, tracks.model.ch * ch);
+  fits(["5.5", "6.1", "8.8"], 11, tracks.version.ch * ch);
   fits(["Low", "Med", "High", "XHigh", "Max"], 11, tracks.effort * 16);
 });

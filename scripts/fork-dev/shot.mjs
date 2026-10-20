@@ -23,6 +23,27 @@ const journal = NodeChildProcess.execFileSync(
 const pairUrl = [...journal.matchAll(/pairingUrl: (\S+\/pair#token=\S+)/g)].at(-1)?.[1];
 if (!pairUrl) throw new Error("No pairing URL in the t3-dev journal");
 const out = NodePath.join(NodeOS.homedir(), "Workspaces-Dev/.t3-dev-fixture/shots");
+// Finished children remain reachable by route even when Projects hides their inactive rows.
+const userdata = NodePath.join(
+  NodeOS.homedir(),
+  "Workspaces/Applications/t3code/.worktrees/fork-sandbox/.t3/userdata",
+);
+const environmentId = NodeFS.readFileSync(NodePath.join(userdata, "environment-id"), "utf8").trim();
+const threadIdsByTitle = new Map(
+  JSON.parse(
+    NodeChildProcess.execFileSync(
+      "python3",
+      [
+        "-c",
+        "import json, sqlite3, sys; from pathlib import Path; " +
+          "db = sqlite3.connect(Path(sys.argv[1]).as_uri() + '?mode=ro', uri=True); " +
+          "print(json.dumps(db.execute('SELECT title, thread_id FROM orchestration_v2_projection_threads').fetchall()))",
+        NodePath.join(userdata, "statev2.sqlite"),
+      ],
+      { encoding: "utf8" },
+    ),
+  ),
+);
 const OPEN_THREADS = [
   ["orchestrator", "Coordinate the sidebar gradient redesign"],
   ["plan", "Plan the borealis plugin API"],
@@ -44,7 +65,17 @@ const threadRow = (page, title) =>
     .locator(`button[aria-label^="${title.replaceAll('"', '\\"')}, "]`)
     .first();
 
-const browser = await chromium.launch();
+const browser = await chromium.launch().catch((error) => {
+  if (!String(error).includes("Executable doesn't exist")) throw error;
+  const cache = NodePath.join(NodeOS.homedir(), ".cache/ms-playwright");
+  const executablePath = NodeFS.globSync("chromium_headless_shell-*/**/chrome-headless-shell", {
+    cwd: cache,
+  })
+    .map((path) => NodePath.join(cache, path))
+    .sort((a, b) => NodeFS.statSync(b).mtimeMs - NodeFS.statSync(a).mtimeMs)[0];
+  if (!executablePath) throw error;
+  return chromium.launch({ executablePath });
+});
 const onlyIssues = process.argv[2] === "issues";
 // Projects view is what the owner reviews; Activity view also shows branch labels.
 for (const mode of onlyIssues ? [] : ["projects", "activity"]) {
@@ -69,7 +100,18 @@ for (const mode of onlyIssues ? [] : ["projects", "activity"]) {
   console.log(`${mode}: ${await page.locator("[data-sidebar-thread-key]").count()} thread rows`);
   if (mode === "projects") {
     for (const [file, title] of OPEN_THREADS) {
-      await threadRow(page, title).click();
+      const row = threadRow(page, title);
+      if (await row.count()) {
+        await row.click();
+      } else {
+        const threadId = threadIdsByTitle.get(title);
+        if (!threadId) throw new Error(`Seeded thread missing: ${title}`);
+        await page.goto(
+          new URL(`/${encodeURIComponent(environmentId)}/${encodeURIComponent(threadId)}`, pairUrl)
+            .href,
+        );
+        await page.waitForSelector("[data-sidebar-thread-key]");
+      }
       await page.waitForTimeout(2_500);
       // Open the collapsed work log so tool calls, diffs and commands show.
       const worked = page.getByText(/^Worked for /).first();

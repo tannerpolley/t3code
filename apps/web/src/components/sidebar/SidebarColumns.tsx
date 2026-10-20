@@ -6,6 +6,15 @@ import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "~/lib/utils";
 
+// Dev preview only: `localStorage["t3code:debug-sidebar-columns"] = "1"` outlines every column
+// cell (SidebarColumns.css) to show the space each one gets.
+if (
+  import.meta.env.DEV &&
+  globalThis.localStorage?.getItem("t3code:debug-sidebar-columns") === "1"
+) {
+  document.documentElement.dataset.debugSidebarColumns = "";
+}
+
 /*
  * The Codex-style sidebar's shared columns. Every row (section header, project, thread, subagent,
  * shell) keeps an 8px start and end padding and a caret slot, so carets and icons line up across
@@ -107,7 +116,11 @@ export function SidebarThreadColumns(props: {
   readonly model?: string | undefined;
   readonly effort?: ReactNode;
   readonly name: ReactNode;
+  /** The row has no model or effort, so its name starts in the model's column. */
+  readonly wideName?: boolean | undefined;
   readonly count?: number | undefined;
+  readonly issue?: ReactNode;
+  readonly pr?: ReactNode;
   readonly trailingClassName?: string | undefined;
   readonly time?: ReactNode;
   readonly status?: ReactNode;
@@ -117,7 +130,10 @@ export function SidebarThreadColumns(props: {
     role: !settings.codexStyleSidebar || settings.sidebarShowRole,
     provider: !settings.codexStyleSidebar || settings.sidebarShowProvider,
     model: !settings.codexStyleSidebar || settings.sidebarShowModel,
+    version: !settings.codexStyleSidebar || settings.sidebarShowModel,
     effort: !settings.codexStyleSidebar || settings.sidebarShowEffort,
+    issue: !settings.codexStyleSidebar || settings.sidebarShowIssueBadge,
+    pr: !settings.codexStyleSidebar || settings.sidebarShowPullRequestBadge,
   }));
   const style = Object.fromEntries(
     Object.entries(columns).flatMap(([column, visible]) =>
@@ -141,12 +157,26 @@ export function SidebarThreadColumns(props: {
       {columns.provider !== false ? (
         <span className="sidebar-thread-icon sidebar-thread-provider">{props.provider}</span>
       ) : null}
-      {columns.model !== false ? <SidebarThreadModel label={props.model} /> : null}
-      {columns.effort !== false ? (
+      {columns.model !== false && !props.wideName ? (
+        <SidebarThreadModel label={props.model} />
+      ) : null}
+      {columns.effort !== false && !props.wideName ? (
         <span className="sidebar-thread-effort">{props.effort}</span>
       ) : null}
-      <span className="sidebar-thread-name">{props.name}</span>
+      <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
+        {props.name}
+      </span>
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
+      {columns.issue !== false ? (
+        <span className={cn("sidebar-thread-badge sidebar-thread-issue", props.trailingClassName)}>
+          {props.issue}
+        </span>
+      ) : null}
+      {columns.pr !== false ? (
+        <span className={cn("sidebar-thread-badge sidebar-thread-pr", props.trailingClassName)}>
+          {props.pr}
+        </span>
+      ) : null}
       <span className={cn("sidebar-thread-time", props.trailingClassName)}>{props.time}</span>
       <span className={cn("sidebar-thread-icon sidebar-thread-work", props.trailingClassName)}>
         {props.status}
@@ -178,17 +208,24 @@ export function sidebarThreadName(name: string, title: string): ReactNode {
   );
 }
 
-/** The model's name and version cells, with the whole label on hover. */
+/** The model's name and version cells, with the whole label on the name's hover. */
 function SidebarThreadModel(props: { readonly label: string | undefined }) {
-  if (!props.label) return <span className="sidebar-thread-model" />;
+  if (!props.label) {
+    return (
+      <>
+        <span className="sidebar-thread-model" />
+        <span className="sidebar-thread-version" />
+      </>
+    );
+  }
   const { name, version } = splitSidebarModelLabel(props.label);
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="sidebar-thread-model" />}>
-        <span className="sidebar-thread-model-part">{name}</span>
-        <span className="sidebar-thread-model-part">{version}</span>
-      </TooltipTrigger>
-      <TooltipPopup side="top">{props.label}</TooltipPopup>
-    </Tooltip>
+    <>
+      <Tooltip>
+        <TooltipTrigger render={<span className="sidebar-thread-model" />}>{name}</TooltipTrigger>
+        <TooltipPopup side="top">{props.label}</TooltipPopup>
+      </Tooltip>
+      <span className="sidebar-thread-version">{version}</span>
+    </>
   );
 }

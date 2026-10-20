@@ -946,8 +946,6 @@ export function resolveThreadRowClassName(input: {
   );
 }
 
-// wake it (subagents, monitors): not the user's turn yet, so it renders amber. Commands it left running, such as a dev
-
 export type SidebarThreadStatus =
   | "approval"
   | "input"
@@ -1110,18 +1108,6 @@ export function groupRunningSubagentsByParent<
     if (!listed.has(parentKey) && !threadRows.has(parentKey) && rootKey !== parentKey)
       add(rootKey, thread);
   }
-  // A parent's native subagents sit directly under it; app-owned children follow, never between.
-  const native = (thread: TThread) =>
-    isProviderNativeSubagentThread({
-      creationSource: thread.source.creationSource,
-      lineage: thread.lineage,
-    });
-  for (const [key, siblings] of byParent) {
-    byParent.set(key, [
-      ...siblings.filter(native),
-      ...siblings.filter((thread) => !native(thread)),
-    ]);
-  }
   return byParent;
 }
 
@@ -1130,27 +1116,6 @@ export function threadLocationKey(
   thread: Pick<SidebarThreadSummary, "environmentId" | "worktreePath">,
 ): string {
   return `${thread.environmentId}:${thread.worktreePath ?? ""}`;
-}
-
-/**
- * Projects lists a project's threads grouped by location: main checkouts first, then worktrees,
- * each in the order its first thread appears. Threads keep their order within one.
- */
-export function groupThreadsByLocation<
-  TThread extends Pick<SidebarThreadSummary, "environmentId" | "worktreePath">,
->(threads: readonly TThread[]): TThread[] {
-  const groups = new Map<string, TThread[]>();
-  for (const thread of threads) {
-    const key = threadLocationKey(thread);
-    const group = groups.get(key);
-    if (group) group.push(thread);
-    else groups.set(key, [thread]);
-  }
-  const all = [...groups.values()];
-  return [
-    ...all.filter((group) => !group[0]!.worktreePath),
-    ...all.filter((group) => group[0]!.worktreePath),
-  ].flat();
 }
 
 /**
@@ -1181,43 +1146,6 @@ export function resolveLocationLeads<
     if (current === undefined || rank < current.rank) leads.set(key, { thread, rank });
   }
   return new Map([...leads].map(([key, { thread }]) => [key, thread]));
-}
-
-/**
- * Projects lists each thread under the location it works in. A running subagent working somewhere
- * other than its parent leaves its parent's tree for its own location's group, where its
- * same-location descendants stay nested under it. Returns the top-level rows, grouped by location,
- * and the keys of the subagents that moved, which their parents' trees leave out.
- */
-export function placeThreadsByLocation<
-  TThread extends Pick<SidebarThreadSummary, "id" | "environmentId" | "worktreePath">,
->(
-  threads: readonly TThread[],
-  byParent: ReadonlyMap<string, readonly TThread[]>,
-): { readonly threads: TThread[]; readonly relocated: ReadonlySet<string> } {
-  const keyOf = (thread: TThread) =>
-    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-  const placed: TThread[] = [];
-  const relocated = new Set<string>();
-  const seen = new Set<string>();
-  const walk = (parent: TThread) => {
-    for (const child of byParent.get(keyOf(parent)) ?? []) {
-      const key = keyOf(child);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (threadLocationKey(child) !== threadLocationKey(parent)) {
-        relocated.add(key);
-        placed.push(child);
-      }
-      walk(child);
-    }
-  };
-  for (const thread of threads) {
-    placed.push(thread);
-    seen.add(keyOf(thread));
-    walk(thread);
-  }
-  return { threads: groupThreadsByLocation(placed), relocated };
 }
 
 /** Running subagents, each followed by its own running subagents, for lists without nesting. */

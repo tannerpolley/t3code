@@ -1,7 +1,13 @@
-import type { ThreadProcessGroup } from "@t3tools/contracts";
+import type { ThreadProcessGroup, ThreadProcesses } from "@t3tools/contracts";
 import { shellProgramName } from "@t3tools/shared/shellCommand";
 
+import type { SidebarThreadSummary } from "../../types";
 import type { BackgroundWorkTaskRow } from "./SidebarBackgroundWork.logic";
+import {
+  resolveThreadStatusMark,
+  withChildNeeds,
+  type SidebarThreadStatus,
+} from "../Sidebar.logic";
 
 type BackgroundTaskRow = Exclude<BackgroundWorkTaskRow, { readonly kind: "subagent" }>;
 
@@ -56,4 +62,51 @@ export function visibleProcessGroups(
 
 export function sidebarWorkExpanded(explicit: boolean | undefined, hasRunningAgents: boolean) {
   return explicit ?? hasRunningAgents;
+}
+
+/** Settled rows without known work must not keep sampling the process table. */
+export function hasKnownSidebarWork(
+  thread: Pick<SidebarThreadSummary, "pendingBackgroundTasks">,
+  status: SidebarThreadStatus,
+  rows: ReadonlyArray<BackgroundWorkTaskRow>,
+) {
+  return status === "working" || thread.pendingBackgroundTasks.length > 0 || rows.length > 0;
+}
+
+/** Whether a processes sample found anything still running for the thread. */
+export function threadProcessesHaveWork(processes: ThreadProcesses | null | undefined) {
+  return (
+    processes != null &&
+    (processes.runningTaskIds.length > 0 ||
+      processes.commands.length > 0 ||
+      processes.processGroups.length > 0)
+  );
+}
+
+/** Projects-only overlay; completion attention remains owned by the shared status helpers. */
+export function withRunningProcessWork(
+  status: SidebarThreadStatus,
+  processes: ThreadProcesses | null | undefined,
+  hasKnownWork = false,
+): SidebarThreadStatus {
+  return status === "ready" && (hasKnownWork || threadProcessesHaveWork(processes))
+    ? "waiting"
+    : status;
+}
+
+export function sidebarSubagentRowStatus(
+  row: Pick<BackgroundWorkTaskRow, "status">,
+  children: Parameters<typeof withChildNeeds>[1],
+) {
+  return withChildNeeds(row.status ?? "working", children);
+}
+
+export function resolveSidebarProjectStatusMark(
+  thread: SidebarThreadSummary,
+  localLastVisitedAt: string | undefined,
+  status: SidebarThreadStatus,
+  workStatus: SidebarThreadStatus,
+) {
+  const completionMark = resolveThreadStatusMark(thread, localLastVisitedAt, status);
+  return completionMark === "done" ? completionMark : workStatus;
 }

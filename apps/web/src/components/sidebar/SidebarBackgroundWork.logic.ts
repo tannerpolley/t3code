@@ -5,7 +5,6 @@ import { fileBasename } from "@t3tools/shared/path";
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import {
   effectiveThreadRole,
-  isProviderNativeSubagentThread,
   THREAD_ROLE_LABELS,
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ThreadShell,
@@ -137,23 +136,14 @@ export function groupBackgroundWorkTaskRows(rows: ReadonlyArray<BackgroundWorkTa
  * those roster entries pair with running children by count. Commands started by a child sit
  * beneath that child while staying on the parent provider's roster.
  *
- * Under a thread the order is: its own background tasks, its native subagents (roster-only ones
- * included), then its app-owned children.
+ * A thread keeps its own background tasks first, then workers by role and newest creation.
+ * Roster-only subagents have no role, so they follow the known workers.
  */
 export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,
   ownerThreadId?: ThreadId,
-  /** Children listed with another location instead (see placeThreadsByLocation). */
-  relocated?: ReadonlySet<string>,
 ): ReadonlyArray<BackgroundWorkTaskRow> {
-  // Moved children stay "listed", so their tasks and commands do not resurface here.
-  const shownChildren =
-    relocated === undefined
-      ? runningChildren
-      : runningChildren.filter(
-          (child) => !relocated.has(scopedThreadKey(scopeThreadRef(child.environmentId, child.id))),
-        );
   const listedChildIds = new Set(runningChildren.map((child) => child.id));
   const linked = tasks.filter(
     (task): task is LinkedSubagentTask =>
@@ -169,7 +159,14 @@ export function describeSidebarBackgroundWork(
     (child) => !linked.some((task) => task.childThreadId === child.id),
   ).length;
 
-  const childRows: BackgroundWorkTaskRow[] = shownChildren.map((child) => {
+  const roleOrder = { implementor: 0, reviewer: 1, investigator: 2, checker: 3, orchestrator: 4 };
+  const orderedChildren = runningChildren.toSorted(
+    (a, b) =>
+      roleOrder[effectiveThreadRole(a.source)] - roleOrder[effectiveThreadRole(b.source)] ||
+      Date.parse(b.createdAt) - Date.parse(a.createdAt) ||
+      a.id.localeCompare(b.id),
+  );
+  const childRows: BackgroundWorkTaskRow[] = orderedChildren.map((child) => {
     const currentStatus = resolveSidebarThreadStatus(child);
     const hasPendingWork =
       backgroundWorkHoldsCompletion(
@@ -218,18 +215,7 @@ export function describeSidebarBackgroundWork(
       };
     });
 
-  // Native children come first (see groupRunningSubagentsByParent). Roster-only subagents are the
-  // provider's own, so they join the natives, ahead of app-owned children.
-  const firstAppOwned = shownChildren.findIndex(
-    (child) => !isProviderNativeSubagentThread(child.source),
-  );
-  const split = firstAppOwned === -1 ? childRows.length : firstAppOwned;
-  return [
-    ...backgroundTaskRows,
-    ...childRows.slice(0, split),
-    ...unmatchedSubagentRows,
-    ...childRows.slice(split),
-  ];
+  return [...backgroundTaskRows, ...childRows, ...unmatchedSubagentRows];
 }
 
 /** Warn after two hours, while long-lived servers keep their normal age display. */

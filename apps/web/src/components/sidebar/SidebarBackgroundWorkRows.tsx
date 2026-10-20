@@ -49,6 +49,8 @@ import { ThreadStatusMark } from "../ThreadStatusMark";
 import { AgentElapsed } from "../chat/AgentElapsed";
 import {
   SidebarProjectThreadName,
+  ThreadIssueBadge,
+  ThreadPullRequestBadge,
   SidebarProjectThreadTooltip,
 } from "./SidebarProjectThreadTooltip";
 import { SidebarThreadTime } from "./SidebarThreadTime";
@@ -65,6 +67,7 @@ import { ThreadLocationIcon } from "../ThreadLocationIcon";
 import { workRowProgram } from "./SidebarThreadProcesses.logic";
 import { ThreadRoleIcon, threadLocationCell } from "../ThreadRoleIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { SidebarThreadStatus } from "../Sidebar.logic";
 
 /** A row's label; a command's full command line shows on hover. */
 function RowLabel(props: {
@@ -84,6 +87,7 @@ function RowLabel(props: {
 }
 
 export type NestedWork = {
+  readonly status?: SidebarThreadStatus;
   readonly toggle: {
     readonly count: number;
     readonly open: boolean;
@@ -194,6 +198,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             />
           );
         const renderRow = (nested: NestedWork | null) => {
+          const status = nested?.status ?? row.status ?? "working";
           const toggle = nested?.toggle ?? null;
           const worktree =
             row.kind === "subagent" && row.child ? childWorktreeLabel(row.child, owner) : null;
@@ -233,10 +238,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               : null;
           const time =
             row.kind === "subagent" && row.child ? (
-              <SidebarThreadTime
-                thread={row.child}
-                {...(row.status === undefined ? {} : { status: row.status })}
-              />
+              <SidebarThreadTime thread={row.child} status={status} />
             ) : row.startedAt ? (
               row.kind === "subagent" ? (
                 <AgentElapsed
@@ -270,7 +272,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                     command={nameDetail}
                   >
                     {row.kind === "subagent" && row.child ? (
-                      <SidebarProjectThreadName thread={row.child}>
+                      <SidebarProjectThreadName thread={row.child} badges={false}>
                         {sidebarThreadTitle(row.child.source)}
                       </SidebarProjectThreadName>
                     ) : (
@@ -280,9 +282,23 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   {sameProgram ? <span className="shrink-0 text-2xs">×{sameProgram}</span> : null}
                 </span>
               }
+              wideName={row.kind !== "subagent"}
+              issue={
+                row.kind === "subagent" && row.child ? (
+                  <ThreadIssueBadge
+                    environmentId={row.child.environmentId}
+                    issue={row.child.source.linkedIssue}
+                  />
+                ) : undefined
+              }
+              pr={
+                row.kind === "subagent" && row.child ? (
+                  <ThreadPullRequestBadge thread={row.child} />
+                ) : undefined
+              }
               count={toggle && !toggle.open ? toggle.count : undefined}
               time={time}
-              status={<ThreadStatusMark status={row.status ?? "working"} />}
+              status={<ThreadStatusMark status={status} />}
             />
           ) : (
             <>
@@ -299,15 +315,16 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               {props.compact ? null : (
                 <span className="shrink-0 text-muted-foreground">{kindLabel}</span>
               )}
-              {row.status === "approval" || row.status === "input" ? (
+              {status === "approval" || status === "input" ? (
                 <span className="flex w-12 shrink-0 justify-end">
-                  <ThreadStatusMark status={row.status} />
+                  <ThreadStatusMark status={status} />
                 </span>
               ) : row.kind === "subagent" && row.child ? (
                 <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
               ) : row.startedAt ? (
                 <span className="w-12 shrink-0 text-right text-muted-foreground">{time}</span>
               ) : null}
+              {row.kind !== "subagent" ? <ThreadStatusMark status="working" /> : null}
             </>
           );
           const element =

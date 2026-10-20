@@ -72,15 +72,8 @@ export function ThreadIssueBadge(props: {
   );
 }
 
-/** Metadata stays inside the flexible name cell, leaving every existing column in place. */
-export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(props: {
-  readonly thread: SidebarThreadSummary;
-  readonly children: ReactNode;
-}) {
-  const { showIssue, showPr } = useClientSettings((settings) => ({
-    showIssue: !settings.codexStyleSidebar || settings.sidebarShowIssueBadge,
-    showPr: !settings.codexStyleSidebar || settings.sidebarShowPullRequestBadge,
-  }));
+/** The pull request badge: workers keep the request glyph, orchestrators the state's own. */
+export function ThreadPullRequestBadge(props: { readonly thread: SidebarThreadSummary }) {
   const pr = sidebarProjectThreadPullRequests(props.thread.pullRequests);
   // Workers opened their pull requests, so they keep the request glyph in its state's color;
   // orchestrators show the state's own glyph, such as the merge they made.
@@ -88,26 +81,44 @@ export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(p
     pr && effectiveThreadRole(props.thread.source) !== "orchestrator"
       ? PullRequestGlyph.pullRequest
       : pr?.Icon;
+  if (!pr || !PrIcon) return null;
+  return (
+    <span
+      role="img"
+      aria-label={pr.label}
+      className={`inline-flex shrink-0 items-center gap-0.5 ${pr.toneClassName}`}
+    >
+      <PrIcon aria-hidden className="size-3" />
+      {pr.count > 1 ? <span className="text-3xs tabular-nums">{pr.count}</span> : null}
+    </span>
+  );
+}
+
+/**
+ * The title with its remote-machine mark. `badges` keeps the issue and pull request badges inline
+ * for rows without the aligned columns; column rows give them their own slots.
+ */
+export const SidebarProjectThreadName = memo(function SidebarProjectThreadName(props: {
+  readonly thread: SidebarThreadSummary;
+  readonly badges?: boolean;
+  readonly children: ReactNode;
+}) {
+  const { showIssue, showPr } = useClientSettings((settings) => ({
+    showIssue: !settings.codexStyleSidebar || settings.sidebarShowIssueBadge,
+    showPr: !settings.codexStyleSidebar || settings.sidebarShowPullRequestBadge,
+  }));
+  const badges = props.badges !== false;
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <span className="fork-sidebar-title min-w-0 flex-1 truncate">{props.children}</span>
       <SidebarProjectThreadMachine environmentId={props.thread.environmentId} />
-      {showIssue ? (
+      {badges && showIssue ? (
         <ThreadIssueBadge
           environmentId={props.thread.environmentId}
           issue={props.thread.source.linkedIssue}
         />
       ) : null}
-      {showPr && pr && PrIcon ? (
-        <span
-          role="img"
-          aria-label={pr.label}
-          className={`inline-flex shrink-0 items-center gap-0.5 ${pr.toneClassName}`}
-        >
-          <PrIcon aria-hidden className="size-3" />
-          {pr.count > 1 ? <span className="text-3xs tabular-nums">{pr.count}</span> : null}
-        </span>
-      ) : null}
+      {badges && showPr ? <ThreadPullRequestBadge thread={props.thread} /> : null}
     </span>
   );
 });

@@ -20,6 +20,15 @@ export const ThreadRunningCommand = Schema.Struct({
 });
 export type ThreadRunningCommand = typeof ThreadRunningCommand.Type;
 
+export const ThreadProcessMember = Schema.Struct({
+  pid: PositiveInt,
+  commandLine: Schema.String,
+  startedAt: Schema.String,
+  cpuPercent: Schema.Number,
+  residentBytes: NonNegativeInt,
+});
+export type ThreadProcessMember = typeof ThreadProcessMember.Type;
+
 /** Processes a thread's commands and tasks spawned that share one command shape. */
 export const ThreadProcessGroup = Schema.Struct({
   /** The kind of program the processes run, such as `python` or `node`. */
@@ -29,6 +38,10 @@ export const ThreadProcessGroup = Schema.Struct({
   count: PositiveInt,
   cpuPercent: Schema.Number,
   residentBytes: NonNegativeInt,
+  /** Earliest start across all members, including those beyond the member limit. */
+  startedAt: Schema.optionalKey(Schema.String),
+  /** Up to 20 members; older servers omit these details. */
+  members: Schema.optionalKey(Schema.Array(ThreadProcessMember)),
 });
 export type ThreadProcessGroup = typeof ThreadProcessGroup.Type;
 

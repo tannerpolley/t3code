@@ -152,6 +152,7 @@ import {
 } from "../lib/projectPaths";
 import {
   currentAddProjectSection,
+  isAddingFolderSubsection,
   placeAddedProject,
   sectionPlacementInput,
   canPlaceProjectInSection,
@@ -160,7 +161,7 @@ import {
   setAddProjectSection,
 } from "../projectSectionPlacement";
 import { useProjectFolderAppearance } from "../projectFolderAppearance";
-import { sectionFolderPath } from "../sectionProjectPath";
+import { folderSubsectionInput, sectionFolderPath } from "../sectionProjectPath";
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -628,7 +629,10 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(
     () =>
       onOpenCommandPalette((detail) => {
-        setAddProjectSection(detail.open === "add-project" ? (detail.sectionId ?? null) : null);
+        setAddProjectSection(
+          detail.open === "add-project" ? (detail.sectionId ?? null) : null,
+          detail.folderSubsection,
+        );
         if (detail.open === "new-thread-in") {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
@@ -1046,6 +1050,8 @@ function OpenCommandPaletteDialog(props: {
         : sectionFolderPath(
             environmentSettings?.projectFolderRoot?.trim() || baseDirectory,
             parent === undefined ? [section.name] : [parent.name, section.name],
+            // A saved folder is a path on the section's own environment, not on the one picked here.
+            sectionTarget(sectionId)?.[0] === environmentId ? section.folderPath : undefined,
           );
     if (sectionFolder !== null) {
       return ensureBrowseDirectoryPath(sectionFolder);
@@ -1633,6 +1639,11 @@ function OpenCommandPaletteDialog(props: {
   ];
 
   const openAddProjectFlow = () => {
+    if (isAddingFolderSubsection()) {
+      const environmentId = sectionTarget(currentAddProjectSection())?.[0] ?? primaryEnvironmentId;
+      if (environmentId !== null) void startAddProjectBrowse(environmentId);
+      return;
+    }
     if (addProjectEnvironmentOptions.length === 0) {
       setOpen(false);
       void navigate({ to: "/settings/connections" });
@@ -2316,6 +2327,39 @@ function OpenCommandPaletteDialog(props: {
 
     const cwd = resolveProjectPathForDispatch(rawCwd, input.currentProjectCwd);
     if (cwd.length === 0) return;
+    if (isAddingFolderSubsection()) {
+      const parent = useUiStateStore
+        .getState()
+        .sidebarProjectSections.find((section) => section.id === sectionId);
+      const selected = await loadBrowsePath({
+        environmentId: input.environmentId,
+        input: {
+          partialPath: ensureBrowseDirectoryPath(cwd),
+          ...(input.currentProjectCwd ? { cwd: input.currentProjectCwd } : {}),
+        },
+      });
+      if (selected._tag === "Failure") {
+        toastManager.add({
+          type: "error",
+          title: "Couldn't open that folder",
+          description: "Choose an existing folder on this environment.",
+        });
+        return;
+      }
+      const folder = folderSubsectionInput(selected.value.parentPath);
+      if (
+        !parent ||
+        parent.parentId !== undefined ||
+        !folder ||
+        (sectionTarget(parent.id)?.[0] ?? primaryEnvironmentId) !== input.environmentId
+      )
+        return;
+      const saved = await useUiStateStore
+        .getState()
+        .addSidebarProjectSection(folder.name, parent.id, folder.folderPath);
+      if (saved) setOpen(false);
+      return;
+    }
 
     const existing = findProjectByPath(
       projects.filter((project) => project.environmentId === input.environmentId),
@@ -2954,13 +2998,15 @@ function OpenCommandPaletteDialog(props: {
     (hasTrailingPathSeparator(query) ? !browseResult : exactBrowseEntry === null);
   const useMetaForMod = isMacPlatform(navigator.platform);
   const submitModifierLabel = useMetaForMod ? "\u2318" : "Ctrl";
-  const submitActionLabel = isCloneDestinationStep
-    ? willCreateProjectPath
-      ? "Create & Clone"
-      : "Clone"
-    : willCreateProjectPath
-      ? "Create & Add"
-      : "Add";
+  const submitActionLabel = isAddingFolderSubsection()
+    ? "Add subsection"
+    : isCloneDestinationStep
+      ? willCreateProjectPath
+        ? "Create & Clone"
+        : "Clone"
+      : willCreateProjectPath
+        ? "Create & Add"
+        : "Add";
   const addShortcutLabel = hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter";
   const hasHighlightedNewProjectItem = newProjectFlow !== null && highlightedItemValue !== null;
   const createShortcutLabel = hasHighlightedNewProjectItem

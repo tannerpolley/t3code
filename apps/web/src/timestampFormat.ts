@@ -362,7 +362,13 @@ export function formatExpiresInLabel(isoDate: string, nowMs: number = Date.now()
 export function formatElapsedSeconds(totalSeconds: number): string {
   const seconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
   const hours = Math.floor(seconds / 3600);
-  const minutesAndSeconds = `${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}m ${String(seconds % 60).padStart(2, "0")}s`;
+  const minutes = String(Math.floor(seconds / 60) % 60).padStart(2, "0");
+  // Hours keep two digits so the label fits the sidebar's time column; from 100 hours on it
+  // counts days and drops the seconds instead.
+  if (hours >= 100) {
+    return `${Math.floor(hours / 24)}d ${String(hours % 24).padStart(2, "0")}h ${minutes}m`;
+  }
+  const minutesAndSeconds = `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
   return hours === 0
     ? minutesAndSeconds
     : `${String(hours).padStart(2, "0")}h ${minutesAndSeconds}`;

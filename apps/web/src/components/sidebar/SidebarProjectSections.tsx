@@ -1,3 +1,4 @@
+import { sidebarSectionChildOrder } from "@t3tools/shared/sidebarLayout";
 import { useSidebarWorkExpansion } from "./useSidebarWorkExpansion";
 import {
   collectDisplayedFamilyRows,
@@ -61,6 +62,8 @@ import {
 } from "lucide-react";
 import {
   SidebarProjectThreadName,
+  ThreadIssueBadge,
+  ThreadPullRequestBadge,
   SidebarProjectThreadTooltip,
 } from "./SidebarProjectThreadTooltip";
 import { sidebarProjectThreadAccessibleName } from "./SidebarProjectThread.logic";
@@ -72,6 +75,10 @@ import {
   useSidebarThreadProcesses,
   type SidebarProcessRows,
 } from "./SidebarThreadProcesses";
+import {
+  sidebarSubagentRowStatus,
+  resolveSidebarProjectStatusMark,
+} from "./SidebarThreadProcesses.logic";
 import {
   SidebarCaretSlot,
   SidebarCaretToggle,
@@ -120,7 +127,7 @@ import {
   flattenRunningSubagents,
   resolveLocationLeads,
   resolveSidebarThreadStatus,
-  resolveThreadStatusMark,
+  type SidebarThreadStatus,
   withChildNeeds,
 } from "../Sidebar.logic";
 import { ThreadStatusMark } from "../ThreadStatusMark";
@@ -153,6 +160,7 @@ import { toastManager } from "../ui/toast";
 import { NewSectionProjectDialog, type NewSectionProjectTarget } from "./NewSectionProjectDialog";
 import {
   resolveProjectDrop,
+  resolveSubsectionDrop,
   type ProjectDrop,
   type ProjectDropOver,
 } from "./SidebarProjectSections.logic";
@@ -175,6 +183,8 @@ type SidebarProjectSectionRender = {
   /** Set on this section itself, as its menu shows it. */
   readonly ownFolderIcons: boolean;
   readonly parentId: string | undefined;
+  readonly childOrder?: readonly string[] | undefined;
+  readonly folderPath?: string | undefined;
 };
 
 type ProjectDragData = {
@@ -216,7 +226,10 @@ function projectDropOverOf(
   const data = over?.data.current as SidebarProjectDragData | undefined;
   if (!over || !data) return null;
   if (data.type === "project") return { type: "project", projectKey: String(over.id) };
-  return { type: "section", sectionId: data.sectionId ?? UNGROUPED_SECTION_ID };
+  return {
+    type: data.type === "section" ? "section-header" : "section",
+    sectionId: data.sectionId ?? UNGROUPED_SECTION_ID,
+  };
 }
 
 function projectSectionName(section: SidebarProjectSectionRender): string {
@@ -239,8 +252,6 @@ interface SidebarProjectSectionsProps {
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-  /** Subagents listed with their own location instead; see `placeThreadsByLocation`. */
-  readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
   readonly isProjectExpanded: (projectKey: string) => boolean;
   readonly onToggleProject: (projectKey: string, expanded: boolean) => void;
   readonly activeThreadKey: string | null;
@@ -270,7 +281,6 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     sections,
     selectedProjectKey,
     runningSubagentsByParentKey,
-    relocatedThreadKeys,
     threadsByProjectKey,
   } = props;
   // Off restores the original Projects view: heading, action row, All projects, chevrons and grips.
@@ -289,6 +299,7 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
   const reorderSectionProjects = useUiStateStore(
     (store) => store.reorderSidebarProjectSectionProjects,
   );
+  const reorderChildren = useUiStateStore((store) => store.reorderSidebarSectionChildren);
   const reorderSections = useUiStateStore((store) => store.reorderSidebarProjectSections);
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
   const [projectDrop, setProjectDrop] = useState<ProjectDrop | null>(null);
@@ -302,13 +313,19 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     readonly id: string;
     readonly name: string;
     readonly parentId: string | undefined;
+    readonly folderPath?: string | undefined;
   }) => {
     const parentName =
       section.parentId === undefined
         ? undefined
         : sections.find((candidate) => candidate.id === section.parentId)?.name;
     setNewProjectDialog((current) => ({
-      target: { sectionId: section.id, sectionName: section.name, parentName },
+      target: {
+        sectionId: section.id,
+        sectionName: section.name,
+        parentName,
+        folderPath: section.folderPath,
+      },
       open: true,
       id: (current?.id ?? 0) + 1,
     }));
@@ -339,6 +356,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
         folderIcons,
         ownFolderIcons: section.folderIcons === true,
         parentId: section.parentId,
+        childOrder: section.childOrder,
+        folderPath: section.folderPath,
       });
     }
     const ungroupedProjectKeys = projects
@@ -459,13 +478,17 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
     const activeData = event.active.data.current as SidebarProjectDragData | undefined;
     const over = projectDropOverOf(event.over);
     setProjectDrop(
-      activeData?.type === "project" && over
-        ? resolveProjectDrop({
-            projectKey: String(event.active.id),
-            over,
-            sections: renderedSections,
-          })
-        : null,
+      !over
+        ? null
+        : activeData?.type === "project"
+          ? resolveProjectDrop({
+              projectKey: String(event.active.id),
+              over,
+              sections: renderedSections,
+            })
+          : activeData?.type === "section"
+            ? resolveSubsectionDrop(activeData.sectionId, over, renderedSections)
+            : null,
     );
   };
 
@@ -488,6 +511,15 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       return;
 
     if (activeData.type === "section") {
+      const activeSection = sections.find((section) => section.id === activeData.sectionId);
+      if (activeSection?.parentId !== undefined) {
+        const over = projectDropOverOf(event.over);
+        const drop = over
+          ? resolveSubsectionDrop(activeData.sectionId, over, renderedSections)
+          : null;
+        if (drop?.childOrder) reorderChildren(drop.sectionId, drop.childOrder);
+        return;
+      }
       const targetSectionId = sectionIdFromDragData(overData);
       if (
         targetSectionId === null ||
@@ -496,9 +528,13 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       ) {
         return;
       }
-      const currentIds = sections.map((section) => section.id);
+      const targetSection = sections.find((s) => s.id === targetSectionId);
+      const topTargetId = targetSection?.parentId ?? targetSectionId;
+      const currentIds = sections
+        .filter((s) => s.parentId === undefined)
+        .map((section) => section.id);
       const fromIndex = currentIds.indexOf(activeData.sectionId);
-      const toIndex = currentIds.indexOf(targetSectionId);
+      const toIndex = currentIds.indexOf(topTargetId);
       if (fromIndex >= 0 && toIndex >= 0) {
         reorderSections(arrayMove(currentIds, fromIndex, toIndex));
       }
@@ -515,7 +551,8 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
       return;
     }
     if (activeData.sectionId !== drop.sectionId) moveProject(projectKey, drop.sectionId);
-    reorderSectionProjects(drop.sectionId, [...drop.projectKeys]);
+    if (drop.childOrder) reorderChildren(drop.sectionId, drop.childOrder);
+    else reorderSectionProjects(drop.sectionId, [...drop.projectKeys]);
   };
 
   return (
@@ -607,7 +644,6 @@ function SidebarProjectSections(props: SidebarProjectSectionsProps) {
                   selectedProjectKey={selectedProjectKey}
                   threadsByProjectKey={threadsByProjectKey}
                   runningSubagentsByParentKey={runningSubagentsByParentKey}
-                  relocatedThreadKeys={relocatedThreadKeys}
                 />
               ))}
           </SortableContext>
@@ -638,7 +674,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly folderColors: boolean;
   /** Where a dragged project would land; this section shows it when it is the target. */
   readonly projectDrop: ProjectDrop | null;
-  /** Rendered inside this section, before its projects; empty for subsections themselves. */
+  /** Immediate subsections; empty for subsections themselves. */
   readonly subsections: readonly SidebarProjectSectionRender[];
   readonly onNewSubsection: (parent: { readonly id: string; readonly name: string }) => void;
   readonly onNewProjectInSection: (section: SidebarProjectSectionRender) => void;
@@ -665,8 +701,6 @@ const ProjectSection = memo(function ProjectSection(props: {
   readonly threadsByProjectKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   /** Running subagent threads by parent thread key; see `groupRunningSubagentsByParent`. */
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-  /** Subagents listed with their own location instead; see `placeThreadsByLocation`. */
-  readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
 }) {
   const canWrite = useSidebarLayoutPermission();
   const { setNodeRef: setDropRef } = useDroppable({
@@ -679,6 +713,7 @@ const ProjectSection = memo(function ProjectSection(props: {
   });
   const expanded = !props.section.collapsed;
   const sectionProjectKeys = expanded ? props.section.projectKeys : [];
+  const childOrder = expanded ? sidebarSectionChildOrder(props.section, props.subsections) : [];
   const drop = props.projectDrop?.sectionId === props.section.id ? props.projectDrop : null;
   // A line marks the landing spot; a section with no visible order highlights instead.
   const highlighted = drop !== null && (drop.beforeKey === undefined || !expanded);
@@ -704,11 +739,21 @@ const ProjectSection = memo(function ProjectSection(props: {
         <ul
           className={props.codexStyle ? undefined : "ms-3 border-sidebar-border/60 border-s ps-1"}
         >
-          {props.subsections.map((subsection) => (
-            <ProjectSection key={subsection.id} {...props} section={subsection} subsections={[]} />
-          ))}
-          <SortableContext items={[...sectionProjectKeys]} strategy={verticalListSortingStrategy}>
-            {sectionProjectKeys.map((projectKey) => {
+          <SortableContext
+            items={childOrder.map((key) =>
+              key.startsWith("section:") ? sectionDragId(key.slice(8)) : key,
+            )}
+            strategy={verticalListSortingStrategy}
+          >
+            {childOrder.map((projectKey) => {
+              const subsection = props.subsections.find((s) => `section:${s.id}` === projectKey);
+              if (subsection)
+                return (
+                  <Fragment key={projectKey}>
+                    {drop?.beforeKey === projectKey ? <ProjectDropLine /> : null}
+                    <ProjectSection {...props} section={subsection} subsections={[]} />
+                  </Fragment>
+                );
               const project = props.projectByKey.get(projectKey);
               return project ? (
                 <Fragment key={projectKey}>
@@ -731,7 +776,6 @@ const ProjectSection = memo(function ProjectSection(props: {
                     selected={props.selectedProjectKey === projectKey}
                     threads={props.threadsByProjectKey.get(project.projectKey) ?? []}
                     runningSubagentsByParentKey={props.runningSubagentsByParentKey}
-                    relocatedThreadKeys={props.relocatedThreadKeys}
                   />
                 </Fragment>
               ) : null;
@@ -778,8 +822,7 @@ function SortableSectionHeader(props: {
       type: "section",
       sectionId: section.id,
     } satisfies SectionDragData,
-    // Only top-level sections reorder; subsections keep the order they were made in.
-    disabled: !canWrite || !section.custom || section.parentId !== undefined,
+    disabled: !canWrite || !section.custom,
     id: sectionDragId(section.id),
   });
   const {
@@ -792,7 +835,7 @@ function SortableSectionHeader(props: {
     transition,
   } = sortable;
   const { codexStyle } = props;
-  const draggable = canWrite && section.custom && section.parentId === undefined;
+  const draggable = canWrite && section.custom;
   const expanded = !section.collapsed;
 
   return (
@@ -803,10 +846,11 @@ function SortableSectionHeader(props: {
         isDragging && "z-10 opacity-70",
       )}
       data-testid={`sidebar-project-section-${section.id}`}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition,
-      }}
+      style={
+        section.parentId === undefined
+          ? { transform: CSS.Translate.toString(transform), transition }
+          : undefined
+      }
     >
       {/* Codex style drags a custom section by its whole header and shows the caret on hover;
           otherwise a grip button drags it. */}
@@ -898,6 +942,21 @@ function SortableSectionHeader(props: {
                 <FilePlusIcon />
                 New project…
               </MenuItem>
+              {props.onNewSubsection ? (
+                <MenuItem
+                  disabled={!canWrite || !placementReady}
+                  onClick={() =>
+                    openCommandPalette({
+                      open: "add-project",
+                      sectionId: section.id,
+                      folderSubsection: true,
+                    })
+                  }
+                >
+                  <FolderTreeIcon />
+                  Add folder as subsection…
+                </MenuItem>
+              ) : null}
               {props.onNewSubsection ? (
                 <MenuItem disabled={!canWrite} onClick={() => props.onNewSubsection?.(section)}>
                   <FolderTreeIcon />
@@ -992,7 +1051,6 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
   ) => void;
   readonly threads: readonly SidebarThreadSummary[];
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-  readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
 }) {
   const { project, codexStyle } = props;
   const canWrite = useSidebarLayoutPermission(null, project.environmentId);
@@ -1027,32 +1085,22 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
     familySeparatorsText === "" ? [] : JSON.parse(familySeparatorsText);
   const familySeparators =
     familySeparatorsText === "" ? undefined : new Map(familySeparatorEntries);
-  // Each location's lead thread, over every shown row: threads and their running subagents.
-  const locationLeads = (() => {
-    if (!codexStyle) return null;
-    const keyOf = (thread: SidebarThreadSummary) =>
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    // A moved subagent is its own top-level row, so its parent's tree leaves it out.
-    const descendants = (
-      thread: SidebarThreadSummary,
-    ): { readonly thread: SidebarThreadSummary; readonly topLevel: boolean }[] =>
-      (props.runningSubagentsByParentKey.get(keyOf(thread)) ?? []).flatMap((child) =>
-        props.relocatedThreadKeys?.has(keyOf(child))
-          ? []
-          : [{ thread: child, topLevel: false }, ...descendants(child)],
-      );
-    return resolveLocationLeads(
-      props.threads.flatMap((thread) => [{ thread, topLevel: true }, ...descendants(thread)]),
-    );
-  })();
-  // One set per distinct list of leads, so rows re-render only when a lead changes.
-  const leadKeyList =
-    locationLeads === null
-      ? null
-      : [...locationLeads.values()]
-          .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
-          .join("\n");
-  const locationLeadKeys = leadKeyList === null ? undefined : new Set(leadKeyList.split("\n"));
+  // Only the displayed lead keys subscribe this project to expansion changes.
+  const leadKeyList = useUiStateStore((state) => {
+    if (!codexStyle || !props.isProjectExpanded) return "";
+    const rows = collectDisplayedFamilyRows({
+      ...props,
+      expandedByKey: state.sidebarWorkExpandedById,
+    });
+    return [
+      ...resolveLocationLeads(
+        rows.flatMap(({ thread, topLevel }) => (thread === null ? [] : [{ thread, topLevel }])),
+      ).values(),
+    ]
+      .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)))
+      .join("\n");
+  });
+  const locationLeadKeys = codexStyle ? new Set(leadKeyList.split("\n")) : undefined;
 
   return (
     // Rows stay put while dragging; the drop line shows where this one lands.
@@ -1209,8 +1257,6 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
             !codexStyle && "ms-5 border-sidebar-border/60 border-s ps-2",
           )}
         >
-          {/* Threads arrive grouped by location (see groupThreadsByLocation); each location's
-              lead row carries its icon. */}
           {props.threads.map((thread) => (
             <SidebarProjectThreadRow
               key={`${thread.environmentId}:${thread.id}`}
@@ -1220,7 +1266,6 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
               onContextMenu={props.onThreadContextMenu}
               thread={thread}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
-              relocatedThreadKeys={props.relocatedThreadKeys}
               locationLeadKeys={locationLeadKeys}
               familySeparators={familySeparators}
               familySeparatorsText={familySeparatorsText}
@@ -1238,10 +1283,11 @@ const SortableProjectRow = memo(function SortableProjectRow(props: {
 });
 
 function ProjectDragPreview(props: { readonly project: SidebarProjectSnapshot | null }) {
+  const folderAppearance = useProjectFolderAppearance(props.project?.projectKey ?? null);
   if (props.project === null) return null;
   return (
     <div className="fork-sidebar-project-preview flex h-7 w-[min(20rem,calc(100vw-2rem))] min-w-0 items-center gap-2 rounded-md border border-sidebar-border bg-sidebar px-2 text-sm text-sidebar-foreground shadow-lg">
-      <ProjectFavicon className="size-4 shrink-0" project={props.project} />
+      <ProjectFavicon className="size-4 shrink-0" project={props.project} {...folderAppearance} />
       <span className="fork-sidebar-title min-w-0 flex-1 truncate font-medium">
         {props.project.displayName}
       </span>
@@ -1282,7 +1328,6 @@ const SidebarProjectThreadRow = memo(
     readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
     /** Threads that carry their location's icon; see `resolveLocationLeads`. */
     readonly locationLeadKeys?: ReadonlySet<string> | undefined;
-    readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
     readonly familySeparators?: ReadonlyMap<string, SidebarFamilySeparator> | undefined;
     /** The project's separators as JSON; equal text means an equal map. */
     readonly familySeparatorsText?: string | undefined;
@@ -1291,7 +1336,7 @@ const SidebarProjectThreadRow = memo(
       scopeThreadRef(props.thread.environmentId, props.thread.id),
     );
     const runningSubagents = props.runningSubagentsByParentKey.get(activeThreadKey) ?? NO_THREADS;
-    const status = withChildNeeds(resolveSidebarThreadStatus(props.thread), runningSubagents);
+    const threadStatus = withChildNeeds(resolveSidebarThreadStatus(props.thread), runningSubagents);
     const active = props.activeThreadKey === activeThreadKey;
     const selected = useThreadSelectionStore((store) =>
       store.selectedThreadKeys.has(activeThreadKey),
@@ -1299,19 +1344,30 @@ const SidebarProjectThreadRow = memo(
     const localLastVisitedAt = useUiStateStore(
       (state) => state.threadLastVisitedAtById[activeThreadKey],
     );
-    // Finished while you were away and not opened since: a green dot where the spinner was.
-    const statusMark = resolveThreadStatusMark(props.thread, localLastVisitedAt, status);
-    const { watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
+    const {
+      status: workStatus,
+      watchRow,
+      workRows,
+      workCount,
+      processRows,
+    } = useSidebarThreadProcesses(
       props.thread,
-      status === "working" || props.thread.pendingBackgroundTasks.length > 0,
+      threadStatus,
       describeSidebarBackgroundWork(
         props.thread.pendingBackgroundTasks,
         props.codexStyle
           ? runningSubagents
           : flattenRunningSubagents(runningSubagents, props.runningSubagentsByParentKey),
         undefined,
-        props.relocatedThreadKeys,
       ),
+    );
+    // Finished while you were away and not opened since: a green dot where the spinner was.
+    const status = props.codexStyle ? workStatus : threadStatus;
+    const statusMark = resolveSidebarProjectStatusMark(
+      props.thread,
+      localLastVisitedAt,
+      threadStatus,
+      status,
     );
     // Spawned processes can outlive the rows that list their command (hidden while a run works).
     const hasWork = workCount > 0;
@@ -1412,11 +1468,18 @@ const SidebarProjectThreadRow = memo(
                     formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
                   )}
                   name={
-                    <SidebarProjectThreadName thread={props.thread}>
+                    <SidebarProjectThreadName thread={props.thread} badges={false}>
                       {sidebarThreadTitle(props.thread.source)}
                     </SidebarProjectThreadName>
                   }
                   count={workCount > 0 && !workOpen ? workCount : undefined}
+                  issue={
+                    <ThreadIssueBadge
+                      environmentId={props.thread.environmentId}
+                      issue={props.thread.source.linkedIssue}
+                    />
+                  }
+                  pr={<ThreadPullRequestBadge thread={props.thread} />}
                   time={<SidebarThreadTime thread={props.thread} status={status} />}
                   status={<ThreadStatusMark status={statusMark} />}
                 />
@@ -1482,7 +1545,6 @@ const SidebarProjectThreadRow = memo(
               onChildClick={props.onClick}
               onChildContextMenu={props.onContextMenu}
               runningSubagentsByParentKey={props.runningSubagentsByParentKey}
-              relocatedThreadKeys={props.relocatedThreadKeys}
               locationLeadKeys={props.locationLeadKeys}
             />
           </div>
@@ -1512,7 +1574,6 @@ const SidebarProjectThreadRow = memo(
       previous.onClick === next.onClick &&
       previous.onContextMenu === next.onContextMenu &&
       previous.locationLeadKeys === next.locationLeadKeys &&
-      previous.relocatedThreadKeys === next.relocatedThreadKeys &&
       previous.familySeparatorsText === next.familySeparatorsText &&
       sameSidebarSubagentTree(
         key,
@@ -1537,7 +1598,6 @@ function SidebarSubagentTree(props: {
     position: { x: number; y: number },
   ) => void;
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
-  readonly relocatedThreadKeys?: ReadonlySet<string> | undefined;
   readonly locationLeadKeys?: ReadonlySet<string> | undefined;
   readonly depth?: number;
   /** This level's summary row and the processes it opens into. */
@@ -1557,7 +1617,6 @@ function SidebarSubagentTree(props: {
       pendingBackgroundWorkOfThread(child.id, child.pendingBackgroundTasks, props.parentTasks),
       grandchildren,
       child.id,
-      props.relocatedThreadKeys,
     );
     return { child, grandchildren, rows };
   };
@@ -1590,6 +1649,7 @@ function SidebarSubagentTree(props: {
         return (
           <SidebarSubagentRow
             thread={child}
+            status={sidebarSubagentRowStatus(row, grandchildren)}
             render={render}
             familySeparators={props.familySeparators}
             depth={(props.depth ?? 1) + 1}
@@ -1601,7 +1661,6 @@ function SidebarSubagentTree(props: {
             onChildClick={props.onChildClick}
             onChildContextMenu={props.onChildContextMenu}
             runningSubagentsByParentKey={props.runningSubagentsByParentKey}
-            relocatedThreadKeys={props.relocatedThreadKeys}
             locationLeadKeys={props.locationLeadKeys}
           />
         );
@@ -1618,13 +1677,14 @@ function SidebarSubagentTree(props: {
 function SidebarSubagentRow(
   props: Omit<ComponentProps<typeof SidebarSubagentTree>, "processRows"> & {
     readonly thread: SidebarThreadSummary;
+    readonly status: SidebarThreadStatus;
     readonly render: (nested: NestedWork | null) => ReactNode;
   },
 ) {
-  const { thread, rows, render, ...tree } = props;
-  const { watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
+  const { thread, status: rowStatus, rows, render, ...tree } = props;
+  const { status, watchRow, workRows, workCount, processRows } = useSidebarThreadProcesses(
     thread,
-    resolveSidebarThreadStatus(thread) === "working" || thread.pendingBackgroundTasks.length > 0,
+    rowStatus,
     rows,
   );
   const { open, onToggle } = useSidebarWorkExpansion(
@@ -1632,6 +1692,7 @@ function SidebarSubagentRow(
     workRows.some((row) => row.kind === "subagent"),
   );
   return render({
+    status,
     ref: watchRow,
     toggle: workCount > 0 ? { count: workCount, open, onToggle } : null,
     children:

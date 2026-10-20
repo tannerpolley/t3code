@@ -7,11 +7,11 @@ import type {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
-import { ListIcon, MinusIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, FoldVerticalIcon, ListIcon, UnfoldVerticalIcon } from "lucide-react";
 import { IssueRow } from "../issues/IssueRow";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { useClientSettings } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -32,11 +32,12 @@ import {
   issueStateFilter,
   type IssueFilterPreferences,
 } from "../issues/issueWorkspace.logic";
+import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
-import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
-/** Issue rows shown before "Show N more", matching the pull request rows. */
+/** Issue rows shown before "Show all issues", matching the pull request rows. */
 const VISIBLE_ISSUE_COUNT = 5;
 
 export { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
@@ -72,9 +73,10 @@ export function threadIssueGroups(
 
 /**
  * The fork's own sibling section for the thread repository's issues, a fork feature kept out of
- * the vanilla Version Control section. Expanded by default and remembered per repository. The
- * Filter menu shares the Issues page's saved choices. A row opens the issue beside the thread, and
- * "Browse all issues" opens the full list there; the list stays live while agents work on it.
+ * the vanilla Version Control section. Its heading collapses the whole section, expanded by default
+ * and remembered per repository. The Filter menu shares the Issues page's saved choices. A row opens
+ * the issue beside the thread, and "Browse all issues" opens the full list there; the list stays
+ * live while agents work on it.
  */
 export function ThreadDetailsIssueRows({
   environmentId,
@@ -93,8 +95,6 @@ export function ThreadDetailsIssueRows({
   return <IssueRows environmentId={environmentId} threadId={threadId} {...target} />;
 }
 
-const LIST_HEADINGS = { open: "Open issues", closed: "Closed issues", all: "Issues" } as const;
-
 function IssueRows({
   environmentId,
   threadId,
@@ -110,7 +110,7 @@ function IssueRows({
   const [issueView, setIssueView] = useIssueView(host, repository);
   const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
     { environmentId, host, repository },
-    issueView === "roadmap" ? "roadmap" : `list:${issueStateFilter(preferences) ?? "open"}`,
+    "section",
   );
   const open = !collapsed;
   const listState =
@@ -136,41 +136,73 @@ function IssueRows({
         );
   const more = list?.nextCursor == null ? "" : "+";
 
+  const browseAll = () =>
+    useRightPanelStore
+      .getState()
+      .openIssueList(scopeThreadRef(environmentId, threadId), { host, repository });
+  const showAllLabel = showAll
+    ? "Show fewer issues"
+    : `Show all issues (${view === null ? 0 : view.hidden}${more} more)`;
+
   return (
     <ThreadDetailsSection
       headingId="thread-details-issues-heading"
       title="Issues"
-      actions={
-        <IssueFilterMenu
-          host=""
-          hosts={[]}
-          onChange={setPreferences}
-          onHostChange={() => {}}
-          preferences={preferences}
-          singleRepository
-          view={{ value: issueView, onChange: setIssueView }}
-        />
-      }
+      showHeading={false}
     >
-      <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">
-        <CollapsibleSectionHeader
-          expanded={open}
-          onClick={toggleCollapsed}
-          accessory={
-            view === null ? null : (
-              <span className="text-xs tabular-nums text-muted-foreground/70">
+      {/* The heading is the section's own collapse toggle, so no row inside repeats it. */}
+      <div className="mb-1 flex min-h-8 min-w-0 items-center justify-between gap-2 px-1.5">
+        <h3 className="min-w-0">
+          <button
+            type="button"
+            aria-expanded={open}
+            className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-2xs font-medium text-muted-foreground select-none hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+            onClick={toggleCollapsed}
+          >
+            <span className="truncate">Issues</span>
+            {view === null ? null : (
+              <span className="tabular-nums text-muted-foreground/70">
                 {view.total}
                 {more}
               </span>
-            )
-          }
-        >
-          {issueView === "roadmap"
-            ? "Roadmap"
-            : LIST_HEADINGS[issueStateFilter(preferences) ?? "open"]}
-        </CollapsibleSectionHeader>
-        {open && issueView === "roadmap" && list !== null ? (
-          <>
+            )}
+            <ChevronDownIcon
+              aria-hidden
+              className={`size-3 shrink-0 transition-transform${open ? "" : " -rotate-90"}`}
+            />
+          </button>
+        </h3>
+        <div className="flex shrink-0 items-center gap-1">
+          <IssueHeaderButton label="Browse all issues" onClick={browseAll}>
+            <ListIcon aria-hidden className="size-3.5" />
+          </IssueHeaderButton>
+          {open && view !== null && view.total > VISIBLE_ISSUE_COUNT ? (
+            <IssueHeaderButton
+              label={showAllLabel}
+              pressed={showAll}
+              onClick={() => setShowAll(!showAll)}
+            >
+              {showAll ? (
+                <FoldVerticalIcon aria-hidden className="size-3.5" />
+              ) : (
+                <UnfoldVerticalIcon aria-hidden className="size-3.5" />
+              )}
+            </IssueHeaderButton>
+          ) : null}
+          <IssueFilterMenu
+            host=""
+            hosts={[]}
+            onChange={setPreferences}
+            onHostChange={() => {}}
+            preferences={preferences}
+            singleRepository
+            view={{ value: issueView, onChange: setIssueView }}
+          />
+        </div>
+      </div>
+      {open ? (
+        <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">
+          {issueView === "roadmap" && list !== null ? (
             <IssueRoadmap
               scope={{ host, repository }}
               environmentId={environmentId}
@@ -198,37 +230,50 @@ function IssueRows({
                 })
               }
             />
-            {view !== null && view.total > VISIBLE_ISSUE_COUNT ? (
-              <ThreadDetailsControl tone="muted" onClick={() => setShowAll(!showAll)}>
-                {showAll ? "Show less" : "Show all loaded issues"}
-              </ThreadDetailsControl>
-            ) : null}
-            <ThreadDetailsControl
-              tone="muted"
-              onClick={() =>
-                useRightPanelStore
-                  .getState()
-                  .openIssueList(scopeThreadRef(environmentId, threadId), { host, repository })
-              }
-            >
-              Browse all issues
-            </ThreadDetailsControl>
-          </>
-        ) : open ? (
-          <IssueRowsBody
-            environmentId={environmentId}
-            threadId={threadId}
-            host={host}
-            repository={repository}
-            view={view}
-            failed={result._tag === "Failure"}
-            more={more}
-            showAll={showAll}
-            onShowAllChange={setShowAll}
-          />
-        ) : null}
-      </div>
+          ) : (
+            <IssueRowsBody
+              environmentId={environmentId}
+              threadId={threadId}
+              host={host}
+              repository={repository}
+              view={view}
+              failed={result._tag === "Failure"}
+            />
+          )}
+        </div>
+      ) : null}
     </ThreadDetailsSection>
+  );
+}
+
+function IssueHeaderButton({
+  label,
+  pressed,
+  onClick,
+  children,
+}: {
+  label: string;
+  pressed?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={label}
+            aria-pressed={pressed}
+            onClick={onClick}
+            size="icon-xs"
+            variant="ghost-muted"
+          />
+        }
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -239,9 +284,6 @@ function IssueRowsBody({
   repository,
   view,
   failed,
-  more,
-  showAll,
-  onShowAllChange,
 }: {
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -249,16 +291,13 @@ function IssueRowsBody({
   repository: string;
   view: ReturnType<typeof threadIssueGroups> | null;
   failed: boolean;
-  more: string;
-  showAll: boolean;
-  onShowAllChange: (showAll: boolean) => void;
 }) {
   if (view === null) {
     return failed ? (
       <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">Issues unavailable</p>
     ) : null;
   }
-  const { groups, total, hidden } = view;
+  const { groups, total } = view;
 
   return (
     <>
@@ -275,27 +314,6 @@ function IssueRowsBody({
       {total === 0 ? (
         <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">No matching issues</p>
       ) : null}
-      {total > VISIBLE_ISSUE_COUNT ? (
-        <ThreadDetailsControl tone="muted" onClick={() => onShowAllChange(!showAll)}>
-          {showAll ? (
-            <MinusIcon aria-hidden className="-mx-0.5 size-4 shrink-0" />
-          ) : (
-            <PlusIcon aria-hidden className="-mx-0.5 size-4 shrink-0" />
-          )}
-          {showAll ? "Show less" : `Show ${hidden}${more} more`}
-        </ThreadDetailsControl>
-      ) : null}
-      <ThreadDetailsControl
-        tone="muted"
-        onClick={() =>
-          useRightPanelStore
-            .getState()
-            .openIssueList(scopeThreadRef(environmentId, threadId), { host, repository })
-        }
-      >
-        <ListIcon aria-hidden className="-mx-0.5 size-4 shrink-0" />
-        Browse all issues
-      </ThreadDetailsControl>
     </>
   );
 }

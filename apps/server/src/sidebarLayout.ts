@@ -235,14 +235,15 @@ export const make = Effect.gen(function* () {
         if (input.deleted) {
           const expanded = { ...layout.projectExpandedById };
           delete expanded[input.projectId];
+          layout = applySidebarLayoutMutation(layout, {
+            type: "move",
+            projectKeys: [input.projectId],
+            sectionId: null,
+          })!;
           layout = {
             ...layout,
             projectExpandedById: expanded,
             projectOrder: layout.projectOrder.filter((id) => id !== input.projectId),
-            sidebarProjectSections: layout.sidebarProjectSections.map((s) => ({
-              ...s,
-              projectKeys: s.projectKeys.filter((id) => id !== input.projectId),
-            })),
           };
         } else {
           if (input.workspaceRoot !== undefined) {

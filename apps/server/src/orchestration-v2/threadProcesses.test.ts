@@ -149,8 +149,49 @@ describe("groupSpawnedProcesses", () => {
         count: 3,
         cpuPercent: 30,
         residentBytes: 300,
+        startedAt: "1970-01-01T00:00:00.001Z",
+        members: [1, 2, 3].map((shard) => ({
+          pid: 30 + shard,
+          commandLine: `/usr/bin/python3 /work/worker.py --shard ${shard}`,
+          startedAt: "1970-01-01T00:00:00.001Z",
+          cpuPercent: 10,
+          residentBytes: 100,
+        })),
       },
     ]);
+  });
+
+  it("caps stable member details without capping counts, totals or the earliest start", () => {
+    const children = Array.from({ length: 23 }, (_, index) => ({
+      ...process(100 + index, 20, `python worker.py --shard ${index}`, index),
+      identity: { pid: 100 + index, startTimeMs: 23_000 - index * 1_000 },
+    }));
+    const sample = (processes: typeof children) =>
+      groupSpawnedProcesses({
+        processes: [process(20, 1, "make all"), ...processes],
+        serverPid: 1,
+        // Overlapping command trees must not count the same member twice.
+        commands: [{ command: "make all" }, { command: "python worker.py --shard 0" }],
+      });
+    const { groups, usage } = sample(children);
+    const group = groups[0]!;
+    assert.equal(group.count, 22);
+    assert.equal(group.startedAt, "1970-01-01T00:00:01.000Z");
+    assert.equal(group.cpuPercent, 253);
+    assert.equal(group.residentBytes, 2_200);
+    assert.deepEqual(
+      group.members?.map((member) => member.pid),
+      Array.from({ length: 20 }, (_, index) => 101 + index),
+    );
+    assert.deepEqual(group.members?.[0], {
+      pid: 101,
+      commandLine: "python worker.py --shard 1",
+      startedAt: "1970-01-01T00:00:22.000Z",
+      cpuPercent: 1,
+      residentBytes: 100,
+    });
+    assert.deepEqual(usage, { cpuPercent: 263, residentBytes: 2_400 });
+    assert.deepEqual(sample(children.toReversed()).groups, groups);
   });
 
   it("lists every group, largest first", () => {

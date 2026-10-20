@@ -6,7 +6,7 @@ import {
   MessageCircleQuestionMarkIcon,
   SettingsIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -183,16 +183,23 @@ function SidebarDontAskModeItem() {
   if (!available) return null;
   const label = on ? "Don't ask mode is on" : "Don't ask mode is off";
   return (
-    <SidebarMenuItem className="ms-auto shrink-0">
+    // Last in the footer. The desktop update control before it already pushes right (`ml-auto`), so
+    // it drops its own push there instead of splitting the free space with it.
+    <SidebarMenuItem className="ms-auto shrink-0 [.ml-auto+&]:ms-0">
       <Tooltip>
         <TooltipTrigger
           render={
             <SidebarMenuButton
               aria-label={label}
               aria-pressed={on}
-              isActive={on}
               onClick={() => updateSettings({ dontAskMode: !on })}
               size="icon"
+              // On: the orange the sidebar uses for the questions and approvals it would answer.
+              style={
+                on
+                  ? ({ "--sidebar-icon-color": "var(--warning-foreground)" } as CSSProperties)
+                  : undefined
+              }
             >
               {on ? <MessageCircleOffIcon /> : <MessageCircleQuestionMarkIcon />}
             </SidebarMenuButton>
@@ -283,8 +290,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
-          {/* Don't ask and Issues sit at the far right, so they never shift the buttons before them. */}
-          <SidebarDontAskModeItem />
           {issuesSupported ? (
             <SidebarUtilityItem
               icon={<CircleDotIcon />}
@@ -295,6 +300,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </>
       )}
       <SidebarUpdatePill />
+      {isOnUtilityPage ? null : <SidebarDontAskModeItem />}
     </SidebarMenu>
   );
 });

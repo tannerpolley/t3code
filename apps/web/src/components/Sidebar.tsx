@@ -201,7 +201,6 @@ import {
   firstValidTimestampMs,
   hasUnseenCompletion,
   groupRunningSubagentsByParent,
-  placeThreadsByLocation,
   withChildNeeds,
   isSidebarNestedLinkClick,
   isSidebarThreadWorking,
@@ -258,6 +257,7 @@ import {
 } from "./ThreadStatusIndicators";
 import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
 import {
+  type ProjectFolderAppearance,
   resolveProjectFolderAppearance,
   useProjectFolderAppearance,
 } from "../projectFolderAppearance";
@@ -955,6 +955,7 @@ function SidebarProviderStack(props: {
 function SidebarThreadTooltip({
   thread,
   project,
+  projectFolderAppearance,
   projectDisplayName,
   environmentLabel,
   environmentMachine,
@@ -969,6 +970,7 @@ function SidebarThreadTooltip({
 }: {
   thread: SidebarThreadSummary;
   project: ProjectFaviconProject | null;
+  projectFolderAppearance: ProjectFolderAppearance;
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
@@ -1005,7 +1007,13 @@ function SidebarThreadTooltip({
       >
         {projectDisplayName ? (
           <div className="flex min-w-0 items-center gap-2">
-            {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
+            {project ? (
+              <ProjectFavicon
+                project={project}
+                className="size-3 shrink-0"
+                {...projectFolderAppearance}
+              />
+            ) : null}
             <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
           </div>
         ) : null}
@@ -1334,6 +1342,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
   composer: ComposerThreadDraftState;
   project: ProjectFaviconProject | null;
+  projectKey: string | null;
   projectDisplayName: string | null;
   isActive: boolean;
   onNavigate: (draftId: DraftId) => void;
@@ -1341,6 +1350,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
   const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
+  const projectFolderAppearance = useProjectFolderAppearance(props.projectKey);
   const promptPreview =
     replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
       .trim()
@@ -1408,7 +1418,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
             {props.project ? (
-              <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+              <ProjectFavicon
+                project={props.project}
+                className="size-4 shrink-0"
+                {...projectFolderAppearance}
+              />
             ) : null}
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
               {props.projectDisplayName}
@@ -1448,6 +1462,7 @@ interface SidebarDraftRowData {
 
 const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
+  logicalProjectKeyByScopedProjectRef: ReadonlyMap<string, string>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
@@ -1513,6 +1528,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             draftId={draftId}
             composer={composer}
             project={props.projectByKey.get(projectKey) ?? null}
+            projectKey={props.logicalProjectKeyByScopedProjectRef.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
             isActive={draftId === props.routeDraftId}
             onNavigate={props.onNavigateToDraft}
@@ -1788,6 +1804,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <SidebarThreadTooltip
       thread={thread}
       project={props.project}
+      projectFolderAppearance={projectFolderAppearance}
       projectDisplayName={props.projectDisplayName}
       environmentLabel={props.environmentLabel}
       environmentMachine={props.environmentMachine}
@@ -2328,7 +2345,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {props.project ? (
-                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+                <ProjectFavicon
+                  project={props.project}
+                  className="size-4 shrink-0"
+                  {...projectFolderAppearance}
+                />
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
@@ -2553,6 +2574,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   isSettled: boolean;
   thread: SidebarThreadSummary;
   project: EnvironmentProject | null;
+  projectKey: string | null;
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
@@ -2567,6 +2589,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
 }) {
   const { thread } = props;
+  const projectFolderAppearance = useProjectFolderAppearance(props.projectKey);
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
     statusLabel: null,
@@ -2659,6 +2682,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           {props.project ? (
             <ProjectFavicon
               project={props.project}
+              {...projectFolderAppearance}
               className={cn(
                 "size-4 shrink-0 transition-opacity",
                 props.isSettled &&
@@ -2710,6 +2734,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
         <SidebarThreadTooltip
           thread={thread}
           project={props.project}
+          projectFolderAppearance={projectFolderAppearance}
           projectDisplayName={props.projectDisplayName}
           environmentLabel={props.environmentLabel}
           environmentMachine={props.environmentMachine}
@@ -2761,7 +2786,6 @@ export default function Sidebar() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
-  const codexStyleSidebar = useClientSettings((s) => s.codexStyleSidebar);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
@@ -3091,7 +3115,7 @@ export default function Sidebar() {
   });
 
   // Projects follow the Thread order setting; Activity keeps its own arranged order.
-  const { sidebarProjectThreadsByKey, relocatedProjectThreadKeys } = (() => {
+  const sidebarProjectThreadsByKey = (() => {
     const grouped = new Map<string, EnvironmentThreadShell[]>();
     for (const thread of sortThreads(
       filterSidebarV2VisibleThreads(threads, null),
@@ -3105,26 +3129,22 @@ export default function Sidebar() {
       projectThreads.push(thread);
       grouped.set(projectKey, projectThreads);
     }
-    // The Codex-style rows are grouped by location, so keyboard order follows them too.
-    const relocated = new Set<string>();
-    if (codexStyleSidebar) {
-      for (const [projectKey, projectThreads] of grouped) {
-        const placed = placeThreadsByLocation(projectThreads, runningSubagentsByParentKey);
-        grouped.set(projectKey, placed.threads);
-        for (const key of placed.relocated) relocated.add(key);
-      }
-    }
-    return { sidebarProjectThreadsByKey: grouped, relocatedProjectThreadKeys: relocated };
+    return grouped;
   })();
 
-  const projectThreadOrder = collectVisibleProjectThreadOrder({
-    projects: projectGroups,
-    sections: sidebarProjectSections,
-    otherProjectsExpanded: sidebarOtherProjectsExpanded,
-    isProjectExpanded,
-    threadsByProjectKey: sidebarProjectThreadsByKey,
-    getThreadKey: threadShellKey,
-  });
+  const projectThreadOrderText = useUiStateStore((state) =>
+    collectVisibleProjectThreadOrder({
+      projects: projectGroups,
+      sections: sidebarProjectSections,
+      otherProjectsExpanded: sidebarOtherProjectsExpanded,
+      isProjectExpanded,
+      threadsByProjectKey: sidebarProjectThreadsByKey,
+      runningSubagentsByParentKey,
+      expandedByKey: state.sidebarWorkExpandedById,
+    }).join("\0"),
+  );
+  const projectThreadOrder =
+    projectThreadOrderText === "" ? [] : projectThreadOrderText.split("\0");
   const allThreadByKey = new Map(
     threads.map((thread) => [threadShellKey(thread), thread] as const),
   );
@@ -4983,7 +5003,6 @@ export default function Sidebar() {
             selectedProjectKey={projectScopeKey}
             threadsByProjectKey={sidebarProjectThreadsByKey}
             runningSubagentsByParentKey={runningSubagentsByParentKey}
-            relocatedThreadKeys={relocatedProjectThreadKeys}
           />
         ) : null}
         <SidebarGroup className="flex-1" role="presentation">
@@ -5012,6 +5031,11 @@ export default function Sidebar() {
                         thread={thread}
                         project={
                           projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+                        }
+                        projectKey={
+                          logicalProjectKeyByScopedProjectRef.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
                         }
                         projectDisplayName={
                           projectDisplayNameByKey.get(
@@ -5209,6 +5233,7 @@ export default function Sidebar() {
                         <SidebarDraftBlock
                           key="draft-sessions"
                           projectByKey={projectByKey}
+                          logicalProjectKeyByScopedProjectRef={logicalProjectKeyByScopedProjectRef}
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
                           routeDraftId={routeDraftIdForRows}

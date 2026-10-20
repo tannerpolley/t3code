@@ -9,8 +9,13 @@ import { appAtomRegistry } from "./rpc/atomRegistry";
 import { serverEnvironment } from "./state/server";
 import { usesServerSidebar } from "./sidebarLayoutClient";
 let addProjectSectionId: string | null = null;
-export function setAddProjectSection(sectionId: string | null): void {
+let addingFolderSubsection = false;
+export function isAddingFolderSubsection(): boolean {
+  return addingFolderSubsection;
+}
+export function setAddProjectSection(sectionId: string | null, folderSubsection = false): void {
   addProjectSectionId = sectionId;
+  addingFolderSubsection = folderSubsection;
 }
 export function currentAddProjectSection(): string | null {
   return addProjectSectionId;
