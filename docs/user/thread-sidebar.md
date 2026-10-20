@@ -55,8 +55,8 @@ On web and desktop, use the folder button beside search to switch between
 threads together. Expanding a project leaves other projects available. Activity
 keeps the pinned, active, Working, snoozed, and settled lists; its project menu
 explicitly filters the list, with **All projects** as the default. In Projects, each
-project's threads follow **Settings → General → Thread order**: last user message
-or creation time.
+project's orchestrators come first; its other threads follow **Settings → General →
+Thread order**: last user message or creation time.
 
 Choose **New section** to group projects. A section's menu can add a subsection,
 choose its color or folder icons, add an existing project, or create a new project

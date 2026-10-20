@@ -292,7 +292,10 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { ProjectSectionDialog, SidebarProjectSections } from "./sidebar/SidebarProjectSections";
-import { collectVisibleProjectThreadOrder } from "./sidebar/SidebarProjectSections.logic";
+import {
+  collectVisibleProjectThreadOrder,
+  orchestratorsFirst,
+} from "./sidebar/SidebarProjectSections.logic";
 import { resolveSidebarReveal } from "./sidebar/SidebarReveal.logic";
 import { SidebarThreadTime } from "./sidebar/SidebarThreadTime";
 import { IssueInboxBadge } from "./issues/IssueInbox";
@@ -3114,12 +3117,12 @@ export default function Sidebar() {
     routeThreadRef,
   });
 
-  // Projects follow the Thread order setting; Activity keeps its own arranged order.
+  // Projects follow the Thread order setting below their orchestrators; Activity keeps its own
+  // arranged order.
   const sidebarProjectThreadsByKey = (() => {
     const grouped = new Map<string, EnvironmentThreadShell[]>();
-    for (const thread of sortThreads(
-      filterSidebarV2VisibleThreads(threads, null),
-      sidebarThreadSortOrder,
+    for (const thread of orchestratorsFirst(
+      sortThreads(filterSidebarV2VisibleThreads(threads, null), sidebarThreadSortOrder),
     )) {
       const projectKey = logicalProjectKeyByScopedProjectRef.get(
         `${thread.environmentId}:${thread.projectId}`,

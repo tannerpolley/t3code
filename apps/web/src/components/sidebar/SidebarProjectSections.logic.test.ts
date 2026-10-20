@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   collectVisibleProjectThreadOrder,
+  orchestratorsFirst,
   resolveProjectDrop,
   resolveSubsectionDrop,
   type ProjectDropSection,
@@ -207,4 +208,26 @@ it("orders subsections alongside projects and keeps body drops as moves into the
       expandedByKey: {},
     }),
   ).toEqual(["a", "c", "b"].map(threadKey));
+});
+
+describe("orchestratorsFirst", () => {
+  it("puts a project's orchestrators above newer workers and keeps everyone else's order", () => {
+    const environmentId = EnvironmentId.make("env");
+    const thread = (id: string, role: "orchestrator" | "investigator" | "implementor") => ({
+      ...makeThreadFixture({ environmentId, id: ThreadId.make(id) }),
+      role,
+    });
+    const ordered = orchestratorsFirst([
+      thread("newest-investigator", "investigator"),
+      thread("implementor", "implementor"),
+      thread("orchestrator", "orchestrator"),
+      thread("older-investigator", "investigator"),
+    ]);
+    expect(ordered.map((entry) => entry.id)).toEqual([
+      "orchestrator",
+      "newest-investigator",
+      "implementor",
+      "older-investigator",
+    ]);
+  });
 });

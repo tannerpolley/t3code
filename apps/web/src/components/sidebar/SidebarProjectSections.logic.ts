@@ -1,3 +1,4 @@
+import { effectiveThreadRole } from "@t3tools/contracts";
 import { sidebarSectionChildOrder } from "@t3tools/shared/sidebarLayout";
 import type { SidebarThreadSummary } from "../../types";
 import { collectDisplayedFamilyRows } from "./SidebarFamilySeparators.logic";
@@ -32,6 +33,14 @@ export interface ProjectThreadSection {
   readonly childOrder?: readonly string[];
   readonly projectKeys: readonly string[];
   readonly collapsed: boolean;
+}
+
+/** A project's orchestrators lead its threads; the rest keep the Thread order setting's order. */
+export function orchestratorsFirst<T extends Parameters<typeof effectiveThreadRole>[0]>(
+  threads: readonly T[],
+): T[] {
+  const lead = (thread: T) => (effectiveThreadRole(thread) === "orchestrator" ? 0 : 1);
+  return [...threads].sort((a, b) => lead(a) - lead(b));
 }
 
 /**
