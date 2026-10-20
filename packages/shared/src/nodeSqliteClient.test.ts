@@ -798,7 +798,7 @@ const withCheckpointClient = <A, E>(
     sql: SqlClient.SqlClient,
     filename: string,
   ) => Effect.Effect<A, E, SqlClient.SqlClient | FileSystem.FileSystem | Scope.Scope>,
-  options: { readonly readerWorker?: boolean } = {},
+  options: { readonly readerWorker?: boolean; readonly checkpointPauseLimit?: number } = {},
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -809,7 +809,17 @@ const withCheckpointClient = <A, E>(
       const sql = yield* SqlClient.SqlClient;
       yield* sql`PRAGMA journal_mode = WAL`;
       return yield* use(sql, filename);
-    }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true, ...options })));
+    }).pipe(
+      Effect.provide(
+        // Backpressure tests assert that writes wait; a slow run must not reach the pause limit.
+        SqliteClient.layer({
+          filename,
+          checkpointWorker: true,
+          checkpointPauseLimit: 5 * 60_000,
+          ...options,
+        }),
+      ),
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 const supportsNoopCheckpoint = (() => {
@@ -1750,6 +1760,35 @@ it.effect.each(["successful", "failed"] as const)(
         );
         assert.isBelow(completedAtHeartbeat, writes.length);
       }),
+    ),
+  { skip: !supportsNoopCheckpoint },
+);
+
+it.effect(
+  "lets writes past a reader that holds the checkpoint back, then bounds the WAL again",
+  () =>
+    withCheckpointClient(
+      (sql, filename) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const worker = startedWorkers.at(-1)!;
+          const { reader, checkpointRequests } = yield* blockCheckpointBehindReader(
+            sql,
+            filename,
+            worker,
+          );
+          // Another process can hold one snapshot for minutes; writes stop waiting for it.
+          yield* sql`INSERT INTO entries VALUES (1)`;
+          assert.equal(reader.prepare("SELECT COUNT(*) AS count FROM entries").get()?.count, 0);
+          const truncated = waitForTruncateCompletion(worker);
+          checkpointRequests.release();
+          reader.exec("ROLLBACK");
+          yield* Effect.promise(() => truncated);
+          assert.equal(Number((yield* fs.stat(`${filename}-wal`)).size), 0);
+          yield* sql`INSERT INTO entries VALUES (2)`;
+          assert.deepEqual(yield* sql`SELECT COUNT(*) AS count FROM entries`, [{ count: 2 }]);
+        }),
+      { checkpointPauseLimit: 0 },
     ),
   { skip: !supportsNoopCheckpoint },
 );

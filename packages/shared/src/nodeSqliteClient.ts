@@ -46,6 +46,13 @@ export interface SqliteClientConfig {
    * Ignored for in-memory databases.
    */
   readonly checkpointWorker?: boolean | undefined;
+  /**
+   * How long writes wait for a checkpoint that a reader holds back. Another
+   * process can keep one read transaction open for minutes (a full scan, or a
+   * copy of the whole database); after this, writes go ahead and the WAL grows
+   * until that reader finishes. Default 1 second.
+   */
+  readonly checkpointPauseLimit?: Duration.Input | undefined;
 }
 
 // SqlClient masks transaction acquisition, so readOnly carries the caller's interruption policy.
@@ -604,6 +611,7 @@ parentPort.on("message", (request) => {
 const startCheckpointWorker = Effect.fnUntraced(function* (
   filename: string,
   writer: NodeSqlite.DatabaseSync,
+  pauseLimitMs: number,
 ) {
   const warn = (reason: string) =>
     Effect.logWarning(
@@ -652,14 +660,32 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   type Waiter = { resume: () => void; cancelled: boolean };
   const waiters: Array<Waiter> = [];
   let elected: Waiter | undefined;
+  // Set once writes have waited pauseLimitMs on a backlog; cleared when the WAL
+  // is back under its bounds. A truncate still pauses writes, but only briefly.
+  let overflowing = false;
+  let pauseTimer: ReturnType<typeof setTimeout> | undefined;
+  const backlogged = () => blocked || log >= CHECKPOINT_BACKPRESSURE_FRAMES;
   const gated = () =>
     !stopped &&
     !writer.isTransaction &&
-    (unknown || blocked || truncate !== undefined || log >= CHECKPOINT_BACKPRESSURE_FRAMES);
+    (unknown || truncate !== undefined || (!overflowing && backlogged()));
   const wake = () => {
+    if (overflowing && !backlogged()) overflowing = false;
     if (!gated() && elected === undefined) {
       elected = waiters.shift();
       elected?.resume();
+    }
+    if (waiters.length > 0 && !overflowing && gated() && backlogged()) {
+      // @effect-diagnostics-next-line globalTimers:off -- A wall-clock bound on waiting for another process, like the worker's own timers; a test clock must not stall it.
+      pauseTimer ??= setTimeout(() => {
+        pauseTimer = undefined;
+        if (backlogged()) overflowing = true;
+        wake();
+      }, pauseLimitMs);
+      pauseTimer.unref();
+    } else if (pauseTimer !== undefined) {
+      clearTimeout(pauseTimer);
+      pauseTimer = undefined;
     }
     if (waiters.length === 0 && elected === undefined) worker.unref();
   };
@@ -870,7 +896,13 @@ const make = Effect.fn("makeWithDatabase")(function* (
     // Started after the close finalizer, so the worker stops before the writer closes.
     const checkpoint =
       options.checkpointWorker && isFileDatabase
-        ? yield* startCheckpointWorker(options.filename, db)
+        ? yield* startCheckpointWorker(
+            options.filename,
+            db,
+            Duration.toMillis(
+              Duration.fromInputUnsafe(options.checkpointPauseLimit ?? Duration.seconds(1)),
+            ),
+          )
         : undefined;
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
