@@ -3,6 +3,8 @@
  * font (as the title budget does).
  */
 const titleCh = 11;
+// With role icons, thread titles are empty, but command and process labels still need this much.
+const labelCh = 10;
 
 export const sidebarColumnLayout = {
   tracks: {
@@ -15,8 +17,9 @@ export const sidebarColumnLayout = {
     model: { ch: 5.65 },
     version: { ch: 2.35 },
     effort: 2.5,
-    // "Orchestrator" is 10.625ch at 12px in OpenDyslexic Bold; leave a narrow space.
-    // Spare width goes to the spacer so counts, badges, time and status stay right-aligned.
+    // A role-name title: "Orchestrator" is 10.625ch at 12px in OpenDyslexic Bold, plus a narrow
+    // space. Other titles take their text's width. Spare width goes to the spacer so counts,
+    // badges, time and status stay right-aligned.
     name: { ch: titleCh },
     spacer: 0,
     // A collapsed row's hidden work count, right-aligned just before the badges.
@@ -47,7 +50,7 @@ export function generateSidebarColumnLayoutCss() {
     .map(([name], index) => {
       const width =
         name === "name"
-          ? "minmax(0, var(--sidebar-name-track, var(--sidebar-name-width)))"
+          ? "minmax(0, var(--sidebar-name-track, max-content))"
           : name === "spacer"
             ? "minmax(0, 1fr)"
             : `var(--sidebar-${name}-track, var(--sidebar-${name}-width))`;
@@ -78,7 +81,7 @@ export function generateSidebarColumnLayoutCss() {
     )
     .join(
       "\n",
-    )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n[data-sidebar-role-display="icon"] {\n  --sidebar-name-track: max-content;\n}\n`;
+    )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n[data-sidebar-role-display="name"]:has(.sidebar-role-title) {\n  --sidebar-name-track: var(--sidebar-name-width);\n}\n`;
   css += entries.map(([name]) => `.sidebar-thread-${name} { grid-column: ${name}; }\n`).join("");
   for (const roleDisplay of ["name", "icon"] as const) {
     const hidden = new Set<string>();
@@ -103,7 +106,7 @@ export function sidebarColumnBudget(
   const { tracks, rowPaddingRem, gapPx } = sidebarColumnLayout;
   const visible = Object.entries(tracks)
     .filter(([name]) => !hidden.has(name) && (name !== "role" || roleDisplay === "icon"))
-    .map(([name, width]) => (name === "name" && roleDisplay === "icon" ? 0 : width));
+    .map(([name, width]) => (name === "name" && roleDisplay === "icon" ? { ch: labelCh } : width));
   return {
     rem: visible.reduce<number>(
       (sum, width) => sum + (typeof width === "number" ? width : 0),

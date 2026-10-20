@@ -42,11 +42,13 @@ describe("sidebar width budget", () => {
     expect(optionalColumns(31.1)).toEqual(["model", "effort", "issue"]);
   });
 
-  it("admits optional columns earlier when icons hide the role name", () => {
-    expect(optionalColumns(19.3, "icon")).toEqual([]);
-    expect(optionalColumns(19.5, "icon")).toEqual(["issue"]);
-    expect(optionalColumns(24, "icon")).toEqual(["model", "issue"]);
-    expect(optionalColumns(26.5, "icon")).toEqual(["model", "effort", "issue"]);
+  it("keeps room for command and process labels when icons hide the role name", () => {
+    expect(optionalColumns(24.3, "icon")).toEqual([]);
+    expect(optionalColumns(24.6, "icon")).toEqual(["issue"]);
+    expect(optionalColumns(28.7, "icon")).toEqual(["issue"]);
+    expect(optionalColumns(29.1, "icon")).toEqual(["model", "issue"]);
+    expect(optionalColumns(31.3, "icon")).toEqual(["model", "issue"]);
+    expect(optionalColumns(31.7, "icon")).toEqual(["model", "effort", "issue"]);
   });
 
   it("never overflows the default 16rem sidebar once every optional column has dropped", () => {
@@ -137,7 +139,6 @@ it("reserves the role track and its gap only for icons", () => {
   const icons = sidebarColumnBudget(hidden, "icon");
   expect(icons.rem - names.rem).toBe(sidebarColumnLayout.tracks.role);
   expect(icons.px - names.px).toBe(sidebarColumnLayout.gapPx);
-  expect(names.ch - icons.ch).toBe(sidebarColumnLayout.titleCh);
 });
 
 it("fits the longest role labels with a narrow space at the 12px row font", () => {

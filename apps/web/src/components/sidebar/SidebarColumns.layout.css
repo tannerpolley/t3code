@@ -55,7 +55,7 @@
     ) [effort] var(--sidebar-effort-track, var(--sidebar-effort-width)) var(
       --sidebar-effort-gap,
       var(--sidebar-column-gap)
-    ) [name] minmax(0, var(--sidebar-name-track, var(--sidebar-name-width))) var(
+    ) [name] minmax(0, var(--sidebar-name-track, max-content)) var(
       --sidebar-name-gap,
       var(--sidebar-column-gap)
     ) [spacer] minmax(0, 1fr) var(--sidebar-spacer-gap, var(--sidebar-column-gap)) [count] var(
@@ -76,8 +76,8 @@
     );
   column-gap: 0;
 }
-[data-sidebar-role-display="icon"] {
-  --sidebar-name-track: max-content;
+[data-sidebar-role-display="name"]:has(.sidebar-role-title) {
+  --sidebar-name-track: var(--sidebar-name-width);
 }
 .sidebar-thread-caret {
   grid-column: caret;
@@ -154,7 +154,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(17.5625rem + 39px + 8ch)) {
+@container sidebar-columns (width < calc(17.5625rem + 39px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
@@ -163,7 +163,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(15.0625rem + 36px + 8ch)) {
+@container sidebar-columns (width < calc(15.0625rem + 36px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-model-track: 0px;
     --sidebar-model-gap: 0px;
@@ -175,7 +175,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(15.0625rem + 30px + 0ch)) {
+@container sidebar-columns (width < calc(15.0625rem + 30px + 10ch)) {
   .sidebar-thread-columns {
     --sidebar-issue-track: 0px;
     --sidebar-issue-gap: 0px;
