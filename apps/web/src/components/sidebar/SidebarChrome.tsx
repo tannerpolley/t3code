@@ -183,7 +183,9 @@ function SidebarDontAskModeItem() {
   if (!available) return null;
   const label = on ? "Don't ask mode is on" : "Don't ask mode is off";
   return (
-    <SidebarMenuItem className="ms-auto shrink-0">
+    // Last in the footer. The desktop update control before it already pushes right (`ml-auto`), so
+    // it drops its own push there instead of splitting the free space with it.
+    <SidebarMenuItem className="ms-auto shrink-0 [.ml-auto+&]:ms-0">
       <Tooltip>
         <TooltipTrigger
           render={
@@ -295,11 +297,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handleIssuesClick}
             />
           ) : null}
-          {/* Far right, so toggling it never shifts the buttons before it. */}
-          <SidebarDontAskModeItem />
         </>
       )}
       <SidebarUpdatePill />
+      {isOnUtilityPage ? null : <SidebarDontAskModeItem />}
     </SidebarMenu>
   );
 });
