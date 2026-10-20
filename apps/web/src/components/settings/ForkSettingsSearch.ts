@@ -3,10 +3,12 @@ import type { SettingsSearchItem } from "./settingsSearch";
 export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "dont-ask-mode",
-    title: "Don't ask mode",
+    title: "Ask mode",
     to: "/settings/general",
     scope: "environment-defaults",
-    searchTerms: ["fork automatic questions recommended answers approvals away unattended"],
+    searchTerms: [
+      "don't ask dont ask fork automatic questions recommended answers approvals away unattended",
+    ],
   },
   {
     id: "storage-worktrees-location",

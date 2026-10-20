@@ -2,8 +2,7 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   CircleDotIcon,
-  MessageCircleOffIcon,
-  MessageCircleQuestionMarkIcon,
+  MessageCircleQuestionIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
@@ -175,13 +174,15 @@ function SidebarUtilityItem({
   );
 }
 
-/** The primary server's Don't ask mode: while on, it answers every agent question and approval. */
-function SidebarDontAskModeItem() {
+/** Ask mode reflects the inverse of the primary server's automatic-answer setting. */
+function SidebarAskModeItem() {
   const available = usePrimarySettingsAvailable();
-  const on = usePrimarySettings((settings) => settings.dontAskMode);
+  const on = usePrimarySettings((settings) => !settings.dontAskMode);
   const updateSettings = useUpdatePrimarySettings();
   if (!available) return null;
-  const label = on ? "Don't ask mode is on" : "Don't ask mode is off";
+  const label = on
+    ? "Ask mode: on (agents can ask you questions)"
+    : "Ask mode: off (agents decide without asking)";
   return (
     // Last in the footer. The desktop update control before it already pushes right (`ml-auto`), so
     // it drops its own push there instead of splitting the free space with it.
@@ -192,16 +193,16 @@ function SidebarDontAskModeItem() {
             <SidebarMenuButton
               aria-label={label}
               aria-pressed={on}
-              onClick={() => updateSettings({ dontAskMode: !on })}
+              onClick={() => updateSettings({ dontAskMode: on })}
               size="icon"
-              // On: the orange the sidebar uses for the questions and approvals it would answer.
+              // Orange matches the sidebar's questions waiting for you.
               style={
                 on
                   ? ({ "--sidebar-icon-color": "var(--warning-foreground)" } as CSSProperties)
                   : undefined
               }
             >
-              {on ? <MessageCircleOffIcon /> : <MessageCircleQuestionMarkIcon />}
+              <MessageCircleQuestionIcon />
             </SidebarMenuButton>
           }
         />
@@ -210,8 +211,8 @@ function SidebarDontAskModeItem() {
             <span className="font-medium text-foreground">{label}</span>
             <span className="text-muted-foreground">
               {on
-                ? "Agents' questions get their recommended option and approvals are granted. Click when you're back."
-                : "Turn on when you step away: agents' questions get their recommended option and approvals are granted."}
+                ? "Turn off when you step away: questions get their recommended option and approvals are granted."
+                : "Questions get their recommended option and approvals are granted. Turn on to answer them yourself."}
             </span>
           </div>
         </TooltipPopup>
@@ -300,7 +301,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         </>
       )}
       <SidebarUpdatePill />
-      {isOnUtilityPage ? null : <SidebarDontAskModeItem />}
+      {isOnUtilityPage ? null : <SidebarAskModeItem />}
     </SidebarMenu>
   );
 });
