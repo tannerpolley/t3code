@@ -224,7 +224,7 @@ it("defaults sidebar text sizes for old settings and validates saved sizes and p
 it("defaults to lines without role icons and persists display customizations", () => {
   const visibility = {
     sidebarShowLocation: true,
-    sidebarShowRole: false,
+    sidebarRoleDisplay: "name",
     sidebarShowProvider: true,
     sidebarShowModel: true,
     sidebarShowEffort: true,
@@ -237,7 +237,12 @@ it("defaults to lines without role icons and persists display customizations", (
     sidebarFamilyStyle: "lines",
   });
   const saved = {
-    ...Object.fromEntries(Object.keys(visibility).map((key) => [key, key === "sidebarShowRole"])),
+    ...Object.fromEntries(
+      Object.keys(visibility)
+        .filter((key) => key !== "sidebarRoleDisplay")
+        .map((key) => [key, false]),
+    ),
+    sidebarRoleDisplay: "icon",
     sidebarLocationIconStyle: "branch",
     sidebarFamilyStyle: "colors",
   };
@@ -247,4 +252,21 @@ it("defaults to lines without role icons and persists display customizations", (
   expect(decodeClientPatch(saved)).toEqual(saved);
   expect(() => decodeClientPatch({ sidebarLocationIconStyle: "unknown" })).toThrow();
   expect(() => decodeClientPatch({ sidebarFamilyStyle: "unknown" })).toThrow();
+});
+
+it("migrates full legacy client files and saves only the role display choice", () => {
+  const { sidebarRoleDisplay: _, ...oldSettings } = DEFAULT_CLIENT_SETTINGS;
+  for (const legacy of [true, false, undefined, null, "true"]) {
+    const migrated = decodeClientSettingsFile(
+      JSON.stringify({ ...oldSettings, sidebarShowRole: legacy }),
+    );
+    expect(migrated.sidebarRoleDisplay).toBe(legacy === true ? "icon" : "name");
+    expect(encodeClientSettings(migrated)).not.toHaveProperty("sidebarShowRole");
+  }
+  expect(
+    decodeClientSettingsFile(
+      JSON.stringify({ ...oldSettings, sidebarShowRole: true, sidebarRoleDisplay: "name" }),
+    ).sidebarRoleDisplay,
+  ).toBe("name");
+  expect(() => decodeClientPatch({ sidebarRoleDisplay: "unknown" })).toThrow();
 });

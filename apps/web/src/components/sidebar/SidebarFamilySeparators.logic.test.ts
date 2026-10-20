@@ -2,10 +2,13 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { expect, it } from "vite-plus/test";
 import { resolveLocationLeads } from "../Sidebar.logic";
+import { describeSidebarBackgroundWork } from "./SidebarBackgroundWork.logic";
 import { makeThreadFixture } from "../../test-fixtures";
 import {
   collectDisplayedFamilyRows,
   resolveSidebarFamilySeparators,
+  sidebarWorkSeparator,
+  sidebarSeparatorStyle,
 } from "./SidebarFamilySeparators.logic";
 
 it("marks checkout changes within a family and solid boundaries around families", () => {
@@ -37,12 +40,12 @@ it("marks checkout changes within a family and solid boundaries around families"
       row("standalone"),
     ]),
   ]).toEqual([
-    [orchestrator.key, "solid"],
-    [worker.key, "dashed"],
-    [sibling.key, "dashed"],
-    [reviewer.key, "dashed"],
-    [otherRoot.key, "solid"],
-    ["after", "solid"],
+    [orchestrator.key, "family"],
+    [worker.key, "checkout change"],
+    [sibling.key, "checkout change"],
+    [reviewer.key, "checkout change"],
+    [otherRoot.key, "family"],
+    ["after", "family"],
   ]);
 });
 
@@ -101,9 +104,9 @@ it("compares only displayed rows, following role order, nesting and expansion", 
   ]);
   expect(rows[3]?.workspace).toBe(worker.worktreePath);
   expect([...resolveSidebarFamilySeparators(rows)]).toEqual([
-    [key(worker), "dashed"],
-    [key(reviewer), "dashed"],
-    [key(standalone), "solid"],
+    [key(worker), "checkout change"],
+    [key(reviewer), "checkout change"],
+    [key(standalone), "family"],
   ]);
   const collapsed = collectDisplayedFamilyRows({
     ...input,
@@ -146,4 +149,24 @@ it("puts a checkout's lead icon on its first displayed implementor", () => {
     );
   expect([...leads(true).values()].map((thread) => thread.id)).toEqual([parent.id, newer.id]);
   expect([...leads(false).values()].map((thread) => thread.id)).toEqual([parent.id]);
+});
+
+it("puts one dashed boundary after tasks or process groups and before the first agent", () => {
+  const rows = [
+    ...describeSidebarBackgroundWork(
+      [
+        { taskId: "run", kind: "command" },
+        { taskId: "agent", kind: "subagent" },
+        { taskId: "other", kind: "subagent" },
+      ],
+      [],
+    ),
+  ];
+  const lines = rows.map((_, index) => sidebarWorkSeparator(undefined, rows, index, 1));
+  expect(lines).toEqual([undefined, "processes block", undefined]);
+  expect(sidebarSeparatorStyle(lines[1])).toBe("dashed");
+  const agents = rows.filter((row) => row.kind === "subagent");
+  expect(sidebarWorkSeparator("family", agents, 0, 2)).toBe("processes block");
+  expect(sidebarWorkSeparator("checkout change", agents, 1, 2)).toBe("checkout change");
+  expect(sidebarWorkSeparator(undefined, agents, 0, 0)).toBeUndefined();
 });

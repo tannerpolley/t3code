@@ -6,14 +6,7 @@ import { splitSidebarModelLabel } from "./SidebarBackgroundWork.logic";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "~/lib/utils";
 
-// Dev preview only: `localStorage["t3code:debug-sidebar-columns"] = "1"` outlines every column
-// cell (SidebarColumns.css) to show the space each one gets.
-if (
-  import.meta.env.DEV &&
-  globalThis.localStorage?.getItem("t3code:debug-sidebar-columns") === "1"
-) {
-  document.documentElement.dataset.debugSidebarColumns = "";
-}
+if (import.meta.env.DEV) void import("./ForkSidebarDebug");
 
 /*
  * The Codex-style sidebar's shared columns. Every row (section header, project, thread, subagent,
@@ -116,6 +109,8 @@ export function SidebarThreadColumns(props: {
   readonly model?: string | undefined;
   readonly effort?: ReactNode;
   readonly name: ReactNode;
+  /** The name contains only the role, which icon mode already explains. */
+  readonly nameIsRole?: boolean | undefined;
   /** The row has no model or effort, so its name starts in the model's column. */
   readonly wideName?: boolean | undefined;
   readonly count?: number | undefined;
@@ -126,8 +121,9 @@ export function SidebarThreadColumns(props: {
   readonly status?: ReactNode;
 }) {
   const columns = useClientSettings((settings) => ({
+    roleDisplay: settings.sidebarRoleDisplay,
     location: !settings.codexStyleSidebar || settings.sidebarShowLocation,
-    role: !settings.codexStyleSidebar || settings.sidebarShowRole,
+    role: settings.sidebarRoleDisplay === "icon",
     provider: !settings.codexStyleSidebar || settings.sidebarShowProvider,
     model: !settings.codexStyleSidebar || settings.sidebarShowModel,
     version: !settings.codexStyleSidebar || settings.sidebarShowModel,
@@ -146,7 +142,11 @@ export function SidebarThreadColumns(props: {
     ),
   ) as CSSProperties;
   return (
-    <span className="sidebar-thread-columns" style={style}>
+    <span
+      className="sidebar-thread-columns"
+      data-sidebar-role-display={columns.roleDisplay}
+      style={style}
+    >
       <span className="sidebar-thread-caret">{props.caret ?? <SidebarCaretSlot />}</span>
       {columns.location !== false ? (
         <span className="sidebar-thread-icon sidebar-thread-location">{props.location}</span>
@@ -164,7 +164,7 @@ export function SidebarThreadColumns(props: {
         <span className="sidebar-thread-effort">{props.effort}</span>
       ) : null}
       <span className={cn("sidebar-thread-name", props.wideName && "sidebar-thread-name-wide")}>
-        {props.name}
+        {props.nameIsRole && columns.roleDisplay === "icon" ? null : props.name}
       </span>
       <span className={cn("sidebar-thread-count", props.trailingClassName)}>{props.count}</span>
       {columns.issue !== false ? (

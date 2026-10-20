@@ -120,3 +120,11 @@ it("fits six-character model names, their versions and every effort label", () =
   fits(["5.5", "6.1", "8.8"], 11, tracks.version.ch * ch);
   fits(["Low", "Med", "High", "XHigh", "Max"], 11, tracks.effort * 16);
 });
+
+it("reserves the role track and its gap only for icons", () => {
+  const hidden = new Set<string>();
+  const names = sidebarColumnBudget(hidden, "name");
+  const icons = sidebarColumnBudget(hidden, "icon");
+  expect(icons.rem - names.rem).toBe(sidebarColumnLayout.tracks.role);
+  expect(icons.px - names.px).toBe(sidebarColumnLayout.gapPx);
+});

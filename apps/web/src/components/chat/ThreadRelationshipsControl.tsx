@@ -761,6 +761,7 @@ export function ThreadRelationshipsPanel(props: {
                   );
                   const relationshipContent = redesign ? (
                     <SidebarThreadColumns
+                      nameIsRole={node?.thread != null}
                       location={
                         node?.thread
                           ? threadLocationCell(

@@ -3,6 +3,7 @@ import { useSidebarWorkExpansion } from "./useSidebarWorkExpansion";
 import {
   collectDisplayedFamilyRows,
   resolveSidebarFamilySeparators,
+  sidebarSeparatorStyle,
   type SidebarFamilySeparator,
 } from "./SidebarFamilySeparators.logic";
 import { useEnvironmentProviders } from "../../state/environments";
@@ -71,7 +72,6 @@ import { SidebarThreadTime } from "./SidebarThreadTime";
 import { SidebarBackgroundWorkRows, type NestedWork } from "./SidebarBackgroundWorkRows";
 import {
   SidebarProcessGroupRows,
-  SidebarProcessSummaryRow,
   useSidebarThreadProcesses,
   type SidebarProcessRows,
 } from "./SidebarThreadProcesses";
@@ -1387,7 +1387,8 @@ const SidebarProjectThreadRow = memo(
     return (
       <li
         className="fork-sidebar-thread-item relative list-none"
-        data-family-separator={props.familySeparators?.get(activeThreadKey)}
+        data-family-separator={sidebarSeparatorStyle(props.familySeparators?.get(activeThreadKey))}
+        data-separator-reason={props.familySeparators?.get(activeThreadKey)}
         // A family of threads shares one hue, from its root: a thread with listed descendants, and a
         // subagent listed with its own location away from its parent.
         style={
@@ -1467,6 +1468,7 @@ const SidebarProjectThreadRow = memo(
                   effort={shortModelSelectionEffort(
                     formatModelSelectionEffort(props.thread.modelSelection, provider?.models),
                   )}
+                  nameIsRole
                   name={
                     <SidebarProjectThreadName thread={props.thread} badges={false}>
                       {sidebarThreadTitle(props.thread.source)}
@@ -1555,7 +1557,7 @@ const SidebarProjectThreadRow = memo(
               environmentId={props.thread.environmentId}
               threadId={props.thread.id}
               rows={workRows}
-              summary={<SidebarProcessSummaryRow columns={false} {...processRows} />}
+              processCount={processRows.count}
               afterTasks={<SidebarProcessGroupRows columns={false} {...processRows} />}
               onChildClick={props.onClick}
               onChildContextMenu={props.onContextMenu}
@@ -1600,7 +1602,7 @@ function SidebarSubagentTree(props: {
   readonly runningSubagentsByParentKey: ReadonlyMap<string, readonly SidebarThreadSummary[]>;
   readonly locationLeadKeys?: ReadonlySet<string> | undefined;
   readonly depth?: number;
-  /** This level's summary row and the processes it opens into. */
+  /** This level's process groups. */
   readonly processRows?: SidebarProcessRows;
   readonly familySeparators?: ReadonlyMap<string, SidebarFamilySeparator> | undefined;
 }) {
@@ -1626,11 +1628,7 @@ function SidebarSubagentTree(props: {
       columns
       familySeparators={props.familySeparators}
       depth={props.depth ?? 1}
-      summary={
-        props.processRows ? (
-          <SidebarProcessSummaryRow columns depth={props.depth ?? 1} {...props.processRows} />
-        ) : null
-      }
+      processCount={props.processRows?.count}
       afterTasks={
         props.processRows ? (
           <SidebarProcessGroupRows columns depth={props.depth ?? 1} {...props.processRows} />

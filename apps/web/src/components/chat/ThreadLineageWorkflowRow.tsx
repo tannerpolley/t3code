@@ -109,6 +109,7 @@ function WorkflowMemberRow({
           }
         >
           <SidebarThreadColumns
+            nameIsRole={thread != null}
             location={
               thread
                 ? threadLocationCell(thread.source, <ThreadLocationIcon thread={thread} />)

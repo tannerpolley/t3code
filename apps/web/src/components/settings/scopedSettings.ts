@@ -1,5 +1,5 @@
 import {
-  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
   type ClientSettingsPatch,
   type EnvironmentId,
   isNullableProjectSettingsOverride,
@@ -38,7 +38,7 @@ interface ScopedSettingsEnvironment {
 }
 
 const SERVER_KEYS = new Set<string>(Object.keys(ServerSettings.fields));
-const CLIENT_KEYS = new Set<string>(Object.keys(ClientSettingsSchema.fields));
+const CLIENT_KEYS = new Set<string>(Object.keys(DEFAULT_CLIENT_SETTINGS));
 const PROJECT_SCOPED_KEYS = new Set<string>(PROJECT_SCOPED_SERVER_SETTING_KEYS);
 
 export function isProjectScopedSettingKey(key: string): key is ProjectScopedServerSettingKey {

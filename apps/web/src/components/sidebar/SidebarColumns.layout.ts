@@ -56,8 +56,8 @@ export function generateSidebarColumnLayoutCss() {
       return `[${name}] ${width}${gap}`;
     })
     .join(" ");
-  const threshold = (hidden: ReadonlySet<string>) => {
-    const budget = sidebarColumnBudget(hidden);
+  const threshold = (hidden: ReadonlySet<string>, roleDisplay: "name" | "icon") => {
+    const budget = sidebarColumnBudget(hidden, roleDisplay);
     return `calc(${budget.rem}rem + ${budget.px}px + ${budget.ch}ch)`;
   };
   // Registered lengths compute once, in the container's font. Unregistered, a ch width resolves in
@@ -78,23 +78,29 @@ export function generateSidebarColumnLayoutCss() {
       "\n",
     )}\n  --sidebar-column-gap: ${gapPx}px;\n  container: sidebar-columns / inline-size;\n  min-width: 0;\n  font-size: ${titleFontRem}rem;\n}\n@utility sidebar-thread-columns {\n  grid-template-columns: ${template};\n  column-gap: 0;\n}\n`;
   css += entries.map(([name]) => `.sidebar-thread-${name} { grid-column: ${name}; }\n`).join("");
-  const hidden = new Set<string>();
-  for (const group of dropOrder) {
-    const boundary = threshold(hidden);
-    for (const column of group) hidden.add(column);
-    const tracksOff = group
-      .map((column) => `--sidebar-${column}-track: 0px; --sidebar-${column}-gap: 0px;`)
-      .join(" ");
-    const cells = group.map((column) => `.sidebar-thread-${column}`).join(", ");
-    css += `@container sidebar-columns (width < ${boundary}) {\n  .sidebar-thread-columns { ${tracksOff} }\n  ${cells} { display: none; }\n}\n`;
+  for (const roleDisplay of ["name", "icon"] as const) {
+    const hidden = new Set<string>();
+    const container = roleDisplay === "name" ? "sidebar-columns-name" : "sidebar-columns";
+    for (const group of dropOrder) {
+      const boundary = threshold(hidden, roleDisplay);
+      for (const column of group) hidden.add(column);
+      const tracksOff = group
+        .map((column) => `--sidebar-${column}-track: 0px; --sidebar-${column}-gap: 0px;`)
+        .join(" ");
+      const cells = group.map((column) => `.sidebar-thread-${column}`).join(", ");
+      css += `@container ${container} (width < ${boundary}) {\n  .sidebar-thread-columns { ${tracksOff} }\n  ${cells} { display: none; }\n}\n`;
+    }
   }
   return css;
 }
 
-export function sidebarColumnBudget(hidden: ReadonlySet<string>) {
+export function sidebarColumnBudget(
+  hidden: ReadonlySet<string>,
+  roleDisplay: "name" | "icon" = "name",
+) {
   const { tracks, rowPaddingRem, gapPx, titleCh } = sidebarColumnLayout;
   const visible = Object.entries(tracks)
-    .filter(([name]) => !hidden.has(name))
+    .filter(([name]) => !hidden.has(name) && (name !== "role" || roleDisplay === "icon"))
     .map(([, width]) => width);
   return {
     rem: visible.reduce<number>(

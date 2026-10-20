@@ -339,8 +339,8 @@ stays open and says so; click outside it or press Escape to close it. In Lineage
 background-work line above the composer, **Show output** opens the output in place.
 Turn off **Settings → General → Background process output** to disable this.
 
-In Projects, a thread's background tasks fold into one **Processes** row above its
-subagents. It starts collapsed; click it to list them, each named by its program (`npm`,
+In Projects, open a thread's caret to list its background tasks and processes directly above its
+subagents, separated from them by a dashed line. Each row is named by its program (`npm`,
 `uv`), with the full command on hover and in its output popup. With the experimental
 **Show running commands and processes** setting on, the list also includes the commands the
 thread's agent is running now and the processes those commands and background tasks
@@ -359,7 +359,7 @@ mark with the setting off.
 Claude shows a foreground command's output only when it finishes, and cannot stop it on its
 own; Codex streams it and can.
 
-To stop one background task, open its thread's Processes row, hover the task's row and use
+To stop one background task, open its thread's caret, hover the task's row and use
 its Stop control. **Stop** above
 the composer stops all the thread's background work. Finished and stopped tasks
 leave the running list; stopped commands keep their stopped state in the conversation.
@@ -413,12 +413,13 @@ With **Codex-style sidebar** enabled on web and desktop, the Projects view align
 role, provider, model, effort, name, time, and work status. Model names show up to six
 characters, with versions such as 5.5 and 6.1 lined up; hover the model for its full
 name. Running child agents show by default; a row you open or close keeps your choice for that view.
-Processes and commands alone only reveal a caret: open it to see the Processes summary. Child rows keep the same columns as their parent. A solid line separates
+Processes and commands alone only reveal a caret: open it to see the running work rows. Child rows keep the same columns as their parent. A solid line separates
 each thread with child agents, and everything under it, from the rows around it; a dashed line
 marks each change of checkout between consecutive rows within a family. Workers stay under their
 parent across worktrees, ordered by role: Implementor, Reviewer, Investigator, Checker, then other
 roles, with the newest activity first within each role.
 In **Settings → Customizations → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
+Choose **Role display → Icons** to replace role names with compact icons; hover an icon for its role and purpose.
 Choose **Family style → Colors** to tint each family instead, with deeper rows a slightly stronger shade.
 Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.

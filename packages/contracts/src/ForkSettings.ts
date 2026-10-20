@@ -250,6 +250,15 @@ export const SidebarTextSize = Schema.NullOr(
   ),
 );
 
+export const SidebarRoleDisplay = Schema.Literals(["name", "icon"]);
+
+export function migrateSidebarRoleDisplay(settings: {
+  readonly sidebarRoleDisplay?: "name" | "icon" | undefined;
+  readonly sidebarShowRole?: unknown;
+}) {
+  return settings.sidebarRoleDisplay ?? (settings.sidebarShowRole === true ? "icon" : "name");
+}
+
 export const ForkClientSettingsFields = {
   // Desktop-only, Linux and Windows: closing the window leaves the app in the
   // system tray so its built-in server and agents keep running.
@@ -263,7 +272,7 @@ export const ForkClientSettingsFields = {
   projectsView: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   codexStyleSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowLocation: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  sidebarShowRole: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarRoleDisplay: Schema.optionalKey(SidebarRoleDisplay),
   sidebarShowProvider: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowModel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowEffort: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -368,7 +377,7 @@ export const ForkClientSettingsPatchFields = {
   projectsView: Schema.optionalKey(Schema.Boolean),
   codexStyleSidebar: Schema.optionalKey(Schema.Boolean),
   sidebarShowLocation: Schema.optionalKey(Schema.Boolean),
-  sidebarShowRole: Schema.optionalKey(Schema.Boolean),
+  sidebarRoleDisplay: Schema.optionalKey(SidebarRoleDisplay),
   sidebarShowProvider: Schema.optionalKey(Schema.Boolean),
   sidebarShowModel: Schema.optionalKey(Schema.Boolean),
   sidebarShowEffort: Schema.optionalKey(Schema.Boolean),

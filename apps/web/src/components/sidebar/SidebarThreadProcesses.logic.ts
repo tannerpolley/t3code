@@ -13,13 +13,11 @@ type BackgroundTaskRow = Exclude<BackgroundWorkTaskRow, { readonly kind: "subage
 
 /**
  * A thread's work rows: its own tasks and the running commands they don't already list, one row
- * per program, then its agents. All but the agents fold into the thread's Processes row, so
- * collapsed only agents show.
+ * per program, then its agents. The thread caret controls visibility of the whole list.
  */
 export function foldThreadWork(
   rows: ReadonlyArray<BackgroundWorkTaskRow>,
   commandRows: ReadonlyArray<BackgroundWorkTaskRow>,
-  open: boolean,
 ) {
   // A Codex background command is both a pending task and a running command item.
   const added = commandRows.filter((row) => !rows.some((listed) => listed.taskId === row.taskId));
@@ -33,7 +31,7 @@ export function foldThreadWork(
   }
   const work = [...byProgram.values()];
   const agents = rows.filter((row) => row.kind === "subagent");
-  return { work, agents, rows: open ? [...work, ...agents] : agents };
+  return { work, agents, rows: [...work, ...agents] };
 }
 
 /** A command or task row's program, which is its whole name in the sidebar; null without a command. */
@@ -41,7 +39,7 @@ export function workRowProgram(row: BackgroundWorkTaskRow): string | null {
   return row.kind === "subagent" || !row.command ? null : shellProgramName(row.command);
 }
 
-/** Most spawned process groups listed under one Processes row; the rest are counted. */
+/** Most spawned process groups listed under one thread; the rest are counted. */
 const VISIBLE_PROCESS_GROUPS = 5;
 
 /**

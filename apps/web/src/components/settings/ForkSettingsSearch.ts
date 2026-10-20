@@ -120,10 +120,12 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["codex sidebar projects thread show hide location checkout icon"],
   },
   {
-    id: "sidebar-show-role",
-    title: "Role icon",
+    id: "sidebar-role-display",
+    title: "Role display",
     to: "/settings/customizations",
-    searchTerms: ["codex sidebar projects thread show hide role orchestrator implementor icon"],
+    searchTerms: [
+      "codex sidebar projects thread role orchestrator implementor names icons compact",
+    ],
   },
   {
     id: "sidebar-show-provider",

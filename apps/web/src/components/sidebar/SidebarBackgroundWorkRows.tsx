@@ -1,5 +1,7 @@
 import {
   sidebarSubagentRowKey,
+  sidebarWorkSeparator,
+  sidebarSeparatorStyle,
   type SidebarFamilySeparator,
 } from "./SidebarFamilySeparators.logic";
 import { useEnvironmentProviders } from "../../state/environments";
@@ -116,8 +118,7 @@ export type SidebarBackgroundWorkRowsProps = {
     row: BackgroundWorkTaskRow,
     render: (nested: NestedWork | null) => ReactNode,
   ) => ReactNode;
-  /** The list item the thread's tasks and commands fold into, first in the list. */
-  readonly summary?: ReactNode;
+  readonly processCount?: number | undefined;
   /** List items placed after the thread's own tasks and commands, ahead of its agents. */
   readonly afterTasks?: ReactNode;
   readonly onChildClick?: (event: ReactMouseEvent, thread: SidebarThreadSummary) => void;
@@ -145,7 +146,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
   // `afterTasks` goes between them.
   const rows = props.rows;
   const afterTasksAt = afterTasksIndex(rows);
-  const familyStyle = useClientSettings((settings) => settings.sidebarFamilyStyle);
   const locationStyle = useClientSettings((settings) => settings.sidebarLocationIconStyle);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   const shortModelNames = useClientSettings((settings) => settings.shortModelNames);
@@ -165,7 +165,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
             : "max-h-48 space-y-0.5 overflow-y-auto pb-1 text-xs",
       )}
     >
-      {props.summary}
       {rows.flatMap((row, index) => {
         const kindLabel =
           row.kind === "subagent"
@@ -265,6 +264,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                     )
                   : undefined
               }
+              nameIsRole={row.kind === "subagent" && row.child !== undefined}
               name={
                 <span className="flex min-w-0 items-center gap-2">
                   <RowLabel
@@ -279,7 +279,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                       name
                     )}
                   </RowLabel>
-                  {sameProgram ? <span className="shrink-0 text-2xs">×{sameProgram}</span> : null}
                 </span>
               }
               wideName={row.kind !== "subagent"}
@@ -296,7 +295,7 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
                   <ThreadPullRequestBadge thread={row.child} />
                 ) : undefined
               }
-              count={toggle && !toggle.open ? toggle.count : undefined}
+              count={sameProgram ?? (toggle && !toggle.open ? toggle.count : undefined)}
               time={time}
               status={<ThreadStatusMark status={status} />}
             />
@@ -393,12 +392,19 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               </div>
             );
 
+          const separator = sidebarWorkSeparator(
+            props.familySeparators?.get(
+              sidebarSubagentRowKey(props.environmentId, props.threadId, row),
+            ),
+            rows,
+            index,
+            props.processCount ?? (props.columns ? afterTasksAt : 0),
+          );
           return (
             <li
               ref={nested?.ref}
-              data-family-separator={props.familySeparators?.get(
-                sidebarSubagentRowKey(props.environmentId, props.threadId, row),
-              )}
+              data-family-separator={sidebarSeparatorStyle(separator)}
+              data-separator-reason={separator}
               data-thread-item={
                 childThreadId
                   ? scopedThreadKey(scopeThreadRef(props.environmentId, childThreadId))
@@ -406,15 +412,6 @@ export function SidebarBackgroundWorkRows(props: SidebarBackgroundWorkRowsProps)
               }
               className={cn(
                 row.kind !== "subagent" && "group/shell",
-                index > 0 &&
-                  row.kind === "subagent" &&
-                  rows[index - 1]!.kind !== "subagent" &&
-                  cn(
-                    "border-t",
-                    props.columns && familyStyle === "lines"
-                      ? "border-transparent"
-                      : "border-sidebar-border/40",
-                  ),
                 "fork-sidebar-agent-item relative",
               )}
               style={

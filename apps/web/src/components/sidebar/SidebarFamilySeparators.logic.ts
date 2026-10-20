@@ -8,7 +8,22 @@ import {
 } from "./SidebarBackgroundWork.logic";
 import { sidebarWorkExpanded } from "./SidebarThreadProcesses.logic";
 
-export type SidebarFamilySeparator = "solid" | "dashed";
+export type SidebarFamilySeparator = "family" | "checkout change" | "processes block";
+
+export function sidebarWorkSeparator(
+  separator: SidebarFamilySeparator | undefined,
+  rows: readonly BackgroundWorkTaskRow[],
+  index: number,
+  processCount: number,
+): SidebarFamilySeparator | undefined {
+  const firstAgent =
+    rows[index]?.kind === "subagent" && (index === 0 || rows[index - 1]?.kind !== "subagent");
+  return firstAgent && processCount > 0 ? "processes block" : separator;
+}
+
+export function sidebarSeparatorStyle(separator: SidebarFamilySeparator | undefined) {
+  return separator === undefined ? undefined : separator === "family" ? "solid" : "dashed";
+}
 type DisplayedFamilyRow = {
   readonly key: string;
   readonly familyKey: string;
@@ -92,9 +107,9 @@ export function resolveSidebarFamilySeparators(
     const row = rows[index]!;
     if (previous.familyKey !== row.familyKey) {
       if (familySizes.get(previous.familyKey)! > 1 || familySizes.get(row.familyKey)! > 1)
-        separators.set(row.key, "solid");
+        separators.set(row.key, "family");
     } else if (previous.workspace !== row.workspace) {
-      separators.set(row.key, "dashed");
+      separators.set(row.key, "checkout change");
     }
   }
   return separators;

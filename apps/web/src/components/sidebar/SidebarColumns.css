@@ -79,7 +79,7 @@
 .sidebar-thread-caret > span {
   width: var(--sidebar-caret-width, 1rem);
 }
-/* Rows without a model (Processes, commands, processes) start their name at the model's x. */
+/* Rows without a model (commands, processes) start their name at the model's x. */
 .sidebar-thread-name-wide {
   grid-column: model / count;
 }
@@ -98,16 +98,6 @@
   border-top-style: dashed;
 }
 
-/* Dev preview column outlines; see SidebarColumns.tsx. Badge slots get their own colors. */
-:root[data-debug-sidebar-columns] .sidebar-thread-columns > * {
-  outline: 1px dashed rgb(239 68 68 / 0.6);
-  outline-offset: -1px;
-  min-height: 1rem;
-  align-self: stretch;
-}
-:root[data-debug-sidebar-columns] .sidebar-thread-columns > .sidebar-thread-issue {
-  outline: 1px solid rgb(34 197 94 / 0.9);
-}
-:root[data-debug-sidebar-columns] .sidebar-thread-columns > .sidebar-thread-pr {
-  outline: 1px solid rgb(168 85 247 / 0.9);
+.sidebar-columns-container:has([data-sidebar-role-display="name"]) {
+  container-name: sidebar-columns-name;
 }

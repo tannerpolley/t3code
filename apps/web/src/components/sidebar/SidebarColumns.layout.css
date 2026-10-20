@@ -112,6 +112,39 @@
 .sidebar-thread-work {
   grid-column: work;
 }
+@container sidebar-columns-name (width < calc(16.8125rem + 36px + 18ch)) {
+  .sidebar-thread-columns {
+    --sidebar-effort-track: 0px;
+    --sidebar-effort-gap: 0px;
+  }
+  .sidebar-thread-effort {
+    display: none;
+  }
+}
+@container sidebar-columns-name (width < calc(14.3125rem + 33px + 18ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-track: 0px;
+    --sidebar-model-gap: 0px;
+    --sidebar-version-track: 0px;
+    --sidebar-version-gap: 0px;
+  }
+  .sidebar-thread-model,
+  .sidebar-thread-version {
+    display: none;
+  }
+}
+@container sidebar-columns-name (width < calc(14.3125rem + 27px + 10ch)) {
+  .sidebar-thread-columns {
+    --sidebar-issue-track: 0px;
+    --sidebar-issue-gap: 0px;
+    --sidebar-pr-track: 0px;
+    --sidebar-pr-gap: 0px;
+  }
+  .sidebar-thread-issue,
+  .sidebar-thread-pr {
+    display: none;
+  }
+}
 @container sidebar-columns (width < calc(17.5625rem + 39px + 18ch)) {
   .sidebar-thread-columns {
     --sidebar-effort-track: 0px;

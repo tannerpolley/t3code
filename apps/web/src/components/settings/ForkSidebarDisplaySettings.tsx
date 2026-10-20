@@ -7,7 +7,6 @@ import { searchableSetting } from "./settingsSearch";
 
 const DISPLAY_ROWS = [
   { key: "sidebarShowLocation", searchId: "sidebar-show-location" },
-  { key: "sidebarShowRole", searchId: "sidebar-show-role" },
   { key: "sidebarShowProvider", searchId: "sidebar-show-provider" },
   { key: "sidebarShowModel", searchId: "sidebar-show-model" },
   { key: "sidebarShowEffort", searchId: "sidebar-show-effort" },
@@ -20,6 +19,29 @@ export function ForkSidebarDisplaySettings() {
   if (!settings.codexStyleSidebar) return null;
   return (
     <SettingsSection title="Sidebar & projects">
+      <ForkSettingsRow
+        {...searchableSetting("sidebar-role-display")}
+        description="Show the role as a name or save title space with an explained icon."
+        control={
+          <Select
+            value={settings.sidebarRoleDisplay}
+            onValueChange={(value) => {
+              if (value === "name" || value === "icon")
+                updateSettings({ sidebarRoleDisplay: value });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Role display">
+              <SelectValue>
+                {settings.sidebarRoleDisplay === "icon" ? "Icons" : "Names"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value="name">Names</SelectItem>
+              <SelectItem value="icon">Icons</SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
       {DISPLAY_ROWS.map(({ key, searchId }) => {
         const setting = searchableSetting(searchId);
         return (

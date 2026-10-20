@@ -30,6 +30,14 @@ type RoleIconThread = Pick<
   readonly lineage: Pick<OrchestrationV2AppThread["lineage"], "relationshipToParent">;
 };
 
+const ROLE_DESCRIPTIONS = {
+  orchestrator: "Coordinates the repository's work and starts workers",
+  implementor: "Makes the changes in its own worktree",
+  reviewer: "Reviews work read-only",
+  investigator: "Gathers evidence and answers questions",
+  checker: "Verifies builds and tests",
+};
+
 const NATIVE_SUBAGENT_LABEL = "Native subagent · Runs on its own · Open parent to direct it";
 
 /**
@@ -79,7 +87,7 @@ export function ThreadRoleIcon({
   const child = thread.lineage.relationshipToParent === "subagent" && !native;
   const role = effectiveThreadRole(thread);
   const RoleIcon = ROLE_ICONS[role];
-  const label = `${THREAD_ROLE_LABELS[role]}${child ? " · Child thread · You can send messages here" : ""}`;
+  const label = `${THREAD_ROLE_LABELS[role]} · ${ROLE_DESCRIPTIONS[role]}${child ? " · Child thread · You can send messages here" : ""}`;
   const roleIcon = (
     <Tooltip>
       <TooltipTrigger

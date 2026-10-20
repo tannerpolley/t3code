@@ -1,5 +1,7 @@
 import {
   ForkClientSettingsFields,
+  SidebarRoleDisplay,
+  migrateSidebarRoleDisplay,
   ForkServerSettingsFields,
   ForkClientSettingsPatchFields,
   ForkServerSettingsPatchFields,
@@ -317,7 +319,7 @@ export type ModelPreferences = {
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
 
-export const ClientSettingsSchema = Schema.Struct({
+const ClientSettingsFieldsSchema = Schema.Struct({
   ...ForkClientSettingsFields,
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -491,6 +493,27 @@ export const ClientSettingsSchema = Schema.Struct({
   // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
+// Old client files contain every setting, so decode the legacy flag before dropping it on save.
+export const ClientSettingsSchema = Schema.Struct({
+  ...ClientSettingsFieldsSchema.fields,
+  sidebarShowRole: Schema.optionalKey(Schema.Unknown),
+}).pipe(
+  Schema.decodeTo(
+    Schema.toType(
+      Schema.Struct({
+        ...ClientSettingsFieldsSchema.fields,
+        sidebarRoleDisplay: SidebarRoleDisplay,
+      }),
+    ),
+    SchemaTransformation.transform({
+      decode: ({ sidebarShowRole, ...settings }) => ({
+        ...settings,
+        sidebarRoleDisplay: migrateSidebarRoleDisplay({ ...settings, sidebarShowRole }),
+      }),
+      encode: (settings) => settings,
+    }),
+  ),
+);
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientSettingsSchema)({});

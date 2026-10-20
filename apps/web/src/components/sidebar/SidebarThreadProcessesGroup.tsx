@@ -53,7 +53,7 @@ export function SidebarThreadProcessesGroup(props: {
   readonly style: CSSProperties | undefined;
 }) {
   const { group } = props;
-  const key = `${props.expansionKey}:group:${group.label}`;
+  const key = `processes:${props.expansionKey}:group:${group.label}`;
   const open = useUiStateStore((state) => state.lineageDetailsExpandedById[key] === true);
   const setExpanded = useUiStateStore((state) => state.setLineageDetailsExpanded);
   const members = group.members ?? [];
@@ -66,7 +66,12 @@ export function SidebarThreadProcessesGroup(props: {
       fallback={<CpuIcon aria-hidden className={iconClassName} />}
     />
   );
-  const rowContent = (name: ReactElement, startedAt: string | undefined, caret?: ReactElement) => {
+  const rowContent = (
+    name: ReactElement,
+    startedAt: string | undefined,
+    caret?: ReactElement,
+    count?: number,
+  ) => {
     const time = startedAt ? (
       <AgentElapsed agent={{ status: "running", startedAt, completedAt: null }} />
     ) : null;
@@ -77,6 +82,7 @@ export function SidebarThreadProcessesGroup(props: {
         provider={icon}
         name={name}
         wideName
+        count={count}
         time={time}
         status={status}
       />
@@ -90,7 +96,7 @@ export function SidebarThreadProcessesGroup(props: {
       </>
     );
   };
-  const name = (
+  const groupName = (
     <span className="flex min-w-0 items-center gap-2">
       <Tooltip>
         <TooltipTrigger render={<span className="fork-sidebar-title min-w-0 flex-1 truncate" />}>
@@ -102,13 +108,16 @@ export function SidebarThreadProcessesGroup(props: {
             : group.commandLine}
         </TooltipPopup>
       </Tooltip>
-      {group.count > 1 ? <span className="shrink-0 text-2xs">×{group.count}</span> : null}
+      {!props.columns && group.count > 1 ? (
+        <span className="shrink-0 text-2xs">×{group.count}</span>
+      ) : null}
     </span>
   );
   const content = rowContent(
-    name,
+    groupName,
     group.startedAt,
     expandable ? <SidebarCaretSlot open={open} /> : undefined,
+    group.count > 1 ? group.count : undefined,
   );
   const buttonClass = cn(props.className, "w-full cursor-pointer text-left hover:bg-accent");
   const single = group.count === 1 ? members[0] : undefined;

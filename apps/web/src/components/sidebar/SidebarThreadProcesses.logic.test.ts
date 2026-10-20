@@ -155,12 +155,12 @@ const agent: BackgroundWorkTaskRow = {
   childThreadId: ThreadId.make("child"),
 };
 
-it("folds commands under Processes one row per program, leaving agents listed", () => {
+it("lists commands directly before agents, deduplicating each program", () => {
   const run = (taskId: string, command: string) => ({ ...task(taskId), command });
   // A Codex background command is both a pending task and a running command item.
   const rows = [run("dev", "npm run dev"), agent];
   const commands = [run("dev", "npm run dev"), run("build", "npm run build"), run("t", "pytest")];
-  const open = foldThreadWork(rows, commands, true);
+  const open = foldThreadWork(rows, commands);
   expect(
     open.rows.map((row) => [row.taskId, row.kind === "subagent" ? 0 : row.sameProgram]),
   ).toEqual([
@@ -168,7 +168,6 @@ it("folds commands under Processes one row per program, leaving agents listed", 
     ["t", undefined],
     ["agent", 0],
   ]);
-  expect(foldThreadWork(rows, commands, false).rows.map((row) => row.taskId)).toEqual(["agent"]);
 });
 
 it("lists each program once, skipping a command's program before capping the groups", () => {
