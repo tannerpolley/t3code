@@ -3,7 +3,7 @@ import type { ThreadProcessGroup } from "@t3tools/contracts";
 import { shellProgramName } from "@t3tools/shared/shellCommand";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ChevronRightIcon } from "lucide-react";
-import type { CSSProperties } from "react";
+import { type CSSProperties, useState } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -19,6 +19,7 @@ import {
   hasKnownSidebarWork,
   visibleProcessGroups,
   withRunningProcessWork,
+  threadProcessesHaveWork,
 } from "./SidebarThreadProcesses.logic";
 import type { SidebarThreadStatus } from "../Sidebar.logic";
 import { SidebarThreadProcessesGroup } from "./SidebarThreadProcessesGroup";
@@ -30,8 +31,8 @@ const NO_GROUPS: ReadonlyArray<ThreadProcessGroup> = [];
  * A thread's work rows, with its tasks, running commands and spawned processes folded into one
  * Processes row that starts collapsed. Commands and processes are experimental ("Show running
  * commands and processes"): they poll with task usage's cadence, only while the setting is on,
- * work is already known from the thread state, and the element given `watchRow` as its ref
- * (the thread's row) is on screen.
+ * work is known from the thread state or the last sample still found some, and the element given
+ * `watchRow` as its ref (the thread's row) is on screen.
  */
 export function useSidebarThreadProcesses(
   thread: SidebarThreadSummary,
@@ -39,8 +40,12 @@ export function useSidebarThreadProcesses(
   rows: ReadonlyArray<BackgroundWorkTaskRow>,
 ) {
   const hasKnownWork = hasKnownSidebarWork(thread, status, rows);
+  // A command can outlive its turn without a roster entry; once a sample sees running work, keep
+  // sampling until one comes back empty, so the row doesn't drop it when the thread settles.
+  const [sampledWork, setSampledWork] = useState(false);
   const wanted =
-    useClientSettings((settings) => settings.runningCommandsAndProcesses) && hasKnownWork;
+    useClientSettings((settings) => settings.runningCommandsAndProcesses) &&
+    (hasKnownWork || sampledWork);
   const { listRef, isVisible: enabled } = useBackgroundTaskListVisibility(wanted);
   const query = useEnvironmentQuery(
     enabled
@@ -51,6 +56,9 @@ export function useSidebarThreadProcesses(
       : null,
   );
   const data = enabled ? query.data : undefined;
+  if (data !== undefined && threadProcessesHaveWork(data) !== sampledWork) {
+    setSampledWork(!sampledWork);
+  }
   // Open state lives in the sidebar's keyed expand record, like Lineage's details.
   const openKey = `processes:${scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))}`;
   const open = useUiStateStore((state) => state.lineageDetailsExpandedById[openKey] === true);

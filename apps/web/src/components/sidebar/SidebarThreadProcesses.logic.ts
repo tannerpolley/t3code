@@ -73,18 +73,23 @@ export function hasKnownSidebarWork(
   return status === "working" || thread.pendingBackgroundTasks.length > 0 || rows.length > 0;
 }
 
+/** Whether a processes sample found anything still running for the thread. */
+export function threadProcessesHaveWork(processes: ThreadProcesses | null | undefined) {
+  return (
+    processes != null &&
+    (processes.runningTaskIds.length > 0 ||
+      processes.commands.length > 0 ||
+      processes.processGroups.length > 0)
+  );
+}
+
 /** Projects-only overlay; completion attention remains owned by the shared status helpers. */
 export function withRunningProcessWork(
   status: SidebarThreadStatus,
   processes: ThreadProcesses | null | undefined,
   hasKnownWork = false,
 ): SidebarThreadStatus {
-  return status === "ready" &&
-    (hasKnownWork ||
-      (processes != null &&
-        (processes.runningTaskIds.length > 0 ||
-          processes.commands.length > 0 ||
-          processes.processGroups.length > 0)))
+  return status === "ready" && (hasKnownWork || threadProcessesHaveWork(processes))
     ? "waiting"
     : status;
 }
