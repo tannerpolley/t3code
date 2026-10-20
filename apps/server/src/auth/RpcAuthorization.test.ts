@@ -580,3 +580,51 @@ it.effect(
       expect(handled).toBe(false);
     }).pipe(Effect.scoped),
 );
+
+it.effect.each([false, true])(
+  "authorizes explicit issue worktree cleanup before the handler (granted: %s)",
+  (granted) =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.issuesCleanup> =>
+            tag !== WS_METHODS.issuesCleanup,
+        ),
+      );
+      let handled = false;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.issuesCleanup, () =>
+              Effect.sync(() => {
+                handled = true;
+                return { outcome: "kept" as const, reason: "Open terminal" };
+              }),
+            ),
+            RpcAuthorization.layer(
+              granted ? [AuthSourceControlWriteScope] : [AuthOrchestrationOperateScope],
+            ),
+          ),
+        ),
+      );
+      const result = yield* client[WS_METHODS.issuesCleanup]({
+        host: "github.com",
+        repository: "owner/repo",
+        number: 64,
+        threadId: ThreadId.make("worker"),
+        action: "remove-worktree",
+        expectedBranch: "work",
+        expectedWorktreePath: "/repo/.worktrees/work",
+        confirmed: true,
+      }).pipe(Effect.result);
+      if (granted)
+        expect(result).toMatchObject({ success: { outcome: "kept", reason: "Open terminal" } });
+      else
+        expect(result).toMatchObject({
+          failure: { requiredPermission: AuthSourceControlWriteScope },
+        });
+      expect(handled).toBe(granted);
+    }).pipe(Effect.scoped),
+);

@@ -14,6 +14,7 @@ import type {
   WorktreeCleanupRules,
   StorageCleanupReport,
   StorageCleanupReportEntry,
+  WorktreeRemovalResult,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -190,6 +191,10 @@ export function storageCleanupPullRequestMerged(
 export class StorageCleanup extends Context.Service<
   StorageCleanup,
   {
+    readonly removeWorktreeNow: (input: {
+      readonly projectId: ProjectId;
+      readonly worktreePath: string;
+    }) => Effect.Effect<WorktreeRemovalResult, ServerSettingsError>;
     readonly runNow: Effect.Effect<StorageCleanupReport, ServerSettingsError>;
     readonly latestReport: Effect.Effect<StorageCleanupReport | null>;
     readonly reports: Stream.Stream<StorageCleanupReport | null>;
@@ -677,32 +682,14 @@ const make = Effect.gen(function* () {
       );
   });
 
-  const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
+  const managedRoots = Effect.fn("StorageCleanup.managedRoots")(function* (
     serverSettings: ServerSettings,
-    now: number,
-    entries: StorageCleanupReportEntry[],
+    projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
+    additionalRoots: ReadonlyArray<string> = [],
   ) {
-    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
-    const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
-          SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
-          FROM orchestration_v2_projection_threads t
-          JOIN projection_projects p ON p.project_id = t.project_id
-          WHERE t.deleted_at IS NOT NULL
-        `;
-    const deletedThreads = (yield* Effect.forEach(deletedRows, (row) =>
-      decodeCleanupThread(row.payload_json).pipe(
-        Effect.map((thread) => ({ ...thread, workspaceRoot: row.workspaceRoot })),
-      ),
-    )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
-    const snapshot = yield* readThreads();
     const roots: Array<string> = [];
     const repositoryRoots = yield* Effect.forEach(
-      [
-        ...new Set([
-          ...snapshot.projects.map((project) => project.workspaceRoot),
-          ...deletedThreads.map((thread) => thread.workspaceRoot),
-        ]),
-      ],
+      [...new Set([...projects.map((project) => project.workspaceRoot), ...additionalRoots])],
       (cwd) =>
         git.listWorktreePaths(cwd).pipe(
           Effect.map((paths) => paths.slice(0, 1)),
@@ -723,6 +710,384 @@ const make = Effect.gen(function* () {
       if (root !== null && !isFilesystemRoot(root, path)) roots.push(root);
     }
 
+    return roots;
+  });
+
+  const removeWorktree = Effect.fn("StorageCleanup.removeWorktree")(function* (
+    serverSettings: ServerSettings,
+    now: number,
+    snapshot: Effect.Success<ReturnType<typeof readThreads>>,
+    roots: ReadonlyArray<string>,
+    thread:
+      | OrchestrationV2ThreadShell
+      | (typeof OrchestrationV2AppThreadJson.Type & { readonly workspaceRoot: string }),
+    group: ReadonlyArray<OrchestrationV2ThreadShell>,
+    refreshedDefaultRefs: Map<string, Set<string>>,
+    defaultBranches: Map<string, string | null>,
+    explicit = false,
+  ) {
+    const configured = resolveWorktreeCleanup(serverSettings, thread.projectId);
+    const settings = explicit
+      ? { ...configured, worktreeKeepWhen: "any-local-files" as const }
+      : configured;
+    if (!explicit && !worktreeCleanupEnabled(settings)) return [];
+    const worktreePath = path.resolve(thread.worktreePath!);
+    const activityAt = Math.max(...group.map(storageCleanupActivityAt));
+    const deleted = "workspaceRoot" in thread;
+    const project = deleted
+      ? { workspaceRoot: thread.workspaceRoot }
+      : snapshot.projects.find((entry) => entry.id === thread.projectId);
+    const entry: StorageCleanupReportEntry = {
+      kind: "worktree",
+      outcome: "kept",
+      reason: "",
+      path: worktreePath,
+      projectPath: project?.workspaceRoot ?? null,
+      threadId: thread.id,
+      threadTitle: thread.title,
+      bytes: null,
+      files: null,
+    };
+    const entries: StorageCleanupReportEntry[] = [];
+    const keep = (reason: string) => entries.push({ ...entry, reason: sentence(reason) });
+    yield* Effect.gen(function* () {
+      if (!(yield* fs.exists(worktreePath))) return;
+      if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
+      if (group.length > 1 && worktreeOwner(group) === undefined)
+        return keep(`shared by ${group.length} threads`);
+      if (project === undefined) return keep("project is unavailable");
+      if (
+        thread.branch === null ||
+        (!deleted && !group.every((member) => storageCleanupThreadIdle(member, now)))
+      )
+        return keep("thread is running or has pending work");
+      if (group.some((member) => member.branch !== thread.branch))
+        return keep("a subagent thread's branch differs from this worktree's branch");
+      if (hasTerminal(worktreePath)) return keep("open terminal");
+      // Roots are canonical, so compare canonical paths. A symlinked parent
+      // (a linked drive) is fine; a symlinked worktree directory is not.
+      const realPath = yield* fs.realPath(worktreePath);
+      const realParent = yield* fs.realPath(path.dirname(worktreePath));
+      if (realPath !== path.join(realParent, path.basename(worktreePath)))
+        return keep("worktree is a symbolic link");
+      if (!roots.some((root) => inside(root, realPath)))
+        return keep("outside the managed worktree folder");
+      if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects]))
+        return keep("contains a project checkout");
+      if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
+        return keep("not a linked worktree");
+      if (yield* branchChanged(worktreePath, thread.branch))
+        return keep("repository or branch changed");
+      const changes = yield* localChangesReason(worktreePath, settings);
+      if (changes !== null) return keep(changes);
+      if (
+        !deleted &&
+        group.some(
+          (member) =>
+            member.settledAt !== null &&
+            now - Math.max(DateTime.toEpochMillis(member.updatedAt), activityAt) <
+              SETTLE_SCRIPT_GRACE_MS,
+        )
+      )
+        return keep("settled moments ago");
+      const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
+      const old =
+        !deleted &&
+        settings.worktreeAfterDays !== null &&
+        activityAt < now - settings.worktreeAfterDays * DAY_MS;
+      const settledFor =
+        deleted || thread.settledAt === null
+          ? null
+          : now - Math.max(DateTime.toEpochMillis(thread.settledAt), activityAt);
+      const settledDays = settledFor === null ? null : Math.floor(settledFor / DAY_MS);
+      const settled =
+        settledFor !== null &&
+        settings.worktreeSettledAfterDays !== null &&
+        settledFor >= settings.worktreeSettledAfterDays * DAY_MS;
+      let eligible = explicit || deleted || old || settled;
+      let removalReason = explicit
+        ? "requested by owner"
+        : deleted
+          ? "thread was deleted"
+          : old
+            ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} days`
+            : `settled for ${settledDays} days`;
+      if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
+        const repositoryCwd = path.resolve(project.workspaceRoot);
+        const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
+        const defaultBranchKey = `${repositoryCwd}\0${remote}`;
+        let branch = defaultBranches.get(defaultBranchKey);
+        if (branch === undefined) {
+          branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
+          // Without a local HEAD ref, only the remote can identify its default;
+          // a conventional name may be a feature branch.
+          if (branch === null) {
+            branch = yield* git
+              .execute({
+                operation: "StorageCleanup.resolveDefaultBranch",
+                cwd: repositoryCwd,
+                args: ["ls-remote", "--symref", "--", remote, "HEAD"],
+                timeoutMs: 20_000,
+              })
+              .pipe(
+                Effect.map(
+                  (result) => /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(result.stdout)?.[1] ?? null,
+                ),
+                Effect.orElseSucceed(() => null),
+              );
+          }
+          defaultBranches.set(defaultBranchKey, branch);
+        }
+        if (branch === null) return keep("default branch is unavailable");
+        const defaultRef = `refs/remotes/${remote}/${branch}`;
+        const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
+        if (!refreshed.has(defaultRef)) {
+          yield* git.fetchRemoteTrackingBranch({
+            cwd: repositoryCwd,
+            remoteName: remote,
+            remoteBranch: branch,
+          });
+          refreshed.add(defaultRef);
+          refreshedDefaultRefs.set(repositoryCwd, refreshed);
+        }
+        const base = yield* git.resolveCommit({
+          cwd: worktreePath,
+          revision: defaultRef,
+        });
+        const ancestor = yield* git.execute({
+          operation: "StorageCleanup.integratedBranch",
+          cwd: worktreePath,
+          args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
+          allowNonZeroExit: true,
+        });
+        const integrated = ancestor.exitCode === 0;
+        eligible = integrated && settings.worktreeUnchanged;
+        if (eligible) removalReason = "no commits beyond the default branch";
+        if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
+          const pullRequest = yield* gitManager.branchPullRequest(
+            { cwd: worktreePath, branch: thread.branch },
+            { refresh: true },
+          );
+          eligible = storageCleanupPullRequestMerged(pullRequest, {
+            branch: thread.branch,
+            defaultBranch: branch,
+            headSha: head.commitSha,
+            integrated,
+          });
+          if (eligible) removalReason = "pull request was merged";
+        }
+      }
+      if (!eligible)
+        return keep(
+          !deleted && settings.worktreeAfterDays !== null
+            ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} of ${settings.worktreeAfterDays} days`
+            : settings.worktreeSettledAfterDays !== null
+              ? settledFor === null
+                ? "not settled"
+                : `settled for ${settledDays} of ${settings.worktreeSettledAfterDays} days`
+              : settings.worktreeOnMerge
+                ? "not merged"
+                : "has commits beyond the default branch",
+        );
+      // Threads, queued deletion work and provider sessions as they are now, so a
+      // queued turn, resumed session or new thread sharing this path cancels
+      // the removal. Read only this path's threads: a full snapshot per
+      // worktree takes seconds on large databases.
+      const blockedSinceCheck = Effect.fnUntraced(function* () {
+        const latestProjects = yield* projectStore.listShells();
+        if (yield* containsProjectRoot(worktreePath, [project, ...latestProjects]))
+          return "contains a project checkout";
+        const latest = (yield* projections.getThreadWorktreePaths({
+          includeArchived: true,
+        })).filter((entry) => path.resolve(entry.worktreePath) === worktreePath);
+        if (hasTerminal(worktreePath)) return "open terminal";
+        if (deleted) {
+          if (
+            latest.length > 0 ||
+            !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
+              .worktreeOnDelete
+          )
+            return "thread or cleanup settings changed since check";
+          // V2 deletion queues durable cleanup. Do not remove its checkout until
+          // every effect has finished successfully or was explicitly cancelled.
+          const pendingCleanup = yield* sql`
+              SELECT 1 FROM orchestration_v2_effect_outbox
+              WHERE thread_id = ${thread.id} AND status NOT IN ('succeeded', 'cancelled') LIMIT 1
+            `;
+          if (pendingCleanup.length > 0) return "thread deletion is still pending";
+        } else {
+          const latestShells = yield* Effect.forEach(latest, (entry) =>
+            projections.getThreadShell(entry.threadId),
+          );
+          const latestGroup = latestShells.filter((shell) => shell !== null);
+          const latestOwner = worktreeOwner(latestGroup);
+          if (
+            latestGroup.length !== group.length ||
+            latestOwner?.id !== thread.id ||
+            latestOwner?.branch !== thread.branch ||
+            latestGroup.some((shell) => {
+              const previous = group.find((member) => member.id === shell.id);
+              return (
+                previous === undefined ||
+                shell.branch !== thread.branch ||
+                !Equal.equals(shell.settledAt, previous.settledAt) ||
+                (shell.settledAt !== null && !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
+                !storageCleanupThreadIdle(shell, now) ||
+                path.resolve(shell.worktreePath!) !== worktreePath ||
+                storageCleanupActivityAt(shell) !== storageCleanupActivityAt(previous)
+              );
+            })
+          )
+            return "thread activity or shared worktree changed since check";
+        }
+        // Sessions can outlive their run and can be shared across app threads.
+        const sessionRows = yield* sql<{ payload_json: string }>`
+            SELECT payload_json FROM orchestration_v2_projection_provider_sessions
+            WHERE status != 'stopped'
+          `;
+        const sessions = yield* Effect.forEach(sessionRows, (row) =>
+          decodeCleanupSession(row.payload_json),
+        );
+        // A stored session can stay ready after its runtime was released,
+        // for example once every thread detached; only a live one holds it.
+        for (const session of sessions) {
+          const cwd = path.resolve(session.cwd);
+          if (
+            (cwd === worktreePath || inside(worktreePath, cwd)) &&
+            (yield* providerSessions.isLive(session.id))
+          )
+            return "provider session is still open";
+        }
+        return null;
+      });
+      const blocked = yield* blockedSinceCheck();
+      if (blocked !== null) return keep(blocked);
+      const bytes = yield* measureWorktree(worktreePath);
+      const blockedWhileMeasuring = yield* blockedSinceCheck();
+      if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
+      if (yield* branchChanged(worktreePath, thread.branch))
+        return keep("repository or branch changed since check");
+      if (
+        (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
+        head.commitSha
+      )
+        return keep("commit changed since check");
+      const finalChanges = yield* localChangesReason(worktreePath, settings);
+      if (finalChanges !== null) return keep(finalChanges);
+      const current = resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId);
+      if (
+        Object.keys(settings).some(
+          (key) =>
+            current[key as keyof typeof configured] !== configured[key as keyof typeof configured],
+        )
+      )
+        return keep("settings changed since check");
+      // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
+      if (settings.worktreeKeepWhen === "tracked-changes")
+        yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+      const submodules = yield* submoduleRemoval(worktreePath, settings);
+      if (submodules.reason !== null) return keep(submodules.reason);
+      if (submodules.force) {
+        const changes = yield* localChangesReason(worktreePath, settings);
+        if (changes !== null) return keep(changes);
+      }
+      yield* cleanupGit(
+        project.workspaceRoot,
+        [
+          "-c",
+          "status.showUntrackedFiles=normal",
+          "worktree",
+          "remove",
+          // Git requires force for submodules; recursive checks above cannot make removal atomic.
+          ...(submodules.force ? ["--force"] : []),
+          "--",
+          worktreePath,
+        ],
+        "git worktree remove",
+      );
+      entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
+      yield* gitManager.invalidateStatus(project.workspaceRoot);
+      // Preserve branch and path: ProviderTurnStartService recreates the checkout
+      // from that branch when the thread is resumed.
+      yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
+    }).pipe(
+      (effect) => withWorkspaceLease(worktreePath, effect),
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          entries.push({
+            ...entry,
+            outcome: "failed",
+            reason: cleanupFailureReason(error),
+          });
+          yield* Effect.logWarning("storage cleanup failed for worktree", {
+            threadId: thread.id,
+            error,
+          });
+        }),
+      ),
+    );
+    return entries;
+  });
+
+  const removeWorktreeNow = Effect.fn("StorageCleanup.removeWorktreeNow")(function* (input: {
+    readonly projectId: ProjectId;
+    readonly worktreePath: string;
+  }): Effect.fn.Return<WorktreeRemovalResult, ServerSettingsError> {
+    const serverSettings = yield* settingsService.getSettings;
+    const snapshot = yield* readThreads().pipe(Effect.orElseSucceed(() => null));
+    const keep = (reason: string): WorktreeRemovalResult => ({ outcome: "kept", reason });
+    if (snapshot === null) return keep("Could not inspect threads");
+    const project = snapshot.projects.find((project) => project.id === input.projectId);
+    if (project === undefined) return keep("Project is unavailable");
+    const worktreePath = path.resolve(input.worktreePath);
+    const group = snapshot.threads.filter(
+      (thread) =>
+        thread.worktreePath !== null && path.resolve(thread.worktreePath) === worktreePath,
+    );
+    const thread = worktreeOwner(group) ?? group[0];
+    if (thread === undefined) return keep("No thread uses this worktree");
+    if (thread.projectId !== input.projectId) return keep("Project does not own this worktree");
+    const roots = yield* managedRoots(serverSettings, snapshot.projects);
+    const entries = yield* removeWorktree(
+      serverSettings,
+      yield* Clock.currentTimeMillis,
+      snapshot,
+      roots,
+      thread,
+      group,
+      new Map(),
+      new Map(),
+      true,
+    );
+    const entry = entries.find((entry) => entry.outcome === "removed") ?? entries.at(-1);
+    if (entry === undefined) return keep("Worktree no longer exists");
+    return { outcome: entry.outcome === "removed" ? "removed" : "kept", reason: entry.reason };
+  });
+
+  const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
+    serverSettings: ServerSettings,
+    now: number,
+    entries: StorageCleanupReportEntry[],
+  ) {
+    if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
+    const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
+          SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
+          FROM orchestration_v2_projection_threads t
+          JOIN projection_projects p ON p.project_id = t.project_id
+          WHERE t.deleted_at IS NOT NULL
+        `;
+    const deletedThreads = (yield* Effect.forEach(deletedRows, (row) =>
+      decodeCleanupThread(row.payload_json).pipe(
+        Effect.map((thread) => ({ ...thread, workspaceRoot: row.workspaceRoot })),
+      ),
+    )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
+    const snapshot = yield* readThreads();
+    const roots = yield* managedRoots(
+      serverSettings,
+      snapshot.projects,
+      deletedThreads.map((thread) => thread.workspaceRoot),
+    );
+
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const defaultBranches = new Map<string, string | null>();
     const groups = Map.groupBy(
@@ -734,307 +1099,19 @@ const make = Effect.gen(function* () {
       ...deletedThreads.filter((thread) => !groups.has(path.resolve(thread.worktreePath!))),
     ];
     for (const thread of candidates) {
-      const settings = resolveWorktreeCleanup(serverSettings, thread.projectId);
-      if (!worktreeCleanupEnabled(settings)) continue;
-      const worktreePath = path.resolve(thread.worktreePath!);
-      const group = groups.get(worktreePath) ?? [];
-      const activityAt = Math.max(...group.map(storageCleanupActivityAt));
-      const deleted = "workspaceRoot" in thread;
-      const project = deleted
-        ? { workspaceRoot: thread.workspaceRoot }
-        : snapshot.projects.find((entry) => entry.id === thread.projectId);
-      const entry: StorageCleanupReportEntry = {
-        kind: "worktree",
-        outcome: "kept",
-        reason: "",
-        path: worktreePath,
-        projectPath: project?.workspaceRoot ?? null,
-        threadId: thread.id,
-        threadTitle: thread.title,
-        bytes: null,
-        files: null,
-      };
-      const keep = (reason: string) => entries.push({ ...entry, reason: sentence(reason) });
-      yield* Effect.gen(function* () {
-        if (!(yield* fs.exists(worktreePath))) return;
-        if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
-        if (group.length > 1 && worktreeOwner(group) === undefined)
-          return keep(`shared by ${group.length} threads`);
-        if (project === undefined) return keep("project is unavailable");
-        if (
-          thread.branch === null ||
-          (!deleted && !group.every((member) => storageCleanupThreadIdle(member, now)))
-        )
-          return keep("thread is running or has pending work");
-        if (group.some((member) => member.branch !== thread.branch))
-          return keep("a subagent thread's branch differs from this worktree's branch");
-        if (hasTerminal(worktreePath)) return keep("open terminal");
-        // Roots are canonical, so compare canonical paths. A symlinked parent
-        // (a linked drive) is fine; a symlinked worktree directory is not.
-        const realPath = yield* fs.realPath(worktreePath);
-        const realParent = yield* fs.realPath(path.dirname(worktreePath));
-        if (realPath !== path.join(realParent, path.basename(worktreePath)))
-          return keep("worktree is a symbolic link");
-        if (!roots.some((root) => inside(root, realPath)))
-          return keep("outside the managed worktree folder");
-        if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects]))
-          return keep("contains a project checkout");
-        if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
-          return keep("not a linked worktree");
-        if (yield* branchChanged(worktreePath, thread.branch))
-          return keep("repository or branch changed");
-        const changes = yield* localChangesReason(worktreePath, settings);
-        if (changes !== null) return keep(changes);
-        if (
-          !deleted &&
-          group.some(
-            (member) =>
-              member.settledAt !== null &&
-              now - Math.max(DateTime.toEpochMillis(member.updatedAt), activityAt) <
-                SETTLE_SCRIPT_GRACE_MS,
-          )
-        )
-          return keep("settled moments ago");
-        const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-        const old =
-          !deleted &&
-          settings.worktreeAfterDays !== null &&
-          activityAt < now - settings.worktreeAfterDays * DAY_MS;
-        const settledFor =
-          deleted || thread.settledAt === null
-            ? null
-            : now - Math.max(DateTime.toEpochMillis(thread.settledAt), activityAt);
-        const settledDays = settledFor === null ? null : Math.floor(settledFor / DAY_MS);
-        const settled =
-          settledFor !== null &&
-          settings.worktreeSettledAfterDays !== null &&
-          settledFor >= settings.worktreeSettledAfterDays * DAY_MS;
-        let eligible = deleted || old || settled;
-        let removalReason = deleted
-          ? "thread was deleted"
-          : old
-            ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} days`
-            : `settled for ${settledDays} days`;
-        if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
-          const repositoryCwd = path.resolve(project.workspaceRoot);
-          const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
-          const defaultBranchKey = `${repositoryCwd}\0${remote}`;
-          let branch = defaultBranches.get(defaultBranchKey);
-          if (branch === undefined) {
-            branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
-            // Without a local HEAD ref, only the remote can identify its default;
-            // a conventional name may be a feature branch.
-            if (branch === null) {
-              branch = yield* git
-                .execute({
-                  operation: "StorageCleanup.resolveDefaultBranch",
-                  cwd: repositoryCwd,
-                  args: ["ls-remote", "--symref", "--", remote, "HEAD"],
-                  timeoutMs: 20_000,
-                })
-                .pipe(
-                  Effect.map(
-                    (result) =>
-                      /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(result.stdout)?.[1] ?? null,
-                  ),
-                  Effect.orElseSucceed(() => null),
-                );
-            }
-            defaultBranches.set(defaultBranchKey, branch);
-          }
-          if (branch === null) return keep("default branch is unavailable");
-          const defaultRef = `refs/remotes/${remote}/${branch}`;
-          const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
-          if (!refreshed.has(defaultRef)) {
-            yield* git.fetchRemoteTrackingBranch({
-              cwd: repositoryCwd,
-              remoteName: remote,
-              remoteBranch: branch,
-            });
-            refreshed.add(defaultRef);
-            refreshedDefaultRefs.set(repositoryCwd, refreshed);
-          }
-          const base = yield* git.resolveCommit({
-            cwd: worktreePath,
-            revision: defaultRef,
-          });
-          const ancestor = yield* git.execute({
-            operation: "StorageCleanup.integratedBranch",
-            cwd: worktreePath,
-            args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
-            allowNonZeroExit: true,
-          });
-          const integrated = ancestor.exitCode === 0;
-          eligible = integrated && settings.worktreeUnchanged;
-          if (eligible) removalReason = "no commits beyond the default branch";
-          if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
-            const pullRequest = yield* gitManager.branchPullRequest(
-              { cwd: worktreePath, branch: thread.branch },
-              { refresh: true },
-            );
-            eligible = storageCleanupPullRequestMerged(pullRequest, {
-              branch: thread.branch,
-              defaultBranch: branch,
-              headSha: head.commitSha,
-              integrated,
-            });
-            if (eligible) removalReason = "pull request was merged";
-          }
-        }
-        if (!eligible)
-          return keep(
-            !deleted && settings.worktreeAfterDays !== null
-              ? `inactive for ${Math.floor((now - activityAt) / DAY_MS)} of ${settings.worktreeAfterDays} days`
-              : settings.worktreeSettledAfterDays !== null
-                ? settledFor === null
-                  ? "not settled"
-                  : `settled for ${settledDays} of ${settings.worktreeSettledAfterDays} days`
-                : settings.worktreeOnMerge
-                  ? "not merged"
-                  : "has commits beyond the default branch",
-          );
-        // Threads, queued deletion work and provider sessions as they are now, so a
-        // queued turn, resumed session or new thread sharing this path cancels
-        // the removal. Read only this path's threads: a full snapshot per
-        // worktree takes seconds on large databases.
-        const blockedSinceCheck = Effect.fnUntraced(function* () {
-          const latestProjects = yield* projectStore.listShells();
-          if (yield* containsProjectRoot(worktreePath, [project, ...latestProjects]))
-            return "contains a project checkout";
-          const latest = (yield* projections.getThreadWorktreePaths({
-            includeArchived: true,
-          })).filter((entry) => path.resolve(entry.worktreePath) === worktreePath);
-          if (hasTerminal(worktreePath)) return "open terminal";
-          if (deleted) {
-            if (
-              latest.length > 0 ||
-              !resolveWorktreeCleanup(yield* settingsService.getSettings, thread.projectId)
-                .worktreeOnDelete
-            )
-              return "thread or cleanup settings changed since check";
-            // V2 deletion queues durable cleanup. Do not remove its checkout until
-            // every effect has finished successfully or was explicitly cancelled.
-            const pendingCleanup = yield* sql`
-              SELECT 1 FROM orchestration_v2_effect_outbox
-              WHERE thread_id = ${thread.id} AND status NOT IN ('succeeded', 'cancelled') LIMIT 1
-            `;
-            if (pendingCleanup.length > 0) return "thread deletion is still pending";
-          } else {
-            const latestShells = yield* Effect.forEach(latest, (entry) =>
-              projections.getThreadShell(entry.threadId),
-            );
-            const latestGroup = latestShells.filter((shell) => shell !== null);
-            const latestOwner = worktreeOwner(latestGroup);
-            if (
-              latestGroup.length !== group.length ||
-              latestOwner?.id !== thread.id ||
-              latestOwner?.branch !== thread.branch ||
-              latestGroup.some((shell) => {
-                const previous = group.find((member) => member.id === shell.id);
-                return (
-                  previous === undefined ||
-                  shell.branch !== thread.branch ||
-                  !Equal.equals(shell.settledAt, previous.settledAt) ||
-                  (shell.settledAt !== null &&
-                    !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
-                  !storageCleanupThreadIdle(shell, now) ||
-                  path.resolve(shell.worktreePath!) !== worktreePath ||
-                  storageCleanupActivityAt(shell) !== storageCleanupActivityAt(previous)
-                );
-              })
-            )
-              return "thread activity or shared worktree changed since check";
-          }
-          // Sessions can outlive their run and can be shared across app threads.
-          const sessionRows = yield* sql<{ payload_json: string }>`
-            SELECT payload_json FROM orchestration_v2_projection_provider_sessions
-            WHERE status != 'stopped'
-          `;
-          const sessions = yield* Effect.forEach(sessionRows, (row) =>
-            decodeCleanupSession(row.payload_json),
-          );
-          // A stored session can stay ready after its runtime was released,
-          // for example once every thread detached; only a live one holds it.
-          for (const session of sessions) {
-            const cwd = path.resolve(session.cwd);
-            if (
-              (cwd === worktreePath || inside(worktreePath, cwd)) &&
-              (yield* providerSessions.isLive(session.id))
-            )
-              return "provider session is still open";
-          }
-          return null;
-        });
-        const blocked = yield* blockedSinceCheck();
-        if (blocked !== null) return keep(blocked);
-        const bytes = yield* measureWorktree(worktreePath);
-        const blockedWhileMeasuring = yield* blockedSinceCheck();
-        if (blockedWhileMeasuring !== null) return keep(blockedWhileMeasuring);
-        if (yield* branchChanged(worktreePath, thread.branch))
-          return keep("repository or branch changed since check");
-        if (
-          (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
-          head.commitSha
-        )
-          return keep("commit changed since check");
-        const finalChanges = yield* localChangesReason(worktreePath, settings);
-        if (finalChanges !== null) return keep(finalChanges);
-        const current = resolveWorktreeCleanup(
-          yield* settingsService.getSettings,
-          thread.projectId,
-        );
-        if (
-          Object.keys(settings).some(
-            (key) =>
-              current[key as keyof typeof settings] !== settings[key as keyof typeof settings],
-          )
-        )
-          return keep("settings changed since check");
-        // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
-        if (settings.worktreeKeepWhen === "tracked-changes")
-          yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
-        const submodules = yield* submoduleRemoval(worktreePath, settings);
-        if (submodules.reason !== null) return keep(submodules.reason);
-        if (submodules.force) {
-          const changes = yield* localChangesReason(worktreePath, settings);
-          if (changes !== null) return keep(changes);
-        }
-        yield* cleanupGit(
-          project.workspaceRoot,
-          [
-            "-c",
-            "status.showUntrackedFiles=normal",
-            "worktree",
-            "remove",
-            // Git requires force for submodules; recursive checks above cannot make removal atomic.
-            ...(submodules.force ? ["--force"] : []),
-            "--",
-            worktreePath,
-          ],
-          "git worktree remove",
-        );
-        entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
-        yield* gitManager.invalidateStatus(project.workspaceRoot);
-        // Preserve branch and path: ProviderTurnStartService recreates the checkout
-        // from that branch when the thread is resumed.
-        yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
-      }).pipe(
-        (effect) => withWorkspaceLease(worktreePath, effect),
-        Effect.catch((error) =>
-          Effect.gen(function* () {
-            entries.push({
-              ...entry,
-              outcome: "failed",
-              reason: cleanupFailureReason(error),
-            });
-            yield* Effect.logWarning("storage cleanup failed for worktree", {
-              threadId: thread.id,
-              error,
-            });
-          }),
-        ),
+      const results = yield* removeWorktree(
+        serverSettings,
+        now,
+        snapshot,
+        roots,
+        thread,
+        groups.get(path.resolve(thread.worktreePath!)) ?? [],
+        refreshedDefaultRefs,
+        defaultBranches,
       );
+      entries.push(...results);
     }
+
     yield* reportOrphanWorktrees(
       roots,
       yield* projectStore.list({ includeDeleted: true }),
@@ -1260,6 +1337,7 @@ const make = Effect.gen(function* () {
   });
   yield* start();
   return StorageCleanup.of({
+    removeWorktreeNow,
     runNow,
     latestReport: SubscriptionRef.get(reportRef),
     reports: SubscriptionRef.changes(reportRef),

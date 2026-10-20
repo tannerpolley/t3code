@@ -123,6 +123,7 @@ export const IssueSummary = Schema.Struct({
         title: Schema.String,
         branch: Schema.NullOr(Schema.String),
         worktreePath: Schema.NullOr(Schema.String),
+        worktreeExists: Schema.optional(Schema.Boolean),
         pullRequests: Schema.Array(Schema.String),
       }),
     ),

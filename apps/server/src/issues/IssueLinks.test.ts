@@ -1,3 +1,5 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
 import { assert, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -51,6 +53,7 @@ function harness(initial: OrchestrationV2ThreadShell[]) {
     Layer.provide(projections),
     Layer.provide(seed),
     Layer.provideMerge(SqlitePersistence.layerMemory),
+    Layer.provideMerge(NodeServices.layer),
   );
   return {
     layer,
@@ -671,4 +674,38 @@ it.effect(
       assert.equal(closed.issues[0]?.liveWork?.[0]?.status, "idle");
     }).pipe(Effect.provide(h.layer));
   },
+);
+
+it.effect("reports whether a closed issue's preserved worktree path still exists", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const worktreePath = `${directory}/worker`;
+    yield* fs.makeDirectory(worktreePath);
+    const base = liveThreadShell(threadId, { activeRunId: null });
+    const h = harness([
+      {
+        ...base,
+        worktreePath,
+        linkedIssue: {
+          ...ref,
+          repositoryId: "repo",
+          id: "13",
+          nodeId: "I_13",
+          title: "Roadmap",
+          url: "https://github.com/owner/repo/issues/13",
+        },
+      },
+    ]);
+    yield* Effect.gen(function* () {
+      const links = yield* IssueLinks.IssueLinks;
+      const source = list();
+      Object.assign(source.issues[0]!, { state: "closed" });
+      assert.isTrue((yield* links.enrich(source)).issues[0]?.liveWork?.[0]?.worktreeExists);
+      yield* fs.remove(worktreePath, { recursive: true });
+      const work = (yield* links.enrich(source)).issues[0]?.liveWork?.[0];
+      assert.equal(work?.worktreePath, worktreePath);
+      assert.isFalse(work?.worktreeExists);
+    }).pipe(Effect.provide(h.layer));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

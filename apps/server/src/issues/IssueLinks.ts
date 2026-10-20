@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -94,6 +95,7 @@ export class IssueLinks extends Context.Service<
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const fs = yield* FileSystem.FileSystem;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const refreshes = yield* SubscriptionRef.make(0);
   const link: IssueLinks["Service"]["link"] = Effect.fn("IssueLinks.link")(function* (
@@ -216,6 +218,9 @@ const make = Effect.gen(function* () {
         title: thread.title,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        worktreeExists:
+          thread.worktreePath !== null &&
+          (yield* fs.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => false))),
         pullRequests: ownedPr === undefined ? [] : [ownedPr.url],
         status: state,
       };

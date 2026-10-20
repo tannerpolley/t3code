@@ -35,10 +35,11 @@ type IssueWorkIndex = ReturnType<typeof indexIssueWork>;
 type WorkSummary = Pick<IssueSummary, "number"> & {
   readonly state?: IssueSummary["state"];
   readonly liveWork?:
-    | readonly Pick<
+    | readonly (Pick<
         NonNullable<IssueSummary["liveWork"]>[number],
-        "threadId" | "inherited" | "status"
-      >[]
+        "threadId" | "inherited" | "status" | "worktreeExists"
+      > &
+        Partial<Pick<NonNullable<IssueSummary["liveWork"]>[number], "worktreePath">>)[]
     | undefined;
   readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
   readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
@@ -98,6 +99,9 @@ export function createLiveIssueWorkOverlay() {
         title: thread.title,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        worktreeExists: issue.liveWork?.find(
+          (work) => work.threadId === thread.id && work.worktreePath === thread.worktreePath,
+        )?.worktreeExists,
         pullRequests: thread.pullRequests
           .filter((pr) => pr.source !== "stack-dismissed")
           .map((pr) => pr.url),

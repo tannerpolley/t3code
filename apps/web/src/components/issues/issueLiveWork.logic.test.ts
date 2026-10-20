@@ -450,3 +450,38 @@ it("retains archived worker and PR details on closed issues while preserving the
   expect(result.issues[0]?.pullRequests?.[0]?.number).toBe(pr.number);
   expect(issueProgress(result.issues[0]!)).toBe("completed");
 });
+
+it("preserves server checkout existence for matching paths and drops it when a worker moves", () => {
+  const thread = { ...root, worktreePath: "/repo/.worktrees/worker" };
+  const source = {
+    ...list,
+    issues: list.issues.map((issue) => ({
+      ...issue,
+      state: "closed" as const,
+      liveWork: [
+        {
+          threadId: thread.id,
+          title: thread.title,
+          branch: thread.branch,
+          pullRequests: [],
+          status: "idle" as const,
+          worktreePath: thread.worktreePath,
+          worktreeExists: true,
+        },
+      ],
+    })),
+  };
+  expect(withLiveIssueWork(source, [thread]).issues[0]?.liveWork?.[0]?.worktreeExists).toBe(true);
+  expect(
+    withLiveIssueWork(source, [{ ...thread, worktreePath: "/repo/.worktrees/moved" }]).issues[0]
+      ?.liveWork?.[0]?.worktreeExists,
+  ).toBeUndefined();
+  const removed = {
+    ...source,
+    issues: source.issues.map((issue) => ({
+      ...issue,
+      liveWork: issue.liveWork.map((work) => ({ ...work, worktreeExists: false })),
+    })),
+  };
+  expect(withLiveIssueWork(removed, [thread]).issues[0]?.liveWork?.[0]?.worktreeExists).toBe(false);
+});
