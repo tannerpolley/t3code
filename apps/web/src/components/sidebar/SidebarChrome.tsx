@@ -190,11 +190,15 @@ function SidebarDontAskModeItem() {
             <SidebarMenuButton
               aria-label={label}
               aria-pressed={on}
-              isActive={on}
               onClick={() => updateSettings({ dontAskMode: !on })}
               size="icon"
             >
-              {on ? <MessageCircleOffIcon /> : <MessageCircleQuestionMarkIcon />}
+              {/* On: the orange the sidebar uses for questions and approvals it would answer. */}
+              {on ? (
+                <MessageCircleOffIcon className="text-warning-foreground" />
+              ) : (
+                <MessageCircleQuestionMarkIcon className="text-sidebar-muted-foreground" />
+              )}
             </SidebarMenuButton>
           }
         />
@@ -283,8 +287,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
-          {/* Don't ask and Issues sit at the far right, so they never shift the buttons before them. */}
-          <SidebarDontAskModeItem />
           {issuesSupported ? (
             <SidebarUtilityItem
               icon={<CircleDotIcon />}
@@ -292,6 +294,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handleIssuesClick}
             />
           ) : null}
+          {/* Far right, so toggling it never shifts the buttons before it. */}
+          <SidebarDontAskModeItem />
         </>
       )}
       <SidebarUpdatePill />
