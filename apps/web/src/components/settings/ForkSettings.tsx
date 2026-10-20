@@ -1,6 +1,9 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEnvironmentProviders } from "../../state/environments";
 import { ForkSidebarTextSizeSettings } from "./ForkSidebarTextSizeSettings";
+import { ForkSidebarDisplaySettings } from "./ForkSidebarDisplaySettings";
+import type { ForkSettingsPage } from "./ForkSettingsPages";
+import { ModelRolesSection } from "./ModelRolesSettings";
 import * as Schema from "effect/Schema";
 import { DEFAULT_UNIFIED_SETTINGS, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { isElectron } from "../../env";
@@ -14,7 +17,7 @@ import {
   type ServerProviderPlugin,
 } from "@t3tools/contracts";
 import { ChevronRightIcon, XIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { lazy, Suspense, type ReactNode, useState } from "react";
 
 import { useClientSettings, updateClientSettings as updateSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -40,6 +43,8 @@ import {
   useScopedSettings,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+
+const DebugSettings = import.meta.env.DEV ? lazy(() => import("./ForkSidebarDebugSettings")) : null;
 
 type CustomizationSwitchKey = {
   [Key in keyof ClientSettings]: ClientSettings[Key] extends boolean ? Key : never;
@@ -246,6 +251,7 @@ function CustomizationsGroup({
 }
 
 type ServerSwitchKey =
+  | "dontAskMode"
   | "autoOrganizeByFolder"
   | "keepThreadTitlesCurrent"
   | "agentBrowserTabLimits"
@@ -486,7 +492,6 @@ function ForkGeneralSettings() {
           }
         />
 
-        <ForkSidebarTextSizeSettings />
         <SidebarProjectSettings />
         <ServerSwitchRow
           settingKey="autoOrganizeByFolder"
@@ -543,6 +548,11 @@ function ForkGeneralBehaviorRows() {
   const mixedIdleTimeout = useScopedSettingsMixed(["idleAgentSessionMinutes"]);
   return (
     <SettingsSection title="Agent sessions & background behavior">
+      <ServerSwitchRow
+        settingKey="dontAskMode"
+        searchId="dont-ask-mode"
+        description="While you're away, answer agents' questions with their recommended option and grant their approvals. Turn off when you return to answer them yourself."
+      />
       {isElectron && !isMacPlatform(navigator.platform) ? (
         <SettingsRow
           {...searchableSetting("keep-running-in-background")}
@@ -688,17 +698,28 @@ function ForkAppearanceSettings() {
 }
 
 /** Each upstream settings page has one slot for this fork's rows. */
-export function ForkSettingsSlot({
-  page,
-}: {
-  readonly page: "general" | "appearance" | "integrations" | "source-control" | "storage";
-}) {
+export function ForkSettingsSlot({ page }: { readonly page: ForkSettingsPage }) {
   switch (page) {
-    case "general":
+    case "/settings/general":
       return <ForkGeneralSettings />;
-    case "appearance":
-      return <ForkAppearanceSettings />;
-    case "integrations":
+    case "/settings/appearance":
+      return (
+        <>
+          <ForkAppearanceSettings />
+          <ForkSidebarDisplaySettings />
+          <SettingsSection title="Sidebar text sizes">
+            <ForkSidebarTextSizeSettings />
+          </SettingsSection>
+          {DebugSettings ? (
+            <Suspense>
+              <DebugSettings />
+            </Suspense>
+          ) : null}
+        </>
+      );
+    case "/settings/providers":
+      return <ModelRolesSection />;
+    case "/settings/integrations":
       return (
         <>
           <CustomizationsGroup title="Browser & preview" section="browser">
@@ -713,7 +734,7 @@ export function ForkSettingsSlot({
           <ProviderPluginsSection />
         </>
       );
-    case "source-control":
+    case "/settings/source-control":
       return (
         <CustomizationsGroup title="Version control & issues" section="versionControl">
           <ServerSwitchRow
@@ -723,7 +744,7 @@ export function ForkSettingsSlot({
           />
         </CustomizationsGroup>
       );
-    case "storage":
+    case "/settings/storage":
       return <WorktreesDirectoryRow />;
   }
 }

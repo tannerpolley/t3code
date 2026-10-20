@@ -1643,7 +1643,7 @@ export function IntegrationsSettingsPanel() {
         <PullRequestLinksOpenInAppSetting />
       </SettingsSection>
       <DeviceIntegrationSettings />
-      <ForkSettingsSlot page="integrations" />
+      <ForkSettingsSlot page="/settings/integrations" />
     </SettingsPageContainer>
   );
 }

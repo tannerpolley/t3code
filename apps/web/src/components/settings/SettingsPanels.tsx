@@ -1470,7 +1470,7 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <TypographySection />
-      <ForkSettingsSlot page="appearance" />
+      <ForkSettingsSlot page="/settings/appearance" />
     </SettingsPageContainer>
   );
 }
@@ -3326,7 +3326,7 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <LegacyFeaturesSection />
-      <ForkSettingsSlot page="general" />
+      <ForkSettingsSlot page="/settings/general" />
     </SettingsPageContainer>
   );
 }

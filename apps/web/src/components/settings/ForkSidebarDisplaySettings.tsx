@@ -17,7 +17,6 @@ const DISPLAY_ROWS = [
 
 export function ForkSidebarDisplaySettings() {
   const settings = useClientSettings();
-  if (!settings.codexStyleSidebar) return null;
   return (
     <SettingsSection title="Sidebar & projects">
       <ForkSettingsRow

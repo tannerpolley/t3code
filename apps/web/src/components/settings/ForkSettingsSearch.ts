@@ -2,6 +2,13 @@ import type { SettingsSearchItem } from "./settingsSearch";
 
 export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
+    id: "dont-ask-mode",
+    title: "Don't ask mode",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["fork automatic questions recommended answers approvals away unattended"],
+  },
+  {
     id: "storage-worktrees-location",
     title: "Worktree location",
     to: "/settings/storage",
@@ -70,7 +77,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "sidebar-section-text-size",
     title: "Section names text size",
-    to: "/settings/general",
+    to: "/settings/appearance",
     searchTerms: [
       "customization fork projects view sidebar font size larger smaller section names headers",
     ],
@@ -78,7 +85,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "sidebar-project-text-size",
     title: "Project names text size",
-    to: "/settings/general",
+    to: "/settings/appearance",
     searchTerms: [
       "customization fork projects view sidebar font size larger smaller project names repository",
     ],
@@ -86,7 +93,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "sidebar-thread-text-size",
     title: "Thread rows text size",
-    to: "/settings/general",
+    to: "/settings/appearance",
     searchTerms: [
       "customization fork projects view sidebar font size larger smaller thread rows titles",
     ],
@@ -94,7 +101,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "sidebar-agent-text-size",
     title: "Agent rows text size",
-    to: "/settings/general",
+    to: "/settings/appearance",
     searchTerms: [
       "customization fork projects view sidebar font size larger smaller agent work rows workers tasks subagents",
     ],
@@ -102,7 +109,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "sidebar-process-text-size",
     title: "Process rows text size",
-    to: "/settings/general",
+    to: "/settings/appearance",
     searchTerms: [
       "customization fork projects view sidebar font size larger smaller process rows commands shell",
     ],
@@ -116,13 +123,13 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "sidebar-show-location",
     title: "Location icon",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: ["codex sidebar projects thread show hide location checkout icon"],
   },
   {
     id: "sidebar-role-display",
     title: "Role display",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: [
       "codex sidebar projects thread role orchestrator implementor names icons compact",
     ],
@@ -130,43 +137,43 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "sidebar-show-provider",
     title: "Provider icon",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: ["codex sidebar projects thread show hide provider codex claude icon"],
   },
   {
     id: "sidebar-show-model",
     title: "Model",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: ["codex sidebar projects thread show hide model name version"],
   },
   {
     id: "sidebar-show-effort",
     title: "Effort",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: ["codex sidebar projects thread show hide reasoning effort"],
   },
   {
     id: "sidebar-show-issue-badge",
     title: "Issue badge",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: ["codex sidebar projects thread show hide issue badge github number"],
   },
   {
     id: "sidebar-show-pull-request-badge",
     title: "Pull request badge",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: ["codex sidebar projects thread show hide pull request badge github state"],
   },
   {
     id: "sidebar-location-icon-style",
     title: "Location icon style",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: ["codex sidebar projects thread location icon worktree branch"],
   },
   {
     id: "sidebar-family-style",
     title: "Family style",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: [
       "codex sidebar projects thread family colors tint lines solid dashed orchestrator workers",
     ],
@@ -174,7 +181,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "sidebar-line-color",
     title: "Line color",
-    to: "/settings/customizations",
+    to: "/settings/appearance",
     searchTerms: [
       "sidebar family checkout lines separator divider dashed solid color darker lighter",
     ],
@@ -346,7 +353,7 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
   {
     id: "model-roles",
     title: "Model roles",
-    to: "/settings/customizations",
+    to: "/settings/providers",
     scope: "environment-defaults",
     searchTerms: [
       "model roles orchestrator delegate subagent builder checker reviewer default model effort",

@@ -97,7 +97,7 @@ from a root folder, and **Keep projects organized by folder** places new, unsort
 projects there; projects you move by hand stay where you put them. The same page
 controls the Projects view, project row style, and revealing the thread you open.
 Folder colors, default icons, and the sidebar toggle position live in **Settings → Appearance**.
-Adjust the title text size for each Projects view row type under **Settings → General → Sidebar & projects**; choose **Default** to restore that row’s text size.
+Adjust the title text size for each Projects view row type under **Settings → Appearance → Sidebar text sizes**; choose **Default** to restore that row’s text size.
 
 Drag a thread from Projects onto the composer to add it as context for your next
 message; subagent rows in Projects and rows in **Lineage** drag the same way.
@@ -368,7 +368,8 @@ A non-server shell running for
 over two hours is marked as possibly stuck.
 
 To tell agents which model and effort suit each kind of delegated work, edit
-**Model roles** in **Settings → Customizations** on web and desktop. Agents use these
+**Model roles** in **Settings → Providers** on web and desktop. **Settings → Customizations**
+also gathers every fork setting, grouped by its normal tab. Agents use these
 roles at their own discretion; your explicit instructions in a thread win. The
 standard roles are Orchestrator, Implementor, Reviewer, Investigator and Checker.
 Implementor has separate Fast and Thorough profiles, each with its own model and
@@ -385,7 +386,7 @@ is an Orchestrator; reviewer types are Reviewers; explorer or researcher types a
 Investigators; tester or checker types are Checkers; and every other type, including
 the default agents, is an Implementor. Native subagents with the Implementor role display as
 Worker with a hard hat icon. Role icons appear in the chat header, and in
-thread rows when you turn them on in **Settings → Customizations → Sidebar & projects**.
+thread rows when you turn them on in **Settings → Appearance → Sidebar & projects**.
 
 Native provider subagents run on their own; their role icon's tooltip identifies them as
 the provider's own subagent. They cannot take messages; use **Open parent** to direct them. App-owned child
@@ -419,7 +420,7 @@ each thread with child agents, and everything under it, from the rows around it;
 marks each change of checkout between consecutive rows within a family. Workers stay under their
 parent across worktrees, ordered by role: Implementor, Reviewer, Investigator, Checker, then other
 roles, with the newest activity first within each role.
-In **Settings → Customizations → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
+In **Settings → Appearance → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
 Choose **Role display → Icons** to replace role names with compact icons; hover an icon for its role and purpose.
 Choose **Family style → Colors** to tint each family instead, with deeper rows a slightly stronger shade. **Line color** sets the color of those lines; **Reset** returns to the theme's.
 Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.

@@ -1,3 +1,4 @@
+import { ForkSettingsSlot } from "./ForkSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
@@ -298,6 +299,7 @@ export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}
       />
+      {target.scoped ? <ForkSettingsSlot page="/settings/providers" /> : null}
     </SettingsPageContainer>
   );
 }

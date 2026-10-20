@@ -449,7 +449,7 @@ export function StorageSettingsPanel() {
             />
           ))}
       <SettingsSection id="storage-worktrees" title="Worktrees">
-        {!isProjectScope && <ForkSettingsSlot page="storage" />}
+        {!isProjectScope && <ForkSettingsSlot page="/settings/storage" />}
         {isProjectScope && (
           <SettingsRow
             title="Automatic worktree cleanup"

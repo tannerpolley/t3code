@@ -642,7 +642,7 @@ export function SourceControlSettingsPanel() {
       )}
 
       <SourceControlWritingSettingsSection />
-      <ForkSettingsSlot page="source-control" />
+      <ForkSettingsSlot page="/settings/source-control" />
     </SettingsPageContainer>
   );
 }
