@@ -201,6 +201,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 environmentId={props.environmentId}
                 projectId={props.projectId}
                 threadId={props.threadId}
+                workspaceRoot={props.gitCwd}
               />
               <ThreadDetailsIssueRows
                 environmentId={props.environmentId}

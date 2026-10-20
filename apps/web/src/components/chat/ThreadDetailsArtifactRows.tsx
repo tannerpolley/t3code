@@ -24,10 +24,13 @@ export function ThreadDetailsArtifactRows({
   environmentId,
   projectId,
   threadId,
+  workspaceRoot,
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   threadId: ThreadId;
+  /** The thread's checkout; HTML inside it opens as a workspace page so its CSS and images load. */
+  workspaceRoot: string | null;
 }) {
   const target = { environmentId, input: { projectId } };
   const result = useAtomValue(projectArtifacts.live(target));
@@ -64,7 +67,7 @@ export function ThreadDetailsArtifactRows({
       const opened = await openFileInPreview({
         threadRef,
         filePath: fresh.resolvedPath,
-        workspaceRoot: undefined,
+        workspaceRoot: workspaceRoot ?? undefined,
         httpBaseUrl,
         createAssetUrl,
         openPreview,
