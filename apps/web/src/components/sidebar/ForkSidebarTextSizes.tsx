@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useClientSettings } from "../../hooks/useSettings";
 
-/** Keep size changes on the container so memoized rows need no settings subscription. */
+/** Keep size and line color changes on the container so memoized rows need no settings subscription. */
 export function ForkSidebarTextSizes(props: {
   readonly children: ReactNode;
   readonly className: string;
@@ -23,6 +23,7 @@ export function ForkSidebarTextSizes(props: {
           "--fork-sidebar-thread-size": rem(settings.sidebarThreadTextSize),
           "--fork-sidebar-agent-size": rem(settings.sidebarAgentTextSize),
           "--fork-sidebar-process-size": rem(settings.sidebarProcessTextSize),
+          "--fork-sidebar-line-color": settings.sidebarLineColor ?? undefined,
         } as CSSProperties
       }
     >

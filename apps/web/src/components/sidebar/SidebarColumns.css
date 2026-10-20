@@ -96,7 +96,8 @@
   inset-inline: 0.5rem;
   top: 0;
   pointer-events: none;
-  border-top: 1px solid color-mix(in oklab, var(--sidebar-border) 80%, transparent);
+  border-top: 1px solid
+    var(--fork-sidebar-line-color, color-mix(in oklab, var(--sidebar-foreground) 30%, transparent));
 }
 [data-family-separator="dashed"]::before {
   border-top-style: dashed;

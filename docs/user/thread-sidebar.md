@@ -421,7 +421,7 @@ parent across worktrees, ordered by role: Implementor, Reviewer, Investigator, C
 roles, with the newest activity first within each role.
 In **Settings → Customizations → Sidebar & projects**, choose which icons, model, effort and issue or pull request badges appear, or use a branch icon for worktrees; hidden columns give their space to the title.
 Choose **Role display → Icons** to replace role names with compact icons; hover an icon for its role and purpose.
-Choose **Family style → Colors** to tint each family instead, with deeper rows a slightly stronger shade.
+Choose **Family style → Colors** to tint each family instead, with deeper rows a slightly stronger shade. **Line color** sets the color of those lines; **Reset** returns to the theme's.
 Turn off **Codex-style sidebar** in **Settings → General** to use the classic rows and flat child list.
 The Activity view keeps its cards.
 

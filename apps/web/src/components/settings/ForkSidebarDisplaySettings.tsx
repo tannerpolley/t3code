@@ -1,4 +1,5 @@
 import { useClientSettings, updateClientSettings as updateSettings } from "../../hooks/useSettings";
+import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ForkSettingsRow } from "./ForkSettingsRow";
@@ -103,6 +104,30 @@ export function ForkSidebarDisplaySettings() {
               <SelectItem value="lines">Lines</SelectItem>
             </SelectPopup>
           </Select>
+        }
+      />
+      <ForkSettingsRow
+        {...searchableSetting("sidebar-line-color")}
+        description="Color of the solid family lines and dashed checkout lines; reset to follow the theme."
+        control={
+          <span className="flex items-center gap-2">
+            {settings.sidebarLineColor === null ? null : (
+              <Button
+                size="compact"
+                variant="ghost"
+                onClick={() => updateSettings({ sidebarLineColor: null })}
+              >
+                Reset
+              </Button>
+            )}
+            <input
+              type="color"
+              aria-label="Line color"
+              value={settings.sidebarLineColor ?? "#8a8a8a"}
+              onChange={(event) => updateSettings({ sidebarLineColor: event.target.value })}
+              className="h-7 w-9 cursor-pointer rounded-md border border-input bg-transparent p-0.5"
+            />
+          </span>
         }
       />
     </SettingsSection>

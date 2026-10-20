@@ -244,6 +244,11 @@ export type UsageLimitRecoveryMode = typeof UsageLimitRecoveryMode.Type;
 export const MIN_SIDEBAR_TEXT_SIZE = 9;
 export const MAX_SIDEBAR_TEXT_SIZE = 20;
 // Null keeps the row's style-specific default; numbers are pixels at a 16px interface font.
+/** A custom color for the sidebar's family and checkout lines; null keeps the theme's. */
+export const SidebarLineColor = Schema.NullOr(
+  Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$/i)),
+);
+
 export const SidebarTextSize = Schema.NullOr(
   Schema.Int.check(
     Schema.isBetween({ minimum: MIN_SIDEBAR_TEXT_SIZE, maximum: MAX_SIDEBAR_TEXT_SIZE }),
@@ -286,6 +291,7 @@ export const ForkClientSettingsFields = {
   sidebarFamilyStyle: Schema.Literals(["colors", "lines"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("lines" as const)),
   ),
+  sidebarLineColor: SidebarLineColor.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   sidebarSectionTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   sidebarProjectTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   sidebarThreadTextSize: SidebarTextSize.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -385,6 +391,7 @@ export const ForkClientSettingsPatchFields = {
   sidebarShowPullRequestBadge: Schema.optionalKey(Schema.Boolean),
   sidebarLocationIconStyle: Schema.optionalKey(Schema.Literals(["worktree", "branch"])),
   sidebarFamilyStyle: Schema.optionalKey(Schema.Literals(["colors", "lines"])),
+  sidebarLineColor: Schema.optionalKey(SidebarLineColor),
   sidebarSectionTextSize: Schema.optionalKey(SidebarTextSize),
   sidebarProjectTextSize: Schema.optionalKey(SidebarTextSize),
   sidebarThreadTextSize: Schema.optionalKey(SidebarTextSize),

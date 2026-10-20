@@ -172,6 +172,14 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "sidebar-line-color",
+    title: "Line color",
+    to: "/settings/customizations",
+    searchTerms: [
+      "sidebar family checkout lines separator divider dashed solid color darker lighter",
+    ],
+  },
+  {
     id: "section-folder-colors",
     title: "Section folder colors",
     to: "/settings/appearance",
