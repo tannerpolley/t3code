@@ -37,41 +37,44 @@ const tableNames = Effect.gen(function* () {
 });
 
 describe("fork migration ledger", () => {
-  it.effect("indexes usage-limit errors without changing lookup results on upgrade", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toForkMigrationInclusive: 17 });
-      for (const [id, threadId, type, payload] of [
-        ["limit", "child", "error", '{"failure":{"class":"usage_limit"}}'],
-        ["other-thread", "other", "error", '{"failure":{"class":"usage_limit"}}'],
-        ["other-error", "child", "error", '{"failure":{"class":"unknown"}}'],
-        ["non-error", "child", "text", '{"failure":{"class":"usage_limit"}}'],
-        ["no-class", "child", "error", "{}"],
-      ]) {
-        yield* sql`
+  it.effect(
+    "indexes usage-limit errors, despite malformed history, without changing lookup results",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toForkMigrationInclusive: 17 });
+        for (const [id, threadId, type, payload] of [
+          ["limit", "child", "error", '{"failure":{"class":"usage_limit"}}'],
+          ["other-thread", "other", "error", '{"failure":{"class":"usage_limit"}}'],
+          ["other-error", "child", "error", '{"failure":{"class":"unknown"}}'],
+          ["non-error", "child", "text", '{"failure":{"class":"usage_limit"}}'],
+          ["no-class", "child", "error", "{}"],
+          ["malformed", "child", "error", "{broken"],
+        ]) {
+          yield* sql`
           INSERT INTO orchestration_v2_projection_turn_items
             (turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json)
           VALUES (${id}, ${threadId}, 1, ${type}, 'completed', '2026-10-20', ${payload})
         `;
-      }
-      const lookup = sql`
+        }
+        const lookup = sql`
         SELECT turn_item_id FROM orchestration_v2_projection_turn_items error
         WHERE error.thread_id = 'child' AND error.type = 'error'
-          AND json_extract(error.payload_json, '$.failure.class') = 'usage_limit'
+          AND CASE WHEN json_valid(error.payload_json) THEN json_extract(error.payload_json, '$.failure.class') END = 'usage_limit'
       `;
-      const before = yield* lookup;
-      assert.deepEqual(before, [{ turn_item_id: "limit" }]);
-      yield* runMigrations();
-      assert.deepEqual(yield* lookup, before);
-      const [query, params] = lookup.compile();
-      const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
-      assert.ok(
-        plan.some((row) =>
-          row.detail.includes("orchestration_v2_projection_turn_items_usage_limit_idx"),
-        ),
-      );
-      assert.deepEqual(yield* runMigrations(), []);
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+        const before = yield* lookup;
+        assert.deepEqual(before, [{ turn_item_id: "limit" }]);
+        yield* runMigrations();
+        assert.deepEqual(yield* lookup, before);
+        const [query, params] = lookup.compile();
+        const plan = yield* sql.unsafe<{ detail: string }>(`EXPLAIN QUERY PLAN ${query}`, params);
+        assert.ok(
+          plan.some((row) =>
+            row.detail.includes("orchestration_v2_projection_turn_items_usage_limit_idx"),
+          ),
+        );
+        assert.deepEqual(yield* runMigrations(), []);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect.each([6, 2])(

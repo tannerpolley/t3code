@@ -4172,7 +4172,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND EXISTS (SELECT 1 FROM orchestration_v2_projection_turn_items error
             WHERE error.run_id = failure.run_id AND error.type = 'error'
               AND error.node_id IS json_extract(failure.payload_json, '$.rootNodeId')
-              AND json_extract(error.payload_json, '$.failure.class') = 'usage_limit')
+              AND CASE WHEN json_valid(error.payload_json) THEN json_extract(error.payload_json, '$.failure.class') END = 'usage_limit')
       `;
         return rows.map((row) => ({
           threadId: ThreadId.make(row.thread_id),
@@ -4233,12 +4233,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND t.thread_id IN (
               SELECT failure.thread_id FROM orchestration_v2_projection_turn_items failure
               WHERE failure.type = 'error' AND failure.status = 'failed'
-                AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
+                AND CASE WHEN json_valid(failure.payload_json) THEN json_extract(failure.payload_json, '$.failure.class') END = 'usage_limit'
             )
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
             AND json_extract(t.payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
-            AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
+            AND CASE WHEN json_valid(item.payload_json) THEN json_extract(item.payload_json, '$.failure.class') END = 'usage_limit'
             AND ((
               ${booleanInt(options.switchProvider ?? false)}
               AND (
@@ -4411,7 +4411,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     OR EXISTS (
                       SELECT 1 FROM orchestration_v2_projection_turn_items error
                       WHERE error.thread_id = child.thread_id AND error.type = 'error'
-                        AND json_extract(error.payload_json, '$.failure.class') = 'usage_limit'
+                        AND CASE WHEN json_valid(error.payload_json) THEN json_extract(error.payload_json, '$.failure.class') END = 'usage_limit'
                     ))
                     AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_context_transfers
