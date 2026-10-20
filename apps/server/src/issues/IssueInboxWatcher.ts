@@ -514,8 +514,10 @@ export const make = Effect.gen(function* () {
           if (states.get(entry.issue.number)?.state !== "closed") continue;
           yield* threads.dispatch({
             type: "issue.queue.change",
+            // Keyed by the current root too: a removal rejected during a root change gets a
+            // fresh command under the new root instead of replaying that rejection forever.
             commandId: CommandId.make(
-              `issue-inbox-closed:${repo.host}:${repo.repositoryId}:${entry.requestId}`,
+              `issue-inbox-closed:${repo.host}:${repo.repositoryId}:${repo.rootThreadId}:${entry.requestId}`,
             ),
             threadId: repo.rootThreadId,
             issue: entry.issue,
