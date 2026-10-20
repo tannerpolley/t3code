@@ -83,10 +83,9 @@ it("keeps issue, PR and live-agent navigation separate as the issue's live state
     await act(async () =>
       render({ ...issue, liveWork: [{ ...issue.liveWork![0]!, status: "waiting_on_you" }] }),
     );
-    expect(container.querySelector('[role="img"][aria-label="In progress"]')).toBeNull();
     expect(
-      container.querySelector('[role="img"][aria-label="In review"]')?.getAttribute("class"),
-    ).toContain("text-emerald-600");
+      container.querySelector('[role="img"][aria-label="In progress"]')?.getAttribute("class"),
+    ).toContain("text-sky-600");
     await click("Waiting on you: Implementor");
     expect(navigate).toHaveBeenCalledTimes(2);
     expect(onSelect).toHaveBeenCalledOnce();

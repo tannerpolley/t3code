@@ -70,6 +70,12 @@ export function createIssueEnvironmentAtoms<R, E>(
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
     }),
+    cleanup: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:cleanup",
+      tag: WS_METHODS.issuesCleanup,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
+    }),
     unlink: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:unlink",
       tag: WS_METHODS.issuesUnlink,

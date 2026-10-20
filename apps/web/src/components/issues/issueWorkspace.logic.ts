@@ -64,8 +64,8 @@ export function issueStateFilter(preferences: IssueFilterPreferences): IssueStat
 }
 
 /** GitHub lists open or all issues, so closed-only reads all and keeps the closed ones. */
-export function issueListStateFor(state: IssueStateFilter): IssueListState {
-  return state === "open" ? "open" : "all";
+export function issueListStateFor(state: IssueStateFilter, roadmap = false): IssueListState {
+  return !roadmap && state === "open" ? "open" : "all";
 }
 
 export interface IssueWorkspaceFilters {
@@ -76,9 +76,8 @@ export interface IssueWorkspaceFilters {
   readonly sort: IssueSort;
 }
 
-function searchableText(issue: IssueSummary, repository: string): string {
+function searchableText(issue: IssueSummary): string {
   return [
-    repository,
     issue.number,
     issue.title,
     issue.milestone?.title,
@@ -110,17 +109,16 @@ export function sortIssues(issues: readonly IssueSummary[], sort: IssueSort): Is
   });
 }
 
-/** The search also matches the repository name, so one box finds repositories and issues. */
+/** Search only issue details; repository scope comes from the project or tab. */
 export function filterAndSortIssues(
   issues: readonly IssueSummary[],
   filters: IssueWorkspaceFilters,
-  repository = "",
 ): IssueSummary[] {
   const terms = filters.query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const filtered = issues.filter((issue) => {
     if (filters.state !== "all" && issue.state !== filters.state) return false;
     if (terms.length > 0) {
-      const text = searchableText(issue, repository);
+      const text = searchableText(issue);
       if (!terms.every((term) => text.includes(term))) return false;
     }
     if (filters.milestone === "with" && issue.milestone === null) return false;

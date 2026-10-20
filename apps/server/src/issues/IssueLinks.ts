@@ -35,6 +35,7 @@ const storageError = (cause: unknown) => new IssueLinkError({ code: "storage", c
 type WorkList = {
   readonly repository: IssueRepositoryRef;
   readonly issues: readonly (Pick<IssueSummary, "number" | "pullRequestRefs"> & {
+    readonly state?: IssueSummary["state"];
     readonly pullRequests?: readonly IssuePullRequestStatus[] | undefined;
     readonly closingPullRequests?: readonly IssuePullRequestStatus[] | undefined;
   })[];
@@ -144,13 +145,14 @@ const make = Effect.gen(function* () {
               .map((row) => row.thread_id),
             prRefsJson,
             prRefs.length > 0,
+            list.issues.some((issue) => issue.state === "closed"),
           ).pipe(Effect.mapError(storageError));
     const shells = yield* Effect.forEach(candidates, ({ thread_id }) =>
       projections.getThreadShell(ThreadId.make(thread_id)),
     ).pipe(Effect.mapError(storageError));
     const threads = shells
       .filter((thread) => thread !== null)
-      .filter((thread) => thread.deletedAt === null && thread.archivedAt === null);
+      .filter((thread) => thread.deletedAt === null);
     const issues = new Map(
       list.issues.map((issue) => [key({ ...list.repository, number: issue.number }), issue.number]),
     );
@@ -234,7 +236,9 @@ const make = Effect.gen(function* () {
       issues: list.issues.map((issue) => {
         // PR references are a server-side lookup, not another copy of the issue timeline on the wire.
         const { pullRequestRefs, ...summary } = issue;
-        const liveWork = work.get(issue.number) ?? [];
+        const liveWork = (work.get(issue.number) ?? []).filter(
+          (item) => issue.state === "closed" || byId.get(item.threadId)?.archivedAt === null,
+        );
         const closingPullRequests =
           issue.closingPullRequests ??
           issue.pullRequests ??
@@ -268,6 +272,7 @@ const make = Effect.gen(function* () {
 function workState(
   thread: OrchestrationV2ThreadShell,
 ): NonNullable<IssueSummary["liveWork"]>[number]["status"] {
+  if (thread.archivedAt !== null) return "idle";
   if (
     thread.pendingRuntimeRequest !== null &&
     runtimeRequestNeedsUser(thread.pendingRuntimeRequest.kind)

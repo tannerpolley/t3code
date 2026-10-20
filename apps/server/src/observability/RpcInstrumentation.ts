@@ -233,6 +233,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.issuesDetail]: "issues",
   [WS_METHODS.issuesStatusBatch]: "issues",
   [WS_METHODS.issuesSetState]: "issues",
+  [WS_METHODS.issuesCleanup]: "issues",
   [WS_METHODS.issuesUnlink]: "issues",
   [WS_METHODS.issuesSubscribeLinkRefreshes]: "issues",
   [WS_METHODS.issuesStart]: "issues",

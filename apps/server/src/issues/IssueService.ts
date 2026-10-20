@@ -82,6 +82,7 @@ const RawIssueSchema = Schema.Struct({
   milestone: Schema.optional(Schema.NullOr(RawMilestoneSchema)),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
+  closed_at: Schema.optional(Schema.NullOr(IsoDateTime)),
   comments: NonNegativeInt,
   body: Schema.optional(Schema.NullOr(Schema.String)),
   pull_request: Schema.optional(Schema.Unknown),
@@ -126,7 +127,7 @@ const issueDetailQuery = (
     issueOrPullRequest(number: $number) {
       __typename
       ... on Issue {
-        number title body state stateReason createdAt updatedAt
+        number title body state stateReason createdAt updatedAt closedAt
         author { login avatarUrl }
         assignees(first: 100) { nodes { login avatarUrl } }
         labels(first: 100) { nodes { name color } }
@@ -226,6 +227,7 @@ const GraphQlIssueSchema = Schema.Struct({
   stateReason: Schema.NullOr(Schema.String),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  closedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   author: Schema.NullOr(GraphQlActorSchema),
   assignees: graphQlNodes(GraphQlActorSchema),
   labels: Schema.NullOr(
@@ -503,6 +505,7 @@ function normalizeIssue(host: string, repository: string, issue: RawIssue): Issu
       issue.milestone == null ? null : normalizeMilestone(host, repository, issue.milestone),
     createdAt: issue.created_at,
     updatedAt: issue.updated_at,
+    closedAt: issue.closed_at ?? null,
     commentCount: issue.comments,
     ...(issue.sub_issues_summary && issue.sub_issues_summary.total > 0
       ? {
@@ -558,6 +561,7 @@ function normalizeGraphQlIssue(
           },
     createdAt: issue.createdAt,
     updatedAt: issue.updatedAt,
+    closedAt: issue.closedAt ?? null,
     commentCount: issue.comments.totalCount,
   };
 }

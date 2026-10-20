@@ -9,7 +9,6 @@ import {
 
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 
 type IssueStateInput = Pick<IssueSummary, "state"> &
   Partial<Pick<IssueSummary, "stateReason" | "projects">> & {
@@ -24,13 +23,7 @@ type IssueStateInput = Pick<IssueSummary, "state"> &
       | undefined;
   };
 
-export type IssueProgress =
-  | "completed"
-  | "not_planned"
-  | "blocked"
-  | "in_progress"
-  | "in_review"
-  | "open";
+export type IssueProgress = "completed" | "not_planned" | "blocked" | "in_progress" | "open";
 
 /**
  * Closed wins, split the way GitHub closes an issue: not planned (or a duplicate) apart from
@@ -44,7 +37,7 @@ export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgres
       : "completed";
   if (issue.blockedBy?.some((blocker) => blocker.state === "open")) return "blocked";
   if (issue.liveWork?.some((work) => work.status === "working")) return "in_progress";
-  if (issue.pullRequests?.some((pr) => pr.state === "open")) return "in_review";
+  if (issue.pullRequests?.some((pr) => pr.state === "open")) return "in_progress";
   return "open";
 }
 
@@ -61,12 +54,6 @@ export const ISSUE_PROGRESS_PRESENTATION = {
     toneClassName: "text-sky-600 dark:text-sky-300/90",
     badgeVariant: "info",
     Icon: CircleDotDashedIcon,
-  },
-  in_review: {
-    label: "In review",
-    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
-    badgeVariant: "success",
-    Icon: PullRequestGlyph.pullRequest,
   },
   blocked: {
     label: "Blocked",
