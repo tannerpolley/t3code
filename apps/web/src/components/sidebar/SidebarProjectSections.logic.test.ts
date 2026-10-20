@@ -188,14 +188,23 @@ it("orders subsections alongside projects and keeps body drops as moves into the
     resolveProjectDrop({ projectKey: "a", over: { type: "section", sectionId: "idaes" }, sections })
       ?.projectKeys,
   ).toEqual(["c", "a"]);
+  const environmentId = EnvironmentId.make("local");
+  const threadKey = (id: string) =>
+    scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(id)));
   expect(
     collectVisibleProjectThreadOrder({
       projects: ["a", "b", "c"].map((projectKey) => ({ projectKey })),
       sections: sections.map((s) => ({ ...s, collapsed: false })),
       otherProjectsExpanded: true,
       isProjectExpanded: () => true,
-      threadsByProjectKey: new Map(["a", "b", "c"].map((key) => [key, [key]])),
-      getThreadKey: (key) => key,
+      threadsByProjectKey: new Map(
+        ["a", "b", "c"].map((key) => [
+          key,
+          [makeThreadFixture({ environmentId, id: ThreadId.make(key) })],
+        ]),
+      ),
+      runningSubagentsByParentKey: new Map(),
+      expandedByKey: {},
     }),
-  ).toEqual(["a", "c", "b"]);
+  ).toEqual(["a", "c", "b"].map(threadKey));
 });
