@@ -331,9 +331,12 @@ it.effect("filters issue turns and throttles bursts with a trailing refresh", ()
       yield* Effect.sync(() => registry.refresh(detail));
       yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
       expect(reads).toEqual([1, 1, 1, 1, 1]);
+      // Changes made outside T3 still arrive through the slow poll.
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5 * 60_000));
+      expect(reads).toHaveLength(6);
       unmount();
       yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
-      expect(reads).toHaveLength(5);
+      expect(reads).toHaveLength(6);
     }),
   ),
 );

@@ -19,6 +19,8 @@ import {
 
 /** How often an issue someone is looking at re-reads GitHub, besides explicit refreshes. */
 const LIVE_ISSUE_REFRESH_MS = 60_000;
+/** An open issue's fallback re-read when none of its own threads finish a turn. */
+const DETAIL_POLL_MS = 5 * 60_000;
 
 /** Issue reads run on the environment whose GitHub credential the user selected. */
 export function createIssueEnvironmentAtoms<R, E>(
@@ -54,10 +56,13 @@ export function createIssueEnvironmentAtoms<R, E>(
     label: "environment-data:issues:inbox-unread",
     tag: WS_METHODS.issuesInboxSubscribeUnread,
   });
+  // The slow poll picks up changes made outside T3, such as comments on GitHub; linked turns
+  // below refresh sooner, at most once a minute.
   const detail = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:issues:detail",
     tag: WS_METHODS.issuesDetail,
     staleTimeMs: 60_000,
+    refreshIntervalMs: DETAIL_POLL_MS,
     refreshTrigger: linkRefreshTrigger,
   });
   // The PR refresh stream has no thread identity; shell completions let each issue filter locally.
@@ -78,7 +83,14 @@ export function createIssueEnvironmentAtoms<R, E>(
           get.refresh(source);
         };
         get.addFinalizer(() => clearTimeout(trailing));
-        get.subscribe(source, (result) => get.setSelf(result));
+        get.subscribe(source, (result) => {
+          // Any fresh read (poll, explicit refresh) satisfies a pending trailing refresh.
+          if (AsyncResult.isSuccess(result) && !result.waiting) {
+            clearTimeout(trailing);
+            trailing = undefined;
+          }
+          get.setSelf(result);
+        });
         get.subscribe(snapshot, (current) => {
           const before = previous;
           previous = current;
