@@ -1,17 +1,22 @@
+import { vi } from "vite-plus/test";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  ThreadId,
+  RunId,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadShell,
   WS_METHODS,
   type IssueDetailInput,
   type IssueListInput,
   type IssueListResult,
   type IssueDetailResult,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -117,6 +122,7 @@ it.effect("keeps a late issue response on its own issue and environment", () =>
       } as EnvironmentRegistry["Service"]);
       const queries = createIssueEnvironmentAtoms(
         Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
+        () => Atom.make(null),
       );
       const registry = AtomRegistry.make();
       yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
@@ -154,11 +160,42 @@ it.effect("keeps a late issue response on its own issue and environment", () =>
   ),
 );
 
-it.effect("re-reads an open issue when an agent turn finishes", () =>
+it.effect("filters issue turns and throttles bursts with a trailing refresh", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const environmentId = EnvironmentId.make("local");
-      const turnFinished = yield* PubSub.unbounded<number>();
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const thread = (id: string, run: string, linked = false): OrchestrationV2ThreadShell =>
+        ({
+          id: ThreadId.make(id),
+          latestRunId: RunId.make(run),
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-10-20T00:00:00Z"),
+          ...(linked
+            ? {
+                linkedIssue: {
+                  host: "GITHUB.COM",
+                  repository: "OWNER/REPO",
+                  number: id === "unrelated" ? 2 : 1,
+                },
+              }
+            : {}),
+        }) as unknown as OrchestrationV2ThreadShell;
+      const snapshot = (threads: OrchestrationV2ThreadShell[]) =>
+        ({
+          schemaVersion: 1,
+          snapshotSequence: 0,
+          projects: [],
+          archivedThreads: [],
+          threads,
+        }) satisfies OrchestrationV2ShellSnapshot;
+      const shells = Atom.make<OrchestrationV2ShellSnapshot | null>(
+        snapshot([
+          thread("linked", "initial", true),
+          thread("worker", "initial"),
+          thread("unrelated", "initial", true),
+        ]),
+      );
       const reads: number[] = [];
       const secondRead = yield* Deferred.make<void>();
       const target = new PrimaryConnectionTarget({
@@ -180,6 +217,16 @@ it.effect("re-reads an open issue when an agent turn finishes", () =>
               comments: [],
               linkedPullRequests: [],
               issue: {
+                liveWork: [
+                  {
+                    threadId: ThreadId.make("worker"),
+                    status: "idle",
+                    title: "Worker",
+                    branch: null,
+                    worktreePath: null,
+                    pullRequests: [],
+                  },
+                ],
                 number: input.number,
                 title: `read ${reads.length}`,
                 url: "https://github.com/owner/repo/issues/1",
@@ -195,7 +242,6 @@ it.effect("re-reads an open issue when an agent turn finishes", () =>
               },
             } as IssueDetailResult;
           }),
-        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(turnFinished),
       } as unknown as WsRpcProtocolClient;
       const session: RpcSession = {
         client,
@@ -228,6 +274,7 @@ it.effect("re-reads an open issue when an agent turn finishes", () =>
       } as EnvironmentRegistry["Service"]);
       const queries = createIssueEnvironmentAtoms(
         Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
+        () => shells,
       );
       const registry = AtomRegistry.make();
       yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
@@ -241,9 +288,52 @@ it.effect("re-reads an open issue when an agent turn finishes", () =>
         (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).body,
       ).toBe("read 1");
 
-      yield* PubSub.publish(turnFinished, 1);
+      const update = (linkedRun: string, workerRun: string, unrelatedRun: string) =>
+        Effect.sync(() =>
+          registry.set(
+            shells,
+            snapshot([
+              thread("linked", linkedRun, true),
+              thread("worker", workerRun),
+              thread("unrelated", unrelatedRun, true),
+            ]),
+          ),
+        ).pipe(Effect.andThen(Effect.promise(() => vi.advanceTimersByTimeAsync(0))));
+      yield* update("initial", "initial", "unrelated-finished");
+      expect(reads).toEqual([1]);
+      yield* Effect.sync(() =>
+        registry.set(
+          shells,
+          snapshot([
+            { ...thread("linked", "linked-finished", true), latestRunCompletedAt: null },
+            thread("worker", "initial"),
+            thread("unrelated", "unrelated-finished", true),
+          ]),
+        ),
+      );
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+      expect(reads).toEqual([1]);
+      yield* update("linked-finished", "initial", "unrelated-finished");
       yield* Deferred.await(secondRead);
       expect(reads).toEqual([1, 1]);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+      yield* update("linked-finished", "worker-finished", "unrelated-finished");
+      yield* update("linked-again", "worker-finished", "unrelated-finished");
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(49_999));
+      expect(reads).toEqual([1, 1]);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1));
+      expect(reads).toEqual([1, 1, 1]);
+      // A worker without its own linkedIssue also refreshes through the detail's liveWork.
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
+      yield* update("linked-again", "worker-again", "unrelated-finished");
+      expect(reads).toEqual([1, 1, 1, 1]);
+      yield* update("linked-final", "worker-again", "unrelated-finished");
+      yield* Effect.sync(() => registry.refresh(detail));
+      yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
+      expect(reads).toEqual([1, 1, 1, 1, 1]);
+      unmount();
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
+      expect(reads).toHaveLength(5);
     }),
   ),
 );
@@ -255,7 +345,6 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
       const reads: string[] = [];
       const linkChanges = yield* SubscriptionRef.make(0);
       const turnFinished = yield* SubscriptionRef.make(0);
-      const turnRead = yield* Deferred.make<void>();
       const linkDetailRead = yield* Deferred.make<void>();
       let detailReads = 0;
       const secondRead = yield* Deferred.make<void>();
@@ -270,8 +359,7 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => SubscriptionRef.changes(turnFinished),
         [WS_METHODS.issuesDetail]: () =>
           Effect.gen(function* () {
-            if (++detailReads === 2) yield* Deferred.succeed(turnRead, undefined);
-            if (detailReads === 3) yield* Deferred.succeed(linkDetailRead, undefined);
+            if (++detailReads === 2) yield* Deferred.succeed(linkDetailRead, undefined);
             return {} as IssueDetailResult;
           }),
         [WS_METHODS.issuesList]: (input: IssueListInput) =>
@@ -321,6 +409,7 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
       } as EnvironmentRegistry["Service"]);
       const queries = createIssueEnvironmentAtoms(
         Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
+        () => Atom.make(null),
       );
       const registry = AtomRegistry.make();
       yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
@@ -342,9 +431,8 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
       expect(reads).toHaveLength(3);
       expect(detailReads).toBe(1);
       yield* SubscriptionRef.set(turnFinished, 1);
-      // A detail re-read proves the turn signal was processed while lists were mounted.
-      yield* Deferred.await(turnRead);
-      expect(detailReads).toBe(2);
+      yield* Effect.yieldNow;
+      expect(detailReads).toBe(1);
       for (const atom of lists)
         yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
       expect(reads).toHaveLength(3);
@@ -355,7 +443,7 @@ it.effect("issue lists ignore turn-finished refreshes and still refresh on link 
         yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true });
       yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true });
       yield* Deferred.await(linkDetailRead);
-      expect(detailReads).toBe(3);
+      expect(detailReads).toBe(2);
       expect(reads).toEqual([
         "roadmap",
         "owner/repo",

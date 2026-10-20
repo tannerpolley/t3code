@@ -275,6 +275,7 @@ describe("command permissions", () => {
                 Effect.provideService(effect, EnvironmentSupervisor, supervisor),
             } as unknown as EnvironmentRegistry["Service"]),
           ),
+          () => Atom.make(null),
         );
         const scope = {
           host: "github.com",
@@ -366,6 +367,7 @@ describe("command permissions", () => {
                   Effect.provideService(effect, EnvironmentSupervisor, supervisor),
               } as unknown as EnvironmentRegistry["Service"]),
             ),
+            () => Atom.make(null),
           );
           const input = {
             host: "github.com",
@@ -773,7 +775,7 @@ it.effect("issue state and unlink writes check the destination's exact grant", (
   Effect.scoped(
     Effect.gen(function* () {
       const registry = yield* setup;
-      const issues = createIssueEnvironmentAtoms(runtime);
+      const issues = createIssueEnvironmentAtoms(runtime, () => Atom.make(null));
       const statePermission = issues.setState.permissionAtom(env);
       const unlinkPermission = issues.unlink.permissionAtom(env);
       registry.set(

@@ -21,7 +21,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAllEnvironmentShellsBootstrapped } from "./entities";
 import { environmentThreadShells } from "./threads";
 import { environmentServerConfigsAtom } from "./server";
-import { allEnvironmentShellsBootstrappedAtom } from "./shell";
+import { allEnvironmentShellsBootstrappedAtom, environmentSnapshotAtom } from "./shell";
 import { issueStatePresentation } from "../components/issues/IssueStateIcon";
 import {
   createLiveIssueWorkOverlay,
@@ -32,7 +32,10 @@ const issueWorkIndexAtom = Atom.make((get) =>
   indexIssueWork(get(environmentThreadShells.threadShellsAtom)),
 );
 
-export const issueEnvironment = createIssueEnvironmentAtoms(connectionAtomRuntime);
+export const issueEnvironment = createIssueEnvironmentAtoms(
+  connectionAtomRuntime,
+  environmentSnapshotAtom,
+);
 
 const sidebarIssueRefs = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) => {

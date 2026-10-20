@@ -1,10 +1,17 @@
-import { type EnvironmentId, WS_METHODS } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import {
+  type EnvironmentId,
+  type OrchestrationV2ShellSnapshot,
+  type IssueDetailInput,
+  WS_METHODS,
+} from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createPullRequestRefreshAtomFamily } from "./pullRequests.ts";
 import {
+  environmentRpcKey,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -16,6 +23,7 @@ const LIVE_ISSUE_REFRESH_MS = 60_000;
 /** Issue reads run on the environment whose GitHub credential the user selected. */
 export function createIssueEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
 ) {
   const refreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
@@ -45,6 +53,66 @@ export function createIssueEnvironmentAtoms<R, E>(
   const inboxUnread = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:issues:inbox-unread",
     tag: WS_METHODS.issuesInboxSubscribeUnread,
+  });
+  const detail = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:issues:detail",
+    tag: WS_METHODS.issuesDetail,
+    staleTimeMs: 60_000,
+    refreshTrigger: linkRefreshTrigger,
+  });
+  // The PR refresh stream has no thread identity; shell completions let each issue filter locally.
+  const liveDetail = Atom.family((key: string) => {
+    const [environmentId, input] = JSON.parse(key) as [EnvironmentId, IssueDetailInput];
+    const source = detail({ environmentId, input });
+    const snapshot = snapshotAtom(environmentId);
+    return Atom.transform(
+      source,
+      (get) => {
+        let previous = get.once(snapshot);
+        let lastRefresh = -Infinity;
+        let trailing: ReturnType<typeof setTimeout> | undefined;
+        const refresh = () => {
+          trailing = undefined;
+          // @effect-diagnostics-next-line globalDate:off - Atom refresh scheduling uses the client clock.
+          lastRefresh = Date.now();
+          get.refresh(source);
+        };
+        get.addFinalizer(() => clearTimeout(trailing));
+        get.subscribe(source, (result) => get.setSelf(result));
+        get.subscribe(snapshot, (current) => {
+          const before = previous;
+          previous = current;
+          if (before === null || current === null) return;
+          const result = Option.getOrNull(AsyncResult.value(get.once(source)));
+          const workers = new Set(result?.issue.liveWork?.map((work) => work.threadId));
+          const runs = new Map(
+            before.threads
+              .filter((thread) => thread.latestRunCompletedAt != null)
+              .map((thread) => [thread.id, thread.latestRunId]),
+          );
+          const finished = current.threads.some((thread) => {
+            if (thread.latestRunCompletedAt == null || runs.get(thread.id) === thread.latestRunId)
+              return false;
+            const issue = thread.linkedIssue;
+            return (
+              workers.has(thread.id) ||
+              (issue !== undefined &&
+                issue.host.toLowerCase() === input.host.toLowerCase() &&
+                issue.repository.toLowerCase() === input.repository.toLowerCase() &&
+                issue.number === input.number)
+            );
+          });
+          if (!finished || trailing !== undefined) return;
+          // @effect-diagnostics-next-line globalDate:off - Atom refresh scheduling uses the client clock.
+          const remaining = LIVE_ISSUE_REFRESH_MS - (Date.now() - lastRefresh);
+          if (remaining <= 0) refresh();
+          // @effect-diagnostics-next-line globalTimers:off - Scoped to this mounted detail atom.
+          else trailing = setTimeout(refresh, remaining);
+        });
+        return get.once(source);
+      },
+      { initialValueTarget: source },
+    ).pipe(Atom.setIdleTTL(0));
   });
   return {
     inboxUnread,
@@ -184,13 +252,6 @@ export function createIssueEnvironmentAtoms<R, E>(
       refreshTrigger: (target) =>
         Atom.make((get) => [get(refreshTrigger(target)), get(linkRefreshTrigger(target))]),
     }),
-    detail: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:issues:detail",
-      tag: WS_METHODS.issuesDetail,
-      staleTimeMs: 60_000,
-      refreshIntervalMs: LIVE_ISSUE_REFRESH_MS,
-      refreshTrigger: (target) =>
-        Atom.make((get) => [get(refreshTrigger(target)), get(linkRefreshTrigger(target))]),
-    }),
+    detail: (target: Parameters<typeof detail>[0]) => liveDetail(environmentRpcKey(target)),
   };
 }
