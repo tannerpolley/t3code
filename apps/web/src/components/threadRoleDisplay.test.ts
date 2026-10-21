@@ -52,7 +52,7 @@ describe("threadRoleDisplay", () => {
     expect(delegated.description).toContain("family of work for its parent orchestrator");
     const lead = threadRoleDisplay({
       ...native,
-      creationSource: "user",
+      creationSource: "web",
       role: "orchestrator",
       lineage: { relationshipToParent: null },
     });
