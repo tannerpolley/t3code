@@ -77,6 +77,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
         [WS_METHODS.issuesCancelRequest]: (input) => issueWork.cancelRequest(input),
         [WS_METHODS.issuesRestoreRoot]: (input) => issueWork.restoreRoot(input),
         [WS_METHODS.issuesHandoff]: (input) => issueWork.handoff(input),
+        [WS_METHODS.issuesAssignOrchestrator]: (input) => issueWork.assignOrchestrator(input),
         [WS_METHODS.issueChangesList]: (input) => issueChanges.list(input),
         [WS_METHODS.issueChangesSubscribe]: (input) => issueChanges.subscribe(input),
         [WS_METHODS.issueChangesDecide]: (input) =>

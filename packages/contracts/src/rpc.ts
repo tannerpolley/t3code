@@ -210,6 +210,7 @@ import {
   IssueWorkStatusResult,
   RepositoryWorkInput,
   RepositoryHandoffInput,
+  RepositoryOrchestratorInput,
   RepositoryWorkControlInput,
   RepositoryWorkerLimitInput,
   RepositoryReadOnlyLimitInput,
@@ -614,6 +615,7 @@ export const WS_METHODS = {
   issueChangesDecide: "issues.changes.decide",
   issueChangesSubscribe: "issues.changes.subscribe",
   issuesHandoff: "issues.handoff",
+  issuesAssignOrchestrator: "issues.assignOrchestrator",
   issuesCancelRequest: "issues.cancelRequest",
   issuesRestoreRoot: "issues.restoreRoot",
   issuesInboxList: "issues.inbox.list",
@@ -1173,6 +1175,12 @@ const WsIssuesCancelRequestRpc = Rpc.make(WS_METHODS.issuesCancelRequest, {
 });
 const WsIssuesRestoreRootRpc = Rpc.make(WS_METHODS.issuesRestoreRoot, {
   payload: RepositoryWorkRestoreInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesAssignOrchestratorRpc = Rpc.make(WS_METHODS.issuesAssignOrchestrator, {
+  payload: RepositoryOrchestratorInput,
   success: RepositoryWorkResult,
   error: IssueRpcError,
 });
@@ -2239,6 +2247,7 @@ const forkWsRpcs = [
   WsIssuesSetWorkerLimitRpc,
   WsIssuesSetReadOnlyLimitRpc,
   WsIssuesHandoffRpc,
+  WsIssuesAssignOrchestratorRpc,
   WsIssuesCancelRequestRpc,
   WsIssuesRestoreRootRpc,
   WsIssueChangesListRpc,
@@ -2482,6 +2491,7 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issuesSetWorkerLimit,
   WS_METHODS.issuesSetReadOnlyLimit,
   WS_METHODS.issuesHandoff,
+  WS_METHODS.issuesAssignOrchestrator,
   WS_METHODS.issuesCancelRequest,
   WS_METHODS.issuesRestoreRoot,
   WS_METHODS.issueChangesList,

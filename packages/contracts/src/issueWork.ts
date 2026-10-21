@@ -120,6 +120,7 @@ export const RepositoryHandoffRequestInput = Schema.Struct({
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   summary: TrimmedNonEmptyString,
   modelSelection: Schema.optional(ModelSelection),
+  targetThreadId: Schema.optional(ThreadId),
   clientRequestId: CommandId,
 });
 export type RepositoryHandoffRequestInput = typeof RepositoryHandoffRequestInput.Type;
@@ -133,6 +134,14 @@ export const RepositoryHandoffInput = Schema.Union([
   }),
 ]);
 export type RepositoryHandoffInput = typeof RepositoryHandoffInput.Type;
+export const RepositoryOrchestratorInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  projectId: ProjectId,
+  targetThreadId: ThreadId,
+  clientRequestId: CommandId,
+});
+export type RepositoryOrchestratorInput = typeof RepositoryOrchestratorInput.Type;
+
 /** User-only recovery; expectations prevent overwriting a newer repository owner. */
 export const RepositoryWorkRestoreInput = Schema.Struct({
   ...IssueRepositoryRef.fields,

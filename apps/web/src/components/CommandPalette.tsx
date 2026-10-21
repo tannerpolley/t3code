@@ -1,5 +1,7 @@
 "use client";
 
+import { useRepositoryOrchestratorAction } from "~/hooks/useRepositoryOrchestratorAction";
+
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -1064,6 +1066,7 @@ function OpenCommandPaletteDialog(props: {
 
   const { projectCwdById, projectByKey, projectTitleById } = useProjectLookups();
 
+  const repositoryOrchestratorAction = useRepositoryOrchestratorAction(activeThread);
   const activeThreadId = activeThread?.id;
   const supportsThreadFind =
     environments.find((environment) => environment.environmentId === activeThread?.environmentId)
@@ -1881,6 +1884,19 @@ function OpenCommandPaletteDialog(props: {
           await navigate({ to: "/issues", search: {} });
         }
       },
+    });
+  }
+
+  const assignOrchestrator = repositoryOrchestratorAction.active;
+  if (assignOrchestrator !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:make-repository-orchestrator",
+      searchTerms: ["repository", "orchestrator", "assign", "move", "handoff"],
+      title: assignOrchestrator.item.label,
+      disabled: assignOrchestrator.item.disabled ?? false,
+      icon: <ListIcon className={ITEM_ICON_CLASS} />,
+      run: assignOrchestrator.run,
     });
   }
 

@@ -249,6 +249,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.issuesHandoff]: "issues",
   [WS_METHODS.issuesCancelRequest]: "orchestration",
   [WS_METHODS.issuesRestoreRoot]: "orchestration",
+  [WS_METHODS.issuesAssignOrchestrator]: "orchestration",
   [WS_METHODS.issueChangesList]: "issues",
   [WS_METHODS.issueChangesDecide]: "issues",
   [WS_METHODS.issueChangesSubscribe]: "issues",

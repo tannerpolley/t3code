@@ -8,7 +8,12 @@ import { makeIssueQueueCommands } from "../issues/IssueQueueCommands.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { makeAppOwnedUserInputCommands } from "./AppOwnedUserInputCommands.ts";
 import { supportsManagedIssueWork, managedIssueProviderError } from "../issues/IssueEligibility.ts";
-import { effectiveThreadRole, issueThreadTitle, worktreeRole } from "@t3tools/contracts";
+import {
+  effectiveThreadRole,
+  isRepositoryOrchestratorEligible,
+  issueThreadTitle,
+  worktreeRole,
+} from "@t3tools/contracts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -2520,7 +2525,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
 
-    if (command.linkedIssue !== undefined || command.repositoryOrchestration !== undefined) {
+    if (command.linkedIssue !== undefined) {
       const adapter = yield* providerAdapters
         .get(command.modelSelection.instanceId)
         .pipe(mapDispatchError(command));
@@ -2585,6 +2590,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       lastVisitedAt: null,
       deletedAt: null,
     };
+
+    if (thread.repositoryOrchestration !== undefined) {
+      const adapter = yield* providerAdapters
+        .get(thread.modelSelection.instanceId)
+        .pipe(mapDispatchError(command));
+      if (!isRepositoryOrchestratorEligible(thread, adapter.driver, thread.repositoryOrchestration))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          detail:
+            "Select an active top-level Orchestrator thread in the same repository project using Codex or Claude.",
+        });
+    }
 
     yield* emitEvent({
       type: "thread.created",
@@ -11586,6 +11604,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     recordSubagentFollowup: (command, events) =>
       recordSubagentFollowup(command, events).pipe(mapDispatchError(command)),
     ...forkCommandHooks,
+    providerAdapters,
     dispatchThreadCreate,
     dispatchMessage,
     getProjectionWithPendingEvents,
@@ -12308,6 +12327,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (effect, key) => threadExecutor.withLock(key, effect),
         dispatchEffect,
       );
+    }
+    if (command.type === "repository.work.handoff") {
+      const root = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(mapDispatchError(command));
+      const targetId = root.repositoryOrchestration?.handoff?.nextThreadId;
+      if (targetId !== undefined) {
+        const target = yield* projectionStore
+          .getThreadShell(targetId)
+          .pipe(mapDispatchError(command));
+        if (
+          target !== null &&
+          (target.lineage.parentThreadId !== null || target.lineage.rootThreadId !== target.id)
+        )
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Select an existing active top-level thread in the same repository project.",
+          });
+        return yield* [...new Set([command.threadId, targetId])]
+          .sort()
+          .reduceRight((effect, key) => threadExecutor.withLock(key, effect), dispatchEffect);
+      }
     }
     const dispatch = threadDispatch.withLock(commandThreadId(command), dispatchEffect);
     if (

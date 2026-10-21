@@ -105,9 +105,11 @@ function RepositoryControls({
   const canRestore = useAtomValue(issueEnvironment.restoreRoot.permissionAtom(environmentId));
   const [restoreExpanded, setRestoreExpanded] = useState(false);
   const [restoreTargetId, setRestoreTargetId] = useState<ThreadId | null>(null);
-  const restoreCandidates = useRepositoryLeads(environmentId, config?.projectId ?? null).filter(
-    (lead) => lead.id !== data?.rootThreadId,
-  );
+  const restoreCandidates = useRepositoryLeads(
+    environmentId,
+    config?.projectId ?? null,
+    reference,
+  ).filter((lead) => lead.id !== data?.rootThreadId);
   if (config == null || data?.rootThreadId == null) return null;
   const restoreTarget = restoreCandidates.find((lead) => lead.id === restoreTargetId);
   const replaceRoot = async () => {

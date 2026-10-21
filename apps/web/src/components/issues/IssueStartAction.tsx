@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
+  isRepositoryOrchestratorEligible,
+  type IssueRepositoryRef,
   type EnvironmentId,
   type IssueRef,
   type ProjectId,
@@ -14,6 +16,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { PlayIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
+import { useEnvironmentProviders } from "~/state/environments";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import {
   useProjects,
@@ -41,18 +44,25 @@ interface IssueStartActionProps {
 }
 
 /** Active top-level threads in the project that can lead its repository's issue work. */
-export function useRepositoryLeads(environmentId: EnvironmentId, projectId: ProjectId | null) {
+export function useRepositoryLeads(
+  environmentId: EnvironmentId,
+  projectId: ProjectId | null,
+  repository: IssueRepositoryRef,
+) {
+  const providers = useEnvironmentProviders().get(environmentId);
   const threadShells = useThreadShellsForProjectRefs(
     projectId === null ? [] : [scopeProjectRef(environmentId, projectId)],
   );
   return threadShells.filter(
     (candidate) =>
       candidate.environmentId === environmentId &&
-      candidate.projectId === projectId &&
-      candidate.archivedAt === null &&
-      candidate.lineage.parentThreadId === null &&
-      candidate.lineage.rootThreadId === candidate.id &&
-      candidate.linkedIssue === undefined,
+      projectId !== null &&
+      isRepositoryOrchestratorEligible(
+        candidate.source,
+        providers?.find((provider) => provider.instanceId === candidate.modelSelection.instanceId)
+          ?.driver,
+        { ...repository, projectId },
+      ),
   );
 }
 
@@ -102,7 +112,7 @@ function IssueStartControls({
   const request = useRef<{ key: string; id: string } | null>(null);
   const project =
     matchingProjects.find((entry) => entry.id === selectedProjectId) ?? preferredProject;
-  const leads = useRepositoryLeads(environmentId, project?.id ?? null);
+  const leads = useRepositoryLeads(environmentId, project?.id ?? null, reference);
   const createOrchestrator = status?.rootThreadId == null && selectedOrchestratorId === "create";
   const selectedLead = createOrchestrator
     ? undefined

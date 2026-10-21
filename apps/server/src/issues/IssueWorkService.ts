@@ -20,6 +20,9 @@ import {
   RepositoryWorkerLimitInput,
   RepositoryReadOnlyLimitInput,
   type RepositoryHandoffInput,
+  type RepositoryOrchestratorInput,
+  type IssueRepositoryRef,
+  isRepositoryOrchestratorEligible,
   type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
   type RepositoryOrchestration,
@@ -28,6 +31,7 @@ import {
   type ThreadLinkedIssue,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import { agentWorktreeName } from "@t3tools/shared/git";
 import {
@@ -68,6 +72,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Stream from "effect/Stream";
+import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Queue from "effect/Queue";
@@ -81,6 +86,12 @@ const encodeToolArgument = Schema.encodeEffect(Schema.fromJsonString(Schema.Unkn
 export class IssueWorkService extends Context.Service<
   IssueWorkService,
   {
+    readonly assignOrchestrator: (
+      input: RepositoryOrchestratorInput,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
+    readonly ensureOrchestrator: (
+      input: IssueRepositoryRef,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly queueIssue: (
       input: IssueQueueInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
@@ -148,6 +159,7 @@ const isProviderDisabledError = Schema.is(ThreadManagementProviderInstanceDisabl
 export const layer = Layer.effect(
   IssueWorkService,
   Effect.gen(function* () {
+    const assignments = yield* KeyedLock.make<string>();
     const projects = yield* ProjectService;
     const issues = yield* IssueService;
     const store = yield* IssueWorkStore;
@@ -1299,6 +1311,38 @@ export const layer = Layer.effect(
         return yield* repositoryStatus(input);
       });
 
+    const validateLead = Effect.fn("IssueWorkService.validateLead")(function* (
+      input: RepositoryOrchestratorInput,
+    ) {
+      yield* assertProjectRepository(input.projectId, input);
+      const target = yield* threads
+        .getThreadShell(input.targetThreadId)
+        .pipe(Effect.mapError(mapError));
+      const adapter =
+        target === null
+          ? undefined
+          : yield* adapters.get(target.modelSelection.instanceId).pipe(Effect.mapError(mapError));
+      const registered = target === null ? null : yield* store.configuration(target.id);
+      if (
+        target === null ||
+        !isRepositoryOrchestratorEligible(
+          { ...target, repositoryOrchestration: registered ?? undefined },
+          adapter?.driver,
+          input,
+        )
+      )
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message:
+            "Select an existing active top-level Orchestrator thread in the same repository project using Codex or Claude.",
+        });
+      yield* assertRootCheckout({
+        projectId: input.projectId,
+        commandId: input.clientRequestId,
+        worktreePath: target.worktreePath,
+      });
+      return target;
+    });
     const prepareHandoff = Effect.fn("IssueWorkService.prepareHandoff")(function* (
       input: RepositoryHandoffRequestInput,
       status: "awaiting_approval" | "draining",
@@ -1310,6 +1354,11 @@ export const layer = Layer.effect(
         return yield* new IssueWorkError({
           code: "invalid-request",
           message: "Only the registered repository root can request a handoff.",
+        });
+      if (input.targetThreadId === owner.rootThreadId)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Choose a different thread for the repository handoff.",
         });
       const config = (yield* store.configuration(owner.rootThreadId))!;
       if (config.handoff?.requestId === input.clientRequestId && config.handoff.status === status)
@@ -1336,11 +1385,24 @@ export const layer = Layer.effect(
           code: "invalid-request",
           message: "Restore the repository root before handing it off.",
         });
+      const existingTarget =
+        input.targetThreadId === undefined
+          ? undefined
+          : yield* validateLead({
+              ...input,
+              projectId: owner.projectId,
+              targetThreadId: input.targetThreadId,
+            });
       const selection =
-        input.modelSelection ?? config.handoff?.modelSelection ?? root.modelSelection;
+        existingTarget?.modelSelection ??
+        input.modelSelection ??
+        config.handoff?.modelSelection ??
+        root.modelSelection;
       if (
         config.handoff !== undefined &&
-        (input.summary !== config.handoff.summary ||
+        ((input.targetThreadId !== undefined &&
+          input.targetThreadId !== config.handoff.nextThreadId) ||
+          input.summary !== config.handoff.summary ||
           (yield* encodeToolArgument(selection).pipe(Effect.mapError(mapError))) !==
             (yield* encodeToolArgument(config.handoff.modelSelection).pipe(
               Effect.mapError(mapError),
@@ -1375,9 +1437,12 @@ export const layer = Layer.effect(
           paused: status === "draining" ? true : config.paused,
           handoff: {
             requestId,
-            nextThreadId: ids.derive.delegatedTaskThread({
-              commandId: CommandId.make(`repository-handoff:${requestId}`),
-            }),
+            nextThreadId:
+              input.targetThreadId ??
+              config.handoff?.nextThreadId ??
+              ids.derive.delegatedTaskThread({
+                commandId: CommandId.make(`repository-handoff:${requestId}`),
+              }),
             summary: input.summary,
             modelSelection: selection,
             status,
@@ -1460,16 +1525,7 @@ export const layer = Layer.effect(
 
     const restoreRoot: IssueWorkService["Service"]["restoreRoot"] = (input) =>
       Effect.gen(function* () {
-        yield* assertProjectRepository(input.projectId, input);
-        const target = yield* threads
-          .getThreadShell(input.targetThreadId)
-          .pipe(Effect.mapError(mapError));
-        if (target !== null && target.lineage.parentThreadId === null)
-          yield* assertRootCheckout({
-            projectId: input.projectId,
-            commandId: input.clientRequestId,
-            worktreePath: target.worktreePath,
-          });
+        yield* validateLead(input);
         if (input.expectedRootThreadId === null) {
           const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
           if (
@@ -1513,7 +1569,117 @@ export const layer = Layer.effect(
         return yield* repositoryStatus(input);
       });
 
+    const assignOrchestrator = Effect.fn("IssueWorkService.assignOrchestrator")(
+      function* (input: RepositoryOrchestratorInput) {
+        const owner = yield* store.repositoryOwnerByRef(input);
+        if (owner?.rootThreadId === input.targetThreadId) {
+          yield* validateLead(input);
+          return yield* repositoryStatus(input);
+        }
+        if (owner !== null) {
+          if (owner.projectId !== input.projectId)
+            return yield* new IssueWorkError({
+              code: "repository-owner-conflict",
+              message: "Select a thread in the registered repository orchestrator's project.",
+            });
+          return yield* handoff({
+            ...input,
+            action: "approve",
+            expectedRevision: owner.revision,
+            summary: `User selected existing thread ${input.targetThreadId} as repository orchestrator.`,
+          });
+        }
+        const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
+        return yield* restoreRoot({
+          ...input,
+          repositoryId: identity.repositoryId,
+          expectedRootThreadId: null,
+          expectedRevision: null,
+          reason: "User selected this existing lead for repository orchestration",
+        });
+      },
+      (effect, input) =>
+        assignments.withLock(
+          `${input.host.toLowerCase()}/${input.repository.toLowerCase()}`,
+          effect,
+        ),
+    );
+    const ensureOrchestrator = Effect.fn("IssueWorkService.ensureOrchestrator")(
+      function* (input: IssueRepositoryRef) {
+        const current = yield* repositoryStatus(input);
+        if (current.rootThreadId !== null) return current;
+        const candidates = [];
+        for (const project of yield* projects.listShells().pipe(Effect.mapError(mapError))) {
+          const identity = project.repositoryIdentity;
+          const names = [identity?.origin?.displayName, sourceControlRepositorySelector(identity)];
+          if (
+            identity?.provider !== "github" ||
+            pullRequestHostOf(identity, SourceControlProviderKind.make("github")).toLowerCase() !==
+              input.host.toLowerCase() ||
+            !names.some((name) => name?.toLowerCase() === input.repository.toLowerCase())
+          )
+            continue;
+          for (const thread of yield* threads
+            .listProjectThreads({ projectId: project.id, includeSubagents: false })
+            .pipe(Effect.mapError(mapError))) {
+            if ((yield* store.configuration(thread.id)) !== null) continue;
+            const adapter = yield* adapters
+              .get(thread.modelSelection.instanceId)
+              .pipe(Effect.option);
+            if (
+              isRepositoryOrchestratorEligible(
+                thread,
+                Option.isSome(adapter) ? adapter.value.driver : undefined,
+                { ...input, projectId: project.id },
+              )
+            )
+              candidates.push(thread);
+          }
+        }
+        candidates.sort(
+          (a, b) =>
+            DateTime.toEpochMillis(b.updatedAt) - DateTime.toEpochMillis(a.updatedAt) ||
+            b.id.localeCompare(a.id),
+        );
+        const target = candidates[0];
+        if (target === undefined) return current;
+        const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
+        yield* restoreRoot({
+          ...input,
+          repositoryId: identity.repositoryId,
+          projectId: target.projectId,
+          targetThreadId: target.id,
+          expectedRootThreadId: null,
+          expectedRevision: null,
+          reason: "Repository work needs an orchestrator",
+          clientRequestId: yield* ids.allocate
+            .command({ fixtureName: "repository-auto-root", commandName: target.id })
+            .pipe(Effect.mapError(mapError)),
+        }).pipe(
+          Effect.catch((error) =>
+            store
+              .repositoryOwnerByRef(input)
+              .pipe(
+                Effect.flatMap((owner) =>
+                  owner !== null || error.code === "invalid-request"
+                    ? Effect.void
+                    : Effect.fail(error),
+                ),
+              ),
+          ),
+        );
+        return yield* repositoryStatus(input);
+      },
+      (effect, input) =>
+        assignments.withLock(
+          `${input.host.toLowerCase()}/${input.repository.toLowerCase()}`,
+          effect,
+        ),
+    );
+
     const service = IssueWorkService.of({
+      assignOrchestrator,
+      ensureOrchestrator,
       workStatus: (input) =>
         Effect.gen(function* () {
           const request = yield* store.latestRequest(input);
@@ -1733,6 +1899,11 @@ export const layer = Layer.effect(
                 : shell?.linkedIssue) ??
               (yield* store.configuration(shell?.lineage.rootThreadId ?? stored.event.threadId));
             if (repository == null) return;
+            if (
+              stored.event.type === "issue.queue.updated" &&
+              (yield* store.queue(repository)).length > 0
+            )
+              yield* ensureOrchestrator(repository);
             const owner = yield* store.repositoryOwner(repository);
             // Root availability also releases one queued notice.
             if (

@@ -1,3 +1,4 @@
+import { useRepositoryOrchestratorAction } from "~/hooks/useRepositoryOrchestratorAction";
 import { ThreadLocationIcon } from "./ThreadLocationIcon";
 import { ThreadRoleIcon } from "./ThreadRoleIcon";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
@@ -4419,6 +4420,7 @@ export default function Sidebar() {
     },
   );
 
+  const repositoryOrchestratorAction = useRepositoryOrchestratorAction();
   const handleThreadContextMenu = useStableCallback(
     (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       void (async () => {
@@ -4463,9 +4465,11 @@ export default function Sidebar() {
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        const assignOrchestrator = await repositoryOrchestratorAction.forThread(thread);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
+              ...(assignOrchestrator ? { repositoryOrchestrator: assignOrchestrator.item } : {}),
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -4507,6 +4511,9 @@ export default function Sidebar() {
           return;
         }
         switch (clicked.value) {
+          case "make-repository-orchestrator":
+            await assignOrchestrator?.run();
+            return;
           case "filter-by-project":
             setSidebarMode("activity");
 

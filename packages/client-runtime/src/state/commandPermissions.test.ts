@@ -227,6 +227,7 @@ describe("command permissions", () => {
             WS_METHODS.issuesCloseOut,
             WS_METHODS.issuesCancelRequest,
             WS_METHODS.issuesRestoreRoot,
+            WS_METHODS.issuesAssignOrchestrator,
             WS_METHODS.issuesInboxMarkRead,
             WS_METHODS.issuesSetWorkerLimit,
             WS_METHODS.issuesSetReadOnlyLimit,
@@ -266,6 +267,8 @@ describe("command permissions", () => {
               Effect.sync(() => calls.push(WS_METHODS.issuesSetWorkerLimit)),
             [WS_METHODS.issuesSetReadOnlyLimit]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesSetReadOnlyLimit)),
+            [WS_METHODS.issuesAssignOrchestrator]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesAssignOrchestrator)),
             [WS_METHODS.issuesRestoreRoot]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesRestoreRoot)),
           },
@@ -302,6 +305,7 @@ describe("command permissions", () => {
           expectedRevision: 2,
           targetThreadId: ThreadId.make("lead"),
         };
+        const scopeWithTarget = { ...scope, targetThreadId: ThreadId.make("lead") };
         for (const environmentId of [other, env]) {
           const outcome = environmentId === env ? "Success" : "Failure";
           const closedOut = yield* Effect.promise(() =>
@@ -315,6 +319,9 @@ describe("command permissions", () => {
           );
           const restored = yield* Effect.promise(() =>
             issues.restoreRoot.run(registry, { environmentId, input: restore }),
+          );
+          const assigned = yield* Effect.promise(() =>
+            issues.assignOrchestrator.run(registry, { environmentId, input: scopeWithTarget }),
           );
           const limited = yield* Effect.promise(() =>
             issues.setWorkerLimit.run(registry, {
@@ -338,16 +345,18 @@ describe("command permissions", () => {
             closedOut._tag,
             cancelled._tag,
             restored._tag,
+            assigned._tag,
             limited._tag,
             readOnlyLimited._tag,
             queued._tag,
             unqueued._tag,
-          ]).toEqual([outcome, outcome, outcome, outcome, outcome, outcome, outcome]);
+          ]).toEqual([outcome, outcome, outcome, outcome, outcome, outcome, outcome, outcome]);
         }
         expect(calls).toEqual([
           WS_METHODS.issuesCloseOut,
           WS_METHODS.issuesCancelRequest,
           WS_METHODS.issuesRestoreRoot,
+          WS_METHODS.issuesAssignOrchestrator,
           WS_METHODS.issuesSetWorkerLimit,
           WS_METHODS.issuesSetReadOnlyLimit,
           WS_METHODS.issuesQueue,

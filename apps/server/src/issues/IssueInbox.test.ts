@@ -16,6 +16,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as IssueInbox from "./IssueInbox.ts";
 import { classifyWrite, parseSourceMarker, sourceMarker } from "./IssueInboxRules.ts";
 import { isoSeconds } from "./IssueInboxWatcher.ts";
+import * as IssueWorkService from "./IssueWorkService.ts";
 import * as IssueService from "./IssueService.ts";
 
 const root = ThreadId.make("root-b");
@@ -165,20 +166,24 @@ function fakeThreads(onDispatch: () => Effect.Effect<void> = () => Effect.void) 
   return { dispatched, failNext: () => void failures++, service };
 }
 
-const projects = Layer.mock(ProjectService.ProjectService)({
-  getById: (projectId) =>
-    Effect.succeed(
-      Option.some({
-        title: projectId === "project-b" ? "B" : "Amine Thermodynamics",
-        repositoryIdentity: {
-          provider: "github",
-          canonicalKey: projectId === "project-b" ? "github.com/acme/b" : "github.com/acme/a",
-          displayName: projectId === "project-b" ? "acme/b" : "acme/a",
-          locator: { source: "git-remote", remoteName: "origin", remoteUrl: "git@github.com:x" },
-        },
-      } as never),
-    ),
-});
+const projects = Layer.mergeAll(
+  Layer.mock(IssueWorkService.IssueWorkService)({}),
+  Layer.mock(ProjectService.ProjectService)({
+    listShells: () => Effect.succeed([]),
+    getById: (projectId) =>
+      Effect.succeed(
+        Option.some({
+          title: projectId === "project-b" ? "B" : "Amine Thermodynamics",
+          repositoryIdentity: {
+            provider: "github",
+            canonicalKey: projectId === "project-b" ? "github.com/acme/b" : "github.com/acme/a",
+            displayName: projectId === "project-b" ? "acme/b" : "acme/a",
+            locator: { source: "git-remote", remoteName: "origin", remoteUrl: "git@github.com:x" },
+          },
+        } as never),
+      ),
+  }),
+);
 
 const seedRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -470,6 +475,34 @@ it.effect(
       }
       assert.equal(new Set(commandIds()).size, 3);
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("t3_issue_post refuses an unresolved repository identity before any GitHub request", () =>
+  Effect.gen(function* () {
+    const github = fakeGitHub();
+    const inbox = yield* IssueInbox.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          github.service,
+          fakeThreads().service,
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeed(Option.some({ title: "B", repositoryIdentity: null } as never)),
+          }),
+        ),
+      ),
+    );
+    const refused = yield* inbox
+      .post(ThreadId.make("thread-in-b"), {
+        repository: "acme/b",
+        title: "Own issue.",
+        body: "Own note.",
+      })
+      .pipe(Effect.flip);
+    assert.equal(refused.code, "orchestration-error");
+    assert.equal(refused.message, "The project's repository identity is unavailable; retry.");
+    assert.deepEqual(github.requests, []);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("t3_issue_post marks and labels only writes to another project's repository", () =>

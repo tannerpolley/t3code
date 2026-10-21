@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isRepositoryOrchestratorEligible,
   MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -13,12 +14,14 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
+import type { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type { DelegatedTaskRequest, ForkCommandHooks } from "./IssueWorkCommands.ts";
 import type { OrchestratorV2Error, OrchestratorProjectionError } from "./Orchestrator.ts";
 import { openBlockerSuspensionReason } from "../issues/IssueEligibility.ts";
 
 interface RepositoryWorkCommandHooks extends ForkCommandHooks {
+  readonly providerAdapters: ProviderAdapterRegistryV2["Service"];
   readonly dispatchThreadCreate: (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -41,6 +44,7 @@ interface RepositoryWorkCommandHooks extends ForkCommandHooks {
 // Ownership decisions collect events and effects in the caller's existing command plan.
 export function makeRepositoryWorkCommands({
   issueWorkStore,
+  providerAdapters,
   issueWorkRecovery,
   projectionStore,
   idAllocator,
@@ -358,24 +362,38 @@ export function makeRepositoryWorkCommands({
         });
       const now = yield* DateTime.now;
       const nextThreadId = config.handoff.nextThreadId;
-      yield* dispatchThreadCreate(
-        {
-          type: "thread.create",
-          commandId: command.commandId,
-          threadId: nextThreadId,
-          projectId: shell.projectId,
-          title: shell.title,
-          modelSelection: config.handoff.modelSelection,
-          runtimeMode: shell.runtimeMode,
-          interactionMode: shell.interactionMode,
-          branch: shell.branch,
-          worktreePath: shell.worktreePath,
-          createdBy: "user",
-          creationSource: "server",
-        },
-        events,
-      );
+      const existing = yield* projectionStore
+        .getThreadShell(nextThreadId)
+        .pipe(mapDispatchError(command));
+      if (existing === null)
+        yield* dispatchThreadCreate(
+          {
+            type: "thread.create",
+            commandId: command.commandId,
+            threadId: nextThreadId,
+            projectId: shell.projectId,
+            title: shell.title,
+            modelSelection: config.handoff.modelSelection,
+            runtimeMode: shell.runtimeMode,
+            interactionMode: shell.interactionMode,
+            branch: shell.branch,
+            worktreePath: shell.worktreePath,
+            createdBy: "user",
+            creationSource: "server",
+          },
+          events,
+        );
       const next = (yield* getProjectionWithPendingEvents(nextThreadId, events)).thread;
+      const adapter = yield* providerAdapters
+        .get(next.modelSelection.instanceId)
+        .pipe(mapDispatchError(command));
+      if (next.id === shell.id || !isRepositoryOrchestratorEligible(next, adapter.driver, config))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "Select an existing active top-level Orchestrator thread in the same repository project using Codex or Claude.",
+        });
       const emitEvent = emit(events, command);
       yield* emitEvent({
         type: "thread.metadata-updated",
@@ -420,7 +438,7 @@ export function makeRepositoryWorkCommands({
           messageId: idAllocator.derive.delegatedTaskMessage({ commandId: command.commandId }),
           text: `You now own repository orchestration for ${config.repository}. The previous root ${command.threadId} has drained; its children and history retain their original lineage.\n\nHandoff summary:\n${config.handoff.summary}\n\nServer recovery inventory:\n${command.inventory}\n\nContinue the approved repository work through the existing issue tools. Review completed attempts and pending changes before admitting successors. ${config.handoff.wasPaused ? "Repository work remains paused until the user resumes it." : "Repository admissions may resume under this root."}`,
           attachments: [],
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: { type: "queue_after_active" },
           createdBy: "user",
           creationSource: "server",
         },
