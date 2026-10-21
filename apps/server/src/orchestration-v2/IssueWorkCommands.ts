@@ -18,6 +18,7 @@ import * as Ref from "effect/Ref";
 import {
   issueEligibility,
   isReadOnlyIssueRole,
+  requiresManagedIssueAdmission,
   sameIssueRepository,
   supportsManagedIssueWork,
   issueScopeExpansionError,
@@ -290,9 +291,14 @@ export function makeIssueWorkCommands({
   ) =>
     Effect.gen(function* () {
       if (isReadOnlyIssueRole(request.role)) return false;
-      const managed =
-        parentProjection.thread.repositoryOrchestration !== undefined ||
-        parentProjection.thread.linkedIssue !== undefined;
+      const parent = parentProjection.thread;
+      const root =
+        parent.lineage.rootThreadId === parent.id
+          ? parent
+          : yield* projectionStore
+              .getThread(parent.lineage.rootThreadId)
+              .pipe(mapDispatchError(command));
+      const managed = requiresManagedIssueAdmission(request.role, parent, root);
       if (managed && request.issue === undefined)
         return yield* new OrchestratorDispatchError({
           commandId: request.commandId,

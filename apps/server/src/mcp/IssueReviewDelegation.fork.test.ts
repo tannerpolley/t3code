@@ -5,11 +5,13 @@ import {
   EnvironmentId,
   EventId,
   ProviderSessionId,
+  resolveThreadRole,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -17,6 +19,9 @@ import * as IssueLinks from "../issues/IssueLinks.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import { continueRestartedRun } from "../orchestration-v2/RestartContinuation.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -468,6 +473,187 @@ it.effect(
         paused: false,
         clientRequestId: CommandId.make("resume-closed-cancelled-child-owner"),
       });
+      assert.isEmpty((yield* store.configuration(root))!.suspendedIssues);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("read-only descendants cannot bypass managed admission for implementors", () => {
+  const harness = setup();
+  return Effect.gen(function* () {
+    const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const work = yield* IssueWorkService.IssueWorkService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const root = yield* createReviewRoot();
+    yield* work.setWorkerLimit({
+      host: "github.com",
+      repository: "tannerpolley/t3code",
+      workerLimit: 1,
+      expectedRevision: 1,
+      clientRequestId: CommandId.make("descendant-limit"),
+    });
+    yield* delegateReviewIssue(root, reviewIssue(1), "descendant-occupied-slot");
+    let parent = root;
+    for (const role of ["checker", "reviewer", "investigator"] as const) {
+      const child = yield* mcp.delegateTask(scopeFor(parent), {
+        role,
+        task: "Read only",
+        clientRequestId: `descendant-${role}`,
+      });
+      parent = child.childThreadId;
+      const projection = yield* threads.getThreadRecords(parent, ["runs"]);
+      assert.isUndefined(projection.thread.linkedIssue);
+      assert.isUndefined(projection.thread.repositoryOrchestration);
+      assert.equal(projection.runs[0]!.status, "starting");
+      for (const implementationRole of [
+        "implementor",
+        "implementation",
+        "general",
+        undefined,
+      ] as const) {
+        const key = `${role}:${implementationRole ?? "default"}`;
+        const missing = yield* mcp
+          .delegateTask(scopeFor(parent), {
+            role: implementationRole,
+            isolation: "shared",
+            task: "Implement without an issue",
+            clientRequestId: `mcp-missing:${key}`,
+          })
+          .pipe(Effect.flip);
+        assert.include(missing.message, "explicit issue");
+        const run = projection.runs[0]!;
+        const direct = yield* threads
+          .dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make(`direct-missing:${key}`),
+            parentThreadId: parent,
+            parentRunId: run.id,
+            parentNodeId: run.rootNodeId!,
+            role:
+              implementationRole === undefined ? undefined : resolveThreadRole(implementationRole),
+            task: "Implement without an issue",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "always",
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(Effect.flip);
+        assert.include(String(direct.cause), "explicit issue");
+      }
+      const wrongOwner = yield* mcp
+        .delegateTask(scopeFor(parent), {
+          role: "implementor",
+          issue: reviewIssue(2),
+          task: "Implement a top-level issue",
+          clientRequestId: `wrong-owner:${role}`,
+        })
+        .pipe(Effect.flip);
+      assert.include(wrongOwner.message, "immediate GitHub parent");
+      assert.isNull(yield* store.issueOwner(reviewIssue(2)));
+      assert.equal(yield* store.slotsInUse(root), 1);
+    }
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect(
+  "close-out refuses unsettled restart continuations and stays closed after they finish",
+  () => {
+    const harness = setup();
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const work = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const sink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const root = yield* createReviewRoot();
+      yield* delegateReviewIssue(root, reviewIssue(1), "restart-worker");
+      const child = (yield* store.issueOwner(reviewIssue(1)))!;
+      const run = (yield* threads.getThreadRecords(child, ["runs"])).runs[0]!;
+      yield* worker.drain();
+      const now = yield* DateTime.now;
+      const effectId = `effect:restart-continuation:${run.id}`;
+      yield* sink.writeWithEffects({
+        events: [
+          {
+            id: EventId.make("restart-cut"),
+            type: "run.updated",
+            threadId: child,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "cancelled", startedAt: now, completedAt: now },
+          },
+        ],
+        effects: [
+          {
+            id: effectId,
+            commandId: CommandId.make("restart-recovery"),
+            threadId: child,
+            request: { type: "provider-runtime.continue", sourceRunId: run.id },
+          },
+        ],
+      });
+      harness.close();
+      const closeOut = Effect.fn("test.closeOutRestartAttempt")(function* (key: string) {
+        const config = (yield* store.configuration(root))!;
+        return yield* work.closeOut({
+          host: "github.com",
+          repository: "tannerpolley/t3code",
+          issueId: reviewIssue(1).id,
+          expectedRevision: config.revision,
+          clientRequestId: CommandId.make(key),
+        });
+      });
+      const pending = yield* closeOut("restart-close-pending").pipe(Effect.flip);
+      assert.include(pending.message, "remaining work");
+      assert.isFalse(yield* store.resultAvailable(child));
+      const claimed = yield* outbox.claimNext({
+        workerId: "restart-test",
+        leaseDurationMs: 60_000,
+        lane: "lifecycle",
+      });
+      assert.equal(Option.getOrThrow(claimed).id, effectId);
+      const running = yield* closeOut("restart-close-running").pipe(Effect.flip);
+      assert.include(running.message, "remaining work");
+      // Stop reaches the cancelled source before the claimed continuation dispatches.
+      yield* threads.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-restart"),
+        threadId: child,
+      });
+      const settings = yield* ServerSettingsService;
+      const continueRun = continueRestartedRun({ threadId: child, sourceRunId: run.id }).pipe(
+        Effect.provideService(ServerSettingsService, {
+          ...settings,
+          getSettings: settings.getSettings.pipe(
+            Effect.map((value) => ({
+              ...value,
+              continueThreadsAfterServerUpdate: true,
+            })),
+          ),
+        }),
+      );
+      yield* continueRun;
+      assert.isTrue(yield* outbox.succeed({ effectId, workerId: "restart-test" }));
+      yield* closeOut("restart-close-finished");
+      assert.isTrue(yield* store.resultAvailable(child));
+      yield* continueRun;
+      yield* worker.drain();
+      yield* work.reconcile(root);
+      yield* work.setPaused({
+        host: "github.com",
+        repository: "tannerpolley/t3code",
+        paused: false,
+        clientRequestId: CommandId.make("resume-after-restart-close"),
+      });
+      const after = yield* threads.getThreadRecords(child, ["runs"]);
+      assert.deepEqual(
+        after.runs.map((row) => row.status),
+        ["cancelled"],
+      );
       assert.isEmpty((yield* store.configuration(root))!.suspendedIssues);
     }).pipe(Effect.provide(harness.layer));
   },
