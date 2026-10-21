@@ -5,6 +5,7 @@ import {
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
 import {
+  BriefcaseIcon,
   HardHatIcon,
   ListChecksIcon,
   NetworkIcon,
@@ -39,15 +40,22 @@ export function threadRoleDisplay(thread: RoleDisplayThread) {
   const native = isProviderNativeSubagentThread(thread);
   const role = effectiveThreadRole(thread);
   const worker = native && role === "implementor";
-  const description = worker ? "Carries out work assigned by its parent" : ROLE_DESCRIPTIONS[role];
+  // An orchestrator another thread delegated runs one family of work for its parent.
+  const manager =
+    !native && role === "orchestrator" && thread.lineage.relationshipToParent === "subagent";
+  const description = worker
+    ? "Carries out work assigned by its parent"
+    : manager
+      ? "Coordinates a family of work for its parent orchestrator"
+      : ROLE_DESCRIPTIONS[role];
   const relationship = native
     ? " · Provider's own subagent · Runs on its own · Open parent to direct it"
     : thread.lineage.relationshipToParent === "subagent"
       ? " · Child thread · You can send messages here"
       : "";
   return {
-    label: worker ? "Worker" : THREAD_ROLE_LABELS[role],
+    label: worker ? "Worker" : manager ? "Manager" : THREAD_ROLE_LABELS[role],
     description: `${description}${relationship}`,
-    icon: worker ? HardHatIcon : ROLE_ICONS[role],
+    icon: worker ? HardHatIcon : manager ? BriefcaseIcon : ROLE_ICONS[role],
   };
 }

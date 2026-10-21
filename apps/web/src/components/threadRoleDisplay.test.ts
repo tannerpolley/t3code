@@ -1,5 +1,5 @@
 import { nativeSubagentRole, THREAD_ROLES } from "@t3tools/contracts";
-import { HardHatIcon, WrenchIcon } from "lucide-react";
+import { BriefcaseIcon, HardHatIcon, NetworkIcon, WrenchIcon } from "lucide-react";
 import { describe, expect, it } from "vite-plus/test";
 import { threadRoleDisplay, type RoleDisplayThread } from "./threadRoleDisplay";
 
@@ -43,5 +43,22 @@ describe("threadRoleDisplay", () => {
         lineage: { relationshipToParent: null },
       }).label,
     ).toBe("Implementor");
+  });
+
+  it("displays a delegated orchestrator as a Manager and a top-level one as the Orchestrator", () => {
+    const delegated = threadRoleDisplay({ ...native, creationSource: "mcp", role: "orchestrator" });
+    expect(delegated.label).toBe("Manager");
+    expect(delegated.icon).toBe(BriefcaseIcon);
+    expect(delegated.description).toContain("family of work for its parent orchestrator");
+    const lead = threadRoleDisplay({
+      ...native,
+      creationSource: "user",
+      role: "orchestrator",
+      lineage: { relationshipToParent: null },
+    });
+    expect(lead.label).toBe("Orchestrator");
+    expect(lead.icon).toBe(NetworkIcon);
+    // A provider's own subagent keeps its native role name.
+    expect(threadRoleDisplay({ ...native, role: "orchestrator" }).label).toBe("Orchestrator");
   });
 });
