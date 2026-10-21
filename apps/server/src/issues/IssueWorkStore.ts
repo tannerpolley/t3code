@@ -129,7 +129,9 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const mapError = (cause: unknown) =>
       new IssueWorkError({ code: "orchestration-error", message: String(cause) });
-    // Keep the displayed occupancy and admission rule identical. `thread` is the worker alias.
+    // A slot covers a managed worker preparing/running/waiting or awaiting a person's response.
+    // Queued workers, read-only children and completed workers (even with open PRs) hold no slot.
+    // Keep displayed occupancy and admission identical; `thread` is the worker alias.
     const usesWorkerSlot = sql`(EXISTS (
       SELECT 1 FROM orchestration_v2_projection_runs run
       WHERE run.thread_id = thread.thread_id

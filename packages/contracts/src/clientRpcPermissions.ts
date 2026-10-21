@@ -64,6 +64,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.issuesSetState]: AuthSourceControlWriteScope,
   [WS_METHODS.issuesCleanup]: AuthSourceControlWriteScope,
   [WS_METHODS.issuesUnlink]: AuthOrchestrationOperateScope,
+  [WS_METHODS.issuesCloseOut]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesCancelRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesRestoreRoot]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesSetWorkerLimit]: AuthOrchestrationOperateScope,

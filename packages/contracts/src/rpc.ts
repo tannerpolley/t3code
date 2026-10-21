@@ -214,6 +214,7 @@ import {
   RepositoryWorkerLimitInput,
   RepositoryWorkRestoreInput,
   IssueWorkCancelInput,
+  IssueWorkCloseOutInput,
   IssueWorkRequested,
   RepositoryWorkResult,
 } from "./issueWork.ts";
@@ -605,6 +606,7 @@ export const WS_METHODS = {
   issuesWorkMilestone: "issues.workMilestone",
   issuesRepositoryStatus: "issues.repositoryStatus",
   issuesSetPaused: "issues.setPaused",
+  issuesCloseOut: "issues.closeOut",
   issuesSetWorkerLimit: "issues.setWorkerLimit",
   issueChangesList: "issues.changes.list",
   issueChangesDecide: "issues.changes.decide",
@@ -1128,6 +1130,11 @@ const WsIssuesRepositoryStatusRpc = Rpc.make(WS_METHODS.issuesRepositoryStatus, 
 });
 const WsIssuesSetWorkerLimitRpc = Rpc.make(WS_METHODS.issuesSetWorkerLimit, {
   payload: RepositoryWorkerLimitInput,
+  success: RepositoryWorkResult,
+  error: IssueRpcError,
+});
+const WsIssuesCloseOutRpc = Rpc.make(WS_METHODS.issuesCloseOut, {
+  payload: IssueWorkCloseOutInput,
   success: RepositoryWorkResult,
   error: IssueRpcError,
 });
@@ -2221,6 +2228,7 @@ const forkWsRpcs = [
   WsIssuesWorkMilestoneRpc,
   WsIssuesRepositoryStatusRpc,
   WsIssuesSetPausedRpc,
+  WsIssuesCloseOutRpc,
   WsIssuesSetWorkerLimitRpc,
   WsIssuesHandoffRpc,
   WsIssuesCancelRequestRpc,
@@ -2462,6 +2470,7 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issuesWorkMilestone,
   WS_METHODS.issuesRepositoryStatus,
   WS_METHODS.issuesSetPaused,
+  WS_METHODS.issuesCloseOut,
   WS_METHODS.issuesSetWorkerLimit,
   WS_METHODS.issuesHandoff,
   WS_METHODS.issuesCancelRequest,

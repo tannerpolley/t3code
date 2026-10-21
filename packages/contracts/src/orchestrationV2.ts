@@ -3217,6 +3217,14 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
   }),
   Schema.Struct({
+    type: Schema.Literal("issue.work.close-out"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    issueThreadId: ThreadId,
+    issue: ThreadLinkedIssue,
+    expectedRevision: Schema.Int,
+  }),
+  Schema.Struct({
     type: Schema.Literal("issue.work.cancel"),
     commandId: CommandId,
     threadId: ThreadId,

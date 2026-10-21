@@ -163,7 +163,7 @@ export type OrchestratorMcpTerminalDelegatedTaskStatus =
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   issue: Schema.optional(IssueRef).annotate({
     description:
-      "Required for repository-managed children. Starts or claims this eligible GitHub issue directly; an existing current worker is reused.",
+      "Required for managed implementors. Starts or claims an eligible GitHub issue; an existing worker is reused. For checker, reviewer and investigator, this is only a visibility link: no claim, slot or issue worktree.",
   }),
   task: OrchestratorMcpPrompt.annotate({
     description: "Self-contained task for one delegated child agent/subagent.",

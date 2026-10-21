@@ -146,6 +146,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Request", "Requesting", "Requested", "an orchestrator handoff"],
     "issue-work",
   ),
+  close_out_issue_attempt: tool(
+    ["Close out", "Closing out", "Closed out", "an issue attempt"],
+    "issue-work",
+  ),
   cancel_issue_request: tool(
     ["Cancel", "Canceling", "Cancelled", "an issue start request"],
     "issue-work",

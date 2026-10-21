@@ -191,6 +191,10 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:worker-limit",
       tag: WS_METHODS.issuesSetWorkerLimit,
     }),
+    closeOut: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:close-out",
+      tag: WS_METHODS.issuesCloseOut,
+    }),
     setPaused: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:pause",
       tag: WS_METHODS.issuesSetPaused,

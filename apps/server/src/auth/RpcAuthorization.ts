@@ -133,6 +133,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.issuesWorkStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.issuesWorkMilestone]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesRepositoryStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.issuesCloseOut]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesSetPaused]: AuthOrchestrationOperateScope,
   [WS_METHODS.issuesSetWorkerLimit]: AuthOrchestrationOperateScope,
   [WS_METHODS.issueChangesList]: AuthOrchestrationReadScope,

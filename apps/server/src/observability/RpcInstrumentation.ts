@@ -242,6 +242,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.issuesWorkStatus]: "issues",
   [WS_METHODS.issuesWorkMilestone]: "issues",
   [WS_METHODS.issuesRepositoryStatus]: "issues",
+  [WS_METHODS.issuesCloseOut]: "issues",
   [WS_METHODS.issuesSetPaused]: "issues",
   [WS_METHODS.issuesSetWorkerLimit]: "issues",
   [WS_METHODS.issuesHandoff]: "issues",
