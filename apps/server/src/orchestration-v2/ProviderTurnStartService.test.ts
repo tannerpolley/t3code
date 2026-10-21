@@ -1357,7 +1357,6 @@ effectIt.effect(
             messageId: MessageId.make("next"),
             text: "Next",
             compact: false,
-            turnStart: true,
           },
           Effect.succeed,
         ),

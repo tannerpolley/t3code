@@ -1,12 +1,8 @@
 import { assert, it } from "@effect/vitest";
-import {
-  MessageId,
-  ProjectId,
-  RunId,
-  ThreadId,
-  type OrchestrationV2ServerCommand,
-} from "@t3tools/contracts";
+import { ProjectId, ThreadId, type OrchestrationV2ServerCommand } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as Layer from "effect/Layer";
@@ -17,7 +13,6 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { InlineShellStore, layer as inlineShellLayer } from "../terminal/InlineShellStore.ts";
 import * as IssueInbox from "./IssueInbox.ts";
 import { classifyWrite, parseSourceMarker, sourceMarker } from "./IssueInboxRules.ts";
 import { isoSeconds } from "./IssueInboxWatcher.ts";
@@ -143,7 +138,7 @@ function fakeGitHub(pageSize = 2) {
   return { requests, data, service };
 }
 
-function fakeThreads() {
+function fakeThreads(onDispatch: () => Effect.Effect<void> = () => Effect.void) {
   const dispatched: OrchestrationV2ServerCommand[] = [];
   let failures = 0;
   const service = Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -154,7 +149,7 @@ function fakeThreads() {
           failures--;
           return Effect.die("server stopped before recording the delivery");
         }
-        return Effect.succeed({ sequence: dispatched.length, storedEvents: [] });
+        return onDispatch().pipe(Effect.as({ sequence: dispatched.length, storedEvents: [] }));
       }),
     getThreadShell: (threadId) =>
       Effect.succeed({
@@ -477,44 +472,6 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect(
-  "mentions unread events once at the orchestrator's next turn start, never on a steer",
-  () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* seedRepository;
-      yield* sql`INSERT INTO issue_inbox_events (host, repository_id, repository, event_key, issue_number, issue_title, kind, author, source_project, tagged, high_priority, needs_triage, url, snippet, occurred_at)
-      VALUES ('github.com', '42', 'acme/b', 'opened:62', 62, 'New', 'issue_opened', 'owner', 'amine', 0, 1, 1, 'https://github.com/acme/b/issues/62', '', ${at(1)})`;
-      const store = yield* InlineShellStore;
-      const delivery = (threadId: ThreadId, id: string, turnStart = true) => ({
-        threadId,
-        deliveryId: id,
-        runId: RunId.make(`run-${id}`),
-        attemptId: null,
-        providerTurnId: null,
-        messageId: MessageId.make(`message-${id}`),
-        text: "Carry on.",
-        compact: false,
-        turnStart,
-      });
-      assert.equal(
-        yield* store.deliver(delivery(ThreadId.make("other"), "other"), Effect.succeed),
-        "Carry on.",
-      );
-      assert.equal(
-        yield* store.deliver(delivery(root, "steer", false), Effect.succeed),
-        "Carry on.",
-      );
-      assert.equal(
-        yield* store.deliver(delivery(root, "first"), Effect.succeed),
-        "Issue inbox: 1 unread external issue event (b #62 opened from amine (needs triage)). Read them with t3_issue_inbox. Review each item, revise it if needed with propose_issue_change, then acknowledge it with t3_issue_inbox mark_read to place the issue in Ready.\n\nCarry on.",
-      );
-      assert.equal(yield* store.deliver(delivery(root, "second"), Effect.succeed), "Carry on.");
-    }).pipe(
-      Effect.provide(inlineShellLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
-    ),
-);
-
 it.effect("t3_issue_post marks and labels only writes to another project's repository", () =>
   Effect.gen(function* () {
     const github = fakeGitHub();
@@ -663,6 +620,8 @@ it.effect(
       for (const [key, number, kind, source, read] of [
         ["opened:5", 5, "issue_opened", "amine", null],
         ["opened:6", 6, "issue_opened", null, null],
+        ["opened:7", 7, "issue_opened", "amine", null],
+        ["opened:8", 8, "issue_opened", "amine", null],
         ["comment:1", 5, "comment", "amine", null],
         ["comment:2", 5, "comment", "amine", null],
         ["comment:3", 5, "comment", "amine", at(4)],
@@ -671,7 +630,7 @@ it.effect(
         yield* sql`INSERT INTO issue_inbox_events (host, repository_id, repository, event_key, issue_number, issue_title,
         kind, source_project, tagged, high_priority, needs_triage, url, snippet, occurred_at, read_at, noted_by)
         VALUES ('github.com', '42', 'acme/b', ${key}, ${number}, 'Issue', ${kind}, ${source}, 1, 1, 0,
-          'https://github.com/acme/b/issues/5', '', ${at(2)}, ${read}, 'digest:1')`;
+          'https://github.com/acme/b/issues/5', '', ${at(2)}, ${read}, ${number === 7 ? "digest:2" : number === 8 ? "start:unseen" : "digest:1"})`;
       }
       yield* sql`INSERT INTO issue_inbox_digests (host, repository_id, text, created_at)
       VALUES ('github.com', '42', 'Stale digest', ${at(1)})`;
@@ -691,16 +650,27 @@ it.effect(
       const inbox = yield* IssueInbox.make.pipe(
         Effect.provide(Layer.mergeAll(github.service, threads.service, projects)),
       );
-      assert.deepEqual(yield* listed(inbox), ["issue_opened #5"]);
+      assert.deepEqual(yield* listed(inbox), [
+        "issue_opened #5",
+        "issue_opened #7",
+        "issue_opened #8",
+      ]);
       yield* inbox.pollDue;
-      assert.deepEqual(yield* listed(inbox), ["comment #5", "issue_opened #5"]);
-      assert.deepEqual((yield* inbox.list(repo)).pendingIssueNumbers, [5]);
+      assert.deepEqual(yield* listed(inbox), [
+        "comment #5",
+        "issue_opened #5",
+        "issue_opened #7",
+        "issue_opened #8",
+      ]);
+      assert.deepEqual(((yield* inbox.list(repo)).pendingIssueNumbers ?? []).toSorted(), [5, 7, 8]);
       assert.deepEqual(threads.dispatched, []);
       yield* TestClock.adjust("16 minutes");
       yield* inbox.pollDue;
       assert.equal(threads.dispatched.length, 1);
       const digest = threads.dispatched[0]!;
       if (digest.type === "message.dispatch") {
+        assert.include(digest.text, "#8", "a legacy turn-start note remains eligible");
+        assert.notInclude(digest.text, "#7", "a successful legacy digest stays announced");
         assert.notInclude(digest.text, "Stale digest");
         assert.notInclude(digest.text, "#6");
         assert.notInclude(digest.text, "closed");
@@ -708,46 +678,43 @@ it.effect(
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
-it.effect("turn-start notes share a 15-minute cooldown and retain skipped marked comments", () =>
+it.effect("overlapping digest attempts retain new events and deliver once per 15 minutes", () =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const { inbox, threads } = yield* setup();
-    const add = (number: number) => sql`INSERT INTO issue_inbox_events
-      (host, repository_id, repository, event_key, issue_number, issue_title, kind, source_project,
-       tagged, high_priority, needs_triage, url, snippet, occurred_at)
-      VALUES ('github.com', '42', 'acme/b', ${`comment:${number}`}, ${number}, 'Cross project',
-       'comment', 'amine', 1, 1, 0, 'https://github.com/acme/b/issues/1', '', ${at(1)})`;
-    const store = yield* InlineShellStore;
-    const deliver = (id: string) =>
-      store.deliver(
-        {
-          threadId: root,
-          deliveryId: id,
-          runId: RunId.make(id),
-          attemptId: null,
-          providerTurnId: null,
-          messageId: MessageId.make(id),
-          text: "Continue",
-          compact: false,
-          turnStart: true,
-        },
-        Effect.succeed,
-      );
-    yield* add(1);
-    const first = yield* deliver("one");
+    const accepted = yield* Deferred.make<void>();
+    const dispatching = yield* Deferred.make<void>();
+    let attempts = 0;
+    const threads = fakeThreads(() =>
+      ++attempts === 1
+        ? Deferred.succeed(dispatching, undefined).pipe(Effect.andThen(Deferred.await(accepted)))
+        : Effect.void,
+    );
+    const { inbox, github } = yield* setup(fakeGitHub(), threads);
+    github.data.issues = [issue(5, amineMarker)];
     yield* TestClock.adjust("2 minutes");
-    yield* add(2);
-    const second = yield* deliver("two");
-    assert.include(first, "Issue inbox:");
-    assert.notInclude(second, "Issue inbox:");
+    const first = yield* inbox.pollDue.pipe(Effect.forkScoped);
+    yield* Deferred.await(dispatching);
+    github.data.comments = [comment(1, 5, amineMarker, { created_at: at(3), updated_at: at(3) })];
+    yield* TestClock.adjust("2 minutes");
+    const second = yield* inbox.pollDue.pipe(Effect.forkScoped);
+    yield* TestClock.adjust("0 millis");
+    assert.lengthOf(threads.dispatched, 1, "only one dispatch is in flight");
+    yield* Deferred.succeed(accepted, undefined);
+    yield* Fiber.join(first);
+    yield* Fiber.join(second);
+    assert.lengthOf(threads.dispatched, 1);
+    assert.lengthOf((yield* inbox.list(repo)).events, 2, "the racing comment was polled");
+    yield* TestClock.adjust("14 minutes");
     yield* inbox.pollDue;
-    assert.lengthOf(threads.dispatched, 0, "turn-start delivery also throttles digests");
-    yield* TestClock.adjust("13 minutes");
-    const third = yield* deliver("three");
-    assert.include(third, "Issue inbox:");
-    assert.include(third, "#2 comment");
-    assert.notInclude(third, "#1 comment");
-  }).pipe(Effect.provide(inlineShellLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))),
+    assert.lengthOf(threads.dispatched, 1, "cooldown starts at acceptance, not creation");
+    yield* TestClock.adjust("2 minutes");
+    yield* inbox.pollDue;
+    assert.lengthOf(threads.dispatched, 2);
+    const digest = threads.dispatched[1]!;
+    if (digest.type === "message.dispatch") {
+      assert.include(digest.text, "#5 comment");
+      assert.notInclude(digest.text, "opened");
+    }
+  }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect("a delayed digest retry starts the next cooldown at successful delivery", () =>
@@ -761,22 +728,6 @@ it.effect("a delayed digest retry starts the next cooldown at successful deliver
     github.data.comments = [comment(1, 5, amineMarker, { created_at: at(19), updated_at: at(19) })];
     yield* nextPoll(inbox); // t=20: two minutes after the retry succeeded
     assert.equal(threads.dispatched.length, 2);
-    const store = yield* InlineShellStore;
-    const note = yield* store.deliver(
-      {
-        threadId: root,
-        deliveryId: "after-retry",
-        runId: RunId.make("after-retry"),
-        attemptId: null,
-        providerTurnId: null,
-        messageId: MessageId.make("after-retry"),
-        text: "Continue",
-        compact: false,
-        turnStart: true,
-      },
-      Effect.succeed,
-    );
-    assert.notInclude(note, "Issue inbox:", "digest delivery also throttles turn-start notes");
     yield* TestClock.adjust("12 minutes");
     yield* inbox.pollDue; // t=32: still before the cooldown ends
     assert.equal(threads.dispatched.length, 2);
@@ -790,5 +741,5 @@ it.effect("a delayed digest retry starts the next cooldown at successful deliver
     assert.equal(rows.length, 2);
     assert.equal(Date.parse(rows[0]!.delivered_at), Date.parse(at(18)));
     assert.equal(Date.parse(rows[1]!.delivered_at), Date.parse(at(34)));
-  }).pipe(Effect.provide(inlineShellLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))),
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

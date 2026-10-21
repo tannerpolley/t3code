@@ -16,10 +16,17 @@ export default Effect.gen(function* () {
       kind <> 'issue_opened' OR source_project IS NULL OR source_project = ''
     )`;
   // Retire unsent stale text without counting it as a successful notification.
-  yield* sql`UPDATE issue_inbox_events SET noted_by = NULL WHERE read_at IS NULL AND noted_by IN (
-    SELECT 'digest:' || digest_id FROM issue_inbox_digests WHERE delivered_at IS NULL
-  )`;
   yield* sql`DELETE FROM issue_inbox_digests WHERE delivered_at IS NULL`;
+  yield* sql`ALTER TABLE issue_inbox_events ADD COLUMN digest_id INTEGER`;
+  // Only successful digests count as announced; turn-start notes may never have reached a provider.
+  yield* sql`UPDATE issue_inbox_events SET digest_id = (
+    SELECT d.digest_id FROM issue_inbox_digests d
+    WHERE issue_inbox_events.noted_by = 'digest:' || d.digest_id
+      AND d.host = issue_inbox_events.host AND d.repository_id = issue_inbox_events.repository_id
+  )`;
+  yield* sql`ALTER TABLE issue_inbox_events DROP COLUMN noted_by`;
+  yield* sql`CREATE UNIQUE INDEX issue_inbox_digests_pending
+    ON issue_inbox_digests(host, repository_id) WHERE delivered_at IS NULL`;
   yield* sql`DROP TABLE issue_inbox_own_writes`;
   yield* sql`DROP TABLE issue_inbox_write_receipts`;
 });

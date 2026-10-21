@@ -23,6 +23,7 @@ import {
   type IssuePostResult,
   type IssueRepositoryRef,
 } from "@t3tools/contracts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -43,8 +44,8 @@ import {
   HIGH_PRIORITY_LABEL,
   digestText,
   fromLabel,
-  inboxNotificationDue,
-  noteEvent,
+  DIGEST_INTERVAL_MS,
+  digestEvent,
   projectSlug,
   sourceMarker,
 } from "./IssueInboxRules.ts";
@@ -133,6 +134,7 @@ export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService;
   const projects = yield* ProjectService;
   const changes = yield* PubSub.sliding<void>(1);
+  const deliveries = yield* KeyedLock.make<string>();
   const changed = PubSub.publish(changes, undefined);
   const watcher = yield* Watcher.make;
   const nowIso = Clock.currentTimeMillis.pipe(Effect.map(Watcher.isoSeconds));
@@ -158,64 +160,64 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  /**
-   * At most one digest per repository every 15 minutes, only for tagged events no note or digest
-   * has told yet. The digest row commits before dispatch, and its command id makes a retry after
-   * a restart replay instead of sending twice.
-   */
-  const deliverDigest = Effect.fn("IssueInbox.deliverDigest")(function* (
-    repo: Watcher.WatchedRepository,
-  ) {
-    if (!(yield* inboxNotificationDue(sql, repo.rootThreadId))) return;
-    let pending = yield* sql<{ digest_id: number; text: string }>`
-        SELECT digest_id, text FROM issue_inbox_digests
-        WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId} AND delivered_at IS NULL
-        ORDER BY digest_id
-      `;
-    if (pending.length === 0) {
-      const now = yield* Clock.currentTimeMillis;
-      const tagged = yield* sql<EventRow>`
+  // Serialize retries through dispatch too: a pending row must not be sent by overlapping polls.
+  const deliverDigest = Effect.fn("IssueInbox.deliverDigest")(
+    function* (repo: Watcher.WatchedRepository) {
+      const [digest] = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          const cutoff = DateTime.formatIso(DateTime.makeUnsafe(now - DIGEST_INTERVAL_MS));
+          const [recent] = yield* sql`
+          SELECT digest_id FROM issue_inbox_digests
+          WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId}
+            AND julianday(delivered_at) > julianday(${cutoff})
+          LIMIT 1
+        `;
+          if (recent !== undefined) return [];
+          const pending = yield* sql<{ digest_id: number }>`
+          SELECT digest_id FROM issue_inbox_digests
+          WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId} AND delivered_at IS NULL
+        `;
+          if (pending.length > 0) return pending;
+          const tagged = yield* sql<EventRow>`
           SELECT * FROM issue_inbox_events
           WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId}
-            AND read_at IS NULL AND noted_by IS NULL AND tagged = 1
+            AND read_at IS NULL AND digest_id IS NULL AND tagged = 1
           ORDER BY high_priority DESC, event_id
         `;
-      if (tagged.length === 0) return;
-      const since = tagged
-        .map((event) => event.occurred_at)
-        .reduce((min, value) => (value < min ? value : min));
-      const text = digestText(tagged.map(noteEvent), since);
-      const createdAt = Watcher.isoSeconds(now);
-      pending = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const rows = yield* sql<{ digest_id: number; text: string }>`
-              INSERT INTO issue_inbox_digests (host, repository_id, text, created_at)
-              VALUES (${repo.host}, ${repo.repositoryId}, ${text}, ${createdAt})
-              RETURNING digest_id, text
-            `;
+          if (tagged.length === 0) return [];
+          const since = tagged.reduce(
+            (min, event) => (event.occurred_at < min ? event.occurred_at : min),
+            tagged[0]!.occurred_at,
+          );
+          const text = digestText(tagged.map(digestEvent), since);
+          const rows = yield* sql<{ digest_id: number }>`
+          INSERT INTO issue_inbox_digests (host, repository_id, text, created_at)
+          VALUES (${repo.host}, ${repo.repositoryId}, ${text}, ${Watcher.isoSeconds(now)})
+          RETURNING digest_id
+        `;
           yield* sql`
-              UPDATE issue_inbox_events SET noted_by = ${`digest:${rows[0]!.digest_id}`}
-              WHERE event_id IN ${sql.in(tagged.map((event) => event.event_id))}
-            `;
+          UPDATE issue_inbox_events SET digest_id = ${rows[0]!.digest_id}
+          WHERE event_id IN ${sql.in(tagged.map((event) => event.event_id))}
+        `;
           return rows;
         }),
       );
-    }
-    for (const digest of pending) {
+      if (digest === undefined) return;
       const unread = yield* sql<EventRow>`
-          SELECT * FROM issue_inbox_events
-          WHERE noted_by = ${`digest:${digest.digest_id}`} AND read_at IS NULL
-          ORDER BY high_priority DESC, event_id
-        `;
+        SELECT * FROM issue_inbox_events
+        WHERE digest_id = ${digest.digest_id} AND read_at IS NULL
+        ORDER BY high_priority DESC, event_id
+      `;
       if (unread.length === 0) {
         yield* sql`DELETE FROM issue_inbox_digests WHERE digest_id = ${digest.digest_id}`;
-        continue;
+        return;
       }
       const since = unread.reduce(
         (min, event) => (event.occurred_at < min ? event.occurred_at : min),
         unread[0]!.occurred_at,
       );
-      const text = digestText(unread.map(noteEvent), since);
+      const text = digestText(unread.map(digestEvent), since);
       const id = `issue-inbox-digest:${digest.digest_id}:${repo.rootThreadId}`;
       // Queued, never steered: Claude's steering interrupts running tools. Idle, it starts a turn.
       yield* threads.dispatch({
@@ -236,12 +238,13 @@ export const make = Effect.gen(function* () {
         creationSource: "server",
       });
       yield* sql`
-          UPDATE issue_inbox_digests SET delivered_at = ${DateTime.formatIso(yield* DateTime.now)}
-          WHERE digest_id = ${digest.digest_id}
-        `;
+        UPDATE issue_inbox_digests SET delivered_at = ${DateTime.formatIso(yield* DateTime.now)}
+        WHERE digest_id = ${digest.digest_id}
+      `;
       return;
-    }
-  });
+    },
+    (effect, repo) => deliveries.withLock(`${repo.host}/${repo.repositoryId}`, effect),
+  );
 
   let nextPollAt = 0;
   const pollDue = Effect.gen(function* () {

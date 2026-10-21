@@ -1,13 +1,9 @@
 /**
  * Who wrote a GitHub issue write, whether it is tagged for the repository orchestrator, and the
- * one-line notes that tell it. Every agent writes with the owner's own `gh` login, so Inbox membership
+ * digests that tell it. Every agent writes with the owner's own `gh` login, so Inbox membership
  * comes from another project's marker, never from the GitHub login.
  */
 import type { IssueInboxEventKind } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
-import type * as SqlClient from "effect/sql/SqlClient";
 
 export const DIGEST_INTERVAL_MS = 15 * 60_000;
 
@@ -104,7 +100,7 @@ export function snippet(body: string, maxLength = 280): string {
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
-export interface NoteEvent {
+export interface DigestEvent {
   readonly repository: string;
   readonly issueNumber: number;
   readonly kind: IssueInboxEventKind;
@@ -127,7 +123,7 @@ const KIND_WORDS: Record<IssueInboxEventKind, string> = {
 const MAX_LISTED = 6;
 
 /** `epc-saft #61 comment from amine, #62 opened (needs triage)`; callers sort priority first. */
-export function listEvents(events: ReadonlyArray<NoteEvent>): string {
+export function listEvents(events: ReadonlyArray<DigestEvent>): string {
   const listed = events.slice(0, MAX_LISTED).map((event, index) => {
     const name = event.repository.slice(event.repository.indexOf("/") + 1);
     const prefix = index === 0 || events[index - 1]!.repository !== event.repository;
@@ -142,23 +138,17 @@ export function listEvents(events: ReadonlyArray<NoteEvent>): string {
 }
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
-const triageHint = (events: ReadonlyArray<NoteEvent>) =>
+const triageHint = (events: ReadonlyArray<DigestEvent>) =>
   events.some((event) => event.needsTriage)
     ? " Review each item, revise it if needed with propose_issue_change, then acknowledge it with t3_issue_inbox mark_read to place the issue in Ready."
     : "";
 
-/** The idle-wake digest: counts and issue numbers, never bodies. */
-export function digestText(events: ReadonlyArray<NoteEvent>, since: string): string {
+/** The queued digest: counts and issue numbers, never bodies. */
+export function digestText(events: ReadonlyArray<DigestEvent>, since: string): string {
   return `${plural(events.length, "tagged external issue event")} since ${since.slice(11, 16)} UTC (${listEvents(events)}). Read them with t3_issue_inbox.${triageHint(events)}`;
 }
 
-/** The line prepended to the orchestrator's next turn. */
-export function turnNoteText(events: ReadonlyArray<NoteEvent>): string {
-  return `Issue inbox: ${plural(events.length, "unread external issue event")} (${listEvents(events)}). Read them with t3_issue_inbox.${triageHint(events)}`;
-}
-
-interface NoteRow {
-  readonly event_id: number;
+interface DigestEventRow {
   readonly repository: string;
   readonly issue_number: number;
   readonly kind: IssueInboxEventKind;
@@ -166,69 +156,10 @@ interface NoteRow {
   readonly needs_triage: number;
 }
 
-export const noteEvent = (row: NoteRow): NoteEvent => ({
+export const digestEvent = (row: DigestEventRow): DigestEvent => ({
   repository: row.repository,
   issueNumber: row.issue_number,
   kind: row.kind,
   sourceProject: row.source_project,
   needsTriage: row.needs_triage === 1,
 });
-
-/** Both notification paths use successful deliveries, including notes with no shell output. */
-export const inboxNotificationDue = Effect.fn("IssueInboxRules.notificationDue")(function* (
-  sql: SqlClient.SqlClient,
-  threadId: string,
-) {
-  const cutoff = DateTime.formatIso(
-    DateTime.makeUnsafe((yield* Clock.currentTimeMillis) - DIGEST_INTERVAL_MS),
-  );
-  const [row] = yield* sql<{ due: number }>`
-    SELECT COALESCE(MAX(julianday(notified_at)) <= julianday(${cutoff}), 1) AS due
-    FROM (
-      SELECT d.delivered_at AS notified_at FROM issue_inbox_digests d
-      JOIN orchestration_v2_projection_repository_orchestration o
-        ON o.host = d.host AND o.repository_id = d.repository_id
-      WHERE o.root_thread_id = ${threadId}
-      UNION ALL
-      SELECT d.created_at AS notified_at FROM inline_shell_delivery_events d
-      JOIN issue_inbox_events e ON e.noted_by = d.delivery_id
-      JOIN orchestration_v2_projection_repository_orchestration o
-        ON o.host = e.host AND o.repository_id = e.repository_id
-      WHERE o.root_thread_id = ${threadId}
-    )
-  `;
-  return row?.due === 1;
-});
-
-/**
- * The inbox line a repository orchestrator's next turn carries, and the events it covers. Other
- * threads get an empty note. Turn starts call this through the inline shell delivery hook.
- */
-export const pendingInboxNote = Effect.fn("IssueInboxRules.pendingNote")(function* (
-  sql: SqlClient.SqlClient,
-  threadId: string,
-) {
-  if (!(yield* inboxNotificationDue(sql, threadId))) return { ids: [], text: "" };
-  return yield* sql<NoteRow>`
-    SELECT e.event_id, e.repository, e.issue_number, e.kind, e.source_project, e.needs_triage
-    FROM orchestration_v2_projection_repository_orchestration o
-    JOIN issue_inbox_events e ON e.host = o.host AND e.repository_id = o.repository_id
-    WHERE o.root_thread_id = ${threadId} AND e.read_at IS NULL AND e.noted_by IS NULL
-    ORDER BY e.high_priority DESC, e.event_id
-  `.pipe(
-    Effect.map((rows) => ({
-      ids: rows.map((row) => row.event_id),
-      text: rows.length === 0 ? "" : turnNoteText(rows.map(noteEvent)),
-    })),
-  );
-});
-
-export const markInboxNoted = (
-  sql: SqlClient.SqlClient,
-  ids: ReadonlyArray<number>,
-  deliveryId: string,
-) =>
-  ids.length === 0
-    ? Effect.void
-    : sql`UPDATE issue_inbox_events SET noted_by = ${deliveryId}
-        WHERE event_id IN ${sql.in(ids)} AND noted_by IS NULL`.pipe(Effect.asVoid);
