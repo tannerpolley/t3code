@@ -472,6 +472,34 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("t3_issue_post refuses an unresolved repository identity before any GitHub request", () =>
+  Effect.gen(function* () {
+    const github = fakeGitHub();
+    const inbox = yield* IssueInbox.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          github.service,
+          fakeThreads().service,
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              Effect.succeed(Option.some({ title: "B", repositoryIdentity: null } as never)),
+          }),
+        ),
+      ),
+    );
+    const refused = yield* inbox
+      .post(ThreadId.make("thread-in-b"), {
+        repository: "acme/b",
+        title: "Own issue.",
+        body: "Own note.",
+      })
+      .pipe(Effect.flip);
+    assert.equal(refused.code, "orchestration-error");
+    assert.equal(refused.message, "The project's repository identity is unavailable; retry.");
+    assert.deepEqual(github.requests, []);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("t3_issue_post marks and labels only writes to another project's repository", () =>
   Effect.gen(function* () {
     const github = fakeGitHub();
