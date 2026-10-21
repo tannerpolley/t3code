@@ -1,5 +1,6 @@
 import {
   CommandId,
+  effectiveThreadRole,
   MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -376,6 +377,7 @@ export function makeRepositoryWorkCommands({
           existing.lineage.rootThreadId !== existing.id ||
           existing.linkedIssue !== undefined ||
           existing.worktreePath !== null ||
+          effectiveThreadRole(existing) !== "orchestrator" ||
           (existingConfig !== undefined &&
             (existingConfig.host !== config.host ||
               existingConfig.repositoryId !== config.repositoryId)))
@@ -383,7 +385,8 @@ export function makeRepositoryWorkCommands({
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: "Select an existing active top-level thread in the same repository project.",
+          cause:
+            "Select an existing active top-level Orchestrator thread in the same repository project.",
         });
       if (existing === null)
         yield* dispatchThreadCreate(
