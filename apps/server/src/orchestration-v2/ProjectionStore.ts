@@ -405,6 +405,7 @@ export interface ProjectionTimelinePage {
 }
 
 export interface ShellSnapshotOptions {
+  readonly threadIds?: ReadonlyArray<ThreadId>;
   readonly location?: "active" | "archive";
   readonly projectId?: ProjectId;
   readonly unsettledOnly?: boolean;
@@ -6170,7 +6171,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const selectShellThreadRows = (
       threadId?: ThreadId,
-      { location, projectId, unsettledOnly = false }: ShellSnapshotOptions = {},
+      { threadIds, location, projectId, unsettledOnly = false }: ShellSnapshotOptions = {},
     ) =>
       sql<ShellThreadRow>`
             SELECT
@@ -6344,8 +6345,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               LIMIT 1
             ) AND blocked.status = 'failed'
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
-              projectId === undefined ? sql`` : sql` AND t.project_id = ${projectId}`
-            }${
+              threadIds === undefined ? sql`` : sql` AND t.thread_id IN ${sql.in(threadIds)}`
+            }${projectId === undefined ? sql`` : sql` AND t.project_id = ${projectId}`}${
               location === "active"
                 ? sql` AND json_extract(t.payload_json, '$.archivedAt') IS NULL`
                 : location === "archive"
@@ -7246,7 +7247,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
       getShellSnapshot: Effect.fn("ProjectionStore.getShellSnapshot")(function* (options) {
         const existing = (yield* Ref.get(replayState)).projections;
         const selectedThreadIds = [...existing.entries()]
-          .filter(([, projection]) => {
+          .filter(([threadId, projection]) => {
+            if (options?.threadIds !== undefined && !options.threadIds.includes(threadId)) {
+              return false;
+            }
             if (
               options?.projectId !== undefined &&
               projection.thread.projectId !== options.projectId

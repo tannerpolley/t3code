@@ -13,10 +13,11 @@ import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
+import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as Stream from "effect/Stream";
 import * as IssueLinks from "./IssueLinks.ts";
 import * as IssueRoadmap from "./IssueRoadmap.ts";
@@ -34,7 +35,18 @@ function harness(initial: OrchestrationV2ThreadShell[]) {
         lookups.push(id);
         return shells.find((thread) => thread.id === id) ?? null;
       }),
-    getShellSnapshot: () => Effect.die("Roadmap must not read the full shell snapshot"),
+    getShellSnapshot: (options) =>
+      Effect.sync(() => {
+        assert.isDefined(options?.threadIds, "Roadmap must not read the full shell snapshot");
+        const selected = shells.filter((shell) => options!.threadIds!.includes(shell.id));
+        lookups.push(...options!.threadIds!);
+        return {
+          schemaVersion: 2 as const,
+          snapshotSequence: 0,
+          threads: selected.filter((shell) => shell.archivedAt === null),
+          archivedThreads: selected.filter((shell) => shell.archivedAt !== null),
+        };
+      }),
   });
   const seed = Layer.effectDiscard(
     Effect.gen(function* () {
@@ -708,4 +720,44 @@ it.effect("reports whether a closed issue's preserved worktree path still exists
       assert.isFalse(work?.worktreeExists);
     }).pipe(Effect.provide(h.layer));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("enriches hundreds of linked threads in one projection transaction", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const links = yield* IssueLinks.IssueLinks;
+    for (let index = 0; index < 100; index++) {
+      const thread = idleThreadProjection(liveThreadShell(ThreadId.make(`batch-${index}`))).thread;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads(
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, archived_at, deleted_at, payload_json
+        ) VALUES (${thread.id}, ${thread.projectId}, ${thread.title}, 'codex', 'full-access', 'default',
+          '2026-10-13', '2026-10-13', NULL, NULL, ${JSON.stringify(thread)})`;
+      yield* sql`INSERT INTO issue_thread_links(host, repository, issue_number, thread_id)
+        VALUES (${ref.host}, ${ref.repository}, ${ref.number}, ${thread.id})`;
+    }
+    let transactions = 0;
+    let statements = 0;
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        if (span.name === "sql.transaction") transactions++;
+        if (span.name === "sqlite") statements++;
+        return span;
+      },
+    });
+    const enriched = yield* links.enrich(list()).pipe(Effect.withTracer(tracer));
+    assert.equal(enriched.issues[0]?.liveWork?.length, 100);
+    assert.equal(transactions, 1);
+    assert.isAtMost(statements, 6);
+  }).pipe(
+    Effect.provide(
+      IssueLinks.layer.pipe(
+        Layer.provide(ProjectionStore.layer),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
 );

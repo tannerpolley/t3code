@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { IssueReadError } from "@t3tools/contracts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -42,6 +43,7 @@ interface ApiCall {
   readonly method: string;
   readonly url: string;
   readonly body: string | undefined;
+  readonly ifNoneMatch: string | undefined;
 }
 
 function rawIssue(number: number, overrides: Readonly<Record<string, unknown>> = {}) {
@@ -95,6 +97,7 @@ function makeHarness(input: {
   readonly responses: ReadonlyArray<MockResponse>;
   readonly onRequest?: (call: ApiCall) => Effect.Effect<void>;
   readonly accountId?: string;
+  readonly credentialFingerprint?: () => string;
   readonly verificationError?: GitHubPullRequestApi.GitHubPullRequestApiError;
   readonly verificationErrorHost?: string;
 }) {
@@ -107,6 +110,7 @@ function makeHarness(input: {
     HttpClient.make((request) => {
       const call = {
         method: request.method,
+        ifNoneMatch: request.headers["if-none-match"],
         url: request.url,
         body:
           request.body._tag === "Uint8Array"
@@ -165,7 +169,7 @@ function makeHarness(input: {
         : use({
             accountId: input.accountId ?? ACCOUNT_ID,
             viewer: "octocat",
-            credentialFingerprint: "credential-fingerprint",
+            credentialFingerprint: input.credentialFingerprint?.() ?? "credential-fingerprint",
           }),
   });
   const layer = Layer.mergeAll(api, verifier);
@@ -659,6 +663,217 @@ it.effect("issue writes surface permission failures and respect the shared rate 
       assert.isDefined(limitedResult.failure.retryAt);
     }
     assert.equal(limited.rateLimitRecords.length, 1);
+  }),
+);
+
+it.effect(
+  "revalidates issue and milestone pages, retaining their decoded bodies and pagination on 304",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        responses: [
+          httpResponse([rawIssue(7)], {
+            etag: '"issues-1"',
+            link: `<https://${HOST}/issues?page=2>; rel="next"`,
+          }),
+          httpResponse([rawMilestone(1)], {
+            etag: '"milestones-1"',
+            link: `<https://${HOST}/milestones?page=2>; rel="next"`,
+          }),
+          httpResponse({ data: {} }),
+          { status: 304, body: null },
+          { status: 304, body: null },
+          httpResponse({ data: {} }),
+        ],
+      });
+      const issues = yield* service(harness);
+      const first = yield* issues.list(listInput);
+      const warm = yield* issues.list(listInput);
+      assert.deepEqual(warm.issues, first.issues);
+      assert.deepEqual(warm.milestones, first.milestones);
+      assert.equal(warm.nextCursor, first.nextCursor);
+      assert.isFalse(warm.issuesComplete);
+      assert.isFalse(warm.milestonesComplete);
+      assert.equal(harness.calls[3]!.ifNoneMatch, '"issues-1"');
+      assert.equal(harness.calls[4]!.ifNoneMatch, '"milestones-1"');
+    }),
+);
+
+it.effect("a changed 200 replaces each cached page and its ETag and pagination", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(7)], {
+          etag: '"issues-1"',
+          link: `<https://${HOST}/issues?page=2>; rel="next"`,
+        }),
+        httpResponse([rawMilestone(1)], { etag: '"milestones-1"' }),
+        httpResponse({ data: {} }),
+        httpResponse([rawIssue(8)], { etag: '"issues-2"' }),
+        httpResponse([rawMilestone(2)], { etag: '"milestones-2"' }),
+        httpResponse({ data: {} }),
+        { status: 304, body: null },
+        { status: 304, body: null },
+        httpResponse({ data: {} }),
+      ],
+    });
+    const issues = yield* service(harness);
+    yield* issues.list(listInput);
+    const changed = yield* issues.list(listInput);
+    const warm = yield* issues.list(listInput);
+    assert.deepEqual(
+      changed.issues.map((issue) => issue.number),
+      [8],
+    );
+    assert.deepEqual(
+      changed.milestones.map((milestone) => milestone.number),
+      [2],
+    );
+    assert.isNull(changed.nextCursor);
+    assert.deepEqual(warm.issues, changed.issues);
+    assert.deepEqual(warm.milestones, changed.milestones);
+    assert.isNull(warm.nextCursor);
+    assert.equal(harness.calls[6]!.ifNoneMatch, '"issues-2"');
+    assert.equal(harness.calls[7]!.ifNoneMatch, '"milestones-2"');
+  }),
+);
+
+it.effect("checks a later issue page with its own ETag after page one returns 304", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(7)], {
+          etag: '"page-1"',
+          link: `<https://${HOST}/issues?page=2>; rel="next"`,
+        }),
+        httpResponse([], { etag: '"milestones"' }),
+        httpResponse({ data: {} }),
+        httpResponse([rawIssue(8)], { etag: '"page-2"' }),
+        httpResponse({ data: {} }),
+        { status: 304, body: null },
+        { status: 304, body: null },
+        httpResponse({ data: {} }),
+        httpResponse([rawIssue(9)], { etag: '"page-2-changed"' }),
+        httpResponse({ data: {} }),
+      ],
+    });
+    const issues = yield* service(harness);
+    const first = yield* issues.list(listInput);
+    yield* issues.list({ ...listInput, cursor: first.nextCursor! });
+    const warm = yield* issues.list(listInput);
+    const later = yield* issues.list({ ...listInput, cursor: warm.nextCursor! });
+    assert.deepEqual(
+      later.issues.map((issue) => issue.number),
+      [9],
+    );
+    assert.equal(harness.calls[5]!.ifNoneMatch, '"page-1"');
+    assert.equal(harness.calls[8]!.ifNoneMatch, '"page-2"');
+    assert.include(harness.calls[8]!.url, "page=2");
+  }),
+);
+
+it.effect("evicts old issue pages at the per-repository bound", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        ...Array.from({ length: 33 }, (_, index) =>
+          httpResponse([rawIssue(index + 1)], { etag: `"page-${index}"` }),
+        ),
+        { status: 304, body: null },
+        httpResponse([rawIssue(34)], { etag: '"refreshed"' }),
+      ],
+    });
+    const issues = yield* service(harness);
+    for (let milestoneNumber = 1; milestoneNumber <= 33; milestoneNumber++)
+      yield* issues.milestoneIssues({ ...listInput, milestoneNumber });
+    const retained = yield* issues.milestoneIssues({ ...listInput, milestoneNumber: 33 });
+    assert.deepEqual(
+      retained.issues.map((issue) => issue.number),
+      [33],
+    );
+    assert.equal(harness.calls[33]!.ifNoneMatch, '"page-32"');
+    const refreshed = yield* issues.milestoneIssues({ ...listInput, milestoneNumber: 1 });
+    assert.isUndefined(harness.calls[34]!.ifNoneMatch);
+    assert.deepEqual(
+      refreshed.issues.map((issue) => issue.number),
+      [34],
+    );
+  }),
+);
+
+it.effect("drops cached pages after the repository stops being listed for five minutes", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      responses: [
+        httpResponse([rawIssue(7)], { etag: '"page-1"' }),
+        { status: 304, body: null },
+        httpResponse([rawIssue(8)], { etag: '"page-2"' }),
+      ],
+    });
+    const issues = yield* service(harness);
+    const input = { ...listInput, milestoneNumber: 1 };
+    yield* issues.milestoneIssues(input);
+    yield* TestClock.adjust("4 minutes");
+    assert.deepEqual(
+      (yield* issues.milestoneIssues(input)).issues.map((issue) => issue.number),
+      [7],
+    );
+    yield* TestClock.adjust("5 minutes");
+    assert.deepEqual(
+      (yield* issues.milestoneIssues(input)).issues.map((issue) => issue.number),
+      [8],
+    );
+    assert.equal(harness.calls[1]!.ifNoneMatch, '"page-1"');
+    assert.isUndefined(harness.calls[2]!.ifNoneMatch);
+  }),
+);
+
+it.effect("keeps list validators separate across hosts, repositories, states and credentials", () =>
+  Effect.gen(function* () {
+    const inputs = [
+      listInput,
+      { ...listInput, state: "all" as const },
+      { ...listInput, repository: "acme/other" },
+      { ...listInput, host: "other.enterprise.test" },
+    ];
+    let credential = "first";
+    const harness = makeHarness({
+      credentialFingerprint: () => credential,
+      responses: [
+        ...inputs.flatMap((_, index) => [
+          httpResponse([rawIssue(index + 1)], { etag: `"issues-${index}"` }),
+          httpResponse([], { etag: `"milestones-${index}"` }),
+          httpResponse({ data: {} }),
+        ]),
+        ...inputs.flatMap(() => [
+          { status: 304, body: null },
+          { status: 304, body: null },
+          httpResponse({ data: {} }),
+        ]),
+        httpResponse([rawIssue(99)], { etag: '"other-credential"' }),
+        httpResponse([]),
+        httpResponse({ data: {} }),
+      ],
+    });
+    const issues = yield* service(harness);
+    for (const input of inputs) yield* issues.list(input);
+    for (const [index, input] of inputs.entries()) {
+      const result = yield* issues.list(input);
+      assert.deepEqual(
+        result.issues.map((issue) => issue.number),
+        [index + 1],
+      );
+      assert.isUndefined(harness.calls[index * 3]!.ifNoneMatch);
+      assert.equal(harness.calls[12 + index * 3]!.ifNoneMatch, `"issues-${index}"`);
+      assert.equal(harness.calls[13 + index * 3]!.ifNoneMatch, `"milestones-${index}"`);
+    }
+    credential = "second";
+    assert.deepEqual(
+      (yield* issues.list(listInput)).issues.map((issue) => issue.number),
+      [99],
+    );
+    assert.isUndefined(harness.calls[24]!.ifNoneMatch);
+    assert.isUndefined(harness.calls[25]!.ifNoneMatch);
   }),
 );
 

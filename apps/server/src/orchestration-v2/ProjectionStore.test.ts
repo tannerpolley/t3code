@@ -1190,6 +1190,17 @@ const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(functio
     all.archivedThreads.map((thread) => thread.id),
     [archivedThreadId],
   );
+  const selected = yield* projectionStore.getShellSnapshot({
+    threadIds: [forkThreadId, archivedThreadId],
+  });
+  assert.deepEqual(
+    selected.threads,
+    all.threads.filter((thread) => thread.id === forkThreadId),
+  );
+  assert.deepEqual(selected.archivedThreads, all.archivedThreads);
+  const empty = yield* projectionStore.getShellSnapshot({ threadIds: [] });
+  assert.deepEqual(empty.threads, []);
+  assert.deepEqual(empty.archivedThreads, []);
   return { projectId, activeThreadId, forkThreadId, otherThreadId };
 });
 
