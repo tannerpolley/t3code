@@ -40,6 +40,9 @@ const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 // A killed backend leaves its agents running. The server gives each provider
 // session 5 s to close, then still records releases and closes the database.
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(10);
+// Every quit waits this long for its backends: past the kill grace, so it never exits with a
+// hung backend still holding the database, and inside the 20 s quit deadline.
+export const QUIT_BACKEND_STOP_TIMEOUT = Duration.seconds(12);
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 const { logWarning: logBackendProcessWarning } =

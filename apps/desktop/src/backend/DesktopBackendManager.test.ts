@@ -1647,7 +1647,10 @@ describe("DesktopBackendManager", () => {
         const started = yield* Queue.takeN(teardownStarted, 2);
         assert.deepEqual(started.toSorted(), ["instance1", "instance2"]);
 
-        yield* TestClock.adjust(Duration.seconds(12));
+        // Quit must outlast the 10 s kill grace before giving up on a hung backend.
+        yield* TestClock.adjust(Duration.millis(10_500));
+        assert.isUndefined(quitFiber.pollUnsafe());
+        yield* TestClock.adjust(Duration.millis(1_500));
         yield* Fiber.join(quitFiber);
         assert.equal(yield* Queue.size(teardownFinished), 0);
 
