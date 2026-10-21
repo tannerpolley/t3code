@@ -243,12 +243,12 @@ const make = Effect.gen(function* () {
   const makeCanonicalPath = () => {
     const identities = new Map<string, string>();
     // One cache per operation avoids resolving every thread again for each candidate.
+    // Keyed by the raw path: lexical normalization would collapse `..` after a symlink.
     return Effect.fnUntraced(function* (target: string) {
-      const resolved = path.resolve(target);
-      const cached = identities.get(resolved);
+      const cached = identities.get(target);
       if (cached !== undefined) return cached;
-      const canonical = yield* Effect.try(() => canonicalWorkspacePath(resolved, isWindows));
-      identities.set(resolved, canonical);
+      const canonical = yield* Effect.try(() => canonicalWorkspacePath(target, isWindows));
+      identities.set(target, canonical);
       return canonical;
     });
   };
@@ -356,7 +356,7 @@ const make = Effect.gen(function* () {
       const resolved = path.resolve(row.worktreePath);
       referenced.add(pathKey(resolved));
       referenced.add(
-        yield* canonicalPath(resolved).pipe(Effect.orElseSucceed(() => pathKey(resolved))),
+        yield* canonicalPath(row.worktreePath).pipe(Effect.orElseSucceed(() => pathKey(resolved))),
       );
     }
     const referencedAncestors = new Set<string>();
@@ -372,7 +372,7 @@ const make = Effect.gen(function* () {
       ),
       (project) => {
         const resolved = path.resolve(project.workspaceRoot);
-        return canonicalPath(resolved).pipe(
+        return canonicalPath(project.workspaceRoot).pipe(
           Effect.orElseSucceed(() => pathKey(resolved)),
           Effect.map((realPath) => [resolved, realPath]),
         );
@@ -750,7 +750,7 @@ const make = Effect.gen(function* () {
       : configured;
     if (!explicit && !worktreeCleanupEnabled(settings)) return [];
     const worktreePath = path.resolve(thread.worktreePath!);
-    const worktreeIdentity = yield* canonicalPath(worktreePath);
+    const worktreeIdentity = yield* canonicalPath(thread.worktreePath!);
     const activityAt = Math.max(...group.map(storageCleanupActivityAt));
     const deleted = "workspaceRoot" in thread;
     const project = deleted

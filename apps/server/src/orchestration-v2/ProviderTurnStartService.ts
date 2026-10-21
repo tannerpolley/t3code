@@ -1316,7 +1316,7 @@ export const layer: Layer.Layer<
           const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
           const providerTurn = yield* thread.worktreePath === null
             ? start(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
+            : withWorkspaceLease(thread.worktreePath, start(input));
           if (providerTurn !== undefined) yield* providerTurn;
         },
         (effect, input) =>
