@@ -19,6 +19,7 @@ import ClosedIssueWorkIndexes from "./ForkMigrations/018_ClosedIssueWorkIndexes.
 import UsageLimitRecoveryIndex from "./ForkMigrations/019_UsageLimitRecoveryIndex.ts";
 import IssueQueue from "./ForkMigrations/016_IssueQueue.ts";
 import IssueInbox from "./ForkMigrations/015_IssueInbox.ts";
+import MarkedIssueInbox from "./ForkMigrations/022_MarkedIssueInbox.ts";
 import UsageLimitSwitchRecovery from "./ForkMigrations/012_UsageLimitSwitchRecovery.ts";
 import InlineShellRuns from "./ForkMigrations/010_InlineShellRuns.ts";
 import ThreadUsageSummary from "./ForkMigrations/011_ThreadUsageSummary.ts";
@@ -50,6 +51,7 @@ export const forkMigrationEntries = [
   [17, "ProjectArtifacts", ProjectArtifacts],
   [18, "ClosedIssueWorkIndexes", ClosedIssueWorkIndexes],
   [19, "UsageLimitRecoveryIndex", UsageLimitRecoveryIndex],
+  [22, "MarkedIssueInbox", MarkedIssueInbox],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.

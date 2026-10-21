@@ -162,74 +162,90 @@ export const make = Effect.gen(function* () {
    * has told yet. The digest row commits before dispatch, and its command id makes a retry after
    * a restart replay instead of sending twice.
    */
-  const deliverDigest = (repo: Watcher.WatchedRepository) =>
-    Effect.gen(function* () {
-      let pending = yield* sql<{ digest_id: number; text: string }>`
+  const deliverDigest = Effect.fn("IssueInbox.deliverDigest")(function* (
+    repo: Watcher.WatchedRepository,
+  ) {
+    let pending = yield* sql<{ digest_id: number; text: string }>`
         SELECT digest_id, text FROM issue_inbox_digests
         WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId} AND delivered_at IS NULL
         ORDER BY digest_id
       `;
-      if (pending.length === 0) {
-        const now = yield* Clock.currentTimeMillis;
-        const [last] = yield* sql<{ created_at: string | null }>`
+    if (pending.length === 0) {
+      const now = yield* Clock.currentTimeMillis;
+      const [last] = yield* sql<{ created_at: string | null }>`
           SELECT MAX(created_at) AS created_at FROM issue_inbox_digests
           WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId}
         `;
-        if (last?.created_at != null && now - Date.parse(last.created_at) < DIGEST_INTERVAL_MS)
-          return;
-        const tagged = yield* sql<EventRow>`
+      if (last?.created_at != null && now - Date.parse(last.created_at) < DIGEST_INTERVAL_MS)
+        return;
+      const tagged = yield* sql<EventRow>`
           SELECT * FROM issue_inbox_events
           WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId}
             AND read_at IS NULL AND noted_by IS NULL AND tagged = 1
           ORDER BY high_priority DESC, event_id
         `;
-        if (tagged.length === 0) return;
-        const since = tagged
-          .map((event) => event.occurred_at)
-          .reduce((min, value) => (value < min ? value : min));
-        const text = digestText(tagged.map(noteEvent), since);
-        const createdAt = Watcher.isoSeconds(now);
-        pending = yield* sql.withTransaction(
-          Effect.gen(function* () {
-            const rows = yield* sql<{ digest_id: number; text: string }>`
+      if (tagged.length === 0) return;
+      const since = tagged
+        .map((event) => event.occurred_at)
+        .reduce((min, value) => (value < min ? value : min));
+      const text = digestText(tagged.map(noteEvent), since);
+      const createdAt = Watcher.isoSeconds(now);
+      pending = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const rows = yield* sql<{ digest_id: number; text: string }>`
               INSERT INTO issue_inbox_digests (host, repository_id, text, created_at)
               VALUES (${repo.host}, ${repo.repositoryId}, ${text}, ${createdAt})
               RETURNING digest_id, text
             `;
-            yield* sql`
+          yield* sql`
               UPDATE issue_inbox_events SET noted_by = ${`digest:${rows[0]!.digest_id}`}
               WHERE event_id IN ${sql.in(tagged.map((event) => event.event_id))}
             `;
-            return rows;
-          }),
-        );
+          return rows;
+        }),
+      );
+    }
+    for (const digest of pending) {
+      const unread = yield* sql<EventRow>`
+          SELECT * FROM issue_inbox_events
+          WHERE noted_by = ${`digest:${digest.digest_id}`} AND read_at IS NULL
+          ORDER BY high_priority DESC, event_id
+        `;
+      if (unread.length === 0) {
+        yield* sql`UPDATE issue_inbox_digests SET delivered_at = ${yield* nowIso}
+            WHERE digest_id = ${digest.digest_id}`;
+        continue;
       }
-      for (const digest of pending) {
-        const id = `issue-inbox-digest:${digest.digest_id}:${repo.rootThreadId}`;
-        // Queued, never steered: Claude's steering interrupts running tools. Idle, it starts a turn.
-        yield* threads.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(id),
-          threadId: repo.rootThreadId,
-          messageId: MessageId.make(id),
-          text: digest.text,
-          notification: {
-            source: { kind: "system" },
-            outcome: "updated",
-            summary: "Tagged external issue activity",
-            detail: digest.text,
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
-        });
-        yield* sql`
+      const since = unread.reduce(
+        (min, event) => (event.occurred_at < min ? event.occurred_at : min),
+        unread[0]!.occurred_at,
+      );
+      const text = digestText(unread.map(noteEvent), since);
+      const id = `issue-inbox-digest:${digest.digest_id}:${repo.rootThreadId}`;
+      // Queued, never steered: Claude's steering interrupts running tools. Idle, it starts a turn.
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId: repo.rootThreadId,
+        messageId: MessageId.make(id),
+        text,
+        notification: {
+          source: { kind: "system" },
+          outcome: "updated",
+          summary: "Tagged external issue activity",
+          detail: text,
+        },
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+      yield* sql`
           UPDATE issue_inbox_digests SET delivered_at = ${yield* nowIso}
           WHERE digest_id = ${digest.digest_id}
         `;
-      }
-    });
+    }
+  });
 
   let nextPollAt = 0;
   const pollDue = Effect.gen(function* () {
@@ -262,20 +278,19 @@ export const make = Effect.gen(function* () {
       LIMIT 100
     `.pipe(Effect.map((rows) => rows.map(toEvent)));
 
-  const markRead = (input: IssueInboxMarkReadInput) =>
-    Effect.gen(function* () {
-      if (input.ids?.length === 0) return { marked: 0 };
-      const now = yield* nowIso;
-      const rows = yield* sql`
+  const markRead = Effect.fn("IssueInbox.markRead")(function* (input: IssueInboxMarkReadInput) {
+    if (input.ids?.length === 0) return { marked: 0 };
+    const now = yield* nowIso;
+    const rows = yield* sql`
         UPDATE issue_inbox_events SET read_at = ${now}
         WHERE host = ${input.host.toLowerCase()}
           AND lower(repository) = ${input.repository.toLowerCase()}
           AND ${input.ids === undefined ? sql`read_at IS NULL` : sql`read_at IS NULL AND event_id IN ${sql.in(input.ids)}`}
         RETURNING event_id
       `;
-      if (rows.length > 0) yield* changed;
-      return { marked: rows.length };
-    });
+    if (rows.length > 0) yield* changed;
+    return { marked: rows.length };
+  });
 
   const unreadCounts = sql<{
     host: string;
@@ -300,27 +315,28 @@ export const make = Effect.gen(function* () {
     Effect.mapError(storageError),
   );
 
-  const callerRepository = (callerThreadId: ThreadId) =>
-    Effect.gen(function* () {
-      const shell = yield* threads.getThreadShell(callerThreadId);
-      const [row] =
-        shell === null
-          ? []
-          : yield* sql<{ host: string; repository: string }>`
+  const callerRepository = Effect.fn("IssueInbox.callerRepository")(function* (
+    callerThreadId: ThreadId,
+  ) {
+    const shell = yield* threads.getThreadShell(callerThreadId);
+    const [row] =
+      shell === null
+        ? []
+        : yield* sql<{ host: string; repository: string }>`
               SELECT host, repository FROM orchestration_v2_projection_repository_orchestration
               WHERE root_thread_id = ${shell.lineage.rootThreadId}
             `;
-      if (row === undefined)
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message:
-            "The issue inbox belongs to a repository orchestrator; call it from that orchestrator or one of its delegated children.",
-        });
-      return row;
-    });
+    if (row === undefined)
+      return yield* new IssueWorkError({
+        code: "invalid-request",
+        message:
+          "The issue inbox belongs to a repository orchestrator; call it from that orchestrator or one of its delegated children.",
+      });
+    return row;
+  });
 
-  const forCaller: IssueInbox["Service"]["forCaller"] = (callerThreadId, input) =>
-    Effect.gen(function* () {
+  const forCaller: IssueInbox["Service"]["forCaller"] = Effect.fn("IssueInbox.forCaller")(
+    function* (callerThreadId, input) {
       const repo = yield* callerRepository(callerThreadId);
       if (input.action === "read" && (input.ids === undefined || input.ids.length === 0))
         return yield* new IssueWorkError({
@@ -342,10 +358,12 @@ export const make = Effect.gen(function* () {
       `;
       const unread = count?.unread ?? 0;
       return { repository: repo.repository, unread, events };
-    }).pipe(Effect.mapError((cause) => (isIssueWorkError(cause) ? cause : storageError(cause))));
+    },
+    Effect.mapError((cause) => (isIssueWorkError(cause) ? cause : storageError(cause))),
+  );
 
-  const post: IssueInbox["Service"]["post"] = (callerThreadId, input) =>
-    Effect.gen(function* () {
+  const post: IssueInbox["Service"]["post"] = Effect.fn("IssueInbox.post")(
+    function* (callerThreadId, input) {
       if (input.issueNumber === undefined && input.title === undefined)
         return yield* new IssueWorkError({
           code: "invalid-request",
@@ -416,13 +434,6 @@ export const make = Effect.gen(function* () {
         ),
       );
       const issueNumber = input.issueNumber ?? created.number ?? 0;
-      if (!crossProject)
-        yield* sql`
-          INSERT INTO issue_inbox_own_writes (host, repository, item)
-          VALUES (${target.host}, ${target.repository},
-            ${input.issueNumber === undefined ? `issue:${issueNumber}` : `comment:${created.id}`})
-          ON CONFLICT DO NOTHING
-        `.pipe(Effect.mapError(storageError));
       return {
         url: created.html_url,
         issueNumber,
@@ -430,19 +441,24 @@ export const make = Effect.gen(function* () {
         crossProject,
         labels,
       };
-    }).pipe(
-      Effect.mapError((cause) =>
-        isIssueWorkError(cause) || isIssueReadError(cause) ? cause : storageError(cause),
-      ),
-    );
+    },
+    Effect.mapError((cause) =>
+      isIssueWorkError(cause) || isIssueReadError(cause) ? cause : storageError(cause),
+    ),
+  );
 
   return IssueInbox.of({
     pollDue,
-    list: (input) =>
-      unreadEvents(input).pipe(
-        Effect.map((events) => ({ events })),
-        Effect.mapError(storageError),
-      ),
+    list: Effect.fn("IssueInbox.list")(function* (input) {
+      const events = yield* unreadEvents(input);
+      const pending = yield* sql<{ issue_number: number }>`
+        SELECT issue_number FROM issue_inbox_events
+        WHERE host = ${input.host.toLowerCase()}
+          AND lower(repository) = ${input.repository.toLowerCase()}
+          AND kind = 'issue_opened' AND read_at IS NULL
+      `;
+      return { events, pendingIssueNumbers: pending.map((row) => row.issue_number) };
+    }, Effect.mapError(storageError)),
     markRead: (input) => markRead(input).pipe(Effect.mapError(storageError)),
     unread: Stream.unwrap(
       Effect.gen(function* () {

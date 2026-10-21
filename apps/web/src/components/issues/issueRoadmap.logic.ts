@@ -22,6 +22,7 @@ export function issueRoadmap(
   issues: readonly IssueSummary[],
   queuedNumbers: readonly number[] = [],
   now = Date.now(),
+  pendingInboxNumbers: readonly number[] = [],
 ) {
   const open = issues.filter((issue) => issue.state === "open");
   const byNumber = new Map(open.map((issue) => [issue.number, issue]));
@@ -118,8 +119,10 @@ export function issueRoadmap(
   const queued = section("queued", "Queued");
   const inProgress = section("in-progress", "In progress");
   const done = section("done", "Done");
+  const pendingInbox = new Set(pendingInboxNumbers);
   // Queue membership keeps its explicit order; dependency warnings remain visible on queued rows.
   for (const row of ordered) {
+    if (pendingInbox.has(row.issue.number)) continue;
     const progress = issueProgress(row.issue);
     const target = queueOrder.has(row.issue.number)
       ? queued

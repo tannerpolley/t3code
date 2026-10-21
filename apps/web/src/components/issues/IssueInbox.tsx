@@ -92,6 +92,14 @@ function describe(event: IssueInboxEvent): string {
   return `${KIND_LABELS[event.kind]}${source} · ${formatRelativeTimeLabel(event.occurredAt)}`;
 }
 
+export function useIssueInbox(environmentId: EnvironmentId, reference: IssueRepositoryRef) {
+  const supported =
+    useServerConfigs().get(environmentId)?.environment.capabilities.issueInbox === true;
+  return useEnvironmentQuery(
+    supported ? issueEnvironment.inbox({ environmentId, input: reference }) : null,
+  );
+}
+
 /** The repository's unread external issue activity on the Issues page, high priority first. */
 export function IssueInboxSection(props: {
   readonly environmentId: EnvironmentId;
@@ -112,7 +120,7 @@ function InboxList({
   readonly reference: IssueRepositoryRef;
   readonly issues?: readonly IssueSummary[] | undefined;
 }) {
-  const { data } = useEnvironmentQuery(issueEnvironment.inbox({ environmentId, input: reference }));
+  const { data } = useIssueInbox(environmentId, reference);
   const markRead = useAtomCommand(issueEnvironment.markInboxRead);
   const canMark = useAtomValue(issueEnvironment.markInboxRead.permissionAtom(environmentId));
   const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(

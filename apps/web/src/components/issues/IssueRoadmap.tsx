@@ -1,4 +1,5 @@
 import { Fragment, useSyncExternalStore, type ReactNode } from "react";
+import { IssueInboxSection, useIssueInbox } from "./IssueInbox";
 import { IssueDoneDetails } from "./IssueDoneDetails";
 import { useIssueQueue } from "./IssueQueueAction";
 import type {
@@ -39,12 +40,17 @@ export function IssueRoadmap({
   const clock = createIssueRoadmapClock(issues);
   const now = useSyncExternalStore(clock.subscribe, clock.snapshot, clock.snapshot);
   const queue = useIssueQueue(environmentId, scope);
+  const pendingInbox = useIssueInbox(environmentId, scope);
   const sections = issueRoadmap(
     { host: scope.host, repository: scope.repository },
     milestones,
     issues,
     queue.data?.queue?.map((entry) => entry.issue.number),
     now,
+    pendingInbox.data?.pendingIssueNumbers ??
+      pendingInbox.data?.events
+        .filter((event) => event.kind === "issue_opened")
+        .map((event) => event.issueNumber),
   );
   const shown = new Set(
     sections
@@ -143,7 +149,15 @@ export function IssueRoadmap({
                   </section>
                 )}
               </IssueSection>
-              {section.id === "blocked" ? inbox : null}
+              {section.id === "blocked"
+                ? (inbox ?? (
+                    <IssueInboxSection
+                      environmentId={environmentId}
+                      reference={scope}
+                      issues={issues}
+                    />
+                  ))
+                : null}
             </Fragment>
           );
         })}

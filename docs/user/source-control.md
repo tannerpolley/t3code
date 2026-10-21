@@ -384,25 +384,16 @@ repositories** widens it to every repository you can read.
 
 ### Cross-project issue inbox
 
-A repository with a repository orchestrator gets an inbox of outside issue activity. About every
-two minutes T3 records new issues and comments, closes and reopens, label and milestone changes,
-and title renames made by another project's agents or by you on GitHub. Edits to issue and comment
-text are not tracked. Its own agents' writes and bots are left out. If T3 was offline long enough
-to miss more than one catch-up can read, the inbox says so once; check the repository on GitHub.
-An issue another project's agent opens or comments on gets the `external`, `priority: high` and
-`from:<project>` labels; an issue you open yourself gets none unless that happens. T3 labels each issue once, so a label you remove stays
-removed. A paused repository's inbox is not read or labeled until you resume it, then it catches up.
+The **Inbox** on the repository's **Issues** page holds issues opened and comments posted by
+another project through `t3_issue_post`. Unmarked writes and other issue changes do not appear.
+T3 checks about every two minutes and notifies the orchestrator of unacknowledged items at most
+once every 15 minutes. A paused repository catches up when resumed.
 
-The orchestrator reads unread events in one line at the start of its next turn. Untagged events
-wait for that turn and never start one. Tagged events also wake an idle orchestrator with a short
-digest, at most once every 15 minutes, queued behind a running turn. An event is tagged when the
-issue has the `cross-project` label, the text mentions `@orchestrator`, or another project's agent
-wrote it.
-
-The orchestrator's sidebar row shows its unread count. Open the repository on the **Issues** page
-for its **Inbox**, high-priority events first, with links and **Mark read**. Agents read the inbox
-with the `t3_issue_inbox` tool, and write to another project's issues with `t3_issue_post`, which
-marks and labels the write so that repository's orchestrator is notified.
+The orchestrator reviews each item, revises it if needed with `propose_issue_change`, then
+acknowledges it with `t3_issue_inbox` `mark_read`. You can also acknowledge it with **Mark read**.
+An open issue stays only in Inbox until its opening is acknowledged, then appears in Ready or
+the normal section for its current state. A comment leaves its issue in its current section.
+Cross-project writes keep their `external`, `priority: high`, and `from:<project>` labels.
 
 ## Troubleshooting
 

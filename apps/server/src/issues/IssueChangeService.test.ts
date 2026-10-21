@@ -390,60 +390,6 @@ it.effect("stale body or state baselines conflict before any GitHub write", () =
   ),
 );
 
-it.effect(
-  "records an inbox receipt only for a state or milestone write that changes the issue",
-  () =>
-    inDatabase((h) =>
-      Effect.gen(function* () {
-        const service = yield* IssueChangeService.IssueChangeService;
-        const sql = yield* SqlClient.SqlClient;
-        const approve = (operation: IssueChangeOperation, request: string) =>
-          propose(operation, request).pipe(
-            // Milestone moves are approved automatically; state changes wait for the user.
-            Effect.flatMap((change) =>
-              change.decision === "pending"
-                ? service.decide({ id: change.id, decision: "approved" }, user)
-                : Effect.void,
-            ),
-            Effect.andThen(drain),
-          );
-        // #10 is already closed: closing it again writes, but GitHub logs no event for it.
-        h.snapshots.set(10, { ...h.snapshots.get(10)!, state: "closed" });
-        yield* approve({ type: "state", number: 10, state: "closed" }, "close-again");
-        assert.equal(h.calls.state, 1);
-        assert.deepEqual(yield* sql`SELECT * FROM issue_inbox_write_receipts`, []);
-        yield* approve({ type: "state", number: 10, state: "open" }, "reopen");
-        yield* approve({ type: "milestone", number: 10, milestoneNumber: 2 }, "move");
-        assert.deepEqual(
-          yield* sql`SELECT host, repository, issue_number, kind, milestone_number FROM issue_inbox_write_receipts ORDER BY receipt_id`,
-          [
-            {
-              host: "github.com",
-              repository: "acme/repo",
-              issue_number: 10,
-              kind: "reopened",
-              milestone_number: null,
-            },
-            {
-              host: "github.com",
-              repository: "acme/repo",
-              issue_number: 10,
-              kind: "demilestoned",
-              milestone_number: 1,
-            },
-            {
-              host: "github.com",
-              repository: "acme/repo",
-              issue_number: 10,
-              kind: "milestoned",
-              milestone_number: 2,
-            },
-          ],
-        );
-      }).pipe(Effect.provide(h.runtime)),
-    ),
-);
-
 it.effect("approved proposals survive rebuilding the service and effect worker", () =>
   inDatabase((h) =>
     Effect.gen(function* () {

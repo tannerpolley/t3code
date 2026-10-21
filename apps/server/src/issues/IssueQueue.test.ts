@@ -15,7 +15,6 @@ import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
@@ -988,7 +987,7 @@ it.effect("reconciliation never reads the attention backlog while the root is bu
   }).pipe(Effect.provide(harness(issueReads).pipe(Layer.provide(scheduler))));
 });
 
-it.effect.each(["external", "own", "bot", "listing"] as const)(
+it.effect.each(["external", "bot", "listing"] as const)(
   "inbox closes remove queued and attention entries through replayable queue commands (%s)",
   (origin) => {
     let closed = false;
@@ -1074,13 +1073,6 @@ it.effect.each(["external", "own", "bot", "listing"] as const)(
       });
       const inbox = yield* IssueInbox.make;
       yield* inbox.pollDue;
-      if (origin === "own") {
-        const sql = yield* SqlClient.SqlClient;
-        for (const number of [1, 2])
-          yield* sql`INSERT INTO issue_inbox_write_receipts
-            (host, repository, issue_number, kind, started_at, finished_at)
-            VALUES ('github.com', 'owner/repo', ${number}, 'closed', 1000, 1000)`;
-      }
       closed = true;
       yield* TestClock.adjust("2 minutes");
       yield* inbox.pollDue;
@@ -1090,7 +1082,7 @@ it.effect.each(["external", "own", "bot", "listing"] as const)(
         (yield* inbox.list(reference)).events
           .filter((event) => event.issueNumber <= 2)
           .map((event) => event.kind),
-        origin === "external" ? ["closed", "closed"] : [],
+        [],
       );
       assert.deepEqual(
         (yield* store.queue(reference)).map((entry) => entry.issue.number),

@@ -1,10 +1,9 @@
 /**
  * Who wrote a GitHub issue write, whether it is tagged for the repository orchestrator, and the
- * one-line notes that tell it. Every agent writes with the owner's own `gh` login, so authorship
- * comes from markers and T3's own records, never from the GitHub author.
+ * one-line notes that tell it. Every agent writes with the owner's own `gh` login, so Inbox membership
+ * comes from another project's marker, never from the GitHub login.
  */
 import type { IssueInboxEventKind } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 
@@ -14,12 +13,6 @@ export const HIGH_PRIORITY_LABEL = "priority: high";
 const LABEL_MAX_LENGTH = 50;
 
 export const fromLabel = (project: string) => `from:${project}`.slice(0, LABEL_MAX_LENGTH);
-
-/** Labels `t3_issue_post` and receiver enforcement add: bookkeeping, never news. */
-export function isReceiverLabel(name: string): boolean {
-  const label = name.toLowerCase();
-  return label === EXTERNAL_LABEL || label === HIGH_PRIORITY_LABEL || label.startsWith("from:");
-}
 
 export const hasLabel = (labels: ReadonlyArray<string>, name: string) =>
   labels.some((label) => label.toLowerCase() === name);
@@ -66,7 +59,7 @@ export interface GitHubAuthor {
   readonly type?: string | undefined;
 }
 
-export const isBot = (author: GitHubAuthor | null | undefined) =>
+const isBot = (author: GitHubAuthor | null | undefined) =>
   author != null && (author.type === "Bot" || author.login.toLowerCase().endsWith("[bot]"));
 
 export type WriteOrigin =
@@ -74,13 +67,8 @@ export type WriteOrigin =
   | { readonly origin: "bot" }
   | {
       readonly origin: "external";
-      readonly sourceProject: string | null;
-      /** Carries another project's source marker. */
-      readonly marked: boolean;
+      readonly sourceProject: string;
     };
-
-// T3's managed status, closeout and issue-change writes, as IssueCommentEffects and IssueService write them.
-const T3_WRITE_MARKER = /<!-- t3-issue-(?:status|closeout|change):\S+ -->/u;
 
 /** The source marker of another project's write; null for unmarked or this repository's own. */
 export function foreignMarker(body: string, repositoryKey: string): SourceMarker | null {
@@ -90,100 +78,18 @@ export function foreignMarker(body: string, repositoryKey: string): SourceMarker
 
 /**
  * Classifies an issue body or comment in the watched repository (`repositoryKey` is
- * `host/owner/name`, lowercase). `ownRecord` is a match in T3's own write records.
+ * `host/owner/name`, lowercase). Only another project's source marker is Inbox news.
  */
 export function classifyWrite(input: {
   readonly body: string;
   readonly author: GitHubAuthor | null | undefined;
   readonly repositoryKey: string;
-  readonly ownRecord: boolean;
 }): WriteOrigin {
   if (isBot(input.author)) return { origin: "bot" };
-  if (input.ownRecord || T3_WRITE_MARKER.test(input.body)) return { origin: "own" };
-  const marker = parseSourceMarker(input.body);
-  if (marker === null) return { origin: "external", sourceProject: null, marked: false };
-  return marker.repository?.toLowerCase() === input.repositoryKey
+  const marker = foreignMarker(input.body, input.repositoryKey);
+  return marker === null
     ? { origin: "own" }
-    : { origin: "external", sourceProject: marker.project, marked: true };
-}
-
-/** A state or milestone transition one T3 issue write makes. */
-export interface WriteTransition {
-  readonly kind: "closed" | "reopened" | "milestoned" | "demilestoned";
-  readonly milestoneNumber: number | null;
-}
-
-/** The transitions a state write makes from `from`; none for a no-op. */
-export const stateTransitions = (
-  from: "open" | "closed",
-  to: "open" | "closed",
-): ReadonlyArray<WriteTransition> =>
-  from === to ? [] : [{ kind: to === "closed" ? "closed" : "reopened", milestoneNumber: null }];
-
-/** The transitions a milestone write makes from `from`; none for a no-op. */
-export const milestoneTransitions = (
-  from: number | null,
-  to: number | null,
-): ReadonlyArray<WriteTransition> =>
-  from === to
-    ? []
-    : [
-        ...(from === null ? [] : [{ kind: "demilestoned" as const, milestoneNumber: from }]),
-        ...(to === null ? [] : [{ kind: "milestoned" as const, milestoneNumber: to }]),
-      ];
-
-/**
- * Runs one T3 GitHub issue write and records the transitions it made with the request's time
- * span, so the inbox watcher reads the events GitHub logs for it as T3's own. `made` names the
- * issue and transitions from the write's result.
- *
- * Known limits, both after a lost GitHub response: a write GitHub applied but answered with an
- * error records no receipt, so its event reads as external; and a create recovered by its marker
- * records a `milestoned` receipt spanning the retry, which can claim the owner's same-milestone
- * change made in that span.
- */
-export const withWriteReceipts = <A, E, R>(
-  sql: SqlClient.SqlClient,
-  repository: { readonly host: string; readonly repository: string },
-  write: Effect.Effect<A, E, R>,
-  made: (result: A) => {
-    readonly issueNumber: number;
-    readonly transitions: ReadonlyArray<WriteTransition>;
-  },
-) =>
-  Effect.gen(function* () {
-    const startedAt = yield* Clock.currentTimeMillis;
-    const result = yield* write;
-    const finishedAt = yield* Clock.currentTimeMillis;
-    const { issueNumber, transitions } = made(result);
-    for (const transition of transitions)
-      yield* sql`
-        INSERT INTO issue_inbox_write_receipts (host, repository, issue_number, kind,
-          milestone_number, started_at, finished_at)
-        VALUES (${repository.host.toLowerCase()}, ${repository.repository.toLowerCase()},
-          ${issueNumber}, ${transition.kind}, ${transition.milestoneNumber}, ${startedAt},
-          ${finishedAt})
-      `.pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Could not record an issue write for the inbox", { cause }),
-        ),
-      );
-    return result;
-  });
-
-const ORCHESTRATOR_MENTION = /(?<![\w@./-])@orchestrator\b/iu;
-
-/** Tagged events may wake an idle orchestrator; untagged ones wait for its next turn. */
-export function isTagged(input: {
-  readonly body: string;
-  readonly labels: ReadonlyArray<string>;
-  readonly marked: boolean;
-}): boolean {
-  return (
-    input.marked ||
-    hasLabel(input.labels, CROSS_PROJECT_LABEL) ||
-    ORCHESTRATOR_MENTION.test(input.body)
-  );
+    : { origin: "external", sourceProject: marker.project };
 }
 
 export function snippet(body: string, maxLength = 280): string {
@@ -234,7 +140,7 @@ export function listEvents(events: ReadonlyArray<NoteEvent>): string {
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 const triageHint = (events: ReadonlyArray<NoteEvent>) =>
   events.some((event) => event.needsTriage)
-    ? " Triage new external issues into a milestone; T3 admits nothing outside the selected milestones."
+    ? " Review each item, revise it if needed with propose_issue_change, then acknowledge it with t3_issue_inbox mark_read to place the issue in Ready."
     : "";
 
 /** The idle-wake digest: counts and issue numbers, never bodies. */

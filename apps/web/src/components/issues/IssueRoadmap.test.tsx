@@ -7,6 +7,10 @@ import { useUiStateStore } from "~/uiStateStore";
 import { IssueRoadmap } from "./IssueRoadmap";
 
 vi.mock("./IssueQueueAction", () => ({ useIssueQueue: () => ({ supported: true, data: null }) }));
+vi.mock("./IssueInbox", () => ({
+  useIssueInbox: () => ({ data: null }),
+  IssueInboxSection: () => null,
+}));
 vi.mock("./IssueRow", () => ({ IssueRow: () => null }));
 
 const issue: IssueSummary = {

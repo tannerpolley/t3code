@@ -4,8 +4,8 @@ import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./
 import { IssueRef, IssueRepositoryRef } from "./issue.ts";
 
 /**
- * External activity the watcher records for a managed repository. `missed_activity` reports a
- * catch-up larger than one poll reads, as after a long time offline.
+ * New Inbox events are marked cross-project openings and comments. Other kinds remain
+ * decodable for acknowledged history recorded before the marker-only Inbox.
  */
 export const IssueInboxEventKind = Schema.Literals([
   "issue_opened",
@@ -42,7 +42,11 @@ export const IssueInboxEvent = Schema.Struct({
 });
 export type IssueInboxEvent = typeof IssueInboxEvent.Type;
 
-export const IssueInboxListResult = Schema.Struct({ events: Schema.Array(IssueInboxEvent) });
+export const IssueInboxListResult = Schema.Struct({
+  events: Schema.Array(IssueInboxEvent),
+  /** All unacknowledged openings, including those beyond the event page. */
+  pendingIssueNumbers: Schema.optional(Schema.Array(NonNegativeInt)),
+});
 export type IssueInboxListResult = typeof IssueInboxListResult.Type;
 
 export const IssueInboxMarkReadInput = Schema.Struct({

@@ -295,3 +295,18 @@ it("notifies at closure expiry without polling and cancels its timer when the vi
     vi.useRealTimers();
   }
 });
+
+it("holds unacknowledged openings out of every open section, then restores their normal state", () => {
+  const issues = [
+    issue(1),
+    issue(2, { blockedBy: [ref(1)] }),
+    issue(3, { liveWork: work("working") }),
+    issue(4),
+  ];
+  const before = issueRoadmap(scope, [], issues, [], Date.now(), [1, 2, 3]);
+  expect(before.flatMap((section) => numbers(section.rows))).toEqual([4]);
+  const acknowledged = issueRoadmap(scope, [], issues, [], Date.now(), []);
+  expect(numbers(inSection(acknowledged, "ready").rows)).toEqual([1, 4]);
+  expect(numbers(inSection(acknowledged, "blocked").rows)).toEqual([2]);
+  expect(numbers(inSection(acknowledged, "in-progress").rows)).toEqual([3]);
+});
