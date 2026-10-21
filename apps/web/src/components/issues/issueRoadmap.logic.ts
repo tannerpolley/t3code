@@ -111,29 +111,28 @@ export function issueRoadmap(
     for (const next of outgoing[id]!) if (--incoming[next]! === 0) insert(next);
   }
   const queueOrder = new Map(queuedNumbers.map((number, index) => [number, index]));
-  const sections = [
-    { id: "ready", title: "Ready", rows: [] as typeof ordered },
-    { id: "queued", title: "Queued", rows: [] as typeof ordered },
-    { id: "in-progress", title: "In progress", rows: [] as typeof ordered },
-    { id: "blocked", title: "Blocked", rows: [] as typeof ordered },
-    { id: "done", title: "Done", rows: [] as typeof ordered },
-    { id: "closed", title: "Closed", rows: [] as typeof ordered },
-  ];
+  const section = (id: string, title: string) => ({ id, title, rows: [] as typeof ordered });
+  const closed = section("closed", "Closed");
+  const blocked = section("blocked", "Blocked");
+  const readySection = section("ready", "Ready");
+  const queued = section("queued", "Queued");
+  const inProgress = section("in-progress", "In progress");
+  const done = section("done", "Done");
   // Queue membership keeps its explicit order; dependency warnings remain visible on queued rows.
   for (const row of ordered) {
     const progress = issueProgress(row.issue);
-    const section = queueOrder.has(row.issue.number)
-      ? 1
+    const target = queueOrder.has(row.issue.number)
+      ? queued
       : progress === "blocked"
-        ? 3
+        ? blocked
         : progress === "in_progress"
-          ? 2
+          ? inProgress
           : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
-            ? 3
-            : 0;
-    sections[section]!.rows.push(row);
+            ? blocked
+            : readySection;
+    target.rows.push(row);
   }
-  sections[1]!.rows.sort(
+  queued.rows.sort(
     (left, right) => queueOrder.get(left.issue.number)! - queueOrder.get(right.issue.number)!,
   );
   for (const issue of issues
@@ -143,9 +142,9 @@ export function issueRoadmap(
         (Date.parse(b.closedAt ?? "") || 0) - (Date.parse(a.closedAt ?? "") || 0) ||
         b.number - a.number,
     )) {
-    sections[recentlyDone(issue, now) ? 4 : 5]!.rows.push({ issue, cycle: false });
+    (recentlyDone(issue, now) ? done : closed).rows.push({ issue, cycle: false });
   }
-  return sections;
+  return [closed, blocked, readySection, queued, inProgress, done];
 }
 
 const RECENTLY_DONE_MS = 24 * 60 * 60 * 1000;

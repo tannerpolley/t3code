@@ -547,6 +547,15 @@ export function IssueBrowser({
       pinned: pinned ? current.pinned.filter((entry) => entry !== key) : [...current.pinned, key],
     }));
 
+  const showsRoadmap = (entry: RepositoryEntry) =>
+    entry.scopeKey !== null && entry.snapshot !== null && views[entry.key] === "roadmap";
+  const inboxFor = (entry: RepositoryEntry) => (
+    <IssueInboxSection
+      issues={entry.snapshot?.issues}
+      environmentId={entry.environmentId}
+      reference={{ host: entry.host, repository: entry.repository }}
+    />
+  );
   const renderRepositoryBody = (entry: RepositoryEntry) => {
     const { scopeKey, state, snapshot, error, filteredIssues } = entry;
     const message = (text: string) => (
@@ -608,10 +617,11 @@ export function IssueBrowser({
             Roadmap view
           </label>
         ) : null}
-        {views[entry.key] === "roadmap" ? (
+        {showsRoadmap(entry) ? (
           <IssueRoadmap
             scope={entry}
             environmentId={entry.environmentId}
+            inbox={inboxFor(entry)}
             milestones={snapshot.milestones}
             issues={snapshot.issues}
             visibleNumbers={new Set(filteredIssues.map((issue) => issue.number))}
@@ -681,11 +691,7 @@ export function IssueBrowser({
             environmentId={entry.environmentId}
             reference={{ host: entry.host, repository: entry.repository }}
           />
-          <IssueInboxSection
-            issues={entry.snapshot?.issues}
-            environmentId={entry.environmentId}
-            reference={{ host: entry.host, repository: entry.repository }}
-          />
+          {showsRoadmap(entry) ? null : inboxFor(entry)}
           {renderRepositoryBody(entry)}
         </section>
       );
@@ -755,11 +761,7 @@ export function IssueBrowser({
                   environmentId={entry.environmentId}
                   reference={{ host: entry.host, repository: entry.repository }}
                 />
-                <IssueInboxSection
-                  issues={entry.snapshot?.issues}
-                  environmentId={entry.environmentId}
-                  reference={{ host: entry.host, repository: entry.repository }}
-                />
+                {showsRoadmap(entry) ? null : inboxFor(entry)}
                 {renderRepositoryBody(entry)}
               </div>
             ) : null}

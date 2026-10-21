@@ -51,28 +51,28 @@ it("remembers each roadmap section across refreshes, repository changes and remo
     renderer = create(render());
   });
   expect(sections().map((section) => section.props["aria-label"])).toEqual([
+    "Closed",
+    "Blocked",
     "Ready",
     "Queued",
     "In progress",
-    "Blocked",
     "Done",
-    "Closed",
   ]);
   expect(sections().map((section) => section.findByType("button").props["aria-expanded"])).toEqual([
-    true,
-    true,
-    true,
-    true,
-    true,
     false,
+    true,
+    true,
+    true,
+    true,
+    true,
   ]);
-  for (const index of [0, 1, 2, 3, 4]) {
+  for (const index of [1, 2, 3, 4, 5]) {
     await act(async () => button(index).props.onClick());
     expect(button(index).props["aria-expanded"]).toBe(false);
     expect(sections()[index]!.findAllByType("ul")).toHaveLength(0);
   }
   expect(
-    button(0)
+    button(2)
       .findAllByType("span")
       .some((span) => span.children[0] === "1"),
   ).toBe(true);
@@ -85,9 +85,9 @@ it("remembers each roadmap section across refreshes, repository changes and remo
     renderer = create(render());
   });
   expect(renderer!.root.findAllByType("li")).toHaveLength(0);
-  await act(async () => button(0).props.onClick());
+  await act(async () => button(2).props.onClick());
   expect(renderer!.root.findAllByType("li")).toHaveLength(1);
-  expect(button(2).props["aria-expanded"]).toBe(false);
-  expect(button(1).props["aria-expanded"]).toBe(false);
+  expect(button(4).props["aria-expanded"]).toBe(false);
   expect(button(3).props["aria-expanded"]).toBe(false);
+  expect(button(1).props["aria-expanded"]).toBe(false);
 });
