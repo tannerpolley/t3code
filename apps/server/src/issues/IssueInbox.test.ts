@@ -485,6 +485,7 @@ it.effect("t3_issue_post refuses an unresolved repository identity before any Gi
         Layer.mergeAll(
           github.service,
           fakeThreads().service,
+          Layer.mock(IssueWorkService.IssueWorkService)({}),
           Layer.mock(ProjectService.ProjectService)({
             getById: () =>
               Effect.succeed(Option.some({ title: "B", repositoryIdentity: null } as never)),
