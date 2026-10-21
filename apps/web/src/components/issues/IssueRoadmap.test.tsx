@@ -59,6 +59,7 @@ it("remembers each roadmap section across refreshes, repository changes and remo
     "Blocked",
     "Ready",
     "Queued",
+    "Paused",
     "In progress",
     "Done",
   ]);
@@ -69,8 +70,9 @@ it("remembers each roadmap section across refreshes, repository changes and remo
     true,
     true,
     true,
+    true,
   ]);
-  for (const index of [1, 2, 3, 4, 5]) {
+  for (const index of [1, 2, 3, 4, 5, 6]) {
     await act(async () => button(index).props.onClick());
     expect(button(index).props["aria-expanded"]).toBe(false);
     expect(sections()[index]!.findAllByType("ul")).toHaveLength(0);
@@ -91,6 +93,7 @@ it("remembers each roadmap section across refreshes, repository changes and remo
   expect(renderer!.root.findAllByType("li")).toHaveLength(0);
   await act(async () => button(2).props.onClick());
   expect(renderer!.root.findAllByType("li")).toHaveLength(1);
+  expect(button(5).props["aria-expanded"]).toBe(false);
   expect(button(4).props["aria-expanded"]).toBe(false);
   expect(button(3).props["aria-expanded"]).toBe(false);
   expect(button(1).props["aria-expanded"]).toBe(false);

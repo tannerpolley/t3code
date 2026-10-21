@@ -92,17 +92,17 @@ const section = (value: IssueListResult) =>
 
 it("follows a linked parent's sidebar status, including questions and approvals", () => {
   const workingRoot = { ...root, runtime: running.runtime };
-  expect(section(withLiveIssueWork(list, [root]))).toBe("ready");
+  expect(section(withLiveIssueWork(list, [root]))).toBe("paused");
   expect(section(withLiveIssueWork(list, [workingRoot]))).toBe("in-progress");
   for (const waiting of [
     { hasPendingApprovals: true },
     { hasPendingUserInput: true },
     { pendingSubagentRequest: "user_input" as const },
   ]) {
-    expect(section(withLiveIssueWork(list, [{ ...workingRoot, ...waiting }]))).toBe("ready");
+    expect(section(withLiveIssueWork(list, [{ ...workingRoot, ...waiting }]))).toBe("in-progress");
   }
   // A settled parent waiting for its subagent is not blue in the sidebar.
-  expect(section(withLiveIssueWork(list, [root, running]))).toBe("ready");
+  expect(section(withLiveIssueWork(list, [root, running]))).toBe("paused");
   expect(section(withLiveIssueWork(list, [{ ...workingRoot, archivedAt: root.updatedAt }]))).toBe(
     "ready",
   );
@@ -146,7 +146,7 @@ it("the Linked issue summary derives the same live status as the issue list", ()
     issueProgress(overlay.summary(issue, scope, environmentId, indexIssueWork([working]))),
   ).toBe("in_progress");
   expect(issueProgress(overlay.summary(issue, scope, environmentId, indexIssueWork([root])))).toBe(
-    "open",
+    "paused",
   );
 });
 
@@ -205,12 +205,12 @@ it("leaves older-server inherited work settled when an unlinked child runs", () 
   };
   const result = withLiveIssueWork(old, [root, running]);
   expect(result).toBe(old);
-  expect(section(result)).toBe("ready");
+  expect(section(result)).toBe("paused");
   expect(
     issueProgress(
       overlay.summary(old.issues[0]!, scope, environmentId, indexIssueWork([root, running])),
     ),
-  ).toBe("open");
+  ).toBe("paused");
 });
 
 it("combines closing PRs with linked threads' PRs, deduplicates identity and follows streamed PR state", () => {
@@ -242,14 +242,14 @@ it("combines closing PRs with linked threads' PRs, deduplicates identity and fol
   };
   const review = withLiveIssueWork(closing, [thread]);
   expect(review.issues[0]?.pullRequests?.map((pr) => pr.number)).toEqual([10, 11]);
-  expect(section(review)).toBe("in-progress");
+  expect(section(review)).toBe("paused");
   expect(
     section(
       withLiveIssueWork(closing, [
         { ...thread, pullRequests: [{ ...pr, snapshot: { ...pr.snapshot!, state: "merged" } }] },
       ]),
     ),
-  ).toBe("ready");
+  ).toBe("paused");
   const blocked = {
     ...closing,
     issues: [
@@ -286,20 +286,21 @@ it("drops PRs from unlinked, dismissed and archived threads instead of retaining
     ...list,
     issues: [{ ...list.issues[0]!, closingPullRequests: [], pullRequests: [pr] }],
   };
-  expect(section(withLiveIssueWork(source, [thread]))).toBe("in-progress");
-  for (const changed of [
-    { ...unlinkedRoot, pullRequests: thread.pullRequests },
-    { ...thread, archivedAt: root.updatedAt },
-    { ...thread, pullRequests: [{ ...link, source: "stack-dismissed" as const }] },
-  ]) {
+  expect(section(withLiveIssueWork(source, [thread]))).toBe("paused");
+  // The PR association drops; a still-linked idle thread keeps the issue Paused.
+  for (const [changed, expected] of [
+    [{ ...unlinkedRoot, pullRequests: thread.pullRequests }, "ready"],
+    [{ ...thread, archivedAt: root.updatedAt }, "ready"],
+    [{ ...thread, pullRequests: [{ ...link, source: "stack-dismissed" as const }] }, "paused"],
+  ] as const) {
     const result = withLiveIssueWork(source, [changed]);
     expect(result.issues[0]?.pullRequests).toEqual([]);
-    expect(section(result)).toBe("ready");
+    expect(section(result)).toBe(expected);
   }
   // Merely observing a closing PR never associates the observing thread's activity.
   const observed = { ...unlinkedRoot, pullRequests: thread.pullRequests, runtime: running.runtime };
   const closing = { ...source, issues: [{ ...source.issues[0]!, closingPullRequests: [pr] }] };
-  expect(section(withLiveIssueWork(closing, [observed]))).toBe("in-progress");
+  expect(section(withLiveIssueWork(closing, [observed]))).toBe("paused");
 });
 
 it("counts a directly linked subagent, but inherited children do not make a settled parent run", () => {
@@ -331,7 +332,7 @@ it("counts a directly linked subagent, but inherited children do not make a sett
       },
     ],
   };
-  expect(section(withLiveIssueWork(inherited, [root, running]))).toBe("ready");
+  expect(section(withLiveIssueWork(inherited, [root, running]))).toBe("paused");
   expect(section(withLiveIssueWork(list, [{ ...running, linkedIssue }]))).toBe("in-progress");
 });
 
@@ -339,7 +340,7 @@ it("keeps identical repository and thread IDs on separate environments apart", (
   const otherEnvironment = EnvironmentId.make("ENVIRONMENT-test");
   const other = { ...root, runtime: running.runtime, environmentId: otherEnvironment };
   const index = indexIssueWork([root, other]);
-  expect(section(overlay.list(list, environmentId, index))).toBe("ready");
+  expect(section(overlay.list(list, environmentId, index))).toBe("paused");
   expect(section(overlay.list(list, otherEnvironment, index))).toBe("in-progress");
 });
 
@@ -383,7 +384,7 @@ it("overlays ordinary work from compact provenance when the managed thread is id
   expect(issueProgress(badge)).toBe(issueProgress(pane));
   expect(
     issueProgress(overlay.summary(summary, scope, environmentId, indexIssueWork([root]))),
-  ).toBe("open");
+  ).toBe("paused");
 });
 
 it("overlays compact sidebar status with the same live work and PR observations", () => {
@@ -401,7 +402,7 @@ it("overlays compact sidebar status with the same live work and PR observations"
   const progress = (shells: Parameters<typeof indexIssueWork>[0]) =>
     issueProgress(overlay.summary(summary, scope, environmentId, indexIssueWork(shells)));
   expect(progress([working])).toBe("in_progress");
-  expect(progress([root])).toBe("in_progress");
+  expect(progress([root])).toBe("paused");
   expect(
     progress([
       {
@@ -414,7 +415,7 @@ it("overlays compact sidebar status with the same live work and PR observations"
         ],
       },
     ]),
-  ).toBe("open");
+  ).toBe("paused");
   expect(
     issueProgress(
       overlay.summary(

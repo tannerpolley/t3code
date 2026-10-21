@@ -117,6 +117,7 @@ export function issueRoadmap(
   const blocked = section("blocked", "Blocked");
   const readySection = section("ready", "Ready");
   const queued = section("queued", "Queued");
+  const paused = section("paused", "Paused");
   const inProgress = section("in-progress", "In progress");
   const done = section("done", "Done");
   const pendingInbox = new Set(pendingInboxNumbers);
@@ -130,9 +131,11 @@ export function issueRoadmap(
         ? blocked
         : progress === "in_progress"
           ? inProgress
-          : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
-            ? blocked
-            : readySection;
+          : progress === "paused"
+            ? paused
+            : row.issue.relationshipsComplete === false || row.issue.blockedBy === undefined
+              ? blocked
+              : readySection;
     target.rows.push(row);
   }
   queued.rows.sort(
@@ -147,7 +150,7 @@ export function issueRoadmap(
     )) {
     (recentlyDone(issue, now) ? done : closed).rows.push({ issue, cycle: false });
   }
-  return [closed, blocked, readySection, queued, inProgress, done];
+  return [closed, blocked, readySection, queued, paused, inProgress, done];
 }
 
 const RECENTLY_DONE_MS = 24 * 60 * 60 * 1000;

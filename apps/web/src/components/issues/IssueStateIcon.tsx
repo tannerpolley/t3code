@@ -4,6 +4,7 @@ import {
   CircleCheckIcon,
   CircleDotDashedIcon,
   CircleDotIcon,
+  CirclePauseIcon,
   CircleSlashIcon,
 } from "lucide-react";
 
@@ -23,12 +24,20 @@ type IssueStateInput = Pick<IssueSummary, "state"> &
       | undefined;
   };
 
-export type IssueProgress = "completed" | "not_planned" | "blocked" | "in_progress" | "open";
+export type IssueProgress =
+  | "completed"
+  | "not_planned"
+  | "blocked"
+  | "in_progress"
+  | "paused"
+  | "open";
 
 /**
  * Closed wins, split the way GitHub closes an issue: not planned (or a duplicate) apart from
  * completed, which is also what an issue closed without a reason counts as. Then an open
- * blocker, then a running agent, then an open pull request. Project fields are metadata only.
+ * blocker. In progress means an agent is on it now, working or waiting for the owner; work
+ * without one (an open or draft pull request, an idle linked thread) is paused. Project fields
+ * are metadata only.
  */
 export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgress {
   if (issue.state === "closed")
@@ -36,8 +45,10 @@ export function issueProgress<T extends IssueStateInput>(issue: T): IssueProgres
       ? "not_planned"
       : "completed";
   if (issue.blockedBy?.some((blocker) => blocker.state === "open")) return "blocked";
-  if (issue.liveWork?.some((work) => work.status === "working")) return "in_progress";
-  if (issue.pullRequests?.some((pr) => pr.state === "open")) return "in_progress";
+  const work = issue.liveWork ?? [];
+  if (work.some((entry) => entry.status === "working" || entry.status === "waiting_on_you"))
+    return "in_progress";
+  if (work.length > 0 || issue.pullRequests?.some((pr) => pr.state === "open")) return "paused";
   return "open";
 }
 
@@ -54,6 +65,12 @@ export const ISSUE_PROGRESS_PRESENTATION = {
     toneClassName: "text-sky-600 dark:text-sky-300/90",
     badgeVariant: "info",
     Icon: CircleDotDashedIcon,
+  },
+  paused: {
+    label: "Paused",
+    toneClassName: "text-amber-600 dark:text-amber-300/90",
+    badgeVariant: "warning",
+    Icon: CirclePauseIcon,
   },
   blocked: {
     label: "Blocked",

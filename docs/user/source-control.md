@@ -267,14 +267,15 @@ and other issue details. Search, Filter and Refresh share the header row. An Iss
 repository.
 
 In the Issues pane, turn on **Roadmap view** for a repository (at the top of **Filter** when the
-pane shows one repository) for dependency order, with **Ready**, **Queued**, **In progress**,
-**Done**, and **Closed** sections. **Blocked** stays between In progress and Done, with red
+pane shows one repository) for dependency order, with **Closed**, **Blocked**, **Inbox**,
+**Ready**, **Queued**, **Paused**, **In progress** and **Done** sections. Blocked shows red
 warnings for open dependencies. Within a section, open blockers and sub-issues come before the
 issues that depend on them; closed blockers no longer hold work back. The view choice is remembered
-per repository. **In progress** follows a linked thread’s running indicator or an open linked PR;
-waiting for a question or approval alone does not count as running. GitHub Project status does not
-change these sections or the issue icon. A thread’s own linked pull request also associates it
-with the issues that GitHub identifies that pull request as closing.
+per repository. **In progress** means a linked agent is working on the issue or waiting for your
+answer. **Paused** means the issue has work, such as an open or draft PR or an idle linked thread,
+but no agent on it right now. GitHub Project status does not change these sections or the issue
+icon. A thread’s own linked pull request also associates it with the issues that GitHub identifies
+that pull request as closing.
 
 Include **Closed** in Filter to see completed and closed issues. **Done** shows those closed in the
 last 24 hours, with their closure reason and time and attached PR numbers, titles, states and links.

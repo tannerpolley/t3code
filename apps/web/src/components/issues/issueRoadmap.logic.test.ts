@@ -170,7 +170,7 @@ describe("live roadmap", () => {
       false,
     );
   });
-  it("keeps only running agents In progress, open PRs In progress, and blockers ahead of both", () => {
+  it("keeps working or waiting agents In progress, idle work and open PRs Paused, and blockers ahead of both", () => {
     const first = issueRoadmap(
       scope,
       [],
@@ -195,10 +195,11 @@ describe("live roadmap", () => {
     );
     expect(first.map((section) => numbers(section.rows))).toEqual([
       [],
-      [1, 4, 5, 6, 10],
-      [2, 3, 9, 13, 14],
+      [1, 4, 5, 10],
+      [9, 13, 14],
       [],
-      [7, 8, 11, 12],
+      [3, 6, 8],
+      [2, 7, 11, 12],
       [],
     ]);
     expect(
@@ -219,8 +220,9 @@ describe("live roadmap", () => {
     expect(refreshed.map((section) => numbers(section.rows))).toEqual([
       [],
       [],
-      [1, 2, 3, 4],
+      [3, 4],
       [],
+      [1, 2],
       [],
       [],
     ]);
@@ -239,6 +241,7 @@ it("puts queued issues after Ready in insertion order and removes them from thei
     ["Blocked", []],
     ["Ready", [3]],
     ["Queued", [2, 1]],
+    ["Paused", []],
     ["In progress", []],
     ["Done", []],
   ]);
