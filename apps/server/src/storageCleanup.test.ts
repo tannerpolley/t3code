@@ -2328,6 +2328,37 @@ describe("explicit worktree removal", () => {
       ),
   );
 
+  it.effect("removes a checkout stored through a symlink and `..`, resolving it physically", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const f = yield* makeCleanupFixture("project-local");
+        f.disable();
+        const sibling = `${f.worktree.slice(0, f.worktree.lastIndexOf("/"))}/sibling`;
+        yield* f.fs.makeDirectory(sibling);
+        yield* f.fs.symlink(sibling, `${f.repo}/sibling-link`);
+        // Physically the checkout; lexically `${f.repo}/<name>`, which doesn't exist.
+        const alias = `${f.repo}/sibling-link/../${f.worktree.slice(f.worktree.lastIndexOf("/") + 1)}`;
+        f.setThreads([
+          shell({
+            branch: "feature",
+            worktreePath: alias,
+            createdAt: at(0),
+            latestUserMessageAt: at(0),
+            latestRunCompletedAt: at(0),
+            latestRunId: RunId.make("run-1"),
+            updatedAt: at(0),
+          }),
+        ]);
+        expect(yield* f.service.removeWorktreeNow(request(alias))).toEqual({
+          outcome: "removed",
+          reason: "Requested by owner",
+        });
+        expect(yield* f.fs.exists(f.worktree)).toBe(false);
+      }),
+    ),
+  );
+
   it.effect("keeps the settle-script grace period even when cleanup is explicitly requested", () =>
     runCleanupTest(
       Effect.gen(function* () {
