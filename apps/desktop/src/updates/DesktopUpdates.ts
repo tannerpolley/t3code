@@ -753,6 +753,11 @@ export const make = Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
+          if (forkUpdates) {
+            // The lifecycle owns bounded shutdown after the launcher is scheduled.
+            yield* forkUpdates.install(downloadedVersion);
+            return { accepted: true, completed: false, failed: false };
+          }
           // Stop every backend in the pool, not just the primary. With parallel
           // WSL + Windows backends, leaving the WSL instance up means
           // quitAndInstall's app.quit() exits before the pool's scope cascade
@@ -769,14 +774,10 @@ export const make = Effect.gen(function* () {
             (instance) => instance.stop({ timeout: Duration.seconds(5) }),
             { concurrency: "unbounded" },
           );
-          if (forkUpdates) {
-            yield* forkUpdates.install(downloadedVersion);
-          } else {
-            yield* electronUpdater.quitAndInstall({
-              isSilent: true,
-              isForceRunAfter: true,
-            });
-          }
+          yield* electronUpdater.quitAndInstall({
+            isSilent: true,
+            isForceRunAfter: true,
+          });
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({

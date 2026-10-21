@@ -98,8 +98,8 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
-    install: (expectedVersion: string | null) =>
-      Effect.gen(function* () {
+    install: Effect.fn("desktop.forkStagedUpdates.install")(
+      function* (expectedVersion: string | null) {
         const version = yield* readStagedBuild;
         if (version === null || version !== expectedVersion) {
           return yield* new ForkStagedUpdateChangedError();
@@ -110,19 +110,22 @@ export const make = Effect.gen(function* () {
         if (info.type !== "File" || (info.mode & 0o111) === 0) {
           return yield* new ForkLauncherNotExecutableError({ launcher });
         }
-        // Electron starts the launcher after exit; it waits for the database and installs pending/.
-        yield* app.relaunch({ execPath: launcher, args: [] });
+        // The launcher must wait for this PID before installing or taking the instance lock.
+        yield* app.relaunch({
+          execPath: launcher,
+          args: ["--update-from-pid", String(process.pid)],
+        });
         yield* app.quit;
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
-              channel: null,
-              isSilent: true,
-              isForceRunAfter: true,
-              cause,
-            }),
-        ),
+      },
+      Effect.mapError(
+        (cause) =>
+          new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+            channel: null,
+            isSilent: true,
+            isForceRunAfter: true,
+            cause,
+          }),
       ),
+    ),
   };
 });

@@ -59,7 +59,7 @@ import { endReleasedSessionWork } from "./ReleasedSessionWork.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
-const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
+const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 5 * 1000;
 
 const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
@@ -1035,24 +1035,11 @@ export const layerWithOptions = (
           Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
         );
         if (Option.isNone(closeExit)) {
+          // A timed-out close stays detached; shutdown must not rejoin its finalizers.
           yield* Effect.logWarning("orchestration-v2.provider-session-scope-close-timeout", {
             ...annotations,
             timeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
           });
-          yield* Fiber.join(closeFiber).pipe(
-            Effect.flatMap((exit) =>
-              Exit.isFailure(exit)
-                ? Effect.logWarning("orchestration-v2.provider-session-scope-close-failed", {
-                    ...annotations,
-                    cause: exit.cause,
-                  })
-                : Effect.logInfo(
-                    "orchestration-v2.provider-session-scope-close-completed-late",
-                    annotations,
-                  ),
-            ),
-            Effect.forkDetach,
-          );
         }
         return closeExit;
       });

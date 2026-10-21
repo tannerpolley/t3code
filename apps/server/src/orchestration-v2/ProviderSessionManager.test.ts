@@ -1319,7 +1319,7 @@ it.effect("ProviderSessionManagerV2 cleans up an interrupted open whose scope cl
       assert.equal((yield* Ref.get(state)).openCount, 1);
 
       const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
-      yield* TestClock.adjust("30 seconds");
+      yield* TestClock.adjust("5 seconds");
       yield* Fiber.join(stopping);
     }).pipe(
       Effect.provide(
@@ -1731,12 +1731,51 @@ it.effect("ProviderSessionManagerV2 releases sessions in parallel on server shut
       }
 
       const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
-      yield* TestClock.adjust("30 seconds");
+      yield* TestClock.adjust("5 seconds");
       yield* Effect.yieldNow;
       assert.isDefined(stopping.pollUnsafe());
     }).pipe(
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, hangSessionScopeClose: true })),
     );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 bounds layer shutdown when a provider scope never closes", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const scopeCloseReached = yield* Deferred.make<void>();
+    const stopping = yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-hung-layer-shutdown");
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId: yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        }),
+        modelSelection,
+        runtimePolicy,
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 60_000, hangSessionScopeClose: true, scopeCloseReached }),
+      ),
+      Effect.forkDetach,
+    );
+    yield* Deferred.await(scopeCloseReached);
+    yield* TestClock.adjust("4999 millis");
+    assert.isUndefined(stopping.pollUnsafe());
+    // Per-session close and the aggregate scope each get at most five seconds.
+    yield* TestClock.adjust("5001 millis");
+    assert.isDefined(stopping.pollUnsafe());
+    yield* Fiber.join(stopping);
+    assert.equal((yield* Ref.get(state)).closeCount, 0);
   }),
 );
 
@@ -3107,7 +3146,7 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
       yield* Effect.yieldNow;
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
 
-      yield* TestClock.adjust("30 seconds");
+      yield* TestClock.adjust("5 seconds");
       yield* Effect.yieldNow;
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.equal(projection.providerSessions.at(-1)?.status, "stopped");

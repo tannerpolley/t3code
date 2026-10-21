@@ -187,41 +187,47 @@ describe("ForkStagedUpdates", () => {
     ),
   );
 
-  it.effect("stops backends, schedules the launcher after exit, and quits through Electron", () => {
-    const steps: string[] = [];
-    return withForkHarness(
-      ({ home, stage, harness }) =>
-        Effect.gen(function* () {
-          yield* stage("2.12.15");
-          const updates = yield* DesktopUpdates.DesktopUpdates;
-          yield* updates.configure;
-          yield* updates.check("manual");
-          const result = yield* updates.installPrepared("0.0.45-v2.12.15");
-          assert.isTrue(result.accepted);
-          assert.isFalse(result.failed);
-          assert.deepEqual(steps, ["stop", "relaunch"]);
-          assert.deepEqual(harness.installSteps, ["relaunch", "quit"]);
-          assert.deepEqual(harness.relaunches, [
-            { execPath: `${home}/.local/bin/t3-code`, args: [] },
-          ]);
-          assert.equal(harness.quitAndInstalls(), 0);
-          const state = yield* DesktopState.DesktopState;
-          assert.isTrue(yield* Ref.get(state.quitting));
-          assert.deepEqual(
-            [...harness.installRecords.values()].map((text) => JSON.parse(text)),
-            [{ fromVersion: "0.0.45-v2.12.14", targetVersion: "0.0.45-v2.12.15" }],
-          );
-        }),
-      {
-        stopBackend: Effect.sync(() => {
-          steps.push("stop");
-        }),
-        relaunch: Effect.sync(() => {
-          steps.push("relaunch");
-        }),
-      },
-    );
-  });
+  it.effect(
+    "schedules the launcher before lifecycle shutdown, even if backend stop would hang",
+    () => {
+      const steps: string[] = [];
+      return withForkHarness(
+        ({ home, stage, harness }) =>
+          Effect.gen(function* () {
+            yield* stage("2.12.15");
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            yield* updates.check("manual");
+            const result = yield* updates.installPrepared("0.0.45-v2.12.15");
+            assert.isTrue(result.accepted);
+            assert.isFalse(result.failed);
+            assert.deepEqual(steps, ["relaunch"]);
+            assert.deepEqual(harness.installSteps, ["relaunch", "quit"]);
+            assert.deepEqual(harness.relaunches, [
+              {
+                execPath: `${home}/.local/bin/t3-code`,
+                args: ["--update-from-pid", String(process.pid)],
+              },
+            ]);
+            assert.equal(harness.quitAndInstalls(), 0);
+            const state = yield* DesktopState.DesktopState;
+            assert.isTrue(yield* Ref.get(state.quitting));
+            assert.deepEqual(
+              [...harness.installRecords.values()].map((text) => JSON.parse(text)),
+              [{ fromVersion: "0.0.45-v2.12.14", targetVersion: "0.0.45-v2.12.15" }],
+            );
+          }),
+        {
+          stopBackend: Effect.sync(() => {
+            steps.push("stop");
+          }).pipe(Effect.andThen(Effect.never)),
+          relaunch: Effect.sync(() => {
+            steps.push("relaunch");
+          }),
+        },
+      );
+    },
+  );
 
   it.effect("recovers instead of quitting when the launcher cannot be executed", () =>
     withForkHarness(({ stage, chmodLauncher, harness }) =>
@@ -250,7 +256,7 @@ describe("ForkStagedUpdates", () => {
         yield* clear();
         const result = yield* updates.installPrepared("0.0.45-v2.12.15");
         assert.isTrue(result.failed);
-        assert.deepEqual(harness.installSteps, ["startBackend"]);
+        assert.deepEqual(harness.installSteps, []);
         assert.deepEqual(harness.relaunches, []);
         assert.equal(harness.installRecords.size, 0);
         assert.equal(harness.updateRestartMarkers.size, 0);
