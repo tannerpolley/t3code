@@ -100,7 +100,6 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
-  | InlineShellStore
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -118,7 +117,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
-    const inlineShell = yield* InlineShellStore;
+    const inlineShell = yield* Effect.serviceOption(InlineShellStore);
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1097,39 +1096,41 @@ export const layer: Layer.Layer<
                 !coveredItemIds.has(item.id) &&
                 historicalMessage(item) !== null,
             );
-      const inlineSession = {
-        ...session,
-        startTurn: (turnInput: Parameters<typeof session.startTurn>[0]) =>
-          inlineShell
-            .deliver(
-              {
-                threadId: projection.thread.id,
-                deliveryId: `start:${attempt.id}:${message.id}`,
-                runId: run.id,
-                attemptId: attempt.id,
-                providerTurnId: null,
-                messageId: message.id,
-                text: turnInput.message.text,
-                compact: message.text.trim().toLowerCase() === "/compact",
-                turnStart: true,
-              },
-              (text) =>
-                session.startTurn({ ...turnInput, message: { ...turnInput.message, text } }),
-            )
-            .pipe(
-              Effect.mapError((cause) =>
-                cause._tag === "ProviderAdapterTurnStartError"
-                  ? cause
-                  : new ProviderAdapter.ProviderAdapterTurnStartError({
-                      driver: session.driver,
-                      threadId: projection.thread.id,
-                      providerThreadId: providerThread.id,
-                      runId: run.id,
-                      cause,
-                    }),
-              ),
-            ),
-      };
+      const inlineSession = Option.isNone(inlineShell)
+        ? session
+        : {
+            ...session,
+            startTurn: (turnInput: Parameters<typeof session.startTurn>[0]) =>
+              inlineShell.value
+                .deliver(
+                  {
+                    threadId: projection.thread.id,
+                    deliveryId: `start:${attempt.id}:${message.id}`,
+                    runId: run.id,
+                    attemptId: attempt.id,
+                    providerTurnId: null,
+                    messageId: message.id,
+                    text: turnInput.message.text,
+                    compact: message.text.trim().toLowerCase() === "/compact",
+                    turnStart: true,
+                  },
+                  (text) =>
+                    session.startTurn({ ...turnInput, message: { ...turnInput.message, text } }),
+                )
+                .pipe(
+                  Effect.mapError((cause) =>
+                    cause._tag === "ProviderAdapterTurnStartError"
+                      ? cause
+                      : new ProviderAdapter.ProviderAdapterTurnStartError({
+                          driver: session.driver,
+                          threadId: projection.thread.id,
+                          providerThreadId: providerThread.id,
+                          runId: run.id,
+                          cause,
+                        }),
+                  ),
+                ),
+          };
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const retryHandoff =
