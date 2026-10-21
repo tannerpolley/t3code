@@ -743,3 +743,40 @@ it.effect("a delayed digest retry starts the next cooldown at successful deliver
     assert.equal(Date.parse(rows[1]!.delivered_at), Date.parse(at(34)));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect(
+  "a digest accepted before a crash keeps its cooldown after its events are acknowledged",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      let crash = true;
+      // A real dispatch commits its receipt with the command; the server then stops before
+      // recording delivered_at.
+      const threads = fakeThreads(() =>
+        Effect.gen(function* () {
+          const id = String(threads.dispatched.at(-1)!.commandId);
+          yield* sql`INSERT OR IGNORE INTO orchestration_command_receipts
+          (command_id, aggregate_kind, aggregate_id, accepted_at, result_sequence, status)
+          VALUES (${id}, 'thread', ${root}, ${at(2)}, 1, 'accepted')`.pipe(Effect.orDie);
+          if (crash) {
+            crash = false;
+            return yield* Effect.die("server stopped before recording the delivery");
+          }
+        }),
+      );
+      const { inbox, github } = yield* setup(fakeGitHub(), threads);
+      github.data.issues = [issue(5, amineMarker)];
+      yield* nextPoll(inbox); // t=2: accepted, then the crash
+      const restarted = yield* IssueInbox.make.pipe(
+        Effect.provide(Layer.mergeAll(github.service, threads.service, projects)),
+      );
+      yield* restarted.markRead(repo);
+      yield* restarted.pollDue; // the emptied pending digest counts as delivered at t=2
+      github.data.comments = [comment(1, 5, amineMarker, { created_at: at(3), updated_at: at(3) })];
+      yield* nextPoll(restarted); // t=4
+      assert.equal(threads.dispatched.length, 1, "accepted at t=2, so t=4 waits");
+      yield* TestClock.adjust("14 minutes");
+      yield* restarted.pollDue; // t=18
+      assert.equal(threads.dispatched.length, 2);
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

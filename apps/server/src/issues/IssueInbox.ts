@@ -204,13 +204,22 @@ export const make = Effect.gen(function* () {
         }),
       );
       if (digest === undefined) return;
+      const id = `issue-inbox-digest:${digest.digest_id}:${repo.rootThreadId}`;
       const unread = yield* sql<EventRow>`
         SELECT * FROM issue_inbox_events
         WHERE digest_id = ${digest.digest_id} AND read_at IS NULL
         ORDER BY high_priority DESC, event_id
       `;
       if (unread.length === 0) {
-        yield* sql`DELETE FROM issue_inbox_digests WHERE digest_id = ${digest.digest_id}`;
+        // A crash after the queue accepted this digest, before delivered_at, still started the cooldown.
+        const [accepted] = yield* sql<{ accepted_at: string }>`
+          SELECT accepted_at FROM orchestration_command_receipts
+          WHERE command_id = ${id} AND status = 'accepted'
+        `;
+        yield* accepted === undefined
+          ? sql`DELETE FROM issue_inbox_digests WHERE digest_id = ${digest.digest_id}`
+          : sql`UPDATE issue_inbox_digests SET delivered_at = ${accepted.accepted_at}
+              WHERE digest_id = ${digest.digest_id}`;
         return;
       }
       const since = unread.reduce(
@@ -218,7 +227,6 @@ export const make = Effect.gen(function* () {
         unread[0]!.occurred_at,
       );
       const text = digestText(unread.map(digestEvent), since);
-      const id = `issue-inbox-digest:${digest.digest_id}:${repo.rootThreadId}`;
       // Queued, never steered: Claude's steering interrupts running tools. Idle, it starts a turn.
       yield* threads.dispatch({
         type: "message.dispatch",
