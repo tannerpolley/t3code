@@ -91,18 +91,22 @@ export function OwnerDecisionCard({
       </div>
       <p role="status" className="text-muted-foreground">
         {chosen ? `Owner chose ${chosen.label}. ` : ""}
-        {decision.state === "withdrawn"
-          ? `Withdrawn: ${decision.withdrawalReason}`
-          : decision.pendingPublish !== null ||
-              (selected !== null && decision.chosenOptionId === null)
-            ? "Publishing to GitHub…"
-            : decision.pendingDelivery
-              ? "Choice recorded; notification awaiting delivery."
-              : decision.state === "awaiting_choice"
-                ? "Awaiting your choice"
-                : decision.deliveredAt !== null
-                  ? "Choice published and requester notified."
-                  : decision.state.replaceAll("_", " ")}
+        {decision.state === "publication_mismatch"
+          ? "GitHub comment mismatch; publication stopped."
+          : decision.state === "delivery_failed"
+            ? "Choice published; requester notification could not be delivered."
+            : decision.state === "withdrawn"
+              ? `Withdrawn: ${decision.withdrawalReason}`
+              : decision.pendingPublish !== null ||
+                  (selected !== null && decision.chosenOptionId === null)
+                ? "Publishing to GitHub…"
+                : decision.pendingDelivery
+                  ? "Choice recorded; notification awaiting delivery."
+                  : decision.state === "awaiting_choice"
+                    ? "Awaiting your choice"
+                    : decision.deliveredAt !== null
+                      ? "Choice published and requester notified."
+                      : decision.state.replaceAll("_", " ")}
         {publishing && decision.state === "publication_failed" ? " Retrying publication." : ""}
       </p>
       {decision.choiceComment ? (

@@ -22,6 +22,7 @@ import {
   type IssuePostInput,
   type IssuePostResult,
   type IssueRepositoryRef,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import * as Clock from "effect/Clock";
@@ -123,6 +124,7 @@ export class IssueInbox extends Context.Service<
     readonly post: (
       callerThreadId: ThreadId,
       input: IssuePostInput,
+      sourceProjectId?: ProjectId,
     ) => Effect.Effect<IssuePostResult, IssueWorkError | IssueReadError>;
   }
 >()("t3/issues/IssueInbox") {}
@@ -344,7 +346,7 @@ export const make = Effect.gen(function* () {
       return { repository: repo.repository, unread, events };
     }).pipe(Effect.mapError((cause) => (isIssueWorkError(cause) ? cause : storageError(cause))));
 
-  const post: IssueInbox["Service"]["post"] = (callerThreadId, input) =>
+  const post: IssueInbox["Service"]["post"] = (callerThreadId, input, sourceProjectId) =>
     Effect.gen(function* () {
       if (input.issueNumber === undefined && input.title === undefined)
         return yield* new IssueWorkError({
@@ -358,13 +360,15 @@ export const make = Effect.gen(function* () {
       const shell = yield* threads
         .getThreadShell(callerThreadId)
         .pipe(Effect.mapError(storageError));
-      if (shell === null)
+      // Durable server work retains its source project after the requesting thread is deleted.
+      const projectId = shell?.projectId ?? sourceProjectId;
+      if (projectId === undefined)
         return yield* new IssueWorkError({
           code: "invalid-request",
           message: "The calling thread is unavailable.",
         });
       const project = Option.getOrNull(
-        yield* projects.getById(shell.projectId).pipe(Effect.mapError(storageError)),
+        yield* projects.getById(projectId).pipe(Effect.mapError(storageError)),
       );
       const identity = project?.repositoryIdentity ?? null;
       const own = [

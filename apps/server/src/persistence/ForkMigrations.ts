@@ -13,6 +13,7 @@ import ThreadIssueWork from "./ForkMigrations/003_ThreadIssueWork.ts";
 import RepositoryOrchestration from "./ForkMigrations/004_RepositoryOrchestration.ts";
 import RepositoryScheduledWork from "./ForkMigrations/005_RepositoryScheduledWork.ts";
 import OwnerDecisions from "./ForkMigrations/020_OwnerDecisions.ts";
+import OwnerDecisionDelivery from "./ForkMigrations/021_OwnerDecisionDelivery.ts";
 import IssueChanges from "./ForkMigrations/006_IssueChanges.ts";
 import SidebarLayout from "./ForkMigrations/013_SidebarLayout.ts";
 import ProjectArtifacts from "./ForkMigrations/017_ProjectArtifacts.ts";
@@ -52,6 +53,7 @@ export const forkMigrationEntries = [
   [18, "ClosedIssueWorkIndexes", ClosedIssueWorkIndexes],
   [19, "UsageLimitRecoveryIndex", UsageLimitRecoveryIndex],
   [20, "OwnerDecisions", OwnerDecisions],
+  [21, "OwnerDecisionDelivery", OwnerDecisionDelivery],
 ] as const;
 
 // Fork builds before v2.11 recorded these in upstream's ledger as 57–62.

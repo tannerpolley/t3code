@@ -37,6 +37,24 @@ const tableNames = Effect.gen(function* () {
 });
 
 describe("fork migration ledger", () => {
+  it.effect("adds the durable decision destination without changing existing requests", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toForkMigrationInclusive: 20 });
+      yield* sql`INSERT INTO owner_decisions (id, requesting_thread_id, requesting_project_id, client_request_id, host, repository, issue_number, request_json, state, created_at, updated_at)
+        VALUES ('existing', 'requester', 'project', 'retry', 'github.com', 'acme/repo', 46, '{}', 'answered', '2026-10-20', '2026-10-20')`;
+      yield* runMigrations();
+      const [row] =
+        yield* sql`SELECT id, state, request_json, delivery_thread_id FROM owner_decisions`;
+      assert.deepEqual(row, {
+        id: "existing",
+        state: "answered",
+        request_json: "{}",
+        delivery_thread_id: null,
+      });
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect(
     "indexes usage-limit errors, despite malformed history, without changing lookup results",
     () =>
@@ -176,6 +194,7 @@ describe("fork migration ledger", () => {
           { migration_id: 18, name: "ClosedIssueWorkIndexes" },
           { migration_id: 19, name: "UsageLimitRecoveryIndex" },
           { migration_id: 20, name: "OwnerDecisions" },
+          { migration_id: 21, name: "OwnerDecisionDelivery" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

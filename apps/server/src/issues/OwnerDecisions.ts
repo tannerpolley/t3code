@@ -8,7 +8,7 @@ import {
   OwnerDecisionWithdrawInput,
   type AuthEnvironmentScope,
   type OwnerDecisionsListInput,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as Context from "effect/Context";
@@ -25,6 +25,8 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ProjectService from "../project/ProjectService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as IssueInbox from "./IssueInbox.ts";
+import * as IssueWorkStore from "./IssueWorkStore.ts";
+import { commentIdentity, decisionComment, parseDecisionComment } from "./OwnerDecisionComments.ts";
 import * as IssueService from "./IssueService.ts";
 import * as Watcher from "./IssueInboxWatcher.ts";
 
@@ -72,6 +74,7 @@ type Row = {
   withdrawal_reason: string | null;
   updated_at: string;
   delivered_at: string | null;
+  delivery_thread_id: string | null;
   pending_publish: OwnerDecision["pendingPublish"];
   pending_delivery: number;
   pending_label: number;
@@ -124,6 +127,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const inbox = yield* IssueInbox.IssueInbox;
+  const work = yield* IssueWorkStore.IssueWorkStore;
   const issues = yield* IssueService.IssueService;
   const github = yield* Watcher.make;
   const lock = yield* Semaphore.make(1);
@@ -145,6 +149,8 @@ const make = Effect.gen(function* () {
       withdrawalReason: row.withdrawal_reason,
       updatedAt: row.updated_at,
       deliveredAt: row.delivered_at,
+      deliveryThreadId:
+        row.delivery_thread_id === null ? null : ThreadId.make(row.delivery_thread_id),
       pendingPublish: row.pending_publish,
       pendingDelivery: row.pending_delivery === 1,
       pendingLabel: row.pending_label === 1,
@@ -240,6 +246,7 @@ const make = Effect.gen(function* () {
         createdAt: now,
         updatedAt: now,
         deliveredAt: null,
+        deliveryThreadId: null,
         pendingPublish: "request",
         pendingDelivery: false,
         pendingLabel: true,
@@ -341,7 +348,7 @@ const make = Effect.gen(function* () {
               message: "An answered decision cannot be withdrawn.",
             });
           if (decision.state === "withdrawn") return;
-          yield* sql`UPDATE owner_decisions SET state = 'withdrawn', withdrawal_reason = ${input.reason}, updated_at = ${yield* nowIso}, pending_publish = NULL, pending_label = 1, last_error = NULL WHERE id = ${input.id} AND chosen_option_id IS NULL`;
+          yield* sql`UPDATE owner_decisions SET state = 'withdrawn', withdrawal_reason = ${input.reason}, updated_at = ${yield* nowIso}, pending_publish = 'withdrawn', pending_label = 1, last_error = NULL WHERE id = ${input.id} AND chosen_option_id IS NULL`;
         }),
       );
       yield* notify;
@@ -352,7 +359,9 @@ const make = Effect.gen(function* () {
   );
 
   const reconcileComment = Effect.fn("OwnerDecisions.reconcileComment")(
-    function* (decision: OwnerDecision, marker: string, body: string) {
+    function* (decision: OwnerDecision, body: string) {
+      const expected = parseDecisionComment(body)!;
+      const identity = commentIdentity(decision.pendingPublish!, decision.id);
       let page: number | null = 1;
       do {
         const response: Effect.Success<
@@ -362,16 +371,34 @@ const make = Effect.gen(function* () {
           `issues/${decision.number}/comments?per_page=100&page=${page}`,
         );
         const comments = yield* decodeComments(response.body);
-        const found = comments.find((comment) => comment.body?.includes(marker));
-        if (found !== undefined) return { id: String(found.id), url: found.html_url };
+        for (const comment of comments) {
+          if (!comment.body?.includes(identity)) continue;
+          const actual = parseDecisionComment(comment.body);
+          if (
+            actual === null ||
+            actual.digest !== expected.digest ||
+            actual.kind !== expected.kind ||
+            actual.id !== expected.id ||
+            actual.optionId !== expected.optionId
+          )
+            return yield* new OwnerDecisionError({
+              code: "publication-mismatch",
+              message: `Decision publication stopped: comment ${comment.html_url} does not match the expected ${decision.pendingPublish} content and digest.`,
+            });
+          return { id: String(comment.id), url: comment.html_url };
+        }
         page = response.nextPage;
       } while (page !== null);
-      const posted = yield* inbox.post(decision.requestingThreadId, {
-        host: decision.host,
-        repository: decision.repository,
-        issueNumber: decision.number,
-        body,
-      });
+      const posted = yield* inbox.post(
+        decision.requestingThreadId,
+        {
+          host: decision.host,
+          repository: decision.repository,
+          issueNumber: decision.number,
+          body,
+        },
+        decision.requestingProjectId,
+      );
       if (posted.commentId === null)
         return yield* new OwnerDecisionError({
           code: "github",
@@ -379,23 +406,20 @@ const make = Effect.gen(function* () {
         });
       return { id: posted.commentId, url: posted.url };
     },
-    Effect.mapError(
-      (cause) =>
-        new OwnerDecisionError({
-          code: "github",
-          message: "Decision comment publication failed; it will be reconciled before retrying.",
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      isDecisionError(cause)
+        ? cause
+        : new OwnerDecisionError({
+            code: "github",
+            message: "Decision comment publication failed; it will be reconciled before retrying.",
+            cause,
+          }),
     ),
   );
   const publish = Effect.fn("OwnerDecisions.publish")(function* (decision: OwnerDecision) {
     if (decision.pendingPublish === null) return;
     const choice = decision.options.find((option) => option.id === decision.chosenOptionId);
-    const marker =
-      decision.pendingPublish === "request"
-        ? `<!-- t3-decision-request:v1 id=${decision.id} -->`
-        : `<!-- t3-decision-choice:v1 id=${decision.id} option=${decision.chosenOptionId} -->`;
-    const body =
+    const readable =
       decision.pendingPublish === "request"
         ? [
             `## Owner decision ${decision.id}`,
@@ -407,25 +431,37 @@ const make = Effect.gen(function* () {
             `Evidence: ${decision.evidenceUrl}`,
             `Requested by ${decision.requestingProjectTitle} / ${decision.requestingThreadTitle} (thread ${decision.requestingThreadId}).`,
             "Answer through T3's signed-in owner interface. Agents cannot choose.",
-            marker,
           ].join("\n\n")
-        : [
-            `Owner chose ${choice!.label} for ${decision.id}.`,
-            `Next: ${choice!.consequence}`,
-            `Chosen at ${decision.chosenAt} by ${decision.chosenBy}.`,
-            `Request: ${decision.requestComment!.url}`,
-            marker,
-          ].join("\n\n");
-    const comment = yield* reconcileComment(decision, marker, body);
+        : decision.pendingPublish === "choice"
+          ? [
+              `Owner chose ${choice!.label} for ${decision.id}.`,
+              `Next: ${choice!.consequence}`,
+              `Chosen at ${decision.chosenAt} by ${decision.chosenBy}.`,
+              `Request: ${decision.requestComment!.url}`,
+            ].join("\n\n")
+          : [
+              `Owner decision ${decision.id} withdrawn.`,
+              `Reason: ${decision.withdrawalReason}`,
+            ].join("\n\n");
+    const body = decisionComment(
+      decision.pendingPublish,
+      decision.id,
+      readable,
+      decision.pendingPublish === "choice" ? decision.chosenOptionId! : undefined,
+    );
+    const comment = yield* reconcileComment(decision, body);
     const json = yield* encodeComment(comment);
     if (decision.pendingPublish === "request")
       yield* sql`UPDATE owner_decisions SET request_comment_json = ${json}, state = 'awaiting_choice', pending_publish = NULL, last_error = NULL, updated_at = ${yield* nowIso} WHERE id = ${decision.id}`;
-    else
+    else if (decision.pendingPublish === "choice")
       yield* sql`UPDATE owner_decisions SET choice_comment_json = ${json}, state = 'answered', pending_publish = NULL, last_error = NULL, updated_at = ${yield* nowIso} WHERE id = ${decision.id}`;
+    else
+      yield* sql`UPDATE owner_decisions SET state = 'withdrawn', pending_publish = NULL, last_error = NULL, updated_at = ${yield* nowIso} WHERE id = ${decision.id}`;
     yield* notify;
   }, Effect.mapError(storageError));
   const syncLabel = Effect.fn("OwnerDecisions.syncLabel")(
     function* (decision: OwnerDecision) {
+      if (decision.pendingPublish !== null || decision.state === "publication_mismatch") return;
       const [open] = yield* sql<{
         count: number;
       }>`SELECT COUNT(*) AS count FROM owner_decisions WHERE host = ${decision.host} AND repository = ${decision.repository} AND issue_number = ${decision.number} AND chosen_option_id IS NULL AND state != 'withdrawn'`;
@@ -435,6 +471,24 @@ const make = Effect.gen(function* () {
           body: { labels: ["decision-needed"] },
         });
       } else {
+        // One bounded read; an incomplete view cannot prove that label removal is safe.
+        const page = yield* github.rest(
+          decision,
+          `issues/${decision.number}/comments?per_page=100&page=1`,
+        );
+        const comments = yield* decodeComments(page.body);
+        const openRequests = new Set<string>();
+        const closedRequests = new Set<string>();
+        for (const comment of comments) {
+          const body = comment.body ?? "";
+          // Unverifiable or older request markers remain open; they cannot authorize cleanup.
+          for (const match of body.matchAll(/<!-- t3-decision-request:v1 id=(\S+)(?: | -->)/gu))
+            openRequests.add(match[1]!);
+          const parsed = parseDecisionComment(body);
+          if (parsed !== null && parsed.kind !== "request") closedRequests.add(parsed.id!);
+        }
+        if (page.nextPage !== null || [...openRequests].some((id) => !closedRequests.has(id)))
+          return;
         const response = yield* github.rest(
           decision,
           `issues/${decision.number}/labels?per_page=100`,
@@ -448,7 +502,7 @@ const make = Effect.gen(function* () {
             method: "DELETE",
           });
       }
-      yield* sql`UPDATE owner_decisions SET pending_label = 0 WHERE id = ${decision.id}`;
+      yield* sql`UPDATE owner_decisions SET pending_label = 0, last_error = CASE WHEN state IN ('publication_mismatch', 'delivery_failed') OR pending_delivery = 1 THEN last_error ELSE NULL END WHERE id = ${decision.id}`;
     },
     Effect.mapError(
       (cause) =>
@@ -459,37 +513,84 @@ const make = Effect.gen(function* () {
         }),
     ),
   );
+  const resolveDestination = Effect.fn("OwnerDecisions.resolveDestination")(function* (
+    decision: OwnerDecision,
+  ) {
+    let destination = decision.requestingThreadId;
+    const visited = new Set<ThreadId>();
+    while (!visited.has(destination) && visited.size < 100) {
+      visited.add(destination);
+      const configuration = yield* work.configuration(destination);
+      if (configuration?.retiredToThreadId !== undefined) {
+        destination = configuration.retiredToThreadId;
+        continue;
+      }
+      if (configuration !== null) {
+        const owner = yield* work.repositoryOwnerByRef(configuration);
+        if (owner !== null && owner.rootThreadId !== destination) {
+          destination = owner.rootThreadId;
+          continue;
+        }
+      }
+      const shell = yield* threads.getThreadShell(destination);
+      if (shell !== null && shell.deletedAt === null && shell.archivedAt === null)
+        return destination;
+      return yield* new OwnerDecisionError({
+        code: "delivery-unavailable",
+        message:
+          "Requester unavailable with no available successor; owner decision remains undelivered.",
+      });
+    }
+    return yield* new OwnerDecisionError({
+      code: "delivery-unavailable",
+      message: "Requester handoff chain is cyclic or too long; owner decision remains undelivered.",
+    });
+  });
   const deliver = Effect.fn("OwnerDecisions.deliver")(
     function* (decision: OwnerDecision) {
       if (!decision.pendingDelivery || decision.choiceComment === null) return;
-      const shell = yield* threads.getThreadShell(decision.requestingThreadId);
-      if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null)
-        return yield* new OwnerDecisionError({
-          code: "delivery",
-          message: "Requester unavailable; owner decision remains undelivered.",
-        });
+      const destination = decision.deliveryThreadId ?? (yield* resolveDestination(decision));
+      // Freeze the recipient before dispatch: a lost receipt must replay the same command payload.
+      if (decision.deliveryThreadId === null)
+        yield* sql`UPDATE owner_decisions SET delivery_thread_id = ${destination}, updated_at = ${yield* nowIso} WHERE id = ${decision.id}`;
       const choice = decision.options.find((option) => option.id === decision.chosenOptionId)!;
       const text = `Owner decision ${decision.id} on ${decision.repository}#${decision.number}: ${choice.label}. Next: ${choice.consequence}. Evidence: ${decision.evidenceUrl}. Owner record: ${decision.choiceComment.url}.`;
       const id = `owner-decision:${decision.id}:${decision.requestingThreadId}`;
-      yield* threads.dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make(id),
-        messageId: MessageId.make(id),
-        threadId: decision.requestingThreadId,
-        text,
-        notification: {
-          source: { kind: "system" },
-          outcome: "updated",
-          summary: "Owner decision answered",
-          detail: text,
-        },
-        attachments: [],
-        dispatchMode: { type: "queue_after_active" },
-        createdBy: "agent",
-        creationSource: "server",
-      });
+      yield* threads
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(id),
+          messageId: MessageId.make(id),
+          threadId: destination,
+          text,
+          notification: {
+            source: { kind: "system" },
+            outcome: "updated",
+            summary: "Owner decision answered",
+            detail: text,
+          },
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.gen(function* () {
+              const shell = yield* threads.getThreadShell(destination);
+              if (shell === null || shell.deletedAt !== null || shell.archivedAt !== null)
+                return yield* new OwnerDecisionError({
+                  code: "delivery-unavailable",
+                  message:
+                    "Saved notification destination is unavailable; owner decision remains undelivered.",
+                  cause,
+                });
+              return yield* cause;
+            }),
+          ),
+        );
       const now = yield* nowIso;
-      yield* sql`UPDATE owner_decisions SET pending_delivery = 0, delivered_at = ${now}, updated_at = ${now} WHERE id = ${decision.id}`;
+      yield* sql`UPDATE owner_decisions SET pending_delivery = 0, delivered_at = ${now}, last_error = CASE WHEN pending_label = 0 THEN NULL ELSE last_error END, updated_at = ${now} WHERE id = ${decision.id}`;
       yield* notify;
     },
     Effect.mapError((cause) =>
@@ -506,10 +607,14 @@ const make = Effect.gen(function* () {
     const pending =
       yield* sql<Row>`SELECT * FROM owner_decisions WHERE pending_publish IS NOT NULL OR pending_delivery = 1 OR pending_label = 1 ORDER BY created_at, id`;
     for (const row of pending) {
-      yield* sql`UPDATE owner_decisions SET last_error = NULL WHERE id = ${row.id}`;
       const recordFailure = Effect.fn("OwnerDecisions.recordFailure")(function* (error: unknown) {
         const problem = storageError(error);
-        yield* sql`UPDATE owner_decisions SET state = CASE WHEN pending_publish IS NOT NULL THEN 'publication_failed' ELSE state END, last_error = ${problem.message}, updated_at = ${yield* nowIso} WHERE id = ${row.id}`;
+        if (problem.code === "publication-mismatch")
+          yield* sql`UPDATE owner_decisions SET state = 'publication_mismatch', pending_publish = NULL, pending_delivery = 0, pending_label = 0, last_error = ${problem.message}, updated_at = ${yield* nowIso} WHERE id = ${row.id}`;
+        else if (problem.code === "delivery-unavailable")
+          yield* sql`UPDATE owner_decisions SET state = 'delivery_failed', pending_delivery = 0, last_error = ${problem.message}, updated_at = ${yield* nowIso} WHERE id = ${row.id}`;
+        else
+          yield* sql`UPDATE owner_decisions SET state = CASE WHEN pending_publish IS NOT NULL THEN 'publication_failed' ELSE state END, last_error = CASE WHEN state IN ('publication_mismatch', 'delivery_failed') THEN last_error ELSE ${problem.message} END, updated_at = ${yield* nowIso} WHERE id = ${row.id}`;
         yield* notify;
       });
       yield* publish(yield* get(row.id)).pipe(Effect.catch(recordFailure));

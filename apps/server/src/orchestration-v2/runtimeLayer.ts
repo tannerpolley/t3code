@@ -332,7 +332,12 @@ const layerIssueInboxProvided = IssueInbox.layer.pipe(
 );
 const layerOwnerDecisionsProvided = OwnerDecisions.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(layerProjectService, layerThreadManagementProvided, layerIssueInboxProvided),
+    Layer.mergeAll(
+      layerProjectService,
+      layerThreadManagementProvided,
+      layerIssueInboxProvided,
+      IssueWorkStore.layer,
+    ),
   ),
 );
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
