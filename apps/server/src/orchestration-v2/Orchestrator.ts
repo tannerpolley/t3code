@@ -7,8 +7,6 @@ import { makeIssueQueueCommands } from "../issues/IssueQueueCommands.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { makeAppOwnedUserInputCommands } from "./AppOwnedUserInputCommands.ts";
 import { supportsManagedIssueWork, managedIssueProviderError } from "../issues/IssueEligibility.ts";
-import { deriveIssueWorkStatus } from "../issues/IssueWorkStatus.ts";
-import { issueCloseoutEffect } from "../issues/IssueCommentEffects.ts";
 import { effectiveThreadRole, issueThreadTitle, worktreeRole } from "@t3tools/contracts";
 import {
   latestExecutedRun,
@@ -167,7 +165,14 @@ import { makeAutomaticProviderSwitchPolicy } from "./AutomaticProviderSwitchPoli
 import {
   usageLimitSwitchResultRun,
   usageLimitSwitchMessageId,
+  usageLimitRecoveryPending,
 } from "./usageLimitRecoveryPending.ts";
+import { isSnoozed } from "./ThreadSettlementService.ts";
+import {
+  makeForkDelegatedCompletion,
+  completionCohort,
+  completionCohortEvent,
+} from "./ForkDelegatedCompletion.ts";
 
 const isIssueQueueRefreshRequired = Schema.is(IssueQueueRefreshRequired);
 
@@ -708,34 +713,6 @@ function delegatedTaskTerminalStatus(
   }
 }
 
-function delegatedTaskResultRun(
-  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
-  taskId: NodeId,
-) {
-  const taskRuns = projection.runs
-    .filter((run) => run.delegatedTaskId === taskId)
-    .map((run) => {
-      // Promotion cancels the queue holder and moves its message into the live run.
-      const message = projection.messages.find((row) => row.id === run.userMessageId);
-      let result = projection.runs.find((row) => row.id === message?.runId) ?? run;
-      for (;;) {
-        const continuation = projection.runs.find(
-          (row) =>
-            row.ordinal > result.ordinal &&
-            (row.restartContinuationOfRunId === result.id ||
-              (row.userMessageId === usageLimitSwitchMessageId(projection.thread.id, result.id) &&
-                row.startedAt !== null)),
-        );
-        if (continuation === undefined) return result;
-        result = continuation;
-      }
-    });
-  return (
-    usageLimitSwitchResultRun(projection.thread, projection.runs, taskId) ??
-    taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0]
-  );
-}
-
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
@@ -1226,38 +1203,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     delivery === null || delivery === undefined
       ? undefined
       : projection.messages.find((candidate) => candidate.id === delivery.messageId);
-
-  // Runless managed admissions share the durable mailbox; the cohort lives on the thread itself.
-  const completionCohort = (
-    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
-    parentRunId: RunId | null,
-  ) =>
-    parentRunId === null
-      ? projection.thread.delegatedCompletion
-      : projection.runs.find((run) => run.id === parentRunId)?.delegatedCompletion;
-
-  const completionCohortEvent = (
-    thread: OrchestrationV2AppThread,
-    run: OrchestrationV2Run | undefined,
-    cohort: OrchestrationV2DelegatedCompletionCohort,
-    now: DateTime.Utc,
-  ): Omit<OrchestrationV2DomainEvent, "id"> =>
-    run === undefined
-      ? {
-          type: "thread.metadata-updated",
-          threadId: thread.id,
-          occurredAt: now,
-          payload: { ...thread, delegatedCompletion: cohort },
-        }
-      : {
-          type: "run.updated",
-          threadId: thread.id,
-          runId: run.id,
-          ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: { ...run, delegatedCompletion: cohort },
-        };
 
   const offerDelegatedCompletionDelivery =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -10723,6 +10668,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     isBlockingRun,
     awaitsRestartContinuation,
     serverSettings,
+    threadShellFromProjection,
+    isSnoozed,
+    usageLimitRecoveryPending,
+    usageLimitSwitchMessageId,
     dispatchWithReceiptEffect: (command) => dispatchWithReceiptEffect(command),
   });
   const { childAwaitsRecoveryContinuation } = automaticProviderSwitch;
@@ -10924,56 +10873,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
-  const publishIssueCloseout = Effect.fn("Orchestrator.publishIssueCloseout")(function* (
-    childControls: ProjectionRecords<
-      "runs" | "messages" | "subagents" | "providerThreads" | "providerTurns" | "attempts"
-    >,
-    childRun: OrchestrationV2Run,
-  ) {
-    const issue = childControls.thread.linkedIssue;
-    if (issue === undefined) return;
-    const root = yield* projectionStore
-      .getThread(childControls.thread.lineage.rootThreadId)
-      .pipe(Effect.option);
-    if (Option.isNone(root) || root.value.repositoryOrchestration?.publishCloseoutComments !== true)
-      return;
-    const childResult = yield* projectionStore.getThreadRecords(
-      childControls.thread.id,
-      ["messages", "turnItems"],
-      {
-        messageRoles: ["assistant"],
-        messageRunIds: [childRun.id],
-        turnItemRunId: childRun.id,
-        turnItemTypes: ["assistant_message", "error"],
-      },
-    );
-    yield* writeSystemEvents(
-      [],
-      [
-        issueCloseoutEffect({
-          issue,
-          thread: childControls.thread,
-          runId: childRun.id,
-          status: deriveIssueWorkStatus({
-            shell: yield* projectionStore.getThreadShell(childControls.thread.id),
-            paused: false,
-            waitingOnSubIssues: false,
-            resultAvailable: true,
-          }),
-          completedAt: yield* DateTime.now,
-          result: subagentResultForRun(
-            {
-              ...childControls,
-              messages: childResult.messages,
-              turnItems: childResult.turnItems,
-            },
-            childRun,
-          ).text,
-        }),
-      ],
-    );
-  });
-
   /**
    * Every mutation here targets the PARENT thread, so callers must hold the
    * parent thread's dispatch lock rather than the child's: the
@@ -11004,14 +10903,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === options.task.id);
-      const recordedRun = options.resultRun;
-      if (recordedRun === undefined) return;
-      const closed =
-        childControls.thread.archivedAt !== null || childControls.thread.deletedAt !== null;
-      const childRun =
-        closed && delegatedTaskTerminalStatus(runOutcome(recordedRun)) === null
-          ? { ...recordedRun, status: "interrupted" as const, completedAt: yield* DateTime.now }
-          : recordedRun;
+      const resultState = yield* forkDelegatedCompletion.closedChildResult(childControls, options);
+      if (resultState === undefined) return;
+      const { closed, childRun } = resultState;
       const outcome = runOutcome(childRun);
       const terminalStatus = delegatedTaskTerminalStatus(outcome);
       if (terminalStatus === null) {
@@ -11120,12 +11014,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      if (task.result !== null) return;
+      if (forkDelegatedCompletion.hasPublishedResult(task)) return;
 
       const now = yield* DateTime.now;
       const settledRun = { ...childRun, status: outcome };
       const result = subagentResultForRun(childProjection, settledRun);
-      yield* publishIssueCloseout(childControls, settledRun);
+      yield* forkDelegatedCompletion.publishIssueCloseout(childControls, settledRun);
       const parentRun =
         task.runId === null
           ? undefined
@@ -11285,19 +11179,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...childControls,
       pendingBackgroundTasks: childShell?.pendingBackgroundTasks ?? [],
     });
-    if (
-      progress.state === "result_available" &&
-      progress.resultRun !== undefined &&
-      progress.resultRun.delegatedTaskId === undefined &&
-      !(yield* childAwaitsRecoveryContinuation(
-        childControls.thread,
-        childControls.runs,
-        progress.resultRun,
-        options?.settledContinuationOf,
-      ))
-    ) {
-      yield* publishIssueCloseout(childControls, progress.resultRun);
-    }
+    yield* forkDelegatedCompletion.publishUntaggedIssueCloseout(childControls, progress, options);
     const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"]);
     const closed =
       childControls.thread.archivedAt !== null || childControls.thread.deletedAt !== null;
@@ -11310,7 +11192,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           progress.state !== "result_available" &&
           usageLimitSwitchResultRun(childControls.thread, childControls.runs, task.id) ===
             undefined) ||
-        task.result !== null
+        forkDelegatedCompletion.hasPublishedResult(task)
       )
         continue;
       let resultRun = delegatedTaskResultRun(childControls, task.id);
@@ -11321,12 +11203,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // Older runtimes erased the task link when an already running turn ended.
         if (
           latest === null ||
-          (!closed &&
-            (progress.state !== "result_available" ||
-              childControls.runs.some((run) => isBlockingRun(run) || run.status === "queued") ||
-              latest.completedAt === null ||
-              task.startedAt === null ||
-              DateTime.toEpochMillis(latest.completedAt) < DateTime.toEpochMillis(task.startedAt)))
+          forkDelegatedCompletion.orphanedFollowupUnavailable(
+            childControls,
+            task,
+            closed,
+            progress,
+            latest,
+          )
         )
           continue;
         resultRun = latest;
@@ -11642,6 +11525,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     mapDispatchError,
     OrchestratorDispatchError,
   };
+  const forkDelegatedCompletion = makeForkDelegatedCompletion({
+    projectionStore,
+    writeSystemEvents,
+    childAwaitsRecoveryContinuation,
+    delegatedTaskTerminalStatus,
+    isTerminalDelegatedTaskStatus,
+    isBlockingRun,
+    usageLimitSwitchMessageId,
+    usageLimitSwitchResultRun,
+  });
+  const { delegatedTaskResultRun } = forkDelegatedCompletion;
+
   const appOwnedUserInput = makeAppOwnedUserInputCommands({
     ...forkCommandHooks,
     OrchestratorProjectionError,
@@ -12557,21 +12452,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 Effect.gen(function* () {
                   const tasks = (yield* projectionStore.getThreadRecords(threadId, ["subagents"]))
                     .subagents;
-                  const childIds = new Set(
-                    tasks.flatMap((task) =>
-                      task.origin === "app_owned" &&
-                      task.result === null &&
-                      task.childThreadId !== null
-                        ? [task.childThreadId]
-                        : [],
-                    ),
+                  yield* forkDelegatedCompletion.recoverDeletedChildren(
+                    tasks,
+                    finalizeAppOwnedSubagent,
+                    withdrawReleasedUsageLimitContinuation,
                   );
-                  for (const childId of childIds) {
-                    const child = yield* projectionStore.getThread(childId);
-                    if (child.deletedAt === null) continue;
-                    yield* finalizeAppOwnedSubagent(childId);
-                    yield* withdrawReleasedUsageLimitContinuation(childId);
-                  }
                   const projection = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
                   // Only the run that consumed a cohort's current delivery
                   // message can settle it. A long-lived parent keeps every
@@ -12640,28 +12525,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
         { messageRoles: ["user"] },
       );
-      if (taskId !== undefined) {
-        const run = delegatedTaskResultRun(child, taskId);
-        if (
-          run === undefined ||
-          child.thread.archivedAt !== null ||
-          child.thread.deletedAt !== null
-        ) {
-          const parentThreadId = child.thread.lineage.parentThreadId;
-          if (parentThreadId === null) return true;
-          const parent = yield* projectionStore.getThreadRecords(parentThreadId, ["subagents"]);
-          return !parent.subagents.some(
-            (task) =>
-              task.id === taskId &&
-              task.childThreadId === childThreadId &&
-              task.origin === "app_owned" &&
-              task.result !== null &&
-              isTerminalDelegatedTaskStatus(task.status),
-          );
-        }
-        if (delegatedTaskTerminalStatus(run.status) === null) return true;
-        return yield* childAwaitsRecoveryContinuation(child.thread, child.runs, run);
-      }
+      const pending = yield* forkDelegatedCompletion.taskResultPending(
+        childThreadId,
+        taskId,
+        child,
+      );
+      if (pending !== undefined) return pending;
       const childShell = yield* projectionStore.getThreadShell(childThreadId);
       const progress = delegatedTaskProgress({
         ...child,
