@@ -163,10 +163,8 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
-import { isSnoozed } from "./ThreadSettlementService.ts";
-import { usageLimitQueuedRunEvents } from "./usageLimitQueuedRuns.ts";
+import { makeAutomaticProviderSwitchPolicy } from "./AutomaticProviderSwitchPolicy.ts";
 import {
-  usageLimitRecoveryPending,
   usageLimitSwitchResultRun,
   usageLimitSwitchMessageId,
 } from "./usageLimitRecoveryPending.ts";
@@ -1631,13 +1629,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           turnItemRunIds: newerRunIds,
         })).turnItems.length > 0;
       const ordinal = startedAhead ? nextRunOrdinal(projection) : queuedRun.ordinal;
-      const marker = projection.thread.autoProviderSwitch;
       if (
-        marker &&
-        queuedRun.userMessageId === usageLimitSwitchMessageId(threadId, marker.runId) &&
-        (yield* projectionStore
-          .isUsageLimitFailureReleased(threadId, marker.runId)
-          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))))
+        yield* automaticProviderSwitch.queuedContinuationReleased(threadId, projection, queuedRun)
       ) {
         yield* dispatchWithReceiptEffect({
           type: "queued-run.cancel",
@@ -3116,37 +3109,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
-    if (
-      (command.type === "provider.switch" || command.type === "thread.metadata.update") &&
-      command.autoProviderSwitch !== undefined
-    ) {
-      const projection = yield* loadProjectionForCommand(
-        command,
-        ["runs", "turnItems", "runtimeRequests"],
-        { turnItemTypes: ["error"] },
-      );
-      const source = latestExecutedRun(projection.runs);
-      const marker = command.autoProviderSwitch;
-      if (
-        source?.id !== marker.runId ||
-        source.status !== "failed" ||
-        latestRootProviderFailure(source, projection.turnItems)?.class !== "usage_limit" ||
-        !modelSelectionsEqual(source.modelSelection, marker.from) ||
-        !modelSelectionsEqual(thread.modelSelection, marker.from) ||
-        thread.archivedAt !== null ||
-        thread.deletedAt !== null ||
-        thread.settledOverride === "settled" ||
-        thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
-        projection.runs.some(isBlockingRun) ||
-        projection.runtimeRequests.some((request) => request.status === "pending")
-      ) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "This usage-limit failure can no longer switch provider.",
-        });
-      }
-    }
+    yield* automaticProviderSwitch.guardMutation(command, thread);
     const needsProviderState =
       command.type === "thread.runtime-mode.set" ||
       command.type === "thread.model-selection.set" ||
@@ -3868,42 +3831,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: updatedThread,
     });
 
-    if (
-      (command.type === "provider.switch" || command.type === "thread.metadata.update") &&
-      command.autoProviderSwitch !== undefined
-    ) {
-      const marker = command.autoProviderSwitch;
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "turn-item.updated",
-        threadId: command.threadId,
-        runId: marker.runId,
-        occurredAt: now,
-        payload: {
-          id: idAllocator.derive.runSignalTurnItem({
-            runId: marker.runId,
-            signal: "auto-provider-switch",
-          }),
-          type: "system_notice",
-          threadId: command.threadId,
-          runId: marker.runId,
-          nodeId: null,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: yield* nextTurnItemOrdinal({ thread, turnItems: [] }),
-          status: "completed",
-          title: marker.to === null ? "Waiting for reset" : "Provider switched automatically",
-          message: marker.message,
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-        },
-      });
-    }
+    yield* automaticProviderSwitch.emitNotice(command, thread, now, events);
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
@@ -5180,42 +5108,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
-    if (command.automaticProviderContinuationOfRunId !== undefined) {
-      const marker = projection.thread.autoProviderSwitch;
-      const source = latestExecutedRun(projection.runs);
-      const shell = threadShellFromProjection(projection);
-      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-      const released =
-        projection.thread.lineage.parentThreadId !== null &&
-        (yield* projectionStore
-          .isUsageLimitFailureReleased(
-            command.threadId,
-            command.automaticProviderContinuationOfRunId,
-          )
-          .pipe(mapDispatchError(command)));
-      if (
-        released ||
-        source?.id !== command.automaticProviderContinuationOfRunId ||
-        source.status !== "failed" ||
-        latestRootProviderFailure(source, projection.turnItems)?.class !== "usage_limit" ||
-        marker?.runId !== source.id ||
-        marker.to === null ||
-        !modelSelectionsEqual(projection.thread.modelSelection, marker.to) ||
-        projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null ||
-        projection.thread.settledOverride === "settled" ||
-        isSnoozed(shell, nowMs) ||
-        projection.thread.repositoryOrchestration?.retiredToThreadId !== undefined ||
-        projection.runs.some(isBlockingRun) ||
-        projection.runtimeRequests.some((request) => request.status === "pending")
-      ) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "This automatic provider switch can no longer continue.",
-        });
-      }
-    }
+    yield* automaticProviderSwitch.guardContinuation(command, projection);
     if (command.usageLimitContinuationOfRunId !== undefined) {
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
@@ -5314,16 +5207,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
 
-    const continuationOf =
-      command.restartContinuationOfRunId ?? command.automaticProviderContinuationOfRunId;
-    const continuedTaskId =
-      continuationOf === undefined
-        ? undefined
-        : (projection.runs.find((run) => run.id === continuationOf)?.delegatedTaskId ??
-          (projection.thread.lineage.relationshipToParent === "subagent" &&
-          projection.thread.forkedFrom?.type === "node"
-            ? projection.thread.forkedFrom.nodeId
-            : undefined));
+    const continuedTaskId = automaticProviderSwitch.continuedTaskId(command, projection);
 
     if (projection.thread.settledOverride !== null) {
       const now = yield* DateTime.now;
@@ -10826,48 +10710,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       awaitsRestartContinuation,
     ).pipe(Effect.map((pending) => pending.includes(true)));
 
-  /**
-   * A delegated child's result is held while its result run, or a run after it
-   * that a restart cut before it started, still has recovery pending.
-   */
-  const childAwaitsRecoveryContinuation = (
-    thread: OrchestrationV2AppThread,
-    runs: ReadonlyArray<OrchestrationV2Run>,
-    resultRun: OrchestrationV2Run,
-    settledContinuationOf?: RunId,
-  ) =>
-    Effect.forEach(
-      runs.filter(
-        (run) =>
-          run.id !== settledContinuationOf &&
-          (run.id === resultRun.id || runRanAfter(run, resultRun)),
-      ),
-      awaitsRestartContinuation,
-    ).pipe(
-      Effect.flatMap((pending) =>
-        Effect.gen(function* () {
-          if (pending.includes(true)) return true;
-          const latest = resultRun.status === "failed" ? resultRun : latestExecutedRun(runs);
-          if (!latest || latest.status !== "failed") return false;
-          const shell = yield* projectionStore.getThreadShell(thread.id);
-          const { providerThreads, turnItems } = yield* projectionStore.getThreadRecords(
-            thread.id,
-            ["providerThreads", "turnItems"],
-            { turnItemRunId: latest.id, turnItemTypes: ["error"] },
-          );
-          return usageLimitRecoveryPending(
-            shell,
-            latest,
-            latestRootProviderFailure(latest, turnItems),
-            runs,
-            (yield* serverSettings.getSettings).usageLimitRecovery,
-            providerThreads.find((providerThread) => providerThread.id === latest.providerThreadId)
-              ?.driver,
-            DateTime.toEpochMillis(yield* DateTime.now),
-          );
-        }),
-      ),
-    );
+  const automaticProviderSwitch = makeAutomaticProviderSwitchPolicy({
+    projectionStore,
+    idAllocator,
+    emit,
+    mapDispatchError,
+    OrchestratorDispatchError,
+    OrchestratorProjectionError,
+    loadProjectionForCommand,
+    nextTurnItemOrdinal,
+    getProjectionWithPendingEvents,
+    isBlockingRun,
+    awaitsRestartContinuation,
+    serverSettings,
+    dispatchWithReceiptEffect: (command) => dispatchWithReceiptEffect(command),
+  });
+  const { childAwaitsRecoveryContinuation } = automaticProviderSwitch;
 
   const planDelegatedCompletionDelivery = Effect.fn(
     "orchestrationV2.planDelegatedCompletionDelivery",
@@ -11958,20 +11816,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
         yield* dispatchMessage(command, events, effects);
-        if (command.automaticProviderContinuationOfRunId !== undefined) {
-          const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
-          const continuation = projection.runs.find(
-            (run) => run.userMessageId === command.messageId,
-          );
-          if (continuation?.providerThreadId != null) {
-            for (const event of usageLimitQueuedRunEvents(
-              projection,
-              continuation.providerThreadId,
-              yield* DateTime.now,
-            ))
-              yield* emit(events, command)(event);
-          }
-        }
+        yield* automaticProviderSwitch.retargetQueuedRuns(command, events);
         yield* recordSubagentFollowup(command, events).pipe(mapDispatchError(command));
         break;
       }
@@ -12209,31 +12054,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const withdrawReleasedUsageLimitContinuation = (threadId: ThreadId) =>
     threadDispatch.withLock(
       threadId,
-      Effect.gen(function* () {
-        const { thread, runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
-        const marker = thread.autoProviderSwitch;
-        if (
-          !marker ||
-          thread.lineage.parentThreadId === null ||
-          !(yield* projectionStore.isUsageLimitFailureReleased(threadId, marker.runId))
-        )
-          return;
-        const continuation = runs.find(
-          (run) => run.userMessageId === usageLimitSwitchMessageId(threadId, marker.runId),
-        );
-        if (
-          !continuation ||
-          continuation.startedAt !== null ||
-          !["queued", "preparing", "starting"].includes(continuation.status)
-        )
-          return;
-        yield* dispatchWithReceiptEffect({
-          type: continuation.status === "queued" ? "queued-run.cancel" : "run.interrupt",
-          commandId: CommandId.make(`limit-switch-withdraw:${continuation.id}`),
-          threadId,
-          runId: continuation.id,
-        });
-      }),
+      automaticProviderSwitch.withdrawReleasedContinuation(threadId),
     );
 
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(
