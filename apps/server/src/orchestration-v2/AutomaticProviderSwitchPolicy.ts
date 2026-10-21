@@ -24,16 +24,16 @@ import type {
   OrchestratorV2DispatchResult,
   OrchestratorV2Error,
 } from "./Orchestrator.ts";
-import {
+import type {
   threadShellFromProjection,
-  type ProjectionRecordField,
-  type ProjectionRecordFilter,
-  type ProjectionRecords,
+  ProjectionRecordField,
+  ProjectionRecordFilter,
+  ProjectionRecords,
 } from "./ProjectionStore.ts";
 import type * as ServerSettings from "../serverSettings.ts";
-import { isSnoozed } from "./ThreadSettlementService.ts";
+import type { isSnoozed } from "./ThreadSettlementService.ts";
 import { usageLimitQueuedRunEvents } from "./usageLimitQueuedRuns.ts";
-import {
+import type {
   usageLimitRecoveryPending,
   usageLimitSwitchMessageId,
 } from "./usageLimitRecoveryPending.ts";
@@ -63,6 +63,10 @@ interface AutomaticProviderSwitchHooks<RestartError> extends Pick<
   readonly awaitsRestartContinuation: (
     run: OrchestrationV2Run,
   ) => Effect.Effect<boolean, RestartError>;
+  readonly threadShellFromProjection: typeof threadShellFromProjection;
+  readonly isSnoozed: typeof isSnoozed;
+  readonly usageLimitRecoveryPending: typeof usageLimitRecoveryPending;
+  readonly usageLimitSwitchMessageId: typeof usageLimitSwitchMessageId;
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
 }
 
@@ -81,6 +85,10 @@ export function makeAutomaticProviderSwitchPolicy<RestartError>({
   isBlockingRun,
   awaitsRestartContinuation,
   serverSettings,
+  threadShellFromProjection,
+  isSnoozed,
+  usageLimitRecoveryPending,
+  usageLimitSwitchMessageId,
 }: AutomaticProviderSwitchHooks<RestartError>) {
   // These hooks run inside existing orchestration spans.
   const guardMutation = Effect.fnUntraced(function* (
