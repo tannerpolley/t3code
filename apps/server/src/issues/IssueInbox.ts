@@ -436,6 +436,11 @@ export const make = Effect.gen(function* () {
         yield* projects.getById(shell.projectId).pipe(Effect.mapError(storageError)),
       );
       const identity = project?.repositoryIdentity ?? null;
+      if (identity === null)
+        return yield* new IssueWorkError({
+          code: "orchestration-error",
+          message: "The project's repository identity is unavailable; retry.",
+        });
       const own = [
         identity?.origin?.displayName,
         sourceControlRepositorySelector(identity),
