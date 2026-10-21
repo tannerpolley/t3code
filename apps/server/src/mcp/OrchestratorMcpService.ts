@@ -80,7 +80,7 @@ import * as Stream from "effect/Stream";
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as IssueLinks from "../issues/IssueLinks.ts";
-import { isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
+import { isReadOnlyIssueRole, requiresManagedIssueAdmission } from "../issues/IssueEligibility.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -2283,10 +2283,13 @@ const make = Effect.gen(function* () {
         );
       }
       const readOnly = isReadOnlyIssueRole(input.role);
-      const managed =
-        !readOnly &&
-        (parent.thread.repositoryOrchestration !== undefined ||
-          parent.thread.linkedIssue !== undefined);
+      const root =
+        readOnly || parent.thread.lineage.rootThreadId === parent.thread.id
+          ? parent.thread
+          : (yield* threadManagement
+              .getThreadRecords(parent.thread.lineage.rootThreadId, [])
+              .pipe(Effect.mapError(threadManagementFailure))).thread;
+      const managed = requiresManagedIssueAdmission(input.role, parent.thread, root);
       if (readOnly && input.issue !== undefined && Option.isNone(issueLinks))
         return yield* failure(
           "orchestration_error",

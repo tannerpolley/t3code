@@ -292,7 +292,8 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         (item) =>
           !terminal(item.status) &&
           !(item.type === "command_execution" && item.input === "Preparing workspace"),
-      )
+      ) ||
+      (yield* store.hasUnsettledRestartContinuation(command.issueThreadId))
     )
       return yield* Effect.fail(
         "Cancel or finish the attempt's remaining work before closing it out.",

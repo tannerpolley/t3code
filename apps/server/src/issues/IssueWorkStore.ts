@@ -64,6 +64,9 @@ export class IssueWorkStore extends Context.Service<
     readonly slotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
     readonly activeRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly subtreeDrained: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
+    readonly hasUnsettledRestartContinuation: (
+      threadId: ThreadId,
+    ) => Effect.Effect<boolean, IssueWorkError>;
     readonly recoveryInventory: (
       repository: Pick<ThreadLinkedIssue, "host" | "repository" | "repositoryId">,
     ) => Effect.Effect<ReadonlyArray<{ section: string; detail: string }>, IssueWorkError>;
@@ -141,6 +144,12 @@ export const layer = Layer.effect(
       WHERE request.thread_id = thread.thread_id AND request.status = 'pending'
         AND request.kind NOT IN ('auth_refresh', 'dynamic_tool_call')
     ))`;
+    // A restart cancels the cut run before its continuation dispatches; other
+    // provider lifecycle effects belong to runs that are still active.
+    const unsettledRestartContinuations = sql`
+      SELECT thread_id FROM orchestration_v2_effect_outbox
+      WHERE status IN ('pending', 'running') AND effect_type = 'provider-runtime.continue'
+    `;
     return IssueWorkStore.of({
       isQueueNoticeRun: (threadId, runId) =>
         isIssueQueueNoticeRun(threadId, runId).pipe(
@@ -208,16 +217,19 @@ export const layer = Layer.effect(
                 AND json_array_length(provider.payload_json, '$.pendingBackgroundTasks') > 0)
             OR EXISTS (SELECT 1 FROM orchestration_v2_projection_turn_items item
               WHERE item.thread_id = subtree.thread_id AND item.status IN ('pending', 'running', 'waiting'))
-            -- A restart cancels the cut run before its continuation dispatches; other
-            -- provider lifecycle effects belong to runs that are still active above.
-            OR EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox effect
-              WHERE effect.thread_id = subtree.thread_id AND effect.status IN ('pending', 'running')
-                AND effect.effect_type = 'provider-runtime.continue')
+            OR subtree.thread_id IN (${unsettledRestartContinuations})
           LIMIT 1
         `.pipe(
           Effect.map((rows) => rows.length === 0),
           Effect.mapError(mapError),
         ),
+      hasUnsettledRestartContinuation: Effect.fn("IssueWorkStore.hasUnsettledRestartContinuation")(
+        (threadId) =>
+          sql`SELECT 1 FROM (${unsettledRestartContinuations}) WHERE thread_id = ${threadId} LIMIT 1`.pipe(
+            Effect.map((rows) => rows.length > 0),
+            Effect.mapError(mapError),
+          ),
+      ),
       recoveryInventory: (repository) =>
         sql<{ section: string; detail: string }>`
           SELECT 'Completed attempts' AS section,

@@ -1,6 +1,7 @@
 import {
   resolveThreadRole,
   type IssueWorkRead,
+  type OrchestrationV2AppThread,
   type ProviderDriverKind,
   type ThreadLinkedIssue,
 } from "@t3tools/contracts";
@@ -9,6 +10,16 @@ export const isReadOnlyIssueRole = (role: string | undefined) => {
   const resolved = role === undefined ? undefined : resolveThreadRole(role);
   return resolved === "checker" || resolved === "reviewer" || resolved === "investigator";
 };
+
+export const requiresManagedIssueAdmission = (
+  role: string | undefined,
+  parent: Pick<OrchestrationV2AppThread, "repositoryOrchestration" | "linkedIssue">,
+  root: Pick<OrchestrationV2AppThread, "repositoryOrchestration">,
+) =>
+  !isReadOnlyIssueRole(role) &&
+  (parent.repositoryOrchestration !== undefined ||
+    parent.linkedIssue !== undefined ||
+    root.repositoryOrchestration !== undefined);
 
 /** Codex and Claude drivers; IssueEligibility.test.ts ties these names to the real drivers. */
 export const supportsManagedIssueWork = (driver: ProviderDriverKind) =>

@@ -899,6 +899,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         id: parentThreadId,
         projectId,
         title: "MCP parent",
+        lineage: { rootThreadId: parentThreadId, parentThreadId: null },
         createdBy: "user",
         creationSource: "web",
         modelSelection,
