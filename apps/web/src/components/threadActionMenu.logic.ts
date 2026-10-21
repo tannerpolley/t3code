@@ -1,36 +1,5 @@
-import {
-  effectiveThreadRole,
-  type ContextMenuItem,
-  type OrchestrationV2ThreadShell,
-  type ProviderDriverKind,
-} from "@t3tools/contracts";
+import { type ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
-
-export function canAssignRepositoryOrchestrator(
-  thread: Pick<
-    OrchestrationV2ThreadShell,
-    | "id"
-    | "role"
-    | "branch"
-    | "worktreePath"
-    | "lineage"
-    | "archivedAt"
-    | "deletedAt"
-    | "linkedIssue"
-  >,
-  driver: ProviderDriverKind | undefined,
-): boolean {
-  return (
-    thread.archivedAt === null &&
-    thread.deletedAt === null &&
-    thread.lineage.parentThreadId === null &&
-    thread.lineage.rootThreadId === thread.id &&
-    thread.linkedIssue === undefined &&
-    thread.worktreePath === null &&
-    effectiveThreadRole(thread) === "orchestrator" &&
-    (driver === "codex" || driver === "claudeAgent")
-  );
-}
 
 export type ThreadActionMenuId =
   | "make-repository-orchestrator"

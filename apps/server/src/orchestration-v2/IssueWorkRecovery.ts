@@ -1,6 +1,6 @@
 import {
   DEFAULT_REPOSITORY_WORK_SETTINGS,
-  isProviderNativeSubagentThread,
+  isRepositoryOrchestratorEligible,
   type IssueWorkRequested,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -12,7 +12,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { managedIssueProviderError, supportsManagedIssueWork } from "../issues/IssueEligibility.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
@@ -137,21 +136,9 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
       const owner = yield* store.repositoryOwner(command);
       const target = yield* projectionStore.getThread(command.targetThreadId);
       const targetConfig = target.repositoryOrchestration;
-      if (
-        target.projectId !== command.projectId ||
-        target.deletedAt !== null ||
-        target.archivedAt !== null ||
-        target.linkedIssue !== undefined ||
-        isProviderNativeSubagentThread(target) ||
-        (targetConfig !== undefined &&
-          (targetConfig.host !== command.host ||
-            targetConfig.repositoryId !== command.repositoryId ||
-            targetConfig.projectId !== command.projectId))
-      )
-        return yield* Effect.fail(topLevelTargetError);
       const adapter = yield* providerAdapters.get(target.modelSelection.instanceId);
-      if (!supportsManagedIssueWork(adapter.driver))
-        return yield* Effect.fail(managedIssueProviderError);
+      if (!isRepositoryOrchestratorEligible(target, adapter.driver, command))
+        return yield* Effect.fail(topLevelTargetError);
       const occurredAt = yield* DateTime.now;
       let retiringRoot: OrchestrationV2AppThread | null = null;
       let config: RepositoryOrchestration;

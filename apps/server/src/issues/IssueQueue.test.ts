@@ -1391,10 +1391,14 @@ it.effect("does not register an orchestrator when replaying a withdrawn queue re
 );
 
 it.effect.each([false, true])(
-  "Inbox arrival registers only when marked work needs a root, once across concurrent arrivals (no candidate: %s)",
+  "queue and Inbox work register one root across mixed concurrent triggers (no candidate: %s)",
   (noCandidate) => {
     let arrived = false;
     const github = Layer.mock(IssueService.IssueService)({
+      resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+      detail: (input) =>
+        Effect.succeed({ issue: { ...issue(input.number), state: "open" } } as never),
+      workRead: (input) => Effect.succeed(read(input.number)),
       repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
       repositoryRest: (input) =>
         Effect.succeed({
@@ -1436,7 +1440,15 @@ it.effect.each([false, true])(
       assert.isNull((yield* service.repositoryStatus(reference)).rootThreadId);
       arrived = true;
       yield* TestClock.adjust("2 minutes");
-      yield* Effect.all([inbox.pollDue, concurrentInbox.pollDue], { concurrency: 2 });
+      yield* Effect.all(
+        [
+          inbox.pollDue,
+          concurrentInbox.pollDue,
+          service.queueIssue(input(1)),
+          service.queueIssue(input(2)),
+        ],
+        { concurrency: 4 },
+      );
       assert.equal(
         (yield* service.repositoryStatus(reference)).rootThreadId,
         noCandidate ? null : "inbox-orchestrator",
