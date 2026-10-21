@@ -22,6 +22,7 @@ import {
   EnvironmentId,
   MessageId,
   ProviderDriverKind,
+  ProviderInstanceId,
   ScheduledTaskId,
   ThreadId,
   type ServerProvider,
@@ -189,10 +190,18 @@ describe("fresh-thread repository handoff", () => {
             : Effect.succeed(CodexProviderCapabilitiesV2),
         ),
     };
+    const cursorAdapter = {
+      ...handoffAdapter,
+      instanceId: ProviderInstanceId.make("cursor"),
+      driver: ProviderDriverKind.make("cursor"),
+    };
     const harness = makeHarness({
       localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
       hasCommit: () => Effect.succeed(true),
-      providers: [provider],
+      providers: [
+        provider,
+        { ...provider, instanceId: cursorAdapter.instanceId, driver: cursorAdapter.driver },
+      ],
       ...(options.git === undefined ? {} : { git: options.git }),
       ...(options.recovery
         ? {
@@ -222,7 +231,7 @@ describe("fresh-thread repository handoff", () => {
             },
           }
         : {}),
-      adapters: [handoffAdapter],
+      adapters: [handoffAdapter, cursorAdapter],
       issueServiceLayer: reads,
       runContinuationWorker: options.continuation ?? false,
       ...(options.continuationRequests === undefined
@@ -235,7 +244,7 @@ describe("fresh-thread repository handoff", () => {
       reads,
       NodeCrypto.layer,
       IdAllocator.layer,
-      ProviderAdapterRegistry.layerFromAdapters([handoffAdapter]),
+      ProviderAdapterRegistry.layerFromAdapters([handoffAdapter, cursorAdapter]),
       store,
       EventStore.layer.pipe(Layer.provide(harness.layer)),
       ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
@@ -1808,6 +1817,119 @@ describe("fresh-thread repository handoff", () => {
         assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
         yield* worker.drain();
       }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect("rejects a role changed between initial validation and registration", () => {
+    const target = ThreadId.make("initial-role-target");
+    let changeRole = Effect.void;
+    let mutate = true;
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* createLead(target);
+      const thread = (yield* threads.getThreadRecords(target, [])).thread;
+      changeRole = sink
+        .write({
+          events: [
+            {
+              type: "thread.metadata-updated",
+              id: EventId.make("registration:role-change"),
+              threadId: target,
+              occurredAt: yield* DateTime.now,
+              payload: { ...thread, role: "implementor" },
+            },
+          ],
+        })
+        .pipe(Effect.asVoid, Effect.orDie);
+      const result = yield* service
+        .assignOrchestrator({
+          ...reference,
+          projectId,
+          targetThreadId: target,
+          clientRequestId: CommandId.make("registration:role-race"),
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") assert.include(result.failure.message, "top-level");
+      assert.isNull((yield* service.repositoryStatus(reference)).rootThreadId);
+      assert.equal((yield* threads.getThreadShell(target))!.role, "implementor");
+    }).pipe(
+      Effect.provide(
+        fixture({
+          recovery: true,
+          wrapThreads: (threads) => ({
+            ...threads,
+            getThreadShell: (id) =>
+              threads.getThreadShell(id).pipe(
+                Effect.tap((shell) => {
+                  if (id !== target || shell === null || !mutate) return Effect.void;
+                  mutate = false;
+                  // Return the old shell after a concurrent role change commits.
+                  return changeRole;
+                }),
+              ),
+          }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects an unsupported provider changed during drain", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const target = ThreadId.make("provider-changed-target");
+      yield* createRoot;
+      yield* createLead(target);
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        threadId: rootId,
+        commandId: CommandId.make("probe:busy"),
+        messageId: MessageId.make("probe:busy"),
+        text: "Finish current work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+      const pending = yield* service.assignOrchestrator({
+        ...reference,
+        projectId,
+        targetThreadId: target,
+        clientRequestId: CommandId.make("probe:assign"),
+      });
+      assert.equal(pending.orchestration!.handoff?.status, "draining");
+      yield* threads.dispatch({
+        type: "thread.model-selection.set",
+        threadId: target,
+        commandId: CommandId.make("probe:provider-change"),
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "cursor-model" },
+      });
+      assert.equal((yield* threads.getThreadShell(target))!.modelSelection.instanceId, "cursor");
+      yield* finish(rootId, "probe:finished");
+      const transfer = yield* threads
+        .dispatch({
+          type: "repository.work.handoff",
+          threadId: rootId,
+          commandId: CommandId.make("provider:transfer"),
+          expectedRevision: pending.orchestration!.revision,
+          inventory: "Current repository work",
+        })
+        .pipe(Effect.result);
+      assert.equal(transfer._tag, "Failure");
+      if (transfer._tag === "Failure") assert.include(String(transfer.failure), "Codex or Claude");
+      yield* service.reconcile(rootId).pipe(Effect.result);
+      yield* worker.drain();
+      const result = yield* service.repositoryStatus(reference);
+      assert.equal(
+        result.rootThreadId,
+        rootId,
+        "Unsupported Cursor target must not become repository owner",
+      );
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
   it.effect(

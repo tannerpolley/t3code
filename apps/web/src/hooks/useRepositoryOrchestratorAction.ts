@@ -1,11 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { CommandId, type ContextMenuItem, type RepositoryWorkResult } from "@t3tools/contracts";
+import {
+  CommandId,
+  isRepositoryOrchestratorEligible,
+  type ContextMenuItem,
+  type RepositoryWorkResult,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 
-import { canAssignRepositoryOrchestrator } from "~/components/threadActionMenu.logic";
 import { useEnvironmentProviders } from "~/state/environments";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { issueEnvironment } from "~/state/issues";
@@ -23,12 +27,6 @@ export function useRepositoryOrchestratorAction(
   const targetFor = (thread: EnvironmentThreadShell | null) => {
     if (
       thread === null ||
-      !canAssignRepositoryOrchestrator(
-        thread.source,
-        providers
-          .get(thread.environmentId)
-          ?.find((provider) => provider.instanceId === thread.modelSelection.instanceId)?.driver,
-      ) ||
       configs.get(thread.environmentId)?.environment.capabilities.issueWork !== true
     )
       return null;
@@ -37,7 +35,17 @@ export function useRepositoryOrchestratorAction(
         project.id === thread.projectId && project.environmentId === thread.environmentId,
     );
     const repository = threadIssueRepository(project?.repositoryIdentity);
-    return repository === null ? null : { thread, repository };
+    return repository === null ||
+      project === undefined ||
+      !isRepositoryOrchestratorEligible(
+        thread.source,
+        providers
+          .get(thread.environmentId)
+          ?.find((provider) => provider.instanceId === thread.modelSelection.instanceId)?.driver,
+        { ...repository, projectId: project.id },
+      )
+      ? null
+      : { thread, repository };
   };
   const activeTarget = targetFor(activeThread);
   const activeStatus = useEnvironmentQuery(

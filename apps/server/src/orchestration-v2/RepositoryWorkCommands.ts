@@ -1,6 +1,6 @@
 import {
   CommandId,
-  effectiveThreadRole,
+  isRepositoryOrchestratorEligible,
   MessageId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -14,12 +14,14 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
+import type { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type { DelegatedTaskRequest, ForkCommandHooks } from "./IssueWorkCommands.ts";
 import type { OrchestratorV2Error, OrchestratorProjectionError } from "./Orchestrator.ts";
 import { openBlockerSuspensionReason } from "../issues/IssueEligibility.ts";
 
 interface RepositoryWorkCommandHooks extends ForkCommandHooks {
+  readonly providerAdapters: ProviderAdapterRegistryV2["Service"];
   readonly dispatchThreadCreate: (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -42,6 +44,7 @@ interface RepositoryWorkCommandHooks extends ForkCommandHooks {
 // Ownership decisions collect events and effects in the caller's existing command plan.
 export function makeRepositoryWorkCommands({
   issueWorkStore,
+  providerAdapters,
   issueWorkRecovery,
   projectionStore,
   idAllocator,
@@ -362,32 +365,6 @@ export function makeRepositoryWorkCommands({
       const existing = yield* projectionStore
         .getThreadShell(nextThreadId)
         .pipe(mapDispatchError(command));
-      const existingConfig =
-        existing === null
-          ? undefined
-          : (yield* projectionStore.getThread(nextThreadId).pipe(mapDispatchError(command)))
-              .repositoryOrchestration;
-      if (
-        existing !== null &&
-        (existing.id === shell.id ||
-          existing.projectId !== shell.projectId ||
-          existing.archivedAt !== null ||
-          existing.deletedAt !== null ||
-          existing.lineage.parentThreadId !== null ||
-          existing.lineage.rootThreadId !== existing.id ||
-          existing.linkedIssue !== undefined ||
-          existing.worktreePath !== null ||
-          effectiveThreadRole(existing) !== "orchestrator" ||
-          (existingConfig !== undefined &&
-            (existingConfig.host !== config.host ||
-              existingConfig.repositoryId !== config.repositoryId)))
-      )
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause:
-            "Select an existing active top-level Orchestrator thread in the same repository project.",
-        });
       if (existing === null)
         yield* dispatchThreadCreate(
           {
@@ -407,6 +384,16 @@ export function makeRepositoryWorkCommands({
           events,
         );
       const next = (yield* getProjectionWithPendingEvents(nextThreadId, events)).thread;
+      const adapter = yield* providerAdapters
+        .get(next.modelSelection.instanceId)
+        .pipe(mapDispatchError(command));
+      if (next.id === shell.id || !isRepositoryOrchestratorEligible(next, adapter.driver, config))
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause:
+            "Select an existing active top-level Orchestrator thread in the same repository project using Codex or Claude.",
+        });
       const emitEvent = emit(events, command);
       yield* emitEvent({
         type: "thread.metadata-updated",

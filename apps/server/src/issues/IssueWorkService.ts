@@ -21,7 +21,7 @@ import {
   type RepositoryHandoffInput,
   type RepositoryOrchestratorInput,
   type IssueRepositoryRef,
-  effectiveThreadRole,
+  isRepositoryOrchestratorEligible,
   type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
   type RepositoryOrchestration,
@@ -1311,34 +1311,29 @@ export const layer = Layer.effect(
       const target = yield* threads
         .getThreadShell(input.targetThreadId)
         .pipe(Effect.mapError(mapError));
+      const adapter =
+        target === null
+          ? undefined
+          : yield* adapters.get(target.modelSelection.instanceId).pipe(Effect.mapError(mapError));
+      const registered = target === null ? null : yield* store.configuration(target.id);
       if (
         target === null ||
-        target.projectId !== input.projectId ||
-        target.archivedAt !== null ||
-        target.deletedAt !== null ||
-        target.lineage.parentThreadId !== null ||
-        target.lineage.rootThreadId !== target.id ||
-        target.linkedIssue !== undefined ||
-        effectiveThreadRole(target) !== "orchestrator"
+        !isRepositoryOrchestratorEligible(
+          { ...target, repositoryOrchestration: registered ?? undefined },
+          adapter?.driver,
+          input,
+        )
       )
         return yield* new IssueWorkError({
           code: "invalid-request",
           message:
-            "Select an existing active top-level Orchestrator thread in the same repository project.",
+            "Select an existing active top-level Orchestrator thread in the same repository project using Codex or Claude.",
         });
       yield* assertRootCheckout({
         projectId: input.projectId,
         commandId: input.clientRequestId,
         worktreePath: target.worktreePath,
       });
-      const adapter = yield* adapters
-        .get(target.modelSelection.instanceId)
-        .pipe(Effect.mapError(mapError));
-      if (!supportsManagedIssueWork(adapter.driver))
-        return yield* new IssueWorkError({
-          code: "invalid-request",
-          message: "Repository orchestration supports Codex and Claude only.",
-        });
       return target;
     });
     const prepareHandoff = Effect.fn("IssueWorkService.prepareHandoff")(function* (
@@ -1523,16 +1518,7 @@ export const layer = Layer.effect(
 
     const restoreRoot: IssueWorkService["Service"]["restoreRoot"] = (input) =>
       Effect.gen(function* () {
-        yield* assertProjectRepository(input.projectId, input);
-        const target = yield* threads
-          .getThreadShell(input.targetThreadId)
-          .pipe(Effect.mapError(mapError));
-        if (target !== null && target.lineage.parentThreadId === null)
-          yield* assertRootCheckout({
-            projectId: input.projectId,
-            commandId: input.clientRequestId,
-            worktreePath: target.worktreePath,
-          });
+        yield* validateLead(input);
         if (input.expectedRootThreadId === null) {
           const identity = yield* issues.repositoryIdentity(input).pipe(Effect.mapError(mapError));
           if (
@@ -1578,9 +1564,11 @@ export const layer = Layer.effect(
 
     const assignOrchestrator = Effect.fn("IssueWorkService.assignOrchestrator")(
       function* (input: RepositoryOrchestratorInput) {
-        yield* validateLead(input);
         const owner = yield* store.repositoryOwnerByRef(input);
-        if (owner?.rootThreadId === input.targetThreadId) return yield* repositoryStatus(input);
+        if (owner?.rootThreadId === input.targetThreadId) {
+          yield* validateLead(input);
+          return yield* repositoryStatus(input);
+        }
         if (owner !== null) {
           if (owner.projectId !== input.projectId)
             return yield* new IssueWorkError({
@@ -1627,21 +1615,17 @@ export const layer = Layer.effect(
           for (const thread of yield* threads
             .listProjectThreads({ projectId: project.id, includeSubagents: false })
             .pipe(Effect.mapError(mapError))) {
-            if (
-              thread.archivedAt !== null ||
-              thread.deletedAt !== null ||
-              thread.lineage.parentThreadId !== null ||
-              thread.lineage.rootThreadId !== thread.id ||
-              thread.linkedIssue !== undefined ||
-              thread.worktreePath !== null ||
-              (yield* store.configuration(thread.id)) !== null ||
-              effectiveThreadRole(thread) !== "orchestrator"
-            )
-              continue;
+            if ((yield* store.configuration(thread.id)) !== null) continue;
             const adapter = yield* adapters
               .get(thread.modelSelection.instanceId)
               .pipe(Effect.option);
-            if (Option.isSome(adapter) && supportsManagedIssueWork(adapter.value.driver))
+            if (
+              isRepositoryOrchestratorEligible(
+                thread,
+                Option.isSome(adapter) ? adapter.value.driver : undefined,
+                { ...input, projectId: project.id },
+              )
+            )
               candidates.push(thread);
           }
         }
