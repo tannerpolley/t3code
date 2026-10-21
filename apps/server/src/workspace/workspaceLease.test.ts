@@ -45,3 +45,34 @@ it.effect.each(["existing", "missing"] as const)(
       expect(calls).toEqual(["holder", "other", "contender"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("follows a symlink before `..`, so a parent-relative alias shares the lease", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "workspace-lease-dotdot-" });
+    const physical = `${root}/repo/.worktrees/feature`;
+    yield* fs.makeDirectory(physical, { recursive: true });
+    yield* fs.makeDirectory(`${root}/repo/.worktrees/other`, { recursive: true });
+    yield* fs.symlink(`${root}/repo/.worktrees/other`, `${root}/linked`);
+    // Physically ../feature from the link's target; lexically it would be `${root}/feature`.
+    const alias = `${root}/linked/../feature`;
+    const release = yield* Deferred.make<void>();
+    const calls: string[] = [];
+    const holder = yield* withWorkspaceLease(
+      alias,
+      Effect.gen(function* () {
+        calls.push("holder");
+        yield* Deferred.await(release);
+      }),
+    ).pipe(Effect.forkChild({ startImmediately: true }));
+    const contender = yield* withWorkspaceLease(
+      physical,
+      Effect.sync(() => calls.push("contender")),
+    ).pipe(Effect.forkChild({ startImmediately: true }));
+    expect(calls).toEqual(["holder"]);
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(holder);
+    yield* Fiber.join(contender);
+    expect(calls).toEqual(["holder", "contender"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
