@@ -4,7 +4,7 @@ import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as IssueLinks from "../issues/IssueLinks.ts";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
   DEFAULT_REPOSITORY_WORK_SETTINGS,
@@ -16,7 +16,9 @@ import {
   type ThreadRole,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -27,6 +29,7 @@ import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   adapter,
   makeHarness,
@@ -83,6 +86,7 @@ const fixture = () => {
     harness.layer,
     reads,
     IdAllocator.layer,
+    ThreadCommandExecutor.layer,
     IssueWorkStore.layer.pipe(Layer.provide(harness.layer)),
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
   );
@@ -93,7 +97,7 @@ const fixture = () => {
     ),
   };
 };
-const createRoot = Effect.gen(function* () {
+const createRoot = Effect.fn("test.createReadOnlyRoot")(function* (registered = true) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   yield* threads.dispatch({
     type: "thread.create",
@@ -108,19 +112,21 @@ const createRoot = Effect.gen(function* () {
     worktreePath: null,
     createdBy: "user",
     creationSource: "web",
-    repositoryOrchestration: {
-      ...DEFAULT_REPOSITORY_WORK_SETTINGS,
-      ...reference,
-      repositoryId: "repo:read-only",
-      projectId,
-      launchCommandId: CommandId.make("read-only-root"),
-      revision: 1,
-      paused: false,
-      publishStatusComments: false,
-      publishCloseoutComments: false,
-      milestones: [],
-      suspendedIssues: [],
-    },
+    repositoryOrchestration: registered
+      ? {
+          ...DEFAULT_REPOSITORY_WORK_SETTINGS,
+          ...reference,
+          repositoryId: "repo:read-only",
+          projectId,
+          launchCommandId: CommandId.make("read-only-root"),
+          revision: 1,
+          paused: false,
+          publishStatusComments: false,
+          publishCloseoutComments: false,
+          milestones: [],
+          suspendedIssues: [],
+        }
+      : undefined,
   });
   yield* threads.dispatch({
     type: "message.dispatch",
@@ -201,7 +207,7 @@ it.effect(
   () => {
     const { harness, layer } = fixture();
     return Effect.gen(function* () {
-      yield* createRoot;
+      yield* createRoot();
       const service = yield* IssueWorkService.IssueWorkService;
       const store = yield* IssueWorkStore.IssueWorkStore;
       const sink = yield* EventSink.EventSinkV2;
@@ -298,7 +304,7 @@ it.effect(
   () => {
     const { layer } = fixture();
     return Effect.gen(function* () {
-      yield* createRoot;
+      yield* createRoot();
       const threads = yield* ThreadManagement.ThreadManagementService;
       const service = yield* IssueWorkService.IssueWorkService;
       const sink = yield* EventSink.EventSinkV2;
@@ -378,7 +384,7 @@ it.effect(
     const { harness, layer } = fixture();
     const links: string[] = [];
     return Effect.gen(function* () {
-      yield* createRoot;
+      yield* createRoot();
       const service = yield* OrchestratorMcp.OrchestratorMcpService;
       const threads = yield* ThreadManagement.ThreadManagementService;
       const store = yield* IssueWorkStore.IssueWorkStore;
@@ -466,7 +472,7 @@ it.effect(
 it.effect("prepares an explicitly isolated read-only child only after it gets a slot", () => {
   const { harness, layer } = fixture();
   return Effect.gen(function* () {
-    yield* createRoot;
+    yield* createRoot();
     const service = yield* IssueWorkService.IssueWorkService;
     const sink = yield* EventSink.EventSinkV2;
     yield* service.setReadOnlyLimit({
@@ -497,3 +503,121 @@ it.effect("prepares an explicitly isolated read-only child only after it gets a 
     assert.equal((yield* service.repositoryStatus(reference)).readOnlySlotsInUse, 1);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("pre-existing managers share repository read-only capacity after assignment", () => {
+  const { layer } = fixture();
+  return Effect.gen(function* () {
+    yield* createRoot(false);
+    const managerA = yield* delegate(100, rootId, "orchestrator");
+    const managerB = yield* delegate(101, rootId, "orchestrator");
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "repository.work.restore",
+      threadId: rootId,
+      commandId: CommandId.make("register-existing-root"),
+      expectedRootThreadId: null,
+      expectedRevision: null,
+      targetThreadId: rootId,
+      projectId,
+      ...reference,
+      repositoryId: "repo:read-only",
+      reason: "Assign existing lead",
+    });
+    yield* delegate(1);
+    yield* delegate(2);
+    yield* delegate(3);
+    const sink = yield* EventSink.EventSinkV2;
+    const commit = sink.commitCommand.bind(sink);
+    const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    class HeldTestLock extends Context.Reference<ThreadId | null>("test/read-only-lock", {
+      defaultValue: () => null,
+    }) {}
+    const withLock = locks.withLock.bind(locks);
+    using _locks = vi
+      .spyOn(locks, "withLock")
+      .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
+        withLock(key, effect.pipe(Effect.provideService(HeldTestLock, key))),
+      );
+    let arrivals = 0;
+    const release = yield* Deferred.make<void>();
+    using _commit = vi.spyOn(sink, "commitCommand").mockImplementation((input) =>
+      Effect.gen(function* () {
+        // Separate manager locks let both plans observe the last free slot before either commits.
+        // A shared root lock prevents the second plan from reaching this gate.
+        if (
+          (input.commandId === "read-only:4" || input.commandId === "read-only:5") &&
+          (yield* HeldTestLock) !== rootId
+        ) {
+          arrivals++;
+          if (arrivals === 2) yield* Deferred.succeed(release, undefined);
+          yield* Deferred.await(release);
+        }
+        return yield* commit(input);
+      }),
+    );
+    const children = yield* Effect.all([delegate(4, managerA), delegate(5, managerB)], {
+      concurrency: "unbounded",
+    });
+    const service = yield* IssueWorkService.IssueWorkService;
+    const status = yield* service.repositoryStatus(reference);
+    assert.equal(status.readOnlySlotsInUse, 4);
+    const runs = yield* Effect.forEach(children, lastRun);
+    assert.sameMembers(
+      runs.map((run) => run.status),
+      ["starting", "queued"],
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "stopped read-only child with an agent follow-up cannot strand the repository queue",
+  () => {
+    const { layer } = fixture();
+    return Effect.gen(function* () {
+      yield* createRoot();
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      yield* service.setReadOnlyLimit({
+        ...reference,
+        readOnlyLimit: 1,
+        expectedRevision: 1,
+        clientRequestId: CommandId.make("limit-one"),
+      });
+      const first = yield* delegate(1);
+      const stopped = yield* delegate(2);
+      yield* threads.dispatch({
+        type: "thread.stop",
+        threadId: stopped,
+        commandId: CommandId.make("stop-queued"),
+      });
+      assert.equal((yield* lastRun(stopped)).queueHeld, true);
+      yield* threads.sendToThread({
+        projectId,
+        threadId: stopped,
+        senderThreadId: rootId,
+        commandId: CommandId.make("agent-follow-up"),
+        messageId: MessageId.make("agent-follow-up"),
+        text: "Follow up when possible",
+        attachments: [],
+        mode: "queue",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const next = yield* delegate(3);
+      yield* finish(first);
+      // Explicit synchronous reconciliation avoids depending on event-consumer timing.
+      yield* threads.dispatch({
+        type: "repository.work.continue",
+        threadId: rootId,
+        commandId: CommandId.make("continue-after-finish"),
+      });
+      const occupancy = (yield* service.repositoryStatus(reference)).readOnlySlotsInUse;
+      assert.equal(occupancy, 1);
+      assert.equal((yield* lastRun(next)).status, "starting");
+      const stoppedRuns = (yield* threads.getThreadRecords(stopped, ["runs"])).runs;
+      assert.equal(stoppedRuns.length, 2);
+      assert.isTrue(stoppedRuns.some((run) => run.queueHeld === true));
+      assert.isTrue(stoppedRuns.every((run) => run.status === "queued"));
+    }).pipe(Effect.provide(layer));
+  },
+);

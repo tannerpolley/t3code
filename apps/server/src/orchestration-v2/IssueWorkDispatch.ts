@@ -46,15 +46,12 @@ class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
   },
 ) {}
 
-/** Whole-thread writes to managed descendants serialize with their root's commands. */
+/** Descendant commands can admit read-only work, even from managers without issue links. */
 export function threadDispatchLockKey(
   threadId: ThreadId,
   shell: OrchestrationV2ThreadShell | null,
 ) {
-  return shell?.linkedIssue !== undefined ||
-    (isReadOnlyIssueRole(shell?.role) && shell?.lineage.relationshipToParent === "subagent")
-    ? shell.lineage.rootThreadId
-    : threadId;
+  return shell?.lineage.rootThreadId ?? threadId;
 }
 
 /**

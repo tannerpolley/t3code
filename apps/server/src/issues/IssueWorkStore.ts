@@ -167,7 +167,10 @@ export const layer = Layer.effect(
       JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
       WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
         AND ${isReadOnly} AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
-        AND run.status = 'queued' AND coalesce(json_extract(run.payload_json, '$.queueHeld'), 0) = 0
+        AND run.status = 'queued'
+        AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs held
+          WHERE held.thread_id = thread.thread_id AND held.status = 'queued'
+            AND json_extract(held.payload_json, '$.queueHeld') = 1)
         AND coalesce(json_extract(thread.payload_json, '$.lastErrorClass'), '') <> 'usage_limit'
         AND NOT ${usesWorkerSlot}
       GROUP BY run.thread_id
