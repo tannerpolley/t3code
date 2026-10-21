@@ -1,6 +1,8 @@
+import { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  canAssignRepositoryOrchestrator,
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   type ThreadActionMenuState,
@@ -241,5 +243,53 @@ describe("buildDraftActionMenuItems", () => {
     const items = buildDraftActionMenuItems({ hasPath: true, hasBranch: false, hasProject: false });
     expect(items.map((item) => item.id)).toEqual(["copy", "discard"]);
     expect(items.at(-1)).toMatchObject({ label: "Discard draft", destructive: true });
+  });
+});
+
+describe("repository orchestrator eligibility", () => {
+  const thread = {
+    id: ThreadId.make("lead"),
+    branch: "main",
+    worktreePath: null,
+    archivedAt: null,
+    deletedAt: null,
+    lineage: {
+      parentThreadId: null,
+      rootThreadId: ThreadId.make("lead"),
+      relationshipToParent: null,
+    },
+  } as const;
+
+  it("allows both supported drivers and an explicit Orchestrator role", () => {
+    expect(canAssignRepositoryOrchestrator(thread, ProviderDriverKind.make("codex"))).toBe(true);
+    expect(
+      canAssignRepositoryOrchestrator(
+        { ...thread, role: "orchestrator" },
+        ProviderDriverKind.make("claudeAgent"),
+      ),
+    ).toBe(true);
+  });
+
+  it("excludes worktrees, other roles, and unavailable or unsupported drivers", () => {
+    expect(
+      canAssignRepositoryOrchestrator(
+        { ...thread, worktreePath: "/worktree", role: "orchestrator" },
+        ProviderDriverKind.make("codex"),
+      ),
+    ).toBe(false);
+    expect(
+      canAssignRepositoryOrchestrator(
+        { ...thread, role: "implementor" },
+        ProviderDriverKind.make("codex"),
+      ),
+    ).toBe(false);
+    expect(canAssignRepositoryOrchestrator(thread, ProviderDriverKind.make("cursor"))).toBe(false);
+    expect(canAssignRepositoryOrchestrator(thread, undefined)).toBe(false);
+    expect(
+      canAssignRepositoryOrchestrator(
+        { ...thread, lineage: { ...thread.lineage, parentThreadId: ThreadId.make("parent") } },
+        ProviderDriverKind.make("codex"),
+      ),
+    ).toBe(false);
   });
 });

@@ -1736,6 +1736,81 @@ describe("fresh-thread repository handoff", () => {
   );
 
   it.effect(
+    "rejects Implementors at assignment and revalidates the role after handoff draining",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const sink = yield* EventSink.EventSinkV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const target = ThreadId.make("role-checked-successor");
+        yield* createLead(target);
+        const setRole = (role: "implementor" | "orchestrator", key: string) =>
+          Effect.gen(function* () {
+            const thread = (yield* threads.getThreadRecords(target, [])).thread;
+            yield* sink.write({
+              events: [
+                {
+                  type: "thread.metadata-updated",
+                  id: EventId.make(key),
+                  threadId: target,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...thread, role },
+                },
+              ],
+            });
+          });
+        const input = {
+          ...reference,
+          projectId,
+          targetThreadId: target,
+          clientRequestId: CommandId.make("role:assign"),
+        };
+        yield* setRole("implementor", "role:implementor");
+        assert.equal(
+          (yield* service.assignOrchestrator(input).pipe(Effect.result))._tag,
+          "Failure",
+        );
+        assert.isNull((yield* service.repositoryStatus(reference)).rootThreadId);
+        yield* createRoot;
+        assert.equal(
+          (yield* service.assignOrchestrator(input).pipe(Effect.result))._tag,
+          "Failure",
+        );
+        yield* setRole("orchestrator", "role:eligible");
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          threadId: rootId,
+          commandId: CommandId.make("role:busy"),
+          messageId: MessageId.make("role:busy"),
+          text: "Finish current work",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        const pending = yield* service.assignOrchestrator(input);
+        assert.equal(pending.orchestration!.handoff?.status, "draining");
+        yield* setRole("implementor", "role:changed-during-drain");
+        yield* finish(rootId, "role:finished");
+        const transfer = yield* threads
+          .dispatch({
+            type: "repository.work.handoff",
+            threadId: rootId,
+            commandId: CommandId.make("role:transfer"),
+            expectedRevision: pending.orchestration!.revision,
+            inventory: "Current repository work",
+          })
+          .pipe(Effect.result);
+        assert.equal(transfer._tag, "Failure");
+        if (transfer._tag === "Failure") assert.include(String(transfer.failure), "Orchestrator");
+        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
+        yield* worker.drain();
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect(
     "keeps an agent's existing handoff target when the user approves without resending it",
     () =>
       Effect.gen(function* () {

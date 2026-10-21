@@ -673,7 +673,6 @@ export const layer = Layer.effect(
             message: "Only open issues can be queued.",
           });
       }
-      if (queued) yield* ensureOrchestrator(issue);
       const owner = yield* store.repositoryOwner(issue);
       // A repository mailbox persists requests before its first orchestrator exists.
       const threadId = Option.isSome(receipt)
@@ -1319,11 +1318,13 @@ export const layer = Layer.effect(
         target.deletedAt !== null ||
         target.lineage.parentThreadId !== null ||
         target.lineage.rootThreadId !== target.id ||
-        target.linkedIssue !== undefined
+        target.linkedIssue !== undefined ||
+        effectiveThreadRole(target) !== "orchestrator"
       )
         return yield* new IssueWorkError({
           code: "invalid-request",
-          message: "Select an existing active top-level thread in the same repository project.",
+          message:
+            "Select an existing active top-level Orchestrator thread in the same repository project.",
         });
       yield* assertRootCheckout({
         projectId: input.projectId,
@@ -1905,6 +1906,11 @@ export const layer = Layer.effect(
                 ? stored.event.payload.issue
                 : shell?.linkedIssue) ?? (yield* store.configuration(stored.event.threadId));
             if (repository == null) return;
+            if (
+              stored.event.type === "issue.queue.updated" &&
+              (yield* store.queue(repository)).length > 0
+            )
+              yield* ensureOrchestrator(repository);
             const owner = yield* store.repositoryOwner(repository);
             // Root availability also releases one queued notice.
             if (

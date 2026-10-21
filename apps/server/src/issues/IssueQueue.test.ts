@@ -79,7 +79,7 @@ const projectRepositoryIdentity = {
     remoteUrl: "https://github.com/owner/repo.git",
   },
 };
-function harness(issueReads = reads) {
+function harness(issueReads = reads, candidateScan?: Deferred.Deferred<void>) {
   const base = makeHarness({
     issueServiceLayer: issueReads,
     projectRepositoryIdentity,
@@ -101,7 +101,23 @@ function harness(issueReads = reads) {
     ProjectionMaintenance.layer.pipe(
       Layer.provide(Layer.merge(dependencies, EventStore.layer.pipe(Layer.provide(dependencies)))),
     ),
-    IssueWorkService.layer.pipe(Layer.provide(dependencies)),
+    IssueWorkService.layer.pipe(
+      Layer.provide(
+        candidateScan === undefined
+          ? Layer.empty
+          : Layer.effect(
+              ThreadManagement.ThreadManagementService,
+              Effect.map(ThreadManagement.ThreadManagementService, (threads) => ({
+                ...threads,
+                listProjectThreads: (input) =>
+                  threads
+                    .listProjectThreads(input)
+                    .pipe(Effect.tap(() => Deferred.succeed(candidateScan, undefined))),
+              })),
+            ).pipe(Layer.provide(base.layer)),
+      ),
+      Layer.provide(dependencies),
+    ),
     ProviderRuntimeRecovery.layer.pipe(Layer.provide(dependencies)),
     EffectWorker.layerWithOptions({ maxAttempts: 1 }).pipe(
       Layer.provide(Layer.mergeAll(dependencies, executor)),
@@ -1310,15 +1326,20 @@ it.effect.each([false, true])(
         threadId: ThreadId.make("archived-orchestrator"),
       });
       assert.isNull((yield* service.repositoryStatus(reference)).rootThreadId);
-      const results = yield* Effect.all(
-        [service.queueIssue(input(1)), service.queueIssue(input(2))],
-        { concurrency: 2 },
-      );
-      assert.deepEqual(
-        results.map((result) => result.rootThreadId),
-        noCandidate
-          ? [null, null]
-          : [ThreadId.make("recent-orchestrator"), ThreadId.make("recent-orchestrator")],
+      const sink = yield* EventSink.EventSinkV2;
+      const sequence = yield* sink.latestSequence();
+      yield* Effect.all([service.queueIssue(input(1)), service.queueIssue(input(2))], {
+        concurrency: 2,
+      });
+      if (!noCandidate)
+        yield* sink.stream({ afterSequence: sequence }).pipe(
+          Stream.filter((stored) => stored.event.type === "repository.work.restored"),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+      assert.equal(
+        (yield* service.repositoryStatus(reference)).rootThreadId,
+        noCandidate ? null : "recent-orchestrator",
       );
       const registrations =
         yield* sql`SELECT * FROM orchestration_events WHERE event_type = 'repository.work.restored'`;
@@ -1332,6 +1353,41 @@ it.effect.each([false, true])(
       }
       yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
     }).pipe(Effect.provide(harness())),
+);
+
+it.effect("does not register an orchestrator when replaying a withdrawn queue request", () =>
+  Effect.gen(function* () {
+    const candidateScan = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const sink = yield* EventSink.EventSinkV2;
+      const sql = yield* SqlClient.SqlClient;
+      yield* service.queueIssue(input(1));
+      yield* Deferred.await(candidateScan);
+      yield* service.unqueueIssue(input(1, "withdraw-before-candidate"));
+      yield* createCandidate("late-orchestrator");
+      const replayed = yield* service.queueIssue(input(1));
+      assert.isNull(replayed.rootThreadId);
+      assert.deepEqual(replayed.queue, []);
+      assert.lengthOf(
+        yield* sql`SELECT * FROM orchestration_events WHERE event_type = 'repository.work.restored'`,
+        0,
+      );
+      const sequence = yield* sink.latestSequence();
+      yield* service.queueIssue(input(1, "fresh-queue-transition"));
+      yield* sink.stream({ afterSequence: sequence }).pipe(
+        Stream.filter((stored) => stored.event.type === "repository.work.restored"),
+        Stream.take(1),
+        Stream.runCollect,
+      );
+      assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, "late-orchestrator");
+      assert.lengthOf(
+        yield* sql`SELECT * FROM orchestration_events WHERE event_type = 'repository.work.restored'`,
+        1,
+      );
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    }).pipe(Effect.provide(harness(reads, candidateScan)));
+  }),
 );
 
 it.effect.each([false, true])(

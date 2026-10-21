@@ -5,6 +5,8 @@ import { CommandId, type ContextMenuItem, type RepositoryWorkResult } from "@t3t
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 
+import { canAssignRepositoryOrchestrator } from "~/components/threadActionMenu.logic";
+import { useEnvironmentProviders } from "~/state/environments";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { issueEnvironment } from "~/state/issues";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -17,14 +19,16 @@ export function useRepositoryOrchestratorAction(
 ) {
   const projects = useProjects();
   const configs = useServerConfigs();
+  const providers = useEnvironmentProviders();
   const targetFor = (thread: EnvironmentThreadShell | null) => {
     if (
       thread === null ||
-      thread.archivedAt !== null ||
-      thread.deletedAt !== null ||
-      thread.lineage.parentThreadId !== null ||
-      thread.lineage.rootThreadId !== thread.id ||
-      thread.linkedIssue !== undefined ||
+      !canAssignRepositoryOrchestrator(
+        thread.source,
+        providers
+          .get(thread.environmentId)
+          ?.find((provider) => provider.instanceId === thread.modelSelection.instanceId)?.driver,
+      ) ||
       configs.get(thread.environmentId)?.environment.capabilities.issueWork !== true
     )
       return null;
