@@ -73,6 +73,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
         [WS_METHODS.issuesCloseOut]: (input) => issueWork.closeOut(input),
         [WS_METHODS.issuesSetPaused]: (input) => issueWork.setPaused(input),
         [WS_METHODS.issuesSetWorkerLimit]: (input) => issueWork.setWorkerLimit(input),
+        [WS_METHODS.issuesSetReadOnlyLimit]: (input) => issueWork.setReadOnlyLimit(input),
         [WS_METHODS.issuesCancelRequest]: (input) => issueWork.cancelRequest(input),
         [WS_METHODS.issuesRestoreRoot]: (input) => issueWork.restoreRoot(input),
         [WS_METHODS.issuesHandoff]: (input) => issueWork.handoff(input),

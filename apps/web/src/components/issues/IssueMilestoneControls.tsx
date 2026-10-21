@@ -290,6 +290,17 @@ function RepositoryControls({
           onSettled={() => appAtomRegistry.refresh(statusAtom)}
         />
       </MetaRow>
+      <MetaRow icon={<UsersIcon className="size-3.5" />} label="Read-only">
+        <IssueWorkerLimitControl
+          key={`read-only:${data.rootThreadId}:${config.revision}`}
+          environmentId={environmentId}
+          reference={reference}
+          config={config}
+          pool="readOnly"
+          slotsInUse={data.readOnlySlotsInUse}
+          onSettled={() => appAtomRegistry.refresh(statusAtom)}
+        />
+      </MetaRow>
       <MetaRow icon={<ActivityIcon className="size-3.5" />} label="Status">
         <span className="flex min-w-0 items-center gap-1">
           <span className="truncate" role="status">

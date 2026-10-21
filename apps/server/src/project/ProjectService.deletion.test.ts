@@ -562,6 +562,7 @@ it.effect(
                   revision: 1,
                   paused: false,
                   workerLimit: 4,
+                  readOnlyLimit: 4,
                   publishStatusComments: true,
                   publishCloseoutComments: true,
                   milestones: [],

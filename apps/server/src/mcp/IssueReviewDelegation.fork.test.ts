@@ -119,6 +119,7 @@ it.effect(
       assert.equal(yield* store.slotsInUse(root), 1);
       const originalOwner = yield* store.issueOwner(reviewIssue(1));
       const scope = scopeFor(root);
+      let readOnlyRequests = 0;
       for (const role of ["checker", "reviewer", "investigator"] as const) {
         for (const issue of [undefined, reviewIssue(1)]) {
           const result = yield* mcp.delegateTask(scope, {
@@ -131,7 +132,10 @@ it.effect(
           assert.equal(child.thread.worktreePath, null);
           assert.equal(child.thread.branch, null);
           assert.isUndefined(child.thread.linkedIssue);
-          assert.equal(child.runs[0]!.status, "starting");
+          readOnlyRequests++;
+          assert.equal(child.runs[0]!.status, readOnlyRequests <= 4 ? "starting" : "queued");
+          assert.equal(result.status, readOnlyRequests <= 4 ? "running" : "queued");
+          assert.equal(yield* store.readOnlySlotsInUse(root), Math.min(readOnlyRequests, 4));
           assert.isUndefined(child.runs[0]!.workspacePreparation);
           assert.equal(yield* store.slotsInUse(root), 1);
           assert.equal(yield* store.issueOwner(reviewIssue(1)), originalOwner);

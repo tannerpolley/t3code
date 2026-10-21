@@ -83,6 +83,7 @@ describe("fresh-thread repository handoff", () => {
     revision: 1,
     paused: false,
     workerLimit: 4,
+    readOnlyLimit: 4,
     publishStatusComments: true,
     publishCloseoutComments: true,
     milestones: [plan],
@@ -2272,7 +2273,7 @@ describe("fresh-thread repository handoff", () => {
         parkTransfer = true;
         yield* finish(rootId, "race-root");
         yield* Deferred.await(parked);
-        // Reconcile lists workers to check suspensions, then again right before it drains.
+        // Reconcile lists admission threads immediately before it drains.
         listings = 0;
         const reconcile = yield* service.reconcile(rootId).pipe(Effect.forkChild);
         yield* Deferred.await(draining);
@@ -2293,12 +2294,12 @@ describe("fresh-thread repository handoff", () => {
             },
             wrapStore: (store) => ({
               ...store,
-              workerThreads: (rootThreadId) =>
+              admissionThreads: (rootThreadId) =>
                 store
-                  .workerThreads(rootThreadId)
+                  .admissionThreads(rootThreadId)
                   .pipe(
                     Effect.tap(() =>
-                      listings !== undefined && ++listings === 2
+                      listings !== undefined && ++listings === 1
                         ? Deferred.succeed(draining, undefined)
                         : Effect.void,
                     ),

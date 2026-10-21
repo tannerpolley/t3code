@@ -82,6 +82,13 @@ export function makeIssueWorkCommands({
     );
   const canStartIssueRun = (thread: OrchestrationV2AppThread) =>
     Effect.gen(function* () {
+      if (isReadOnlyIssueRole(thread.role) && thread.lineage.relationshipToParent === "subagent") {
+        if (Option.isNone(issueWorkStore)) return true;
+        const store = issueWorkStore.value;
+        const config = yield* store.configuration(thread.lineage.rootThreadId);
+        if (config === null) return true;
+        return yield* store.canAdmitReadOnly(thread.lineage.rootThreadId, thread.id);
+      }
       const issue = thread.linkedIssue;
       if (issue === undefined) return true;
       if (Option.isNone(issueWorkStore)) return false;
@@ -118,6 +125,7 @@ export function makeIssueWorkCommands({
       const issue = thread.linkedIssue;
       if (
         issue === undefined ||
+        isReadOnlyIssueRole(thread.role) ||
         Option.isNone(issueWorkStore) ||
         command.delegatedCompletion !== undefined ||
         command.usageLimitContinuationOfRunId !== undefined ||

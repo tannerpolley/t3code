@@ -97,6 +97,10 @@ const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(OrchestratorV2)({})),
 );
 
+const decodeRepositoryLimit = Schema.decodeUnknownSync(
+  OrchestratorToolkit.tools.set_repository_worker_limit.parametersSchema,
+);
+
 it("publishes unique tool names with reference-free object-root inputs", () => {
   const names = new Set<string>();
   for (const toolkit of [
@@ -132,6 +136,17 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     }
   }
   expect(names.has("set_repository_worker_limit")).toBe(true);
+  const limitTool = OrchestratorToolkit.tools.set_repository_worker_limit;
+  expect(
+    decodeRepositoryLimit({
+      host: "github.com",
+      repository: "owner/repo",
+      readOnlyLimit: 4,
+      expectedRevision: 1,
+      clientRequestId: "limit-read-only",
+    }),
+  ).toHaveProperty("readOnlyLimit", 4);
+  expect(limitTool.description).toContain("readOnlyLimit");
   expect(names.has("t3_thread_launch")).toBe(true);
   expect(names.has("t3_thread_start")).toBe(false);
 });

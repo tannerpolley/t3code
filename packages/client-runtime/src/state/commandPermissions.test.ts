@@ -229,6 +229,7 @@ describe("command permissions", () => {
             WS_METHODS.issuesRestoreRoot,
             WS_METHODS.issuesInboxMarkRead,
             WS_METHODS.issuesSetWorkerLimit,
+            WS_METHODS.issuesSetReadOnlyLimit,
             WS_METHODS.issuesQueue,
             WS_METHODS.issuesUnqueue,
           ]) {
@@ -263,6 +264,8 @@ describe("command permissions", () => {
               Effect.sync(() => calls.push(WS_METHODS.issuesUnqueue)),
             [WS_METHODS.issuesSetWorkerLimit]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesSetWorkerLimit)),
+            [WS_METHODS.issuesSetReadOnlyLimit]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesSetReadOnlyLimit)),
             [WS_METHODS.issuesRestoreRoot]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesRestoreRoot)),
           },
@@ -319,6 +322,12 @@ describe("command permissions", () => {
               input: { ...scope, workerLimit: 8, expectedRevision: 2 },
             }),
           );
+          const readOnlyLimited = yield* Effect.promise(() =>
+            issues.setReadOnlyLimit.run(registry, {
+              environmentId,
+              input: { ...scope, readOnlyLimit: 8, expectedRevision: 2 },
+            }),
+          );
           const queued = yield* Effect.promise(() =>
             issues.queueIssue.run(registry, { environmentId, input: { ...scope, number: 1 } }),
           );
@@ -330,15 +339,17 @@ describe("command permissions", () => {
             cancelled._tag,
             restored._tag,
             limited._tag,
+            readOnlyLimited._tag,
             queued._tag,
             unqueued._tag,
-          ]).toEqual([outcome, outcome, outcome, outcome, outcome, outcome]);
+          ]).toEqual([outcome, outcome, outcome, outcome, outcome, outcome, outcome]);
         }
         expect(calls).toEqual([
           WS_METHODS.issuesCloseOut,
           WS_METHODS.issuesCancelRequest,
           WS_METHODS.issuesRestoreRoot,
           WS_METHODS.issuesSetWorkerLimit,
+          WS_METHODS.issuesSetReadOnlyLimit,
           WS_METHODS.issuesQueue,
           WS_METHODS.issuesUnqueue,
         ]);

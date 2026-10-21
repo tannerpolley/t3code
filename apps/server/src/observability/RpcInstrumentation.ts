@@ -245,6 +245,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.issuesCloseOut]: "issues",
   [WS_METHODS.issuesSetPaused]: "issues",
   [WS_METHODS.issuesSetWorkerLimit]: "issues",
+  [WS_METHODS.issuesSetReadOnlyLimit]: "issues",
   [WS_METHODS.issuesHandoff]: "issues",
   [WS_METHODS.issuesCancelRequest]: "orchestration",
   [WS_METHODS.issuesRestoreRoot]: "orchestration",

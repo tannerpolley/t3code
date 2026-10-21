@@ -7911,6 +7911,7 @@ it.layer(layerUsageSwitchTest)("automatic usage-limit provider switch", (it) => 
                     revision: 1,
                     paused: false,
                     workerLimit: 4,
+                    readOnlyLimit: 4,
                     publishStatusComments: false,
                     publishCloseoutComments: false,
                     milestones: [],

@@ -170,7 +170,7 @@ export interface OrchestratorMcpServiceShape {
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly setRepositoryWorkerLimit: (
     scope: McpInvocationScope,
-    input: import("@t3tools/contracts").RepositoryWorkerLimitInput,
+    input: import("@t3tools/contracts").RepositoryConcurrencyLimitInput,
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly closeOutIssue: (
     scope: McpInvocationScope,
@@ -1868,9 +1868,16 @@ const make = Effect.gen(function* () {
         yield* requireRepositoryController(scope);
         if (Option.isNone(issueWork))
           return yield* failure("orchestration_error", "Issue work is unavailable.");
-        return yield* issueWork.value
-          .setWorkerLimit(input)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+        if ((input.workerLimit === undefined) === (input.readOnlyLimit === undefined))
+          return yield* failure(
+            "invalid_request",
+            "Provide exactly one of workerLimit or readOnlyLimit.",
+          );
+        return yield* (
+          input.readOnlyLimit !== undefined
+            ? issueWork.value.setReadOnlyLimit({ ...input, readOnlyLimit: input.readOnlyLimit })
+            : issueWork.value.setWorkerLimit({ ...input, workerLimit: input.workerLimit! })
+        ).pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       },
     ),
     closeOutIssue: Effect.fn("OrchestratorMcpService.closeOutIssue")(function* (scope, input) {

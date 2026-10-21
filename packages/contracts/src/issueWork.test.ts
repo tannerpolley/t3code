@@ -41,6 +41,7 @@ describe("managed issue workspace compatibility", () => {
         ],
         suspendedIssues: [],
       });
+      expect(owner.readOnlyLimit).toBe(4);
       expect(owner).not.toHaveProperty("workspace");
       expect(owner.milestones[0]).not.toHaveProperty("workspace");
       expect(

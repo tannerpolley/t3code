@@ -341,8 +341,13 @@ are in use. Raising it starts eligible queued work. Lowering it lets current wor
 holds new starts until there is room. A slot covers a managed worker preparing, running, waiting,
 or awaiting your response. Queued workers and completed workers, including those with an open PR,
 do not hold slots. The repository orchestrator and read-only reviewers, checkers and investigators
-do not use worker slots. Read-only children share their parent's checkout unless another isolation
-is requested; an issue link gives visibility without claiming its work.
+do not use worker slots. They use a separate **Read-only** limit in repository **Status**, initially
+4 and adjustable from 1 to 32. It covers children throughout the repository's thread tree, including
+restart continuations. Excess requests wait in order until a slot frees. Raising the limit starts
+queued children; lowering it lets current children finish. Agents can set either limit through
+`set_repository_worker_limit`, using `workerLimit` or `readOnlyLimit` and the current revision.
+Read-only children share their parent's checkout unless another isolation is requested; an issue
+link gives visibility without claiming its work.
 An issue worker paused by an open GitHub blocker resumes by itself within about a minute after
 all its blockers close. Other pauses wait until you resume repository work from **Status**.
 If an issue closes during work, cancel or finish its remaining work, then use **Close out attempt**

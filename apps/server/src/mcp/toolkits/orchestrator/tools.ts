@@ -33,7 +33,7 @@ import {
   RepositoryWorkInput,
   IssueQueueInput,
   RepositoryWorkControlInput,
-  RepositoryWorkerLimitInput,
+  RepositoryConcurrencyLimitInput,
   RepositoryHandoffRequestInput,
   RepositoryWorkResult,
   IssueRepositoryRef,
@@ -339,7 +339,7 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Destructive, true),
   Tool.make("get_repository_orchestration", {
     description:
-      "Read repository ownership, worker limit, slots in use, pause state, milestone progress and the ordered issue queue, including noticeRunId, notifiedAt and needs_attention entries where the orchestrator completed without claiming a worker.",
+      "Read repository ownership, worker and read-only limits, slots in use for each pool, pause state, milestone progress and the ordered issue queue, including noticeRunId, notifiedAt and needs_attention entries where the orchestrator completed without claiming a worker.",
     parameters: IssueRepositoryRef,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
@@ -348,8 +348,8 @@ export const OrchestratorToolkit = Toolkit.make(
   }).annotate(Tool.Readonly, true),
   Tool.make("set_repository_worker_limit", {
     description:
-      "Set the repository worker limit (1–32). Read get_repository_orchestration for the current revision. Raising admits queued work promptly; lowering holds new starts without stopping running workers.",
-    parameters: RepositoryWorkerLimitInput,
+      "Set either independent repository limit (1–32): workerLimit for implementors, or readOnlyLimit for reviewer/checker/investigator children (default 4). Read get_repository_orchestration for the current revision. Raising admits queued work promptly; lowering holds new starts without stopping running children.",
+    parameters: RepositoryConcurrencyLimitInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
     failureMode: "return",

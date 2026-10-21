@@ -18,6 +18,7 @@ import {
   type RepositoryWorkInput,
   type RepositoryWorkControlInput,
   RepositoryWorkerLimitInput,
+  RepositoryReadOnlyLimitInput,
   type RepositoryHandoffInput,
   type RepositoryHandoffRequestInput,
   type RepositoryWorkResult,
@@ -72,7 +73,9 @@ import * as Deferred from "effect/Deferred";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
-const decodeWorkerLimit = Schema.decodeEffect(RepositoryWorkerLimitInput);
+const decodeLimit = Schema.decodeEffect(
+  Schema.Union([RepositoryWorkerLimitInput, RepositoryReadOnlyLimitInput]),
+);
 const encodeToolArgument = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export class IssueWorkService extends Context.Service<
@@ -112,6 +115,9 @@ export class IssueWorkService extends Context.Service<
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly setWorkerLimit: (
       input: RepositoryWorkerLimitInput,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
+    readonly setReadOnlyLimit: (
+      input: RepositoryReadOnlyLimitInput,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly closeOut: (
       input: IssueWorkCloseOutInput,
@@ -634,6 +640,8 @@ export const layer = Layer.effect(
           rootThreadId: owner?.rootThreadId ?? null,
           orchestration: owner === null ? null : yield* store.configuration(owner.rootThreadId),
           slotsInUse: owner === null ? 0 : yield* store.slotsInUse(owner.rootThreadId),
+          readOnlySlotsInUse:
+            owner === null ? 0 : yield* store.readOnlySlotsInUse(owner.rootThreadId),
           queue: yield* store.queue(input),
         };
       });
@@ -839,12 +847,13 @@ export const layer = Layer.effect(
         const draining = config.handoff?.status === "draining";
         if (config.paused && !draining) return;
         const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry.reason]));
-        for (const threadId of yield* store.workerThreads(rootThreadId)) {
+        for (const threadId of yield* store.admissionThreads(rootThreadId)) {
           const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
+          if (shell == null || shell.activeRunId === null) continue;
           if (
-            shell?.linkedIssue === undefined ||
-            shell.activeRunId === null ||
-            !(yield* store.canAdmit(shell.linkedIssue, threadId))
+            !isReadOnlyIssueRole(shell.role) &&
+            (shell.linkedIssue === undefined ||
+              !(yield* store.canAdmit(shell.linkedIssue, threadId)))
           )
             continue;
           const run = (yield* threads
@@ -1178,52 +1187,50 @@ export const layer = Layer.effect(
         yield* reconcile(owner.rootThreadId);
         return yield* repositoryStatus(input);
       });
-    const setWorkerLimit: IssueWorkService["Service"]["setWorkerLimit"] = (input) =>
-      Effect.gen(function* () {
-        yield* decodeWorkerLimit(input).pipe(
-          Effect.mapError(
-            () =>
-              new IssueWorkError({
-                code: "invalid-request",
-                message:
-                  "Use an integer worker limit from 1 to 32 and the current repository revision.",
-              }),
+    const setLimit = Effect.fn("IssueWorkService.setLimit")(function* (
+      input: RepositoryWorkerLimitInput | RepositoryReadOnlyLimitInput,
+    ) {
+      yield* decodeLimit(input).pipe(
+        Effect.mapError(
+          () =>
+            new IssueWorkError({
+              code: "invalid-request",
+              message: "Use an integer limit from 1 to 32 and the current repository revision.",
+            }),
+        ),
+      );
+      const owner = yield* store.repositoryOwnerByRef(input);
+      if (owner === null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "This repository has no registered orchestrator.",
+        });
+      const config = (yield* store.configuration(owner.rootThreadId))!;
+      if (config.revision !== input.expectedRevision)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Repository ownership changed. Refresh before updating work.",
+        });
+      if (config.handoff?.status === "draining")
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "A handoff is draining. Cancel the handoff before changing the limit.",
+        });
+      const field = "workerLimit" in input ? "workerLimit" : "readOnlyLimit";
+      const limit = "workerLimit" in input ? input.workerLimit : input.readOnlyLimit;
+      if (limit !== config[field])
+        yield* update(owner.rootThreadId, { ...config, [field]: limit }, input.clientRequestId);
+      if (limit > config[field] && !config.paused)
+        yield* reconcile(owner.rootThreadId).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Issue queue continuation after limit change failed", {
+              rootThreadId: owner.rootThreadId,
+              cause,
+            }),
           ),
         );
-        const owner = yield* store.repositoryOwnerByRef(input);
-        if (owner === null)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "This repository has no registered orchestrator.",
-          });
-        const config = (yield* store.configuration(owner.rootThreadId))!;
-        if (config.revision !== input.expectedRevision)
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "Repository ownership changed. Refresh before updating work.",
-          });
-        if (config.handoff?.status === "draining")
-          return yield* new IssueWorkError({
-            code: "invalid-request",
-            message: "A handoff is draining. Cancel the handoff before changing the worker limit.",
-          });
-        if (input.workerLimit !== config.workerLimit)
-          yield* update(
-            owner.rootThreadId,
-            { ...config, workerLimit: input.workerLimit },
-            input.clientRequestId,
-          );
-        if (input.workerLimit > config.workerLimit && !config.paused)
-          yield* reconcile(owner.rootThreadId).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Issue queue continuation after worker limit change failed", {
-                rootThreadId: owner.rootThreadId,
-                cause,
-              }),
-            ),
-          );
-        return yield* repositoryStatus(input);
-      });
+      return yield* repositoryStatus(input);
+    });
     const closeOut = Effect.fn("IssueWorkService.closeOut")(function* (
       input: IssueWorkCloseOutInput,
       callerThreadId?: ThreadId,
@@ -1588,7 +1595,8 @@ export const layer = Layer.effect(
       repositoryStatus,
       setPaused,
       closeOut,
-      setWorkerLimit,
+      setWorkerLimit: setLimit,
+      setReadOnlyLimit: setLimit,
       assertCurrentCaller,
       requestHandoff: (threadId, input) => prepareHandoff(input, "awaiting_approval", threadId),
       handoff,
@@ -1722,12 +1730,14 @@ export const layer = Layer.effect(
             const repository =
               (stored.event.type === "issue.queue.updated"
                 ? stored.event.payload.issue
-                : shell?.linkedIssue) ?? (yield* store.configuration(stored.event.threadId));
+                : shell?.linkedIssue) ??
+              (yield* store.configuration(shell?.lineage.rootThreadId ?? stored.event.threadId));
             if (repository == null) return;
             const owner = yield* store.repositoryOwner(repository);
             // Root availability also releases one queued notice.
             if (
               owner !== null &&
+              !isReadOnlyIssueRole(shell?.role) &&
               (shell?.linkedIssue === undefined ||
                 stored.event.type === "subagent.updated" ||
                 stored.event.type === "runtime-request.updated" ||

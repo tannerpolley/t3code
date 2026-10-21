@@ -543,6 +543,7 @@ const createReviewRoot = Effect.fn("test.createReviewRoot")(function* (
       revision: 1,
       paused: false,
       workerLimit: 4,
+      readOnlyLimit: 4,
       publishStatusComments: false,
       publishCloseoutComments: false,
       milestones: [

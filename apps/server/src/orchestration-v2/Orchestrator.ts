@@ -1,3 +1,4 @@
+import { isReadOnlyIssueRole } from "../issues/IssueEligibility.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -11959,10 +11960,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     threadId: ThreadId,
   ) {
     const shell = yield* projectionStore.getThreadShell(threadId);
-    if (shell?.linkedIssue === undefined || Option.isNone(issueWorkStore)) return;
-    const owner = yield* issueWorkStore.value.repositoryOwner(shell.linkedIssue);
-    if (owner === null) return;
-    for (const queuedThreadId of yield* issueWorkStore.value.workerThreads(owner.rootThreadId)) {
+    if (shell === null || Option.isNone(issueWorkStore)) return;
+    const rootThreadId = shell.lineage.rootThreadId;
+    if ((yield* issueWorkStore.value.configuration(rootThreadId)) === null) return;
+    for (const queuedThreadId of yield* issueWorkStore.value.admissionThreads(rootThreadId)) {
       if (
         queuedThreadId === threadId ||
         !(yield* projectionStore.canStartQueuedRun(queuedThreadId))
@@ -12040,7 +12041,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
           for (const threadId of yield* issueWorkStore.value
-            .workerThreads(command.threadId)
+            .admissionThreads(command.threadId)
             .pipe(mapDispatchError(command)))
             yield* mapDispatchError(command)(startNextQueuedRun(threadId));
         }
@@ -12151,7 +12152,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
           for (const threadId of yield* issueWorkStore.value
-            .workerThreads(command.threadId)
+            .admissionThreads(command.threadId)
             .pipe(mapDispatchError(command)))
             yield* mapDispatchError(command)(startNextQueuedRun(threadId));
         }
@@ -12196,7 +12197,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (command.type === "repository.work.continue" && Option.isSome(issueWorkStore)) {
         for (const threadId of yield* issueWorkStore.value
-          .workerThreads(command.threadId)
+          .admissionThreads(command.threadId)
           .pipe(mapDispatchError(command)))
           yield* mapDispatchError(command)(startNextQueuedRun(threadId));
       }
@@ -12206,7 +12207,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const shell = yield* projectionStore
           .getThreadShell(stored.event.threadId)
           .pipe(mapDispatchError(command));
-        if (shell?.linkedIssue !== undefined)
+        if (shell?.linkedIssue !== undefined || (shell !== null && isReadOnlyIssueRole(shell.role)))
           yield* mapDispatchError(command)(startNextQueuedRun(stored.event.threadId));
       }
       if (command.type === "notification.delivery.accept") {

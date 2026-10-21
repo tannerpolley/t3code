@@ -39,6 +39,9 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesCleanup)).toBe(AuthSourceControlWriteScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesSetState)).toBe(AuthSourceControlWriteScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesUnlink)).toBe(AuthOrchestrationOperateScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.issuesSetReadOnlyLimit)).toBe(
+      AuthOrchestrationOperateScope,
+    );
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesSetWorkerLimit)).toBe(
       AuthOrchestrationOperateScope,
     );

@@ -1,4 +1,5 @@
 import {
+  DEFAULT_REPOSITORY_WORK_SETTINGS,
   IssueWorkError,
   IssueWorkRequested,
   ProjectId,
@@ -13,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { readIssueQueue, readIssueQueueNotice, isIssueQueueNoticeRun } from "./IssueQueueStore.ts";
-import { openBlockerSuspensionReason } from "./IssueEligibility.ts";
+import { openBlockerSuspensionReason, readOnlyIssueRoles } from "./IssueEligibility.ts";
 
 const decodeConfiguration = Schema.decodeEffect(Schema.fromJsonString(RepositoryOrchestration));
 import * as SqlClient from "effect/sql/SqlClient";
@@ -62,6 +63,14 @@ export class IssueWorkStore extends Context.Service<
       rootThreadId: ThreadId,
     ) => Effect.Effect<RepositoryOrchestration | null, IssueWorkError>;
     readonly slotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
+    readonly readOnlySlotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
+    readonly admissionThreads: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
+    readonly canAdmitReadOnly: (
+      rootThreadId: ThreadId,
+      threadId: ThreadId,
+    ) => Effect.Effect<boolean, IssueWorkError>;
     readonly activeRoots: () => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly subtreeDrained: (rootThreadId: ThreadId) => Effect.Effect<boolean, IssueWorkError>;
     readonly hasUnsettledRestartContinuation: (
@@ -133,7 +142,7 @@ export const layer = Layer.effect(
     const mapError = (cause: unknown) =>
       new IssueWorkError({ code: "orchestration-error", message: String(cause) });
     // A slot covers a managed worker preparing/running/waiting or awaiting a person's response.
-    // Queued workers, read-only children and completed workers (even with open PRs) hold no slot.
+    // Queued and completed workers (even with open PRs) hold no worker slot; read-only children use their own pool.
     // Keep displayed occupancy and admission identical; `thread` is the worker alias.
     const usesWorkerSlot = sql`(EXISTS (
       SELECT 1 FROM orchestration_v2_projection_runs run
@@ -150,7 +159,62 @@ export const layer = Layer.effect(
       SELECT thread_id FROM orchestration_v2_effect_outbox
       WHERE status IN ('pending', 'running') AND effect_type = 'provider-runtime.continue'
     `;
+    const isReadOnly = sql`json_extract(thread.payload_json, '$.role') IN ${sql.in(readOnlyIssueRoles)}
+      AND json_extract(thread.payload_json, '$.lineage.relationshipToParent') = 'subagent'`;
+    // Run rowids preserve committed request order even when timestamps tie (including restart continuations).
+    const readOnlyQueue = (rootThreadId: ThreadId) => sql`
+      SELECT run.thread_id, min(run.rowid) AS position FROM orchestration_v2_projection_runs run
+      JOIN orchestration_v2_projection_threads thread ON thread.thread_id = run.thread_id
+      WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+        AND ${isReadOnly} AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
+        AND run.status = 'queued' AND coalesce(json_extract(run.payload_json, '$.queueHeld'), 0) = 0
+        AND coalesce(json_extract(thread.payload_json, '$.lastErrorClass'), '') <> 'usage_limit'
+        AND NOT ${usesWorkerSlot}
+      GROUP BY run.thread_id
+    `;
     return IssueWorkStore.of({
+      readOnlySlotsInUse: (rootThreadId) =>
+        sql<{
+          active: number;
+        }>`SELECT count(*) AS active FROM orchestration_v2_projection_threads thread
+          WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+            AND ${isReadOnly} AND ${usesWorkerSlot}`.pipe(
+          Effect.map((rows) => rows[0]!.active),
+          Effect.mapError(mapError),
+        ),
+      canAdmitReadOnly: (rootThreadId, threadId) =>
+        sql<{ allowed: number }>`
+          SELECT (
+            (SELECT count(*) FROM orchestration_v2_projection_threads thread
+              WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+                AND thread.thread_id <> ${threadId} AND ${isReadOnly} AND ${usesWorkerSlot})
+              < coalesce(json_extract(root.payload_json, '$.repositoryOrchestration.readOnlyLimit'), ${DEFAULT_REPOSITORY_WORK_SETTINGS.readOnlyLimit})
+            AND (coalesce(json_extract(root.payload_json, '$.repositoryOrchestration.paused'), 0) = 0
+              OR json_extract(root.payload_json, '$.repositoryOrchestration.handoff.status') = 'draining')
+            AND NOT EXISTS (SELECT 1 FROM (${readOnlyQueue(rootThreadId)}) queued
+              WHERE queued.thread_id <> ${threadId} AND queued.position < coalesce(
+                (SELECT min(rowid) FROM orchestration_v2_projection_runs
+                  WHERE thread_id = ${threadId} AND status = 'queued'), 9223372036854775807))
+          ) AS allowed FROM orchestration_v2_projection_threads root WHERE root.thread_id = ${rootThreadId}
+        `.pipe(
+          Effect.map((rows) => rows[0]?.allowed === 1),
+          Effect.mapError(mapError),
+        ),
+      admissionThreads: (rootThreadId) =>
+        sql<{ thread_id: string }>`
+          SELECT thread.thread_id FROM orchestration_v2_projection_threads thread
+          LEFT JOIN (${readOnlyQueue(rootThreadId)}) queued ON queued.thread_id = thread.thread_id
+          WHERE json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+            AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
+            AND (${isReadOnly} OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work work
+              JOIN orchestration_v2_projection_repository_orchestration owner
+                ON owner.host = work.host AND owner.repository_id = work.repository_id
+              WHERE work.owner_thread_id = thread.thread_id AND owner.root_thread_id = ${rootThreadId}))
+          ORDER BY queued.position, thread.created_at, thread.thread_id
+        `.pipe(
+          Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
+          Effect.mapError(mapError),
+        ),
       isQueueNoticeRun: (threadId, runId) =>
         isIssueQueueNoticeRun(threadId, runId).pipe(
           Effect.provideService(SqlClient.SqlClient, sql),
