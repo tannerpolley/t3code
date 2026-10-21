@@ -16,6 +16,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as IssueInbox from "./IssueInbox.ts";
 import { classifyWrite, parseSourceMarker, sourceMarker } from "./IssueInboxRules.ts";
 import { isoSeconds } from "./IssueInboxWatcher.ts";
+import * as IssueWorkService from "./IssueWorkService.ts";
 import * as IssueService from "./IssueService.ts";
 
 const root = ThreadId.make("root-b");
@@ -165,20 +166,24 @@ function fakeThreads(onDispatch: () => Effect.Effect<void> = () => Effect.void) 
   return { dispatched, failNext: () => void failures++, service };
 }
 
-const projects = Layer.mock(ProjectService.ProjectService)({
-  getById: (projectId) =>
-    Effect.succeed(
-      Option.some({
-        title: projectId === "project-b" ? "B" : "Amine Thermodynamics",
-        repositoryIdentity: {
-          provider: "github",
-          canonicalKey: projectId === "project-b" ? "github.com/acme/b" : "github.com/acme/a",
-          displayName: projectId === "project-b" ? "acme/b" : "acme/a",
-          locator: { source: "git-remote", remoteName: "origin", remoteUrl: "git@github.com:x" },
-        },
-      } as never),
-    ),
-});
+const projects = Layer.mergeAll(
+  Layer.mock(IssueWorkService.IssueWorkService)({}),
+  Layer.mock(ProjectService.ProjectService)({
+    listShells: () => Effect.succeed([]),
+    getById: (projectId) =>
+      Effect.succeed(
+        Option.some({
+          title: projectId === "project-b" ? "B" : "Amine Thermodynamics",
+          repositoryIdentity: {
+            provider: "github",
+            canonicalKey: projectId === "project-b" ? "github.com/acme/b" : "github.com/acme/a",
+            displayName: projectId === "project-b" ? "acme/b" : "acme/a",
+            locator: { source: "git-remote", remoteName: "origin", remoteUrl: "git@github.com:x" },
+          },
+        } as never),
+      ),
+  }),
+);
 
 const seedRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

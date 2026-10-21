@@ -1,6 +1,6 @@
 /**
- * The cross-project issue inbox: records external GitHub issue activity for each repository with
- * a repository orchestrator (IssueInboxWatcher), wakes it with digests, and backs
+ * The cross-project issue inbox: records external GitHub issue activity for project repositories
+ * (IssueInboxWatcher), registers a lead when marked work arrives, wakes it with digests, and backs
  * `t3_issue_post`, `t3_issue_inbox` and the inbox RPCs. Its own scheduler source polls.
  */
 import {
@@ -49,6 +49,8 @@ import {
   projectSlug,
   sourceMarker,
 } from "./IssueInboxRules.ts";
+import { IssueWorkService } from "./IssueWorkService.ts";
+import { IssueService } from "./IssueService.ts";
 import * as Watcher from "./IssueInboxWatcher.ts";
 
 const POLL_INTERVAL_MS = 2 * 60_000;
@@ -133,13 +135,15 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const threads = yield* ThreadManagementService;
   const projects = yield* ProjectService;
+  const issueWork = yield* IssueWorkService;
+  const issues = yield* IssueService;
   const changes = yield* PubSub.sliding<void>(1);
   const deliveries = yield* KeyedLock.make<string>();
   const changed = PubSub.publish(changes, undefined);
   const watcher = yield* Watcher.make;
   const nowIso = Clock.currentTimeMillis.pipe(Effect.map(Watcher.isoSeconds));
 
-  const watched = sql<{
+  const registered = sql<{
     host: string;
     repository_id: string;
     repository: string;
@@ -160,9 +164,40 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const watched = Effect.gen(function* () {
+    const repositories = [...(yield* registered)];
+    for (const project of yield* projects.listShells()) {
+      const identity = project.repositoryIdentity;
+      if (identity?.provider !== "github") continue;
+      const host = pullRequestHostOf(
+        identity,
+        SourceControlProviderKind.make("github"),
+      ).toLowerCase();
+      const repository = identity.origin?.displayName ?? sourceControlRepositorySelector(identity);
+      if (
+        repository === null ||
+        repositories.some(
+          (repo) =>
+            repo.host === host && repo.repository.toLowerCase() === repository.toLowerCase(),
+        )
+      )
+        continue;
+      // A paused or archived owner must not be replaced or woken by Inbox discovery.
+      if ((yield* issueWork.repositoryStatus({ host, repository })).rootThreadId !== null) continue;
+      yield* issues.repositoryIdentity({ host, repository }).pipe(
+        Effect.tap((repo) => Effect.sync(() => repositories.push({ ...repo, rootThreadId: null }))),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Issue inbox repository discovery failed", { repository, cause }),
+        ),
+      );
+    }
+    return repositories;
+  });
+
   // Serialize retries through dispatch too: a pending row must not be sent by overlapping polls.
   const deliverDigest = Effect.fn("IssueInbox.deliverDigest")(
     function* (repo: Watcher.WatchedRepository) {
+      if (repo.rootThreadId === null) return;
       const [digest] = yield* sql.withTransaction(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
@@ -259,9 +294,18 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     if (now < nextPollAt) return;
     nextPollAt = now + POLL_INTERVAL_MS;
-    for (const repo of yield* watched) {
+    for (let repo of yield* watched) {
       yield* Effect.gen(function* () {
         if ((yield* watcher.poll(repo)) > 0) yield* changed;
+        if (repo.rootThreadId === null) {
+          const [pending] = yield* sql`SELECT event_id FROM issue_inbox_events
+            WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId} AND tagged = 1 AND read_at IS NULL LIMIT 1`;
+          if (pending !== undefined) {
+            const registered = yield* issueWork.ensureOrchestrator(repo);
+            repo = { ...repo, rootThreadId: registered.rootThreadId };
+            if (repo.rootThreadId !== null) yield* changed;
+          }
+        }
         yield* watcher.enforceLabels(repo);
       }).pipe(
         Effect.catchCause((cause) =>

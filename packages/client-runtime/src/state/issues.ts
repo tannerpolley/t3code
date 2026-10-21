@@ -199,6 +199,12 @@ export function createIssueEnvironmentAtoms<R, E>(
       label: "environment-data:issues:pause",
       tag: WS_METHODS.issuesSetPaused,
     }),
+    assignOrchestrator: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:issues:assign-orchestrator",
+      tag: WS_METHODS.issuesAssignOrchestrator,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.update(localChanges(environmentId), (revision) => revision + 1)),
+    }),
     handoff: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:handoff",
       tag: WS_METHODS.issuesHandoff,

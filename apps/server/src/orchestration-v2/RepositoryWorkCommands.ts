@@ -358,23 +358,51 @@ export function makeRepositoryWorkCommands({
         });
       const now = yield* DateTime.now;
       const nextThreadId = config.handoff.nextThreadId;
-      yield* dispatchThreadCreate(
-        {
-          type: "thread.create",
+      const existing = yield* projectionStore
+        .getThreadShell(nextThreadId)
+        .pipe(mapDispatchError(command));
+      const existingConfig =
+        existing === null
+          ? undefined
+          : (yield* projectionStore.getThread(nextThreadId).pipe(mapDispatchError(command)))
+              .repositoryOrchestration;
+      if (
+        existing !== null &&
+        (existing.id === shell.id ||
+          existing.projectId !== shell.projectId ||
+          existing.archivedAt !== null ||
+          existing.deletedAt !== null ||
+          existing.lineage.parentThreadId !== null ||
+          existing.lineage.rootThreadId !== existing.id ||
+          existing.linkedIssue !== undefined ||
+          existing.worktreePath !== null ||
+          (existingConfig !== undefined &&
+            (existingConfig.host !== config.host ||
+              existingConfig.repositoryId !== config.repositoryId)))
+      )
+        return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
-          threadId: nextThreadId,
-          projectId: shell.projectId,
-          title: shell.title,
-          modelSelection: config.handoff.modelSelection,
-          runtimeMode: shell.runtimeMode,
-          interactionMode: shell.interactionMode,
-          branch: shell.branch,
-          worktreePath: shell.worktreePath,
-          createdBy: "user",
-          creationSource: "server",
-        },
-        events,
-      );
+          commandType: command.type,
+          cause: "Select an existing active top-level thread in the same repository project.",
+        });
+      if (existing === null)
+        yield* dispatchThreadCreate(
+          {
+            type: "thread.create",
+            commandId: command.commandId,
+            threadId: nextThreadId,
+            projectId: shell.projectId,
+            title: shell.title,
+            modelSelection: config.handoff.modelSelection,
+            runtimeMode: shell.runtimeMode,
+            interactionMode: shell.interactionMode,
+            branch: shell.branch,
+            worktreePath: shell.worktreePath,
+            createdBy: "user",
+            creationSource: "server",
+          },
+          events,
+        );
       const next = (yield* getProjectionWithPendingEvents(nextThreadId, events)).thread;
       const emitEvent = emit(events, command);
       yield* emitEvent({
@@ -420,7 +448,7 @@ export function makeRepositoryWorkCommands({
           messageId: idAllocator.derive.delegatedTaskMessage({ commandId: command.commandId }),
           text: `You now own repository orchestration for ${config.repository}. The previous root ${command.threadId} has drained; its children and history retain their original lineage.\n\nHandoff summary:\n${config.handoff.summary}\n\nServer recovery inventory:\n${command.inventory}\n\nContinue the approved repository work through the existing issue tools. Review completed attempts and pending changes before admitting successors. ${config.handoff.wasPaused ? "Repository work remains paused until the user resumes it." : "Repository admissions may resume under this root."}`,
           attachments: [],
-          dispatchMode: { type: "start_immediately" },
+          dispatchMode: { type: "queue_after_active" },
           createdBy: "user",
           creationSource: "server",
         },

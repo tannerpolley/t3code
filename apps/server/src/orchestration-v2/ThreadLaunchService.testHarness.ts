@@ -216,7 +216,13 @@ function makeHarness(options: HarnessOptions = {}) {
       getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
-      listShells: () => Effect.die("unused"),
+      listShells: () =>
+        Effect.succeed(
+          [project, otherProject].map((entry) => ({
+            ...entry,
+            repositoryIdentity: options.projectRepositoryIdentity ?? entry.repositoryIdentity,
+          })),
+        ),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,

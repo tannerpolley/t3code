@@ -2,6 +2,7 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
+  | "make-repository-orchestrator"
   | "new-thread-on-branch"
   | "filter-by-project"
   | "project-settings"
@@ -64,6 +65,7 @@ export function buildDraftActionMenuItems(options: {
 }
 
 export interface ThreadActionMenuState {
+  readonly repositoryOrchestrator?: ContextMenuItem<"make-repository-orchestrator">;
   readonly canOperate: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
@@ -105,6 +107,7 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.repositoryOrchestrator ? [state.repositoryOrchestrator] : []),
     ...(state.branch
       ? [
           {

@@ -3,7 +3,7 @@
  * records the external part in the inbox tables. Body edits are not tracked. Conditional page-1
  * reads keep an unchanged repository free.
  */
-import { CommandId, type IssueInboxEventKind, type ThreadId } from "@t3tools/contracts";
+import { CommandId, type IssueInboxEventKind, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -83,7 +83,7 @@ export interface WatchedRepository {
   readonly host: string;
   readonly repositoryId: string;
   readonly repository: string;
-  readonly rootThreadId: ThreadId;
+  readonly rootThreadId: ThreadId | null;
 }
 
 interface NewEvent {
@@ -383,7 +383,8 @@ export const make = Effect.gen(function* () {
           commandId: CommandId.make(
             `issue-inbox-closed:${repo.host}:${repo.repositoryId}:${repo.rootThreadId}:${entry.requestId}`,
           ),
-          threadId: repo.rootThreadId,
+          threadId:
+            repo.rootThreadId ?? ThreadId.make(`issue-queue:${repo.host}:${repo.repositoryId}`),
           issue: entry.issue,
           queued: false,
         });
