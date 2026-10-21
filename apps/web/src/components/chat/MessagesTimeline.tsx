@@ -4338,6 +4338,7 @@ function UserMessageElementDetails({
 }
 
 interface UserMessageContextRenderContext {
+  threadRef: ScopedThreadRef | null;
   reference: ChatMarkdownContextReference;
   annotationImage: ChatImageAttachment | null;
   attachment: ChatImageAttachment | ChatFileAttachment | null;
@@ -4370,7 +4371,11 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
       canRender: (record) => record.kind === "issue",
       render: (record, context) =>
         record.kind === "issue" ? (
-          <IssueContextChip record={record} copyMarkdown={context.copyMarkdown} />
+          <IssueContextChip
+            record={record}
+            copyMarkdown={context.copyMarkdown}
+            threadRef={context.threadRef}
+          />
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),
@@ -4589,13 +4594,14 @@ function UserMessageContextReferenceChip(props: {
   onExpandVideo: (file: ChatFileAttachment) => void;
   onOpenFile: (file: ChatFileAttachment) => void;
 }) {
-  const { resolvedTheme } = use(TimelineRowCtx);
+  const { resolvedTheme, threadRef } = use(TimelineRowCtx);
   const copyMarkdown = formatComposerContextReference({
     kind: props.reference.kind,
     contextId: props.reference.contextId as ComposerContextId,
     label: props.reference.label,
   });
   return userMessageContextPresentationRegistry.render(props.reference.kind, props.record, {
+    threadRef,
     reference: props.reference,
     annotationImage: props.annotationImage,
     attachment: props.attachment,
