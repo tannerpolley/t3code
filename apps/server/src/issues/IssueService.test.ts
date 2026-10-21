@@ -699,6 +699,42 @@ it.effect(
     }),
 );
 
+it.effect.each([true, false])(
+  "updates cached issue and milestone pagination when a 304 changes hasNextPage to %s",
+  (hasNextPage) =>
+    Effect.gen(function* () {
+      const next = { link: `<https://${HOST}/pages?page=2>; rel="next"` };
+      const last = { link: `<https://${HOST}/pages?page=1>; rel="prev"` };
+      const harness = makeHarness({
+        responses: [
+          httpResponse([rawIssue(7)], { etag: '"issues"', ...(!hasNextPage ? next : {}) }),
+          httpResponse([rawMilestone(1)], { etag: '"milestones"', ...(!hasNextPage ? next : {}) }),
+          httpResponse({ data: {} }),
+          { status: 304, body: null, headers: hasNextPage ? next : last },
+          { status: 304, body: null, headers: hasNextPage ? next : last },
+          httpResponse({ data: {} }),
+          { status: 304, body: null },
+          { status: 304, body: null },
+          httpResponse({ data: {} }),
+        ],
+      });
+      const issues = yield* service(harness);
+      const first = yield* issues.list(listInput);
+      assert.equal(first.issuesComplete, hasNextPage);
+      assert.equal(first.milestonesComplete, hasNextPage);
+      for (let index = 0; index < 2; index++) {
+        const warm = yield* issues.list(listInput);
+        assert.deepEqual(warm.issues, first.issues);
+        assert.deepEqual(warm.milestones, first.milestones);
+        assert.equal(warm.issuesComplete, !hasNextPage);
+        assert.equal(warm.milestonesComplete, !hasNextPage);
+        assert.equal(warm.nextCursor !== null, hasNextPage);
+      }
+      assert.equal(harness.calls[6]!.ifNoneMatch, '"issues"');
+      assert.equal(harness.calls[7]!.ifNoneMatch, '"milestones"');
+    }),
+);
+
 it.effect("a changed 200 replaces each cached page and its ETag and pagination", () =>
   Effect.gen(function* () {
     const harness = makeHarness({

@@ -10,12 +10,14 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runtimeRequestNeedsUser } from "@t3tools/provider-core/server/subagentProjection";
 import {
   legacyThreadPullRequestKey,
@@ -129,7 +131,7 @@ const make = Effect.gen(function* () {
     const rows = yield* sql<{ issue_number: number; thread_id: string }>`
       SELECT issue_number, thread_id FROM issue_thread_links
       WHERE host = ${host} AND repository = ${repository}
-    `.pipe(Effect.mapError(storageError));
+    `.pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
     const issueNumbers = list.issues.map((issue) => issue.number);
     const prRefs = list.issues.flatMap((issue) => issue.pullRequestRefs ?? []);
     const prRefsJson = yield* encodePrRefs(prRefs).pipe(Effect.mapError(storageError));
@@ -148,17 +150,23 @@ const make = Effect.gen(function* () {
             prRefsJson,
             prRefs.length > 0,
             list.issues.some((issue) => issue.state === "closed"),
-          ).pipe(Effect.mapError(storageError));
-    const snapshot =
-      candidates.length === 0
-        ? { threads: [], archivedThreads: [] }
-        : yield* projections
-            .getShellSnapshot({
-              threadIds: candidates.map(({ thread_id }) => ThreadId.make(thread_id)),
-            })
-            .pipe(Effect.mapError(storageError));
+          ).pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
+    // Commit each reader transaction before decoding so writers and WAL truncation can proceed.
+    const snapshots = yield* Effect.forEach(Arr.chunksOf(candidates, 32), (chunk) =>
+      sql
+        .withTransaction(
+          projections.readShellSnapshot({
+            threadIds: chunk.map(({ thread_id }) => ThreadId.make(thread_id)),
+          }),
+        )
+        .pipe(NodeSqliteClient.readOnly, Effect.flatten, Effect.mapError(storageError)),
+    );
     const shells = new Map(
-      [...snapshot.threads, ...snapshot.archivedThreads].map((thread) => [thread.id, thread]),
+      snapshots.flatMap((snapshot) =>
+        [...snapshot.threads, ...snapshot.archivedThreads].map(
+          (thread) => [thread.id, thread] as const,
+        ),
+      ),
     );
     const threads = candidates.flatMap(({ thread_id }) => {
       const thread = shells.get(ThreadId.make(thread_id));
