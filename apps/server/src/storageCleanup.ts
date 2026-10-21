@@ -48,7 +48,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
-import { canonicalWorkspacePath } from "./workspace/workspacePath.ts";
+import { canonicalWorkspacePath, physicalWorkspacePath } from "./workspace/workspacePath.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -749,7 +749,8 @@ const make = Effect.gen(function* () {
       ? { ...configured, worktreeKeepWhen: "any-local-files" as const }
       : configured;
     if (!explicit && !worktreeCleanupEnabled(settings)) return [];
-    const worktreePath = path.resolve(thread.worktreePath!);
+    // Physical, so later path joins can't re-collapse `..` after a symlink lexically.
+    const worktreePath = yield* Effect.try(() => physicalWorkspacePath(thread.worktreePath!));
     const worktreeIdentity = yield* canonicalPath(thread.worktreePath!);
     const activityAt = Math.max(...group.map(storageCleanupActivityAt));
     const deleted = "workspaceRoot" in thread;
@@ -785,8 +786,9 @@ const make = Effect.gen(function* () {
       if (yield* hasTerminal(worktreeIdentity, canonicalPath)) return keep("open terminal");
       // Roots are canonical, so compare canonical paths. A symlinked parent
       // (a linked drive) is fine; a symlinked worktree directory is not.
-      const realParent = yield* canonicalPath(path.dirname(worktreePath));
-      if (worktreeIdentity !== pathKey(path.join(realParent, path.basename(worktreePath))))
+      // The stored path's own parent and name: its physical form has already followed the link.
+      const realParent = yield* canonicalPath(path.dirname(thread.worktreePath!));
+      if (worktreeIdentity !== pathKey(path.join(realParent, path.basename(thread.worktreePath!))))
         return keep("worktree is a symbolic link");
       if (!roots.some((root) => inside(root, worktreeIdentity)))
         return keep("outside the managed worktree folder");

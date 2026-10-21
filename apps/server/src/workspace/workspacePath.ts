@@ -15,12 +15,17 @@ const isMissing = (error: unknown) =>
  * deepest existing ancestor, so the identity is the same before and after the checkout exists.
  */
 export function canonicalWorkspacePath(target: string, isWindows: boolean): string {
+  const physical = physicalWorkspacePath(target);
+  return isWindows ? physical.toLowerCase() : physical;
+}
+
+/** The same physical path without case folding, for filesystem and git operations. */
+export function physicalWorkspacePath(target: string): string {
   const absolute = NodePath.isAbsolute(target)
     ? target
     : `${process.cwd()}${NodePath.sep}${target}`;
-  const fold = (value: string) => (isWindows ? value.toLowerCase() : value);
   try {
-    return fold(NodeFS.realpathSync.native(absolute));
+    return NodeFS.realpathSync.native(absolute);
   } catch (error) {
     if (!isMissing(error)) throw error;
   }
@@ -42,8 +47,8 @@ export function canonicalWorkspacePath(target: string, isWindows: boolean): stri
     } catch (error) {
       if (!isMissing(error)) throw error;
       // Nothing below a missing directory exists, so the rest can be joined as text.
-      return fold(NodePath.join(current, ...parts.slice(index)));
+      return NodePath.join(current, ...parts.slice(index));
     }
   }
-  return fold(current);
+  return current;
 }
