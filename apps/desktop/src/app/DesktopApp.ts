@@ -148,13 +148,17 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
   handleFatalStartupError(stage, Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
 
+// Outlasts the backend's 10 s kill grace, so quit sees a hung backend killed
+// instead of leaving it holding the database, and stays inside the 20 s quit deadline.
+const QUIT_BACKEND_STOP_TIMEOUT = Duration.seconds(12);
+
 export const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
   function* (): Effect.fn.Return<void, never, DesktopBackendPool.DesktopBackendPool> {
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
     const instances = yield* pool.list;
     yield* Effect.forEach(
       instances,
-      (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+      (instance) => instance.stop({ timeout: QUIT_BACKEND_STOP_TIMEOUT }),
       { concurrency: "unbounded" },
     );
   },
