@@ -641,11 +641,13 @@ it.effect("acknowledged events are excluded from throttled and retried digests",
     yield* nextPoll(inbox);
     assert.equal(threads.dispatched.length, 1);
     github.data.comments = [comment(1, 5, amineMarker)];
+    threads.failNext();
     yield* nextPoll(inbox);
+    assert.equal(threads.dispatched.length, 2);
     yield* inbox.markRead(repo);
     yield* TestClock.adjust("16 minutes");
     yield* inbox.pollDue;
-    assert.equal(threads.dispatched.length, 1);
+    assert.equal(threads.dispatched.length, 2);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
@@ -673,7 +675,12 @@ it.effect(
       }
       yield* sql`INSERT INTO issue_inbox_digests (host, repository_id, text, created_at)
       VALUES ('github.com', '42', 'Stale digest', ${at(1)})`;
+      yield* sql`INSERT INTO issue_inbox_digests (host, repository_id, text, created_at, delivered_at)
+      VALUES ('github.com', '42', 'Delivered digest', ${at(-1)}, ${at(-1)})`;
       yield* runMigrations();
+      assert.deepEqual(yield* sql`SELECT text FROM issue_inbox_digests`, [
+        { text: "Delivered digest" },
+      ]);
       const github = fakeGitHub();
       github.data.comments = [
         comment(1, 5, "Unmarked on external issue"),
@@ -699,4 +706,89 @@ it.effect(
         assert.notInclude(digest.text, "closed");
       }
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.effect("turn-start notes share a 15-minute cooldown and retain skipped marked comments", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const { inbox, threads } = yield* setup();
+    const add = (number: number) => sql`INSERT INTO issue_inbox_events
+      (host, repository_id, repository, event_key, issue_number, issue_title, kind, source_project,
+       tagged, high_priority, needs_triage, url, snippet, occurred_at)
+      VALUES ('github.com', '42', 'acme/b', ${`comment:${number}`}, ${number}, 'Cross project',
+       'comment', 'amine', 1, 1, 0, 'https://github.com/acme/b/issues/1', '', ${at(1)})`;
+    const store = yield* InlineShellStore;
+    const deliver = (id: string) =>
+      store.deliver(
+        {
+          threadId: root,
+          deliveryId: id,
+          runId: RunId.make(id),
+          attemptId: null,
+          providerTurnId: null,
+          messageId: MessageId.make(id),
+          text: "Continue",
+          compact: false,
+          turnStart: true,
+        },
+        Effect.succeed,
+      );
+    yield* add(1);
+    const first = yield* deliver("one");
+    yield* TestClock.adjust("2 minutes");
+    yield* add(2);
+    const second = yield* deliver("two");
+    assert.include(first, "Issue inbox:");
+    assert.notInclude(second, "Issue inbox:");
+    yield* inbox.pollDue;
+    assert.lengthOf(threads.dispatched, 0, "turn-start delivery also throttles digests");
+    yield* TestClock.adjust("13 minutes");
+    const third = yield* deliver("three");
+    assert.include(third, "Issue inbox:");
+    assert.include(third, "#2 comment");
+    assert.notInclude(third, "#1 comment");
+  }).pipe(Effect.provide(inlineShellLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))),
+);
+
+it.effect("a delayed digest retry starts the next cooldown at successful delivery", () =>
+  Effect.gen(function* () {
+    const { inbox, github, threads } = yield* setup();
+    github.data.issues = [issue(5, amineMarker)];
+    threads.failNext();
+    yield* nextPoll(inbox); // fails at t=2, leaves created_at=t=2
+    yield* TestClock.adjust("16 minutes");
+    yield* inbox.pollDue; // succeeds at t=18
+    github.data.comments = [comment(1, 5, amineMarker, { created_at: at(19), updated_at: at(19) })];
+    yield* nextPoll(inbox); // t=20: two minutes after the retry succeeded
+    assert.equal(threads.dispatched.length, 2);
+    const store = yield* InlineShellStore;
+    const note = yield* store.deliver(
+      {
+        threadId: root,
+        deliveryId: "after-retry",
+        runId: RunId.make("after-retry"),
+        attemptId: null,
+        providerTurnId: null,
+        messageId: MessageId.make("after-retry"),
+        text: "Continue",
+        compact: false,
+        turnStart: true,
+      },
+      Effect.succeed,
+    );
+    assert.notInclude(note, "Issue inbox:", "digest delivery also throttles turn-start notes");
+    yield* TestClock.adjust("12 minutes");
+    yield* inbox.pollDue; // t=32: still before the cooldown ends
+    assert.equal(threads.dispatched.length, 2);
+    yield* TestClock.adjust("2 minutes");
+    yield* inbox.pollDue; // t=34: polling resumes after the 15-minute cooldown
+    assert.equal(threads.dispatched.length, 3);
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{
+      delivered_at: string;
+    }>`SELECT delivered_at FROM issue_inbox_digests ORDER BY digest_id`;
+    assert.equal(rows.length, 2);
+    assert.equal(Date.parse(rows[0]!.delivered_at), Date.parse(at(18)));
+    assert.equal(Date.parse(rows[1]!.delivered_at), Date.parse(at(34)));
+  }).pipe(Effect.provide(inlineShellLayer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))),
 );

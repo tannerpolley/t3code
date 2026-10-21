@@ -169,18 +169,15 @@ export const layer = Layer.effect(
           const result = yield* send(
             [inbox.text, selected.text, input.text].filter((part) => part !== "").join("\n\n"),
           );
-          yield* markInboxNoted(sql, inbox.ids, input.deliveryId).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Issue inbox note was sent but not recorded", { cause }),
-            ),
-          );
-          if (selected.ids.length > 0) {
+          if (selected.ids.length > 0 || inbox.ids.length > 0) {
             const now = yield* DateTime.now;
             yield* sql
               .withTransaction(
                 Effect.gen(function* () {
                   yield* sql`INSERT INTO inline_shell_delivery_events (delivery_id, thread_id, run_id, attempt_id, provider_turn_id, message_id, record_ids_json, created_at) SELECT ${input.deliveryId}, ${input.threadId}, ${input.runId}, ${input.attemptId}, ${input.providerTurnId}, ${input.messageId}, ${encodeIds(selected.ids)}, ${DateTime.formatIso(now)} WHERE ${activeThread(input.threadId)} ON CONFLICT(delivery_id) DO NOTHING`;
-                  yield* sql`UPDATE inline_shell_runs SET delivered_by = ${input.deliveryId} WHERE thread_id = ${input.threadId} AND run_id IN ${sql.in(selected.ids)} AND delivered_by IS NULL AND ${activeThread(input.threadId)}`;
+                  yield* markInboxNoted(sql, inbox.ids, input.deliveryId);
+                  if (selected.ids.length > 0)
+                    yield* sql`UPDATE inline_shell_runs SET delivered_by = ${input.deliveryId} WHERE thread_id = ${input.threadId} AND run_id IN ${sql.in(selected.ids)} AND delivered_by IS NULL AND ${activeThread(input.threadId)}`;
                 }),
               )
               .pipe(wrap(input.threadId));

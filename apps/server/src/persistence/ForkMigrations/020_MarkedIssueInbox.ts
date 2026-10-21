@@ -15,11 +15,11 @@ export default Effect.gen(function* () {
     WHERE read_at IS NULL AND (
       kind <> 'issue_opened' OR source_project IS NULL OR source_project = ''
     )`;
-  // Retire stale digest text, retaining its timestamp so the notification throttle survives upgrade.
+  // Retire unsent stale text without counting it as a successful notification.
   yield* sql`UPDATE issue_inbox_events SET noted_by = NULL WHERE read_at IS NULL AND noted_by IN (
     SELECT 'digest:' || digest_id FROM issue_inbox_digests WHERE delivered_at IS NULL
   )`;
-  yield* sql`UPDATE issue_inbox_digests SET delivered_at = created_at WHERE delivered_at IS NULL`;
+  yield* sql`DELETE FROM issue_inbox_digests WHERE delivered_at IS NULL`;
   yield* sql`DROP TABLE issue_inbox_own_writes`;
   yield* sql`DROP TABLE issue_inbox_write_receipts`;
 });

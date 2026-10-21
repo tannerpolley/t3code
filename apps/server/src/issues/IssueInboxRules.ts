@@ -4,8 +4,12 @@
  * comes from another project's marker, never from the GitHub login.
  */
 import type { IssueInboxEventKind } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
+
+export const DIGEST_INTERVAL_MS = 15 * 60_000;
 
 export const CROSS_PROJECT_LABEL = "cross-project";
 export const EXTERNAL_LABEL = "external";
@@ -170,12 +174,42 @@ export const noteEvent = (row: NoteRow): NoteEvent => ({
   needsTriage: row.needs_triage === 1,
 });
 
+/** Both notification paths use successful deliveries, including notes with no shell output. */
+export const inboxNotificationDue = Effect.fn("IssueInboxRules.notificationDue")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: string,
+) {
+  const cutoff = DateTime.formatIso(
+    DateTime.makeUnsafe((yield* Clock.currentTimeMillis) - DIGEST_INTERVAL_MS),
+  );
+  const [row] = yield* sql<{ due: number }>`
+    SELECT COALESCE(MAX(julianday(notified_at)) <= julianday(${cutoff}), 1) AS due
+    FROM (
+      SELECT d.delivered_at AS notified_at FROM issue_inbox_digests d
+      JOIN orchestration_v2_projection_repository_orchestration o
+        ON o.host = d.host AND o.repository_id = d.repository_id
+      WHERE o.root_thread_id = ${threadId}
+      UNION ALL
+      SELECT d.created_at AS notified_at FROM inline_shell_delivery_events d
+      JOIN issue_inbox_events e ON e.noted_by = d.delivery_id
+      JOIN orchestration_v2_projection_repository_orchestration o
+        ON o.host = e.host AND o.repository_id = e.repository_id
+      WHERE o.root_thread_id = ${threadId}
+    )
+  `;
+  return row?.due === 1;
+});
+
 /**
  * The inbox line a repository orchestrator's next turn carries, and the events it covers. Other
  * threads get an empty note. Turn starts call this through the inline shell delivery hook.
  */
-export const pendingInboxNote = (sql: SqlClient.SqlClient, threadId: string) =>
-  sql<NoteRow>`
+export const pendingInboxNote = Effect.fn("IssueInboxRules.pendingNote")(function* (
+  sql: SqlClient.SqlClient,
+  threadId: string,
+) {
+  if (!(yield* inboxNotificationDue(sql, threadId))) return { ids: [], text: "" };
+  return yield* sql<NoteRow>`
     SELECT e.event_id, e.repository, e.issue_number, e.kind, e.source_project, e.needs_triage
     FROM orchestration_v2_projection_repository_orchestration o
     JOIN issue_inbox_events e ON e.host = o.host AND e.repository_id = o.repository_id
@@ -187,6 +221,7 @@ export const pendingInboxNote = (sql: SqlClient.SqlClient, threadId: string) =>
       text: rows.length === 0 ? "" : turnNoteText(rows.map(noteEvent)),
     })),
   );
+});
 
 export const markInboxNoted = (
   sql: SqlClient.SqlClient,

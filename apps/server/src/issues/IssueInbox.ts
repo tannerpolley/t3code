@@ -26,6 +26,7 @@ import {
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -42,6 +43,7 @@ import {
   HIGH_PRIORITY_LABEL,
   digestText,
   fromLabel,
+  inboxNotificationDue,
   noteEvent,
   projectSlug,
   sourceMarker,
@@ -49,7 +51,6 @@ import {
 import * as Watcher from "./IssueInboxWatcher.ts";
 
 const POLL_INTERVAL_MS = 2 * 60_000;
-export const DIGEST_INTERVAL_MS = 15 * 60_000;
 const RawCreated = Schema.Struct({
   id: Schema.Number,
   number: Schema.optional(Schema.Number),
@@ -165,6 +166,7 @@ export const make = Effect.gen(function* () {
   const deliverDigest = Effect.fn("IssueInbox.deliverDigest")(function* (
     repo: Watcher.WatchedRepository,
   ) {
+    if (!(yield* inboxNotificationDue(sql, repo.rootThreadId))) return;
     let pending = yield* sql<{ digest_id: number; text: string }>`
         SELECT digest_id, text FROM issue_inbox_digests
         WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId} AND delivered_at IS NULL
@@ -172,12 +174,6 @@ export const make = Effect.gen(function* () {
       `;
     if (pending.length === 0) {
       const now = yield* Clock.currentTimeMillis;
-      const [last] = yield* sql<{ created_at: string | null }>`
-          SELECT MAX(created_at) AS created_at FROM issue_inbox_digests
-          WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId}
-        `;
-      if (last?.created_at != null && now - Date.parse(last.created_at) < DIGEST_INTERVAL_MS)
-        return;
       const tagged = yield* sql<EventRow>`
           SELECT * FROM issue_inbox_events
           WHERE host = ${repo.host} AND repository_id = ${repo.repositoryId}
@@ -212,8 +208,7 @@ export const make = Effect.gen(function* () {
           ORDER BY high_priority DESC, event_id
         `;
       if (unread.length === 0) {
-        yield* sql`UPDATE issue_inbox_digests SET delivered_at = ${yield* nowIso}
-            WHERE digest_id = ${digest.digest_id}`;
+        yield* sql`DELETE FROM issue_inbox_digests WHERE digest_id = ${digest.digest_id}`;
         continue;
       }
       const since = unread.reduce(
@@ -241,9 +236,10 @@ export const make = Effect.gen(function* () {
         creationSource: "server",
       });
       yield* sql`
-          UPDATE issue_inbox_digests SET delivered_at = ${yield* nowIso}
+          UPDATE issue_inbox_digests SET delivered_at = ${DateTime.formatIso(yield* DateTime.now)}
           WHERE digest_id = ${digest.digest_id}
         `;
+      return;
     }
   });
 
