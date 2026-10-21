@@ -230,7 +230,7 @@ import {
 } from "~/lib/openPullRequestLink";
 import { observeResize } from "~/lib/observeResize";
 import { useOpenLink } from "../browser/useOpenLink";
-import { useOpenIssueLink } from "../lib/openIssueLink";
+import { knownGitHubHosts, parseIssueUrl, useOpenIssueLink } from "../lib/openIssueLink";
 import { useCopyToClipboard, writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
 import {
@@ -241,6 +241,7 @@ import {
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
+import { IssueLinkPreview, IssueLinkPreviewFallback } from "./issues/IssueLinkPreview";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
@@ -3260,6 +3261,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
             originalUrl={href}
             target={pullRequestPreviewTarget}
             confirmBeforeOpen={confirmBeforeOpen}
+            fallback={
+              confirmBeforeOpen ? (
+                <IssueLinkPreviewFallback environmentId={environmentId} url={href} />
+              ) : undefined
+            }
             onOpenPullRequest={(targetUrl) =>
               openChangeRequestLink(
                 {
@@ -3287,6 +3293,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
             }}
           />
         );
+      }
+      if (parseIssueUrl(href, knownGitHubHosts(projects)) !== null) {
+        return <IssueLinkPreview link={link} url={href} environmentId={environmentId} />;
       }
       return (
         <Tooltip>

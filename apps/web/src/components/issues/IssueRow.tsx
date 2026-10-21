@@ -1,3 +1,4 @@
+import { IssueHoverCard } from "./IssueHoverCard";
 import { IssueQueueAction } from "./IssueQueueAction";
 import { parseIssueUrl, knownGitHubHosts } from "~/lib/openIssueLink";
 import { useProjects } from "~/state/entities";
@@ -71,7 +72,7 @@ export function IssueRow({
   const reference = parseIssueUrl(issue.url, knownGitHubHosts(projects));
   const projectChips = issueProjectChips(issue.projects);
   const assignees = issue.assignees.slice(0, 3);
-  return (
+  const row = (
     <div
       draggable
       onDragStart={(event) => startIssueDrag(event, issue)}
@@ -166,5 +167,10 @@ export function IssueRow({
         ) : null}
       </div>
     </div>
+  );
+  return environmentId !== undefined && reference !== null ? (
+    <IssueHoverCard render={row} target={{ environmentId, input: reference }} issue={issue} />
+  ) : (
+    row
   );
 }
