@@ -6,6 +6,7 @@ import {
   MessageId,
   ThreadId,
   type OrchestrationV2Run,
+  type ThreadRole,
 } from "@t3tools/contracts";
 import * as IssueInbox from "./IssueInbox.ts";
 import * as DateTime from "effect/DateTime";
@@ -14,6 +15,8 @@ import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
+import { sourceMarker } from "./IssueInboxRules.ts";
 import * as TestClock from "effect/testing/TestClock";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
@@ -64,9 +67,24 @@ const reads = Layer.mock(IssueService.IssueService)({
       issue: { ...issue(input.number), state: input.number === 99 ? "closed" : "open" },
     } as never),
   workRead: (input) => Effect.succeed(read(input.number)),
+  repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
 });
+const projectRepositoryIdentity = {
+  provider: "github" as const,
+  canonicalKey: "github.com/owner/repo",
+  displayName: "owner/repo",
+  locator: {
+    source: "git-remote" as const,
+    remoteName: "origin",
+    remoteUrl: "https://github.com/owner/repo.git",
+  },
+};
 function harness(issueReads = reads) {
-  const base = makeHarness({ issueServiceLayer: issueReads });
+  const base = makeHarness({
+    issueServiceLayer: issueReads,
+    projectRepositoryIdentity,
+    localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
+  });
   const dependencies = Layer.mergeAll(
     base.layer,
     issueReads,
@@ -1233,4 +1251,147 @@ it.effect("rebuilds the same queue from notice, terminal, claim, retry and remov
     );
     yield* verify;
   }).pipe(Effect.provide(harness())),
+);
+
+const createCandidate = (id: string, role?: ThreadRole) =>
+  Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const threadId = ThreadId.make(id);
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`${id}:create`),
+      threadId,
+      projectId,
+      title: id,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    if (role !== undefined) {
+      const sink = yield* EventSink.EventSinkV2;
+      const thread = (yield* threads.getThreadRecords(threadId, [])).thread;
+      yield* sink.write({
+        events: [
+          {
+            type: "thread.metadata-updated",
+            id: EventId.make(`${id}:role`),
+            threadId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...thread, role },
+          },
+        ],
+      });
+    }
+  });
+
+it.effect.each([false, true])(
+  "queue automatically registers the most recent Orchestrator exactly once under concurrency (no candidate: %s)",
+  (noCandidate) =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sql = yield* SqlClient.SqlClient;
+      if (!noCandidate) {
+        yield* createCandidate("older-orchestrator");
+        yield* TestClock.adjust("1 second");
+        yield* createCandidate("recent-orchestrator", "orchestrator");
+      }
+      yield* TestClock.adjust("1 second");
+      yield* createCandidate("newest-implementor", "implementor");
+      assert.isNull((yield* service.repositoryStatus(reference)).rootThreadId);
+      const results = yield* Effect.all(
+        [service.queueIssue(input(1)), service.queueIssue(input(2))],
+        { concurrency: 2 },
+      );
+      assert.deepEqual(
+        results.map((result) => result.rootThreadId),
+        noCandidate
+          ? [null, null]
+          : [ThreadId.make("recent-orchestrator"), ThreadId.make("recent-orchestrator")],
+      );
+      const registrations =
+        yield* sql`SELECT * FROM orchestration_events WHERE event_type = 'repository.work.restored'`;
+      assert.lengthOf(registrations, noCandidate ? 0 : 1);
+      if (!noCandidate) {
+        assert.isUndefined(
+          (yield* threads.getThreadRecords(ThreadId.make("older-orchestrator"), [])).thread
+            .repositoryOrchestration,
+        );
+        assert.equal((yield* service.queueIssue(input(1))).rootThreadId, "recent-orchestrator");
+      }
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    }).pipe(Effect.provide(harness())),
+);
+
+it.effect.each([false, true])(
+  "Inbox arrival registers only when marked work needs a root, once across concurrent arrivals (no candidate: %s)",
+  (noCandidate) => {
+    let arrived = false;
+    const github = Layer.mock(IssueService.IssueService)({
+      repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+      repositoryRest: (input) =>
+        Effect.succeed({
+          status: 200,
+          etag: null,
+          nextPage: null,
+          body: JSON.stringify(
+            arrived && input.path.startsWith("issues?")
+              ? [
+                  {
+                    number: 7,
+                    title: "External issue",
+                    state: "open",
+                    user: { login: "owner", type: "User" },
+                    body: sourceMarker({
+                      project: "other",
+                      repository: "github.com/owner/other",
+                      thread: "other-thread",
+                    }),
+                    created_at: "1970-01-01T00:00:01Z",
+                    updated_at: "1970-01-01T00:00:01Z",
+                    html_url: "https://github.com/owner/repo/issues/7",
+                    labels: [],
+                    milestone: null,
+                  },
+                ]
+              : [],
+          ),
+        }),
+    });
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const sql = yield* SqlClient.SqlClient;
+      if (!noCandidate) yield* createCandidate("inbox-orchestrator");
+      else yield* createCandidate("inbox-implementor", "implementor");
+      const inbox = yield* IssueInbox.make;
+      const concurrentInbox = yield* IssueInbox.make;
+      yield* inbox.pollDue;
+      assert.isNull((yield* service.repositoryStatus(reference)).rootThreadId);
+      arrived = true;
+      yield* TestClock.adjust("2 minutes");
+      yield* Effect.all([inbox.pollDue, concurrentInbox.pollDue], { concurrency: 2 });
+      assert.equal(
+        (yield* service.repositoryStatus(reference)).rootThreadId,
+        noCandidate ? null : "inbox-orchestrator",
+      );
+      assert.lengthOf((yield* inbox.list(reference)).events, 1);
+      assert.lengthOf(
+        yield* sql`SELECT * FROM orchestration_events WHERE event_type = 'repository.work.restored'`,
+        noCandidate ? 0 : 1,
+      );
+      if (!noCandidate) {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        assert.lengthOf(
+          (yield* threads.getThreadRecords(ThreadId.make("inbox-orchestrator"), ["messages"]))
+            .messages,
+          1,
+        );
+      }
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    }).pipe(Effect.provide(harness(github)));
+  },
 );

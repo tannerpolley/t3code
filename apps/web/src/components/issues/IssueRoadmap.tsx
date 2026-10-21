@@ -65,8 +65,8 @@ export function IssueRoadmap({
       queue.data?.rootThreadId === null &&
       (queue.data.queue?.length ?? 0) > 0 ? (
         <p className="px-3 py-1 text-xs text-muted-foreground" role="status">
-          Waiting for a repository orchestrator. Register one with Start agent to hand off queued
-          issues.
+          Waiting for a repository orchestrator. Right-click a thread and choose Make repository
+          orchestrator to hand off queued issues.
         </p>
       ) : null}
       {sections

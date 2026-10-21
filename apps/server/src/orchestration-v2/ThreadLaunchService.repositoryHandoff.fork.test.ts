@@ -1668,6 +1668,107 @@ describe("fresh-thread repository handoff", () => {
         creationSource: "web",
       }),
     );
+  it.effect(
+    "assigns an existing thread once and moves to another existing thread through a draining handoff",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const target = ThreadId.make("assigned-lead");
+        const successor = ThreadId.make("assigned-successor");
+        yield* createLead(target);
+        yield* createLead(successor);
+        const assign = {
+          ...reference,
+          projectId,
+          targetThreadId: target,
+          clientRequestId: CommandId.make("assign:first"),
+        };
+        assert.equal((yield* service.assignOrchestrator(assign)).rootThreadId, target);
+        assert.equal((yield* service.assignOrchestrator(assign)).rootThreadId, target);
+        yield* threads.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("assign:running"),
+          threadId: target,
+          messageId: MessageId.make("assign:running"),
+          text: "Work in progress",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        const move = {
+          ...assign,
+          targetThreadId: successor,
+          clientRequestId: CommandId.make("assign:move"),
+        };
+        const pending = yield* service.assignOrchestrator(move);
+        assert.equal(pending.rootThreadId, target);
+        assert.equal(pending.orchestration!.handoff?.status, "draining");
+        assert.equal(pending.orchestration!.handoff?.nextThreadId, successor);
+        assert.equal((yield* service.assignOrchestrator(move)).rootThreadId, target);
+        yield* finish(target, "assign:finished");
+        yield* service.reconcile(target);
+        yield* worker.drain();
+        const moved = yield* service.repositoryStatus(reference);
+        assert.equal(moved.rootThreadId, successor);
+        assert.deepEqual(
+          moved.orchestration!.handoffHistory?.map((entry) => entry.threadId),
+          [target],
+        );
+        const messages = (yield* threads.getThreadRecords(successor, ["messages"])).messages;
+        assert.lengthOf(messages, 1);
+        assert.include(messages[0]!.text, "Server recovery inventory");
+        assert.equal((yield* service.assignOrchestrator(move)).rootThreadId, successor);
+        const sql = yield* SqlClient.SqlClient;
+        assert.equal(
+          (yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads`).length,
+          2,
+        );
+        assert.equal(
+          (yield* sql`SELECT * FROM orchestration_events WHERE event_type = 'repository.work.restored'`)
+            .length,
+          1,
+        );
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
+  it.effect(
+    "keeps an agent's existing handoff target when the user approves without resending it",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* IssueWorkService.IssueWorkService;
+        const target = ThreadId.make("agent-selected-successor");
+        yield* createRoot;
+        yield* createLead(target);
+        const proposal = {
+          ...reference,
+          expectedRevision: 1,
+          summary: "Continue in the selected conversation.",
+          clientRequestId: CommandId.make("agent-target:propose"),
+        };
+        const self = yield* service
+          .requestHandoff(rootId, { ...proposal, targetThreadId: rootId })
+          .pipe(Effect.result);
+        assert.equal(self._tag, "Failure");
+        const pending = yield* service.requestHandoff(rootId, {
+          ...proposal,
+          targetThreadId: target,
+        });
+        assert.equal(pending.orchestration!.handoff?.status, "awaiting_approval");
+        const approved = yield* service.handoff({
+          ...proposal,
+          expectedRevision: pending.orchestration!.revision,
+          action: "approve",
+          clientRequestId: CommandId.make("agent-target:approve"),
+        });
+        assert.equal(approved.rootThreadId, target);
+        yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+      }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
   const registerInput = (targetThreadId: ThreadId, key: string) => ({
     ...restoreInput,
     expectedRootThreadId: null,

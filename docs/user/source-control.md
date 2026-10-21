@@ -305,6 +305,12 @@ or chat message opens the same issue panel. **Prepare draft** opens a new thread
 project in a worktree on a branch named after the issue, with an unsent prompt.
 Select the issue number at the top to comment or make other changes on GitHub.
 
+To assign the repository orchestrator, right-click an unarchived top-level thread in its project
+and choose **Make repository orchestrator**, or use that action in the command palette.
+Choosing another thread moves the role after live issue work drains. If none is registered when
+an issue is queued or a marked cross-project item reaches the Inbox, T3 selects the most recently
+active eligible Orchestrator thread in the repository's project. Without one, work waits.
+
 To run issue work, open an issue, choose **Start agent**, then a model role and the
 matching repository project. Use a model role with an available Codex or Claude target.
 **Start agent on issue…** in the command palette opens the current

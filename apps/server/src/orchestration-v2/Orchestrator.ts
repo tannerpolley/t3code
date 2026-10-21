@@ -12308,6 +12308,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         dispatchEffect,
       );
     }
+    if (command.type === "repository.work.handoff") {
+      const root = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(mapDispatchError(command));
+      const targetId = root.repositoryOrchestration?.handoff?.nextThreadId;
+      if (targetId !== undefined) {
+        const target = yield* projectionStore
+          .getThreadShell(targetId)
+          .pipe(mapDispatchError(command));
+        if (
+          target !== null &&
+          (target.lineage.parentThreadId !== null || target.lineage.rootThreadId !== target.id)
+        )
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Select an existing active top-level thread in the same repository project.",
+          });
+        return yield* [...new Set([command.threadId, targetId])]
+          .sort()
+          .reduceRight((effect, key) => threadExecutor.withLock(key, effect), dispatchEffect);
+      }
+    }
     const dispatch = threadDispatch.withLock(commandThreadId(command), dispatchEffect);
     if (
       command.type !== "message.dispatch" ||
