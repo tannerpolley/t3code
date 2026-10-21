@@ -113,6 +113,7 @@ export const layerProjectService = ProjectService.layer.pipe(
 const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      IssueWorkStore.layer,
       layerEventSinkProvided,
       IdAllocator.layer,
       ProjectionStore.layer,

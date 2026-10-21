@@ -1,7 +1,9 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
+  CommandId,
+  DEFAULT_REPOSITORY_WORK_SETTINGS,
   CheckpointRef,
   CheckpointScopeId,
   MessageId,
@@ -27,6 +29,7 @@ import {
   TurnItemId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -38,6 +41,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -55,7 +59,11 @@ import {
   selectInheritedBackgroundTurnItems,
 } from "./RunExecutionService.ts";
 
+import { makeHarness } from "./ThreadLaunchService.testHarness.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+
 const layerTestDatabase = SqlitePersistence.layerMemory;
+const layerIssueWorkStore = IssueWorkStore.layer.pipe(Layer.provide(layerTestDatabase));
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provide(layerTestDatabase),
 );
@@ -71,6 +79,7 @@ const layerGit = GitVcsDriver.layer.pipe(
 
 const layerTest = Layer.mergeAll(
   layerTestDatabase,
+  layerIssueWorkStore,
   layerTestStores,
   layerTestEventSink,
   IdAllocator.layer,
@@ -79,6 +88,7 @@ const layerTest = Layer.mergeAll(
   ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerIssueWorkStore,
         layerTestStores,
         layerTestEventSink,
         IdAllocator.layer,
@@ -2464,4 +2474,185 @@ layer("ProviderEventIngestorV2", (it) => {
       );
     }),
   );
+});
+
+it.effect("preserves a native child's rename and runtime mode during model sync", () => {
+  const harness = makeHarness();
+  const dependencies = Layer.mergeAll(
+    harness.layer,
+    IssueWorkStore.layer.pipe(Layer.provide(harness.layer)),
+    ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
+    IdAllocator.layer,
+    ThreadCommandExecutor.layer,
+    Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  );
+  const testLayer = dependencies.pipe(
+    Layer.provideMerge(ProviderEventIngestor.layer.pipe(Layer.provide(dependencies))),
+  );
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const now = yield* DateTime.now;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const rootEvent = yield* threadCreatedEvent(now);
+    if (rootEvent.type !== "thread.created") {
+      throw new Error("Expected a thread.created fixture event");
+    }
+    const childThreadId = idAllocator.derive.threadFromProviderThread({
+      driver: CODEX_DRIVER,
+      nativeThreadId: "native-late-model-subagent",
+    });
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId: rootEvent.threadId,
+    });
+    const ingest = (event: ProviderEventIngestor.ProviderEventIngestInput["event"]) =>
+      ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+        event,
+      });
+    yield* eventSink.write({
+      events: [
+        {
+          ...rootEvent,
+          payload: {
+            ...rootEvent.payload,
+            repositoryOrchestration: {
+              ...DEFAULT_REPOSITORY_WORK_SETTINGS,
+              host: "github.com",
+              repository: "owner/repo",
+              repositoryId: "repo:model-sync",
+              projectId: rootEvent.payload.projectId,
+              launchCommandId: CommandId.make("model-sync-root"),
+              revision: 1,
+              paused: false,
+              publishStatusComments: false,
+              publishCloseoutComments: false,
+              milestones: [],
+              suspendedIssues: [],
+            },
+          },
+        },
+      ],
+    });
+    yield* ingest({
+      type: "app_thread.created",
+      driver: CODEX_DRIVER,
+      appThread: {
+        ...rootEvent.payload,
+        id: childThreadId,
+        title: "review design",
+        modelSelection: {
+          ...modelSelection,
+          options: [{ id: "reasoningEffort", value: "xhigh" }],
+        },
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: rootEvent.threadId,
+          relationshipToParent: "subagent",
+          rootThreadId: rootEvent.threadId,
+        },
+      },
+    });
+    const subagentUpdated = {
+      type: "subagent.updated",
+      driver: CODEX_DRIVER,
+      subagent: {
+        id: NodeId.make("node:late-model-subagent"),
+        threadId: rootEvent.threadId,
+        runId: null,
+        parentNodeId: NodeId.make("node:root"),
+        origin: "provider_native",
+        createdBy: "agent",
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Review the design",
+        title: "review design",
+        model: "gpt-6.1-sol",
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      },
+    } satisfies ProviderEventIngestor.ProviderEventIngestInput["event"];
+
+    const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    class HeldTestLock extends Context.Reference<ThreadId | null>("test/model-sync-lock", {
+      defaultValue: () => null,
+    }) {}
+    class UserUpdate extends Context.Reference<boolean>("test/model-sync-user-update", {
+      defaultValue: () => false,
+    }) {}
+    const modelReady = yield* Deferred.make<void>();
+    const releaseModel = yield* Deferred.make<void>();
+    const updateBlocked = yield* Deferred.make<void>();
+    const updateComplete = yield* Deferred.make<void>();
+    let modelLockKey: ThreadId | null = null;
+    const withLock = locks.withLock.bind(locks);
+    using _locks = vi
+      .spyOn(locks, "withLock")
+      .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
+        Effect.gen(function* () {
+          // Only the command's planning lock coordinates with a repository model write.
+          if ((yield* UserUpdate) && key === rootEvent.threadId && key === modelLockKey)
+            yield* Deferred.succeed(updateBlocked, undefined);
+          return yield* withLock(key, effect.pipe(Effect.provideService(HeldTestLock, key)));
+        }),
+      );
+    const originalWrite = eventSink.write.bind(eventSink);
+    using _write = vi.spyOn(eventSink, "write").mockImplementation((input) =>
+      Effect.gen(function* () {
+        if (
+          input.events.some(
+            (event) =>
+              event.type === "thread.model-selection-updated" && event.threadId === childThreadId,
+          )
+        ) {
+          modelLockKey = yield* HeldTestLock;
+          yield* Deferred.succeed(modelReady, undefined);
+          yield* Deferred.await(releaseModel);
+        }
+        return yield* originalWrite(input);
+      }),
+    );
+    const publishing = yield* ingest(subagentUpdated).pipe(Effect.forkChild);
+    yield* Deferred.await(modelReady);
+    const editing = yield* Effect.gen(function* () {
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("rename-native-child"),
+        threadId: childThreadId,
+        title: "New user title",
+      });
+      yield* threads.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("reduce-native-child-permissions"),
+        threadId: childThreadId,
+        runtimeMode: "approval-required",
+      });
+      yield* Deferred.succeed(updateComplete, undefined);
+    }).pipe(Effect.provideService(UserUpdate, true), Effect.forkChild);
+    // A shared lock queues the edit; separate locks let it commit before model sync.
+    yield* Effect.raceFirst(Deferred.await(updateBlocked), Deferred.await(updateComplete));
+    yield* Deferred.succeed(releaseModel, undefined);
+    yield* Fiber.join(publishing);
+    yield* Fiber.join(editing);
+    const after = yield* projectionStore.getThread(childThreadId);
+    assert.deepEqual(
+      { title: after.title, runtimeMode: after.runtimeMode, model: after.modelSelection.model },
+      {
+        title: "New user title",
+        runtimeMode: "approval-required",
+        model: "gpt-6.1-sol",
+      },
+    );
+  }).pipe(Effect.provide(testLayer));
 });

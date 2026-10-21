@@ -621,3 +621,72 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+it.effect(
+  "a held manager command does not block a sibling without a repository orchestrator",
+  () => {
+    const { layer } = fixture();
+    return Effect.gen(function* () {
+      yield* createRoot(false);
+      const managerA = yield* delegate(100, rootId, "orchestrator");
+      const managerB = yield* delegate(101, rootId, "orchestrator");
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const siblingBlocked = yield* Deferred.make<void>();
+      const siblingComplete = yield* Deferred.make<void>();
+      const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      class HeldTestLock extends Context.Reference<ThreadId | null>("test/unmanaged-lock", {
+        defaultValue: () => null,
+      }) {}
+      let heldKey: ThreadId | null = null;
+      const withLock = locks.withLock.bind(locks);
+      using _locks = vi
+        .spyOn(locks, "withLock")
+        .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
+          Effect.gen(function* () {
+            if (key === heldKey) yield* Deferred.succeed(siblingBlocked, undefined);
+            return yield* withLock(key, effect.pipe(Effect.provideService(HeldTestLock, key)));
+          }),
+        );
+      const commit = sink.commitCommand.bind(sink);
+      using _commit = vi.spyOn(sink, "commitCommand").mockImplementation((input) =>
+        Effect.gen(function* () {
+          if (input.commandId === "hold-manager") {
+            heldKey = yield* HeldTestLock;
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+          }
+          return yield* commit(input);
+        }),
+      );
+      const held = yield* threads
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("hold-manager"),
+          threadId: managerA,
+          title: "Held manager",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      const sibling = yield* threads
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("rename-sibling"),
+          threadId: managerB,
+          title: "Independent sibling",
+        })
+        .pipe(
+          Effect.tap(() => Deferred.succeed(siblingComplete, undefined)),
+          Effect.forkChild,
+        );
+      yield* Effect.raceFirst(Deferred.await(siblingBlocked), Deferred.await(siblingComplete));
+      assert.isTrue(yield* Deferred.isDone(siblingComplete));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(held);
+      yield* Fiber.join(sibling);
+      assert.equal((yield* threads.getThreadShell(managerB))?.title, "Independent sibling");
+    }).pipe(Effect.provide(layer));
+  },
+);

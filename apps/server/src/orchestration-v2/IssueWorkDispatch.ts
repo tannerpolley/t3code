@@ -46,12 +46,16 @@ class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
   },
 ) {}
 
-/** Descendant commands can admit read-only work, even from managers without issue links. */
+/** Repository descendants share admission and whole-thread writes under the root lock. */
 export function threadDispatchLockKey(
   threadId: ThreadId,
-  shell: OrchestrationV2ThreadShell | null,
+  shell: Pick<OrchestrationV2ThreadShell, "lineage" | "linkedIssue"> | null,
+  rootIsRepositoryOrchestrator: boolean,
 ) {
-  return shell?.lineage.rootThreadId ?? threadId;
+  // ponytail: a command already in flight at assignment ran under its old key.
+  return shell !== null && (shell.linkedIssue !== undefined || rootIsRepositoryOrchestrator)
+    ? shell.lineage.rootThreadId
+    : threadId;
 }
 
 /**
@@ -69,9 +73,12 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     withLock: (threadId, effect) =>
       Effect.gen(function* () {
         const shell = yield* projectionStore.getThreadShell(threadId).pipe(Effect.orDie);
-        // Run starts across every managed descendant share the root's planning lock.
-        // Whole-thread provider writes use the same key; ordinary provider updates do not plan admissions.
-        const key = threadDispatchLockKey(threadId, shell);
+        const root = Option.isSome(issueWorkStore)
+          ? yield* issueWorkStore.value
+              .configuration(shell?.lineage.rootThreadId ?? threadId)
+              .pipe(Effect.orDie)
+          : null;
+        const key = threadDispatchLockKey(threadId, shell, root !== null);
         // A child's dispatch can nest inside its parent's lock, and both may resolve to
         // the root. The lock is not reentrant, so a held key is not taken again.
         const held = yield* HeldDispatchLocks;

@@ -30,6 +30,7 @@ import * as Schema from "effect/Schema";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as EventSink from "./EventSink.ts";
@@ -296,6 +297,7 @@ export const layer: Layer.Layer<
   ProviderEventIngestorV2,
   never,
   | EventSink.EventSinkV2
+  | IssueWorkStore.IssueWorkStore
   | GitVcsDriver.GitVcsDriver
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
@@ -308,6 +310,7 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const issueWorkStore = yield* IssueWorkStore.IssueWorkStore;
     const analytics = yield* ProviderTurnAnalytics;
     const agentScope = yield* AgentScope;
     const completedTurnAnalytics = new Set<string>();
@@ -419,9 +422,11 @@ export const layer: Layer.Layer<
           ),
           Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         );
-        if ((yield* staleThread) === null) return [];
+        const shell = yield* staleThread;
+        if (shell === null) return [];
+        const root = yield* issueWorkStore.configuration(shell.lineage.rootThreadId);
         return yield* threadCommands.withLock(
-          childThreadId,
+          threadDispatchLockKey(childThreadId, shell, root !== null),
           Effect.gen(function* () {
             const thread = yield* staleThread;
             if (thread === null) return [];
@@ -879,18 +884,28 @@ export const layer: Layer.Layer<
               (effect) => {
                 if (input.event.type !== "app_thread.created") return effect;
                 const thread = input.event.appThread;
-                const childLocked = threadCommands.withLock(thread.id, effect);
-                const parentId = thread.lineage.parentThreadId;
-                if (
-                  !isProviderNativeSubagentThread(thread) ||
-                  parentId === null ||
-                  parentId === thread.id
-                )
-                  return childLocked;
                 return Effect.gen(function* () {
+                  const root = yield* issueWorkStore
+                    .configuration(thread.lineage.rootThreadId)
+                    .pipe(Effect.orDie);
+                  const childKey = threadDispatchLockKey(thread.id, thread, root !== null);
+                  const childLocked = threadCommands.withLock(childKey, effect);
+                  const parentId = thread.lineage.parentThreadId;
+                  if (
+                    !isProviderNativeSubagentThread(thread) ||
+                    parentId === null ||
+                    parentId === thread.id
+                  )
+                    return yield* childLocked;
                   const parent = yield* projections.getThreadShell(parentId).pipe(Effect.orDie);
-                  const key = threadDispatchLockKey(parentId, parent);
-                  return yield* key === thread.id
+                  const parentRoot =
+                    parent?.lineage.rootThreadId === thread.lineage.rootThreadId
+                      ? root
+                      : yield* issueWorkStore
+                          .configuration(parent?.lineage.rootThreadId ?? parentId)
+                          .pipe(Effect.orDie);
+                  const key = threadDispatchLockKey(parentId, parent, parentRoot !== null);
+                  return yield* key === childKey
                     ? childLocked
                     : threadCommands.withLock(key, childLocked);
                 });

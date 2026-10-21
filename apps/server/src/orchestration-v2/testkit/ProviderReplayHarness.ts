@@ -325,6 +325,7 @@ export function layerWithRegistry<Error>(
   const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        IssueWorkStore.layer.pipe(Layer.provide(layerDatabase)),
         layerStores,
         layerEventSinkProvided,
         IdAllocator.layer,
