@@ -3378,8 +3378,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const projections = yield* ProjectionStore.ProjectionStoreV2;
         const projectId = ProjectId.make(`pr-watch-tail-project-${mode}`);
         const threadId = ThreadId.make(`runtime-pr-watch-tail-${mode}`);
-        const startedAt = "2026-10-02T12:00:00.000Z";
-        yield* TestClock.setTime(Date.parse(startedAt));
+        const now = yield* DateTime.now;
+        const at = (minutes: number, seconds = 0) =>
+          DateTime.formatIso(DateTime.add(now, { minutes, seconds }));
+        const startedAt = at(0);
         yield* seedProject({
           projectId,
           title: "Watch edited replies",
@@ -3416,7 +3418,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           kind: "review-comment",
           author: { login: "reviewer", name: null, avatarUrl: null },
           body: "Original feedback.",
-          createdAt: "2026-10-02T11:00:00.000Z",
+          createdAt: at(-60),
           url: null,
           path: "src/index.ts",
           reviewState: null,
@@ -3514,7 +3516,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         replies = replies.map((reply) => ({
           ...reply,
           body: "Edited feedback.",
-          editedAt: "2026-10-02T12:00:01.000Z",
+          editedAt: at(0, 1),
         }));
 
         if (mode === "mixed-age remarks") {
@@ -3522,7 +3524,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           const visibleReply = {
             ...thread.comments[0]!,
             body: "Edited visible feedback.",
-            editedAt: "2026-10-02T12:02:00.000Z",
+            editedAt: at(2),
           };
           thread.comments[0] = visibleReply;
           yield* TestClock.adjust("5 minutes");
@@ -3569,7 +3571,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           replies = replies.map((reply, index) => ({
             ...reply,
             body: `Latest feedback ${index + 1}.`,
-            editedAt: `2026-10-02T12:01:0${index + 1}.000Z`,
+            editedAt: at(1, index + 1),
           }));
           failPage = false;
         } else {

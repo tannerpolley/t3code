@@ -11014,7 +11014,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      if (forkDelegatedCompletion.hasPublishedResult(task)) return;
+      if (
+        forkDelegatedCompletion.hasPublishedResult(task) ||
+        (task.status === "cancelled" && task.completionDelivery?.state === "disposed")
+      )
+        return;
 
       const now = yield* DateTime.now;
       const settledRun = { ...childRun, status: outcome };
@@ -12557,6 +12561,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentThreadId,
         finalizeAppOwnedSubagent(threadId, { settledContinuationOf: sourceRunId }),
       );
+      yield* withdrawReleasedUsageLimitContinuation(threadId);
     },
     (effect, threadId, _sourceRunId) =>
       effect.pipe(
