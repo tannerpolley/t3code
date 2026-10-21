@@ -1302,6 +1302,13 @@ it.effect.each([false, true])(
       }
       yield* TestClock.adjust("1 second");
       yield* createCandidate("newest-implementor", "implementor");
+      yield* TestClock.adjust("1 second");
+      yield* createCandidate("archived-orchestrator");
+      yield* threads.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("archived-orchestrator:archive"),
+        threadId: ThreadId.make("archived-orchestrator"),
+      });
       assert.isNull((yield* service.repositoryStatus(reference)).rootThreadId);
       const results = yield* Effect.all(
         [service.queueIssue(input(1)), service.queueIssue(input(2))],
