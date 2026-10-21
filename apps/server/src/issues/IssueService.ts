@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as RcMap from "effect/RcMap";
+import type * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 
 import {
@@ -35,6 +37,7 @@ import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import { readIssueListMetadata } from "./IssueProjects.ts";
+import { IssueListPageCache } from "./IssueListPageCache.ts";
 
 const LIST_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 // A detail read carries up to DETAIL_COMMENT_LIMIT comment bodies of up to 64 KiB each.
@@ -374,6 +377,7 @@ class IssueResponseError extends IssueReadError.extend<IssueResponseError>("Issu
 const isIssueResponseError = Schema.is(IssueResponseError);
 
 interface ApiResponse {
+  readonly status: number;
   readonly body: string;
   readonly headers: Readonly<Record<string, string | undefined>>;
 }
@@ -853,11 +857,29 @@ export class IssueService extends Context.Service<
 export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Return<
   IssueService["Service"],
   never,
-  GitHubApi.GitHubApi | GitHubPullRequestApi.GitHubPullRequestApi
+  GitHubApi.GitHubApi | GitHubPullRequestApi.GitHubPullRequestApi | Scope.Scope
 > {
   const api = yield* GitHubApi.GitHubApi;
   const githubPullRequests = yield* GitHubPullRequestApi.GitHubPullRequestApi;
   const homeDirectory = yield* HostProcess.HomeDirectory;
+  const makePageCaches = () => ({
+    issues: new IssueListPageCache<PageResult<IssueSummaryType>>(),
+    milestones: new IssueListPageCache<PageResult<IssueMilestone>>(),
+  });
+  // List subscriptions have no server-side lifetime signal. Release a repository after five
+  // idle minutes; at most 16 repositories retain 32 issue and 32 milestone pages each.
+  const pageCaches = yield* RcMap.make({
+    lookup: (_key: string) => Effect.sync(makePageCaches),
+    idleTimeToLive: "5 minutes",
+    capacity: 16,
+  });
+  const repositoryPages = Effect.fn("IssueService.repositoryPages")(
+    (scope: IssueRepositoryScope, credentialFingerprint: string) =>
+      RcMap.get(
+        pageCaches,
+        JSON.stringify([scope.host, scope.repository, credentialFingerprint]),
+      ).pipe(Effect.catchTags({ ExceededCapacityError: () => Effect.sync(makePageCaches) })),
+  );
 
   const resolveScope = Effect.fn("IssueService.resolveScope")(function* (
     operation: IssueOperation,
@@ -881,6 +903,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
     readonly scope: IssueRepositoryScope;
     readonly endpoint: string;
     readonly maxOutputBytes: number;
+    readonly ifNoneMatch?: string | undefined;
     readonly graphql?: {
       readonly query: string;
       readonly variables: Readonly<Record<string, string | number>>;
@@ -903,7 +926,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
           variables,
           maxResponseBytes: input.maxOutputBytes,
         })
-        .pipe(Effect.map((body): ApiResponse | null => ({ body, headers: {} })));
+        .pipe(Effect.map((body): ApiResponse | null => ({ status: 200, body, headers: {} })));
     const send: Effect.Effect<ApiResponse | null, GitHubApi.GitHubApiError> =
       graphql === undefined
         ? api
@@ -913,12 +936,11 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               path: input.endpoint,
               ...(input.requestMethod === undefined ? {} : { method: input.requestMethod }),
               ...(input.requestBody === undefined ? {} : { body: input.requestBody }),
+              ...(input.ifNoneMatch === undefined ? {} : { ifNoneMatch: input.ifNoneMatch }),
               maxResponseBytes: input.maxOutputBytes,
             })
             .pipe(
-              Effect.map((response): ApiResponse | null =>
-                response.truncated ? null : { body: response.body, headers: response.headers },
-              ),
+              Effect.map((response): ApiResponse | null => (response.truncated ? null : response)),
             )
         : query(graphql.query, graphql.variables).pipe(
             Effect.catchIf(
@@ -1042,7 +1064,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 const response = yield* decodeApiResponse(
                   "detail",
                   StatusBatchResponse,
-                  { body, headers: {} },
+                  { status: 200, body, headers: {} },
                   "GitHub returned invalid issue status data.",
                 );
                 for (const [index, node] of response.data.nodes.entries()) {
@@ -1378,16 +1400,21 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
 
   const listIssuePage = Effect.fn("IssueService.listIssuePage")(function* (
     scope: IssueRepositoryScope,
+    cache: IssueListPageCache<PageResult<IssueSummaryType>>,
     state: IssueListState,
     page: number,
     milestoneNumber?: number,
   ): Effect.fn.Return<PageResult<IssueSummaryType>, IssueReadError> {
+    const endpoint = `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}${milestoneNumber === undefined ? "" : `&milestone=${milestoneNumber}`}`;
+    const cached = cache.get(endpoint);
     const response = yield* executeApi({
       operation: "list",
       scope,
-      endpoint: `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}${milestoneNumber === undefined ? "" : `&milestone=${milestoneNumber}`}`,
+      endpoint,
+      ifNoneMatch: cached?.etag,
       maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     });
+    if (response.status === 304 && cached !== undefined) return cached.page;
     const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawIssueSchema)))(
       response.body,
     ).pipe(
@@ -1403,25 +1430,32 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         "GitHub returned invalid pagination metadata.",
       );
     }
-    return {
+    const result = {
       items: raw
         .filter((issue) => !Object.hasOwn(issue, "pull_request"))
         .map((issue) => normalizeIssue(scope.host, scope.repository, issue)),
       nextPage,
     };
+    cache.set(endpoint, response.headers["etag"], result);
+    return result;
   });
 
   const listMilestonePage = Effect.fn("IssueService.listMilestonePage")(function* (
     scope: IssueRepositoryScope,
+    cache: IssueListPageCache<PageResult<IssueMilestone>>,
     state: IssueListState,
     page: number,
   ): Effect.fn.Return<PageResult<IssueMilestone>, IssueReadError> {
+    const endpoint = `repos/${encodeRepositoryPath(scope.repository)}/milestones?state=${state}&per_page=100&page=${page}`;
+    const cached = cache.get(endpoint);
     const response = yield* executeApi({
       operation: "list",
       scope,
-      endpoint: `repos/${encodeRepositoryPath(scope.repository)}/milestones?state=${state}&per_page=100&page=${page}`,
+      endpoint,
+      ifNoneMatch: cached?.etag,
       maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     });
+    if (response.status === 304 && cached !== undefined) return cached.page;
     const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawMilestoneSchema)))(
       response.body,
     ).pipe(
@@ -1437,10 +1471,12 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         "GitHub returned invalid pagination metadata.",
       );
     }
-    return {
+    const result = {
       items: raw.map((milestone) => normalizeMilestone(scope.host, scope.repository, milestone)),
       nextPage,
     };
+    cache.set(endpoint, response.headers["etag"], result);
+    return result;
   });
 
   const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
@@ -1477,17 +1513,18 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
                 "The issue cursor is invalid for this account.",
               );
             }
+            const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
             const issuePage = cursor === null ? 1 : cursor.issuePage;
             const milestonePage = cursor === null ? 1 : cursor.milestonePage;
             const issueResult =
               issuePage === null
                 ? { items: [], nextPage: null }
-                : yield* listIssuePage(scope, state, issuePage);
+                : yield* listIssuePage(scope, pages.issues, state, issuePage);
             const [milestoneResult, projects] = yield* Effect.all(
               [
                 milestonePage === null
                   ? Effect.succeed({ items: [], nextPage: null })
-                  : listMilestonePage(scope, state, milestonePage),
+                  : listMilestonePage(scope, pages.milestones, state, milestonePage),
                 readIssueListMetadata(
                   scope,
                   issueResult.items.map((issue) => issue.number),
@@ -1522,7 +1559,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
               issuesComplete: issueResult.nextPage === null,
               milestonesComplete: milestoneResult.nextPage === null,
             } satisfies IssueListResultType;
-          }),
+          }).pipe(Effect.scoped),
       )
       .pipe(
         Effect.mapError((error) =>
@@ -1699,13 +1736,15 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
   )(function* (input) {
     const scope = yield* resolveScope("list", input);
     return yield* githubPullRequests
-      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, () =>
+      .withVerifiedCredential({ cwd: scope.cwd, host: scope.host }, (identity) =>
         Effect.gen(function* () {
+          const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
           const issues: IssueSummaryType[] = [];
           let page: number | null = 1;
           for (let count = 0; count < 10 && page !== null; count++) {
             const result: PageResult<IssueSummaryType> = yield* listIssuePage(
               scope,
+              pages.issues,
               "all",
               page,
               input.milestoneNumber,
@@ -1715,6 +1754,7 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
           }
           return { issues, complete: page === null };
         }).pipe(
+          Effect.scoped,
           // GitHub answers 422 for an invalid milestone and for its spam guard, so only a 404 from
           // the milestone itself proves it is missing. Any other answer keeps the list failure.
           Effect.catchIf(

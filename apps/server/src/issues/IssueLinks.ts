@@ -149,12 +149,21 @@ const make = Effect.gen(function* () {
             prRefs.length > 0,
             list.issues.some((issue) => issue.state === "closed"),
           ).pipe(Effect.mapError(storageError));
-    const shells = yield* Effect.forEach(candidates, ({ thread_id }) =>
-      projections.getThreadShell(ThreadId.make(thread_id)),
-    ).pipe(Effect.mapError(storageError));
-    const threads = shells
-      .filter((thread) => thread !== null)
-      .filter((thread) => thread.deletedAt === null);
+    const snapshot =
+      candidates.length === 0
+        ? { threads: [], archivedThreads: [] }
+        : yield* projections
+            .getShellSnapshot({
+              threadIds: candidates.map(({ thread_id }) => ThreadId.make(thread_id)),
+            })
+            .pipe(Effect.mapError(storageError));
+    const shells = new Map(
+      [...snapshot.threads, ...snapshot.archivedThreads].map((thread) => [thread.id, thread]),
+    );
+    const threads = candidates.flatMap(({ thread_id }) => {
+      const thread = shells.get(ThreadId.make(thread_id));
+      return thread === undefined || thread.deletedAt !== null ? [] : [thread];
+    });
     const issues = new Map(
       list.issues.map((issue) => [key({ ...list.repository, number: issue.number }), issue.number]),
     );
