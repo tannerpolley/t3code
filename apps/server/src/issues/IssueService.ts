@@ -1414,15 +1414,10 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       ifNoneMatch: cached?.etag,
       maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     });
-    if (response.status === 304 && cached !== undefined) return cached.page;
-    const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawIssueSchema)))(
-      response.body,
-    ).pipe(
-      Effect.mapError(() =>
-        readError("list", "invalid-response", "GitHub returned an invalid issue list."),
-      ),
-    );
-    const nextPage = nextPageFromHeaders(response.headers, page);
+    const nextPage =
+      response.status === 304 && cached !== undefined && response.headers["link"] === undefined
+        ? cached.page.nextPage
+        : nextPageFromHeaders(response.headers, page);
     if (nextPage === undefined) {
       return yield* readError(
         "list",
@@ -1430,6 +1425,18 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         "GitHub returned invalid pagination metadata.",
       );
     }
+    if (response.status === 304 && cached !== undefined) {
+      const result = { ...cached.page, nextPage };
+      cache.set(endpoint, response.headers["etag"] ?? cached.etag, result);
+      return result;
+    }
+    const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawIssueSchema)))(
+      response.body,
+    ).pipe(
+      Effect.mapError(() =>
+        readError("list", "invalid-response", "GitHub returned an invalid issue list."),
+      ),
+    );
     const result = {
       items: raw
         .filter((issue) => !Object.hasOwn(issue, "pull_request"))
@@ -1455,15 +1462,10 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
       ifNoneMatch: cached?.etag,
       maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     });
-    if (response.status === 304 && cached !== undefined) return cached.page;
-    const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawMilestoneSchema)))(
-      response.body,
-    ).pipe(
-      Effect.mapError(() =>
-        readError("list", "invalid-response", "GitHub returned an invalid milestone list."),
-      ),
-    );
-    const nextPage = nextPageFromHeaders(response.headers, page);
+    const nextPage =
+      response.status === 304 && cached !== undefined && response.headers["link"] === undefined
+        ? cached.page.nextPage
+        : nextPageFromHeaders(response.headers, page);
     if (nextPage === undefined) {
       return yield* readError(
         "list",
@@ -1471,6 +1473,18 @@ export const make = Effect.fn("IssueService.make")(function* (): Effect.fn.Retur
         "GitHub returned invalid pagination metadata.",
       );
     }
+    if (response.status === 304 && cached !== undefined) {
+      const result = { ...cached.page, nextPage };
+      cache.set(endpoint, response.headers["etag"] ?? cached.etag, result);
+      return result;
+    }
+    const raw = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(RawMilestoneSchema)))(
+      response.body,
+    ).pipe(
+      Effect.mapError(() =>
+        readError("list", "invalid-response", "GitHub returned an invalid milestone list."),
+      ),
+    );
     const result = {
       items: raw.map((milestone) => normalizeMilestone(scope.host, scope.repository, milestone)),
       nextPage,

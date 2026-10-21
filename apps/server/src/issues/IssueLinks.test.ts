@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
+import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -35,7 +36,7 @@ function harness(initial: OrchestrationV2ThreadShell[]) {
         lookups.push(id);
         return shells.find((thread) => thread.id === id) ?? null;
       }),
-    getShellSnapshot: (options) =>
+    readShellSnapshot: (options) =>
       Effect.sync(() => {
         assert.isDefined(options?.threadIds, "Roadmap must not read the full shell snapshot");
         const selected = shells.filter((shell) => options!.threadIds!.includes(shell.id));
@@ -46,7 +47,7 @@ function harness(initial: OrchestrationV2ThreadShell[]) {
           threads: selected.filter((shell) => shell.archivedAt === null),
           archivedThreads: selected.filter((shell) => shell.archivedAt !== null),
         };
-      }),
+      }).pipe(Effect.map(Effect.succeed)),
   });
   const seed = Layer.effectDiscard(
     Effect.gen(function* () {
@@ -722,42 +723,95 @@ it.effect("reports whether a closed issue's preserved worktree path still exists
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("enriches hundreds of linked threads in one projection transaction", () =>
+it.effect("allows writes during enrich reads and WAL truncation between bounded batches", () =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const links = yield* IssueLinks.IssueLinks;
-    for (let index = 0; index < 100; index++) {
-      const thread = idleThreadProjection(liveThreadShell(ThreadId.make(`batch-${index}`))).thread;
-      yield* sql`
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-issue-enrich-" });
+    const filename = `${directory}/state.sqlite`;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const links = yield* IssueLinks.IssueLinks;
+      yield* sql`CREATE TABLE contention_probe (value INTEGER)`;
+      for (let index = 0; index < 100; index++) {
+        const thread = idleThreadProjection(
+          liveThreadShell(ThreadId.make(`batch-${index}`)),
+        ).thread;
+        yield* sql`
         INSERT INTO orchestration_v2_projection_threads(
           thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
           created_at, updated_at, archived_at, deleted_at, payload_json
         ) VALUES (${thread.id}, ${thread.projectId}, ${thread.title}, 'codex', 'full-access', 'default',
           '2026-10-13', '2026-10-13', NULL, NULL, ${JSON.stringify(thread)})`;
-      yield* sql`INSERT INTO issue_thread_links(host, repository, issue_number, thread_id)
+        yield* sql`INSERT INTO issue_thread_links(host, repository, issue_number, thread_id)
         VALUES (${ref.host}, ${ref.repository}, ${ref.number}, ${thread.id})`;
-    }
-    let transactions = 0;
-    let statements = 0;
-    const tracer = Tracer.make({
-      span(options) {
-        const span = new Tracer.NativeSpan(options);
-        if (span.name === "sql.transaction") transactions++;
-        if (span.name === "sqlite") statements++;
-        return span;
-      },
-    });
-    const enriched = yield* links.enrich(list()).pipe(Effect.withTracer(tracer));
-    assert.equal(enriched.issues[0]?.liveWork?.length, 100);
-    assert.equal(transactions, 1);
-    assert.isAtMost(statements, 6);
-  }).pipe(
-    Effect.provide(
-      IssueLinks.layer.pipe(
-        Layer.provide(ProjectionStore.layer),
-        Layer.provideMerge(SqlitePersistence.layerMemory),
-        Layer.provide(NodeServices.layer),
+      }
+      const other = yield* Effect.acquireRelease(
+        Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+        (db) => Effect.sync(() => db.close()),
+      );
+      other.exec("PRAGMA busy_timeout = 0");
+      let writerResult: unknown;
+      let checkpointResult: unknown;
+      let batches = 0;
+      let checkpointAfterBatch = 0;
+      let statements = 0;
+      const connections: unknown[] = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          if (span.name === "sqlite") statements++;
+          const end = span.end.bind(span);
+          span.end = (time, exit) => {
+            end(time, exit);
+            if (span.name === "sql.transaction")
+              connections.push(span.attributes.get("db.connection"));
+            if (
+              span.name === "sqlite" &&
+              String(span.attributes.get("db.query.text")).includes("native_subagent_payload_json")
+            ) {
+              batches++;
+              if (writerResult === undefined) {
+                try {
+                  other.exec("INSERT INTO contention_probe VALUES (1)");
+                  writerResult = true;
+                } catch (error) {
+                  writerResult = error;
+                }
+              }
+            }
+            if (
+              span.name === "ProjectionStore.decodeShellSnapshot" &&
+              checkpointResult === undefined
+            ) {
+              checkpointAfterBatch = batches;
+              try {
+                checkpointResult = other.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+              } catch (error) {
+                checkpointResult = error;
+              }
+            }
+          };
+          return span;
+        },
+      });
+      const enriched = yield* links.enrich(list()).pipe(Effect.withTracer(tracer));
+      assert.sameMembers(
+        enriched.issues[0]?.liveWork?.map((work) => work.threadId) ?? [],
+        Array.from({ length: 100 }, (_, index) => `batch-${index}`),
+      );
+      assert.strictEqual(writerResult, true);
+      assert.deepEqual(checkpointResult, { busy: 0, log: 0, checkpointed: 0 });
+      assert.isAbove(checkpointAfterBatch, 0);
+      assert.isAbove(batches, checkpointAfterBatch, "more batches must run after truncation");
+      assert.isTrue(connections.every((connection) => connection === "reader"));
+      assert.isAtMost(statements, 30, "shell reads must stay batched, not per thread");
+    }).pipe(
+      Effect.provide(
+        IssueLinks.layer.pipe(
+          Layer.provide(ProjectionStore.layer),
+          Layer.provideMerge(SqlitePersistence.layerFromPath(filename)),
+        ),
       ),
-    ),
-  ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
