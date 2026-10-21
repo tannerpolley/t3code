@@ -224,6 +224,7 @@ describe("command permissions", () => {
           for (const method of [
             PROJECT_ARTIFACT_METHODS.add,
             PROJECT_ARTIFACT_METHODS.remove,
+            WS_METHODS.issuesCloseOut,
             WS_METHODS.issuesCancelRequest,
             WS_METHODS.issuesRestoreRoot,
             WS_METHODS.issuesInboxMarkRead,
@@ -253,6 +254,8 @@ describe("command permissions", () => {
         const calls: string[] = [];
         const session = {
           client: {
+            [WS_METHODS.issuesCloseOut]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.issuesCloseOut)),
             [WS_METHODS.issuesCancelRequest]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesCancelRequest)),
             [WS_METHODS.issuesQueue]: () => Effect.sync(() => calls.push(WS_METHODS.issuesQueue)),
@@ -298,6 +301,12 @@ describe("command permissions", () => {
         };
         for (const environmentId of [other, env]) {
           const outcome = environmentId === env ? "Success" : "Failure";
+          const closedOut = yield* Effect.promise(() =>
+            issues.closeOut.run(registry, {
+              environmentId,
+              input: { ...scope, issueId: "issue", expectedRevision: 2 },
+            }),
+          );
           const cancelled = yield* Effect.promise(() =>
             issues.cancelRequest.run(registry, { environmentId, input: cancel }),
           );
@@ -316,11 +325,17 @@ describe("command permissions", () => {
           const unqueued = yield* Effect.promise(() =>
             issues.unqueueIssue.run(registry, { environmentId, input: { ...scope, number: 1 } }),
           );
-          expect([cancelled._tag, restored._tag, limited._tag, queued._tag, unqueued._tag]).toEqual(
-            [outcome, outcome, outcome, outcome, outcome],
-          );
+          expect([
+            closedOut._tag,
+            cancelled._tag,
+            restored._tag,
+            limited._tag,
+            queued._tag,
+            unqueued._tag,
+          ]).toEqual([outcome, outcome, outcome, outcome, outcome, outcome]);
         }
         expect(calls).toEqual([
+          WS_METHODS.issuesCloseOut,
           WS_METHODS.issuesCancelRequest,
           WS_METHODS.issuesRestoreRoot,
           WS_METHODS.issuesSetWorkerLimit,

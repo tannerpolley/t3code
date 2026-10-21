@@ -7,6 +7,9 @@ import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import { IssueRef, IssueRepositoryRef } from "./issue.ts";
 
+export const CLOSED_ISSUE_SUSPENSION_REASON =
+  "Issue closed during work. Decide whether to resume or close out the retained result.";
+
 export const RepositoryMilestonePlan = Schema.Struct({
   number: Schema.Int.check(Schema.isGreaterThan(0)),
   modelRoleId: ModelRoleId,
@@ -78,6 +81,14 @@ export const RepositoryWorkerLimitInput = Schema.Struct({
   clientRequestId: CommandId,
 });
 export type RepositoryWorkerLimitInput = typeof RepositoryWorkerLimitInput.Type;
+export const IssueWorkCloseOutInput = Schema.Struct({
+  ...IssueRepositoryRef.fields,
+  issueId: TrimmedNonEmptyString,
+  expectedRevision: RepositoryOrchestration.fields.revision,
+  clientRequestId: CommandId,
+});
+export type IssueWorkCloseOutInput = typeof IssueWorkCloseOutInput.Type;
+
 export const RepositoryWorkControlInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   paused: Schema.Boolean,

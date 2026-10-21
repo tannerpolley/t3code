@@ -17,6 +17,7 @@ import * as Ref from "effect/Ref";
 
 import {
   issueEligibility,
+  isReadOnlyIssueRole,
   sameIssueRepository,
   supportsManagedIssueWork,
   issueScopeExpansionError,
@@ -288,6 +289,7 @@ export function makeIssueWorkCommands({
     command: OrchestrationV2ServerCommand,
   ) =>
     Effect.gen(function* () {
+      if (isReadOnlyIssueRole(request.role)) return false;
       const managed =
         parentProjection.thread.repositoryOrchestration !== undefined ||
         parentProjection.thread.linkedIssue !== undefined;
@@ -402,7 +404,7 @@ export function makeIssueWorkCommands({
     });
 
   const childIssueFields = (request: DelegatedTaskRequest) => ({
-    ...(request.issue === undefined
+    ...(request.issue === undefined || isReadOnlyIssueRole(request.role)
       ? {}
       : { linkedIssue: request.issue, titleSource: "generated" as const }),
     ...(request.role === undefined ? {} : { role: request.role }),
@@ -412,10 +414,25 @@ export function makeIssueWorkCommands({
   // preparation binds one; it never borrows the parent's.
   const childWorkspaceFields = (request: DelegatedTaskRequest) =>
     request.workspaceStrategy === undefined
-      ? request.issue === undefined
+      ? request.issue === undefined || isReadOnlyIssueRole(request.role)
         ? {}
         : { branch: null, worktreePath: null }
       : { branch: request.workspaceStrategy.branch ?? null, worktreePath: null };
+
+  const closeOut = Effect.fn("IssueWorkCommands.closeOut")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "issue.work.close-out" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const read = yield* issueSnapshot(command.issue);
+    if (read?.state !== "closed")
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        detail: "Only a confirmed closed issue can be closed out.",
+      });
+    for (const event of yield* issueWorkRecovery.closeOut(command).pipe(mapDispatchError(command)))
+      yield* emit(events, command)<OrchestrationV2DomainEvent>(event);
+  });
 
   const cancel = (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "issue.work.cancel" }>,
@@ -433,6 +450,7 @@ export function makeIssueWorkCommands({
     reuseManagedChild,
     childIssueFields,
     childWorkspaceFields,
+    closeOut,
     cancel,
   };
 }

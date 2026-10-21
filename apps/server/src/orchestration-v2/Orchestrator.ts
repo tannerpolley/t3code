@@ -534,6 +534,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.threadId;
     case "issue.queue.change":
     case "issue.queue.deliver":
+    case "issue.work.close-out":
     case "issue.work.cancel":
     case "repository.work.restore":
     case "issue.work.start":
@@ -8475,7 +8476,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       .getThreadRecords(
         command.threadId,
         ["runs", "messages", "nodes", "attempts", "subagents", "turnItems"],
-        { turnItemTypes: [], messageRoles: ["user"] },
+        { turnItemTypes: ["command_execution"], messageRoles: ["user"] },
       )
       .pipe(Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })));
     const queuedRun = projection.runs.find((candidate) => candidate.id === command.runId);
@@ -8526,6 +8527,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
       },
     });
+    for (const item of projection.turnItems) {
+      if (
+        item.runId !== queuedRun.id ||
+        item.type !== "command_execution" ||
+        item.input !== WORKSPACE_PREPARATION_INPUT ||
+        !["pending", "running", "waiting"].includes(item.status)
+      )
+        continue;
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: queuedRun.id,
+        occurredAt: now,
+        payload: {
+          ...item,
+          status: "cancelled",
+          title: "Workspace preparation cancelled",
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+    }
     if (queuedAttempt !== undefined && queuedRootNode !== undefined) {
       yield* emitEvent({
         type: "run-attempt.updated",
@@ -10072,7 +10095,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.runId === run.id &&
           candidate.type === "command_execution" &&
           candidate.input === WORKSPACE_PREPARATION_INPUT &&
-          candidate.status === "running",
+          ["pending", "running", "waiting"].includes(candidate.status),
       );
       if (preparationItem !== undefined) {
         yield* emitEvent({
@@ -11855,6 +11878,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "issue.queue.deliver":
         yield* issueQueue.deliver(command, events, effects);
         break;
+      case "issue.work.close-out":
+        yield* issueWork.closeOut(command, events);
+        break;
       case "issue.work.cancel":
         yield* issueWork.cancel(command, events);
         break;
@@ -12218,6 +12244,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const needsReads =
       command.type === "issue.work.start" ||
+      command.type === "issue.work.close-out" ||
       command.type === "issue.queue.deliver" ||
       command.type === "delegated_task.request" ||
       command.type === "message.dispatch" ||

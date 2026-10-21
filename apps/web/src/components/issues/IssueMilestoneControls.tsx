@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
+  CLOSED_ISSUE_SUSPENSION_REASON,
   DEFAULT_REPOSITORY_WORK_SETTINGS,
   type EnvironmentId,
   type IssueMilestone,
@@ -8,7 +9,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ActivityIcon,
   ArrowRightLeftIcon,
@@ -22,7 +23,12 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
-import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadShell,
+  useThreadShellsForProjectRefs,
+} from "~/state/entities";
 import { issueEnvironment } from "~/state/issues";
 import { useEnvironmentQuery, formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -79,6 +85,9 @@ function RepositoryControls({
 }) {
   const { statusAtom, data, config } = useRepositoryWork(environmentId, reference);
   const navigate = useNavigate();
+  const issueThreads = useThreadShellsForProjectRefs(
+    config?.suspendedIssues.length ? [scopeProjectRef(environmentId, config.projectId)] : [],
+  );
   const root = useThreadShell(
     data?.rootThreadId == null ? null : scopeThreadRef(environmentId, data.rootThreadId),
   );
@@ -88,6 +97,8 @@ function RepositoryControls({
   const [busy, setBusy] = useState(false);
   const [handoffExpanded, setHandoffExpanded] = useState(false);
   const [summary, setSummary] = useState("");
+  const closeOut = useAtomCommand(issueEnvironment.closeOut, { reportFailure: false });
+  const canCloseOut = useAtomValue(issueEnvironment.closeOut.permissionAtom(environmentId));
   const pause = useAtomCommand(issueEnvironment.setPaused, { reportFailure: false });
   const handoff = useAtomCommand(issueEnvironment.handoff, { reportFailure: false });
   const restore = useAtomCommand(issueEnvironment.restoreRoot, { reportFailure: false });
@@ -166,6 +177,27 @@ function RepositoryControls({
       setHandoffExpanded(false);
       setSummary("");
     }
+    appAtomRegistry.refresh(statusAtom);
+  };
+  const finishAttempt = async (issueId: string) => {
+    if (busy || !canCloseOut) return;
+    setBusy(true);
+    const result = await closeOut({
+      environmentId,
+      input: {
+        ...reference,
+        issueId,
+        expectedRevision: config.revision,
+        clientRequestId: CommandId.make(randomUUID()),
+      },
+    });
+    setBusy(false);
+    if (result._tag === "Failure")
+      toastManager.add({
+        type: "error",
+        title: "Could not close out the issue attempt",
+        description: formatEnvironmentQueryError(result.cause),
+      });
     appAtomRegistry.refresh(statusAtom);
   };
   const togglePause = async () => {
@@ -281,6 +313,25 @@ function RepositoryControls({
           </Tooltip>
         </span>
       </MetaRow>
+      {config.suspendedIssues
+        .filter((entry) => entry.reason === CLOSED_ISSUE_SUSPENSION_REASON)
+        .map((entry) => (
+          <div key={entry.id} className="flex items-center justify-between gap-2 text-xs">
+            <span className="text-muted-foreground">
+              {issueThreads.find((thread) => thread.linkedIssue?.id === entry.id)?.title ??
+                "Closed issue"}
+              : {entry.reason}
+            </span>
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={busy || !canCloseOut || config.handoff?.status === "draining"}
+              onClick={() => void finishAttempt(entry.id)}
+            >
+              Close out attempt
+            </Button>
+          </div>
+        ))}
       {restoreExpanded && config.handoff === undefined ? (
         <div className="flex w-full max-w-md flex-col gap-2 pt-1">
           <span className="text-xs text-muted-foreground">

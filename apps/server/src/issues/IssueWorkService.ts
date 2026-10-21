@@ -1,5 +1,6 @@
 import {
   CommandId,
+  CLOSED_ISSUE_SUSPENSION_REASON,
   ThreadId,
   type IssueQueueInput,
   type OrchestrationV2ServerCommand,
@@ -8,6 +9,7 @@ import {
   type IssueRef,
   type IssueWorkStartInput,
   type IssueWorkCancelInput,
+  type IssueWorkCloseOutInput,
   type IssueWorkRequested,
   type RepositoryWorkRestoreInput,
   type IssueWorkStartResult,
@@ -55,6 +57,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { checkDelegateTarget } from "../mcp/delegateTaskTarget.ts";
 import {
   issueEligibility,
+  isReadOnlyIssueRole,
   sameIssueRepository,
   supportsManagedIssueWork,
   issueScopeExpansionError,
@@ -109,6 +112,10 @@ export class IssueWorkService extends Context.Service<
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly setWorkerLimit: (
       input: RepositoryWorkerLimitInput,
+    ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
+    readonly closeOut: (
+      input: IssueWorkCloseOutInput,
+      callerThreadId?: ThreadId,
     ) => Effect.Effect<RepositoryWorkResult, IssueWorkError>;
     readonly setPaused: (
       input: RepositoryWorkControlInput,
@@ -435,6 +442,11 @@ export const layer = Layer.effect(
     const startWorker: IssueWorkService["Service"]["startWorker"] = Effect.fn(
       "IssueWorkService.startWorker",
     )(function* (command) {
+      if (command.type === "delegated_task.request" && isReadOnlyIssueRole(command.role))
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Read-only children use ordinary delegation and issue links.",
+        });
       if (command.issue === undefined)
         return yield* new IssueWorkError({
           code: "invalid-request",
@@ -932,7 +944,8 @@ export const layer = Layer.effect(
               shell.activeRunId === null &&
               shell.status !== "queued" &&
               (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
-              (yield* store.resultAvailable(threadId)))
+              ((yield* store.resultAvailable(threadId)) ||
+                (yield* progressFor(threadId, false)).progress.state === "result_available"))
           )
             continue;
           // User-decision suspensions remain until the user explicitly resumes repository work.
@@ -942,9 +955,7 @@ export const layer = Layer.effect(
           let reason: string | null = null;
           if (read._tag === "Failure" || issueEligibility(read.success) === "unknown")
             reason = "Issue relationships are unreadable. Restore access before resuming.";
-          else if (read.success.state === "closed")
-            reason =
-              "Issue closed during work. Decide whether to resume or close out the retained result.";
+          else if (read.success.state === "closed") reason = CLOSED_ISSUE_SUSPENSION_REASON;
           else if (issueEligibility(read.success) === "blocked")
             reason = openBlockerSuspensionReason;
           else {
@@ -1213,6 +1224,43 @@ export const layer = Layer.effect(
           );
         return yield* repositoryStatus(input);
       });
+    const closeOut = Effect.fn("IssueWorkService.closeOut")(function* (
+      input: IssueWorkCloseOutInput,
+      callerThreadId?: ThreadId,
+    ) {
+      const owner = yield* store.repositoryOwnerByRef(input);
+      if (owner === null)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "This repository has no registered orchestrator.",
+        });
+      if (callerThreadId !== undefined && owner.rootThreadId !== callerThreadId)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "Only the registered repository orchestrator can close out an issue attempt.",
+        });
+      const workers = yield* Effect.forEach(yield* store.workerThreads(owner.rootThreadId), (id) =>
+        threads.getThreadShell(id).pipe(Effect.mapError(mapError)),
+      );
+      const worker = workers.find((worker) => worker?.linkedIssue?.id === input.issueId);
+      if (worker?.linkedIssue === undefined)
+        return yield* new IssueWorkError({
+          code: "invalid-request",
+          message: "The issue has no current attempt under this repository orchestrator.",
+        });
+      yield* threads
+        .dispatch({
+          type: "issue.work.close-out",
+          commandId: input.clientRequestId,
+          threadId: owner.rootThreadId,
+          issueThreadId: worker.id,
+          issue: worker.linkedIssue,
+          expectedRevision: input.expectedRevision,
+        })
+        .pipe(Effect.mapError(mapError));
+      return yield* repositoryStatus(input);
+    });
+
     const setPaused: IssueWorkService["Service"]["setPaused"] = (input) =>
       Effect.gen(function* () {
         const owner = yield* store.repositoryOwnerByRef(input);
@@ -1539,6 +1587,7 @@ export const layer = Layer.effect(
       workMilestone,
       repositoryStatus,
       setPaused,
+      closeOut,
       setWorkerLimit,
       assertCurrentCaller,
       requestHandoff: (threadId, input) => prepareHandoff(input, "awaiting_approval", threadId),

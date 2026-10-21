@@ -29,8 +29,8 @@ const topLevelTargetError =
   "Select an existing active top-level thread in the same repository project.";
 
 /**
- * User-only issue recovery decisions: cancel an unclaimed admission, and register or restore a
- * repository orchestrator. The orchestrator owns locks, receipts and event ids. These read
+ * Issue recovery decisions: cancel an unclaimed admission, close out a stopped attempt, or
+ * register or restore a repository orchestrator. The orchestrator owns locks, receipts and event ids. These read
  * committed state and fail with the user-facing rejection reason as a string.
  */
 export const makeIssueWorkRecovery = Effect.gen(function* () {
@@ -254,5 +254,150 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
       return { retiringRoot, events };
     });
 
-  return { restoreLockKeys, cancel, restore };
+  const closeOut = Effect.fn("IssueWorkRecovery.closeOut")(function* (
+    command: Command<"issue.work.close-out">,
+  ) {
+    const store = yield* requireStore;
+    const root = yield* projectionStore.getThread(command.threadId);
+    const config = root.repositoryOrchestration;
+    const repository = yield* store.repositoryOwner(command.issue);
+    if (
+      config === undefined ||
+      config.revision !== command.expectedRevision ||
+      config.handoff?.status === "draining" ||
+      repository?.rootThreadId !== command.threadId ||
+      (yield* store.issueOwner(command.issue)) !== command.issueThreadId
+    )
+      return yield* Effect.fail(
+        "Repository ownership or the issue attempt changed. Refresh before closing out.",
+      );
+    const child = yield* projectionStore.getThreadRecords(command.issueThreadId, [
+      "runs",
+      "subagents",
+      "runtimeRequests",
+      "providerThreads",
+      "turnItems",
+    ]);
+    const terminal = (status: string) =>
+      ["completed", "failed", "interrupted", "cancelled", "rolled_back"].includes(status);
+    if (
+      child.thread.lineage.rootThreadId !== root.id ||
+      child.runs.some((run) => !terminal(run.status)) ||
+      child.subagents.some((task) => !terminal(task.status)) ||
+      child.runtimeRequests.some((request) => request.status === "pending") ||
+      child.providerThreads.some(
+        (provider) => (provider.pendingBackgroundTasks?.length ?? 0) > 0,
+      ) ||
+      child.turnItems.some(
+        (item) =>
+          !terminal(item.status) &&
+          !(item.type === "command_execution" && item.input === "Preparing workspace"),
+      )
+    )
+      return yield* Effect.fail(
+        "Cancel or finish the attempt's remaining work before closing it out.",
+      );
+    const parentId = child.thread.lineage.parentThreadId;
+    if (parentId === null) return yield* Effect.fail("The issue attempt has no parent.");
+    const parent = yield* projectionStore.getThreadRecords(parentId, [
+      "subagents",
+      "nodes",
+      "turnItems",
+    ]);
+    const task = parent.subagents.findLast(
+      (task) => task.origin === "app_owned" && task.childThreadId === command.issueThreadId,
+    );
+    if (task === undefined) return yield* Effect.fail("The issue attempt has no delegated task.");
+    const now = yield* DateTime.now;
+    const events: EventInput[] = [];
+    for (const item of child.turnItems) {
+      if (
+        item.type !== "command_execution" ||
+        item.input !== "Preparing workspace" ||
+        terminal(item.status)
+      )
+        continue;
+      events.push({
+        type: "turn-item.updated",
+        threadId: child.thread.id,
+        occurredAt: now,
+        payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+      });
+    }
+    for (const nested of child.subagents) {
+      if (
+        nested.origin !== "app_owned" ||
+        (nested.completionDelivery?.state !== "pending" &&
+          nested.completionDelivery?.state !== "claimed")
+      )
+        continue;
+      events.push({
+        type: "subagent.updated",
+        threadId: child.thread.id,
+        nodeId: nested.id,
+        occurredAt: now,
+        payload: {
+          ...nested,
+          updatedAt: now,
+          completionDelivery: { state: "disposed", observedByRunId: null },
+        },
+      });
+    }
+    const result = task.result ?? "Closed out the attempt for the closed issue.";
+    events.push({
+      type: "subagent.updated",
+      threadId: parentId,
+      nodeId: task.id,
+      occurredAt: now,
+      payload: {
+        ...task,
+        status: "completed",
+        result,
+        completedAt: task.completedAt ?? now,
+        updatedAt: now,
+        completionDelivery: { state: "disposed", observedByRunId: null },
+      },
+    });
+    const node = parent.nodes.find((node) => node.id === task.id);
+    if (node !== undefined)
+      events.push({
+        type: "node.updated",
+        threadId: parentId,
+        nodeId: node.id,
+        occurredAt: now,
+        payload: { ...node, status: "completed", completedAt: node.completedAt ?? now },
+      });
+    for (const item of parent.turnItems) {
+      if (item.type !== "subagent" || item.subagentId !== task.id) continue;
+      events.push({
+        type: "turn-item.updated",
+        threadId: parentId,
+        occurredAt: now,
+        payload: {
+          ...item,
+          status: "completed",
+          result,
+          completedAt: item.completedAt ?? now,
+          updatedAt: now,
+        },
+      });
+    }
+    events.push({
+      type: "thread.metadata-updated",
+      threadId: root.id,
+      occurredAt: now,
+      payload: {
+        ...root,
+        updatedAt: now,
+        repositoryOrchestration: {
+          ...config,
+          revision: config.revision + 1,
+          suspendedIssues: config.suspendedIssues.filter((entry) => entry.id !== command.issue.id),
+        },
+      },
+    });
+    return events;
+  });
+
+  return { restoreLockKeys, cancel, restore, closeOut };
 });

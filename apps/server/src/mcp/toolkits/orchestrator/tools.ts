@@ -38,6 +38,7 @@ import {
   RepositoryWorkResult,
   IssueRepositoryRef,
   IssueWorkCancelInput,
+  IssueWorkCloseOutInput,
   IssueWorkRequested,
   RepositoryWorkRestoreInput,
   IssueChangeProposeInput,
@@ -357,6 +358,15 @@ export const OrchestratorToolkit = Toolkit.make(
   Tool.make("set_repository_work_paused", {
     description: "Pause new worker admissions or resume after rechecking GitHub eligibility.",
     parameters: RepositoryWorkControlInput,
+    success: RepositoryWorkResult,
+    failure: OrchestratorMcpFailure,
+    failureMode: "return",
+    dependencies,
+  }).annotate(Tool.Destructive, true),
+  Tool.make("close_out_issue_attempt", {
+    description:
+      "Only the registered repository orchestrator can finish a closed issue's retained attempt and clear its suspension. Cancel or finish remaining work first. Read get_repository_orchestration for the suspended issueId and current expectedRevision. clientRequestId makes retries idempotent.",
+    parameters: IssueWorkCloseOutInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
     failureMode: "return",
