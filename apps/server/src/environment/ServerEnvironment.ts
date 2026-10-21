@@ -227,6 +227,7 @@ export const make = Effect.gen(function* () {
       issueWork: true,
       issueQueue: true,
       issueChanges: true,
+      ownerDecisions: true,
       issueMilestones: true,
       issueInbox: true,
       issueContexts: true,

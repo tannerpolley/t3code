@@ -35,6 +35,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as InlineShellRuns from "./terminal/InlineShellRuns.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
+import * as OwnerDecisions from "./issues/OwnerDecisions.ts";
 import * as IssueInbox from "./issues/IssueInbox.ts";
 import * as IssueLinks from "./issues/IssueLinks.ts";
 import * as IssueCleanup from "./issues/IssueCleanup.ts";
@@ -461,6 +462,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(InlineShellRuns.InlineShellRuns)({}),
   Layer.mock(IssueChangeService.IssueChangeService)({}),
   Layer.mock(IssueInbox.IssueInbox)({}),
+  Layer.mock(OwnerDecisions.OwnerDecisions)({}),
   Layer.mock(IssueLinks.IssueLinks)({}),
   Layer.mock(IssueRoadmap.IssueRoadmap)({}),
   Layer.mock(IssueCleanup.IssueCleanup)({}),

@@ -3,6 +3,7 @@ import * as Sidebar from "../../../sidebarLayout.ts";
 import { EMPTY_SIDEBAR_LAYOUT } from "@t3tools/contracts";
 import * as IssueLinks from "../../../issues/IssueLinks.ts";
 import * as IssueInbox from "../../../issues/IssueInbox.ts";
+import * as OwnerDecisions from "../../../issues/OwnerDecisions.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -105,6 +106,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const layerRoutes = McpHttpServer.layer.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
+        Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
         Layer.provide(Layer.mock(ProjectArtifacts.ProjectArtifacts)({})),
         Layer.provide(McpSessionRegistry.layer),
       );

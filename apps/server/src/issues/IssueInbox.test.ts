@@ -73,7 +73,7 @@ interface Request {
   readonly host: string;
   readonly repository: string;
   readonly path: string;
-  readonly method?: "POST";
+  readonly method?: "POST" | "DELETE";
   readonly body?: unknown;
   readonly ifNoneMatch?: string;
 }

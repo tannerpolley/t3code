@@ -459,3 +459,9 @@ the scope and merge strategy. GitHub rebases the remaining stack after merging.
 It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that
 layer before retrying. GitHub may require manual conflict resolution after a lower layer is amended,
 even when its changes look independent. Stack actions require an environment that supports them.
+
+## Owner decisions
+
+Agents can request a decision on a GitHub issue, with two to four choices, a recommendation, evidence, and the consequence of each choice. Open **Decisions** in the Issues page or a thread's Issues pane, or answer from the issue detail. The all-projects view gathers decisions from connected environments and warns when an environment is unavailable.
+
+Only T3's signed-in owner interface accepts a choice. Agents and Ask mode cannot choose. T3 records the choice in a GitHub comment, then notifies the requesting thread; publication or delivery failures stay visible and retry automatically. A decision does not approve a separate issue-change preview. This identity guarantee uses the owner login boundary: it cannot prove a physical person clicked if someone else has the owner's credentials.

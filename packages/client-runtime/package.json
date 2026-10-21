@@ -211,6 +211,10 @@
       "types": "./src/state/issueWork.ts",
       "default": "./src/state/issueWork.ts"
     },
+    "./state/ownerDecisions": {
+      "types": "./src/state/ownerDecisions.ts",
+      "default": "./src/state/ownerDecisions.ts"
+    },
     "./state/issues": {
       "types": "./src/state/issues.ts",
       "default": "./src/state/issues.ts"

@@ -1,6 +1,7 @@
 import { ProjectArtifactsToolkit } from "./projectArtifacts/tools.ts";
 import * as IssueLinks from "../../issues/IssueLinks.ts";
 import * as IssueInbox from "../../issues/IssueInbox.ts";
+import * as OwnerDecisions from "../../issues/OwnerDecisions.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -134,6 +135,9 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
   expect(names.has("set_repository_worker_limit")).toBe(true);
   expect(names.has("t3_thread_launch")).toBe(true);
   expect(names.has("t3_thread_start")).toBe(false);
+  for (const name of ["request_owner_decision", "list_owner_decisions", "withdraw_owner_decision"])
+    expect(names.has(name)).toBe(true);
+  expect(names.has("choose_owner_decision")).toBe(false);
 });
 
 const threadId = ThreadId.make("mcp-core-thread");
@@ -702,24 +706,45 @@ const dispatched: Array<string> = [];
 it.effect("refuses act-as-caller tools to a client caller", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const result = yield* server
-      .callTool({
-        name: "delegate_task",
-        arguments: { task: "Review", mode: "async" },
-      })
-      .pipe(
-        Effect.provideService(
-          McpInvocationContext.McpInvocationContext,
-          clientScope("full-access"),
-        ),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect(declaredFailure(result)).toMatchObject({ code: "thread_credential_required" });
+    for (const tool of [
+      { name: "delegate_task", arguments: { task: "Review", mode: "async" } },
+      { name: "list_owner_decisions", arguments: {} },
+      { name: "withdraw_owner_decision", arguments: { id: "D1", reason: "Superseded" } },
+      {
+        name: "request_owner_decision",
+        arguments: {
+          host: "github.com",
+          repository: "acme/repo",
+          number: 46,
+          clientRequestId: "retry",
+          question: "Proceed?",
+          options: [
+            { id: "yes", label: "Yes", consequence: "Proceed" },
+            { id: "no", label: "No", consequence: "Stop" },
+          ],
+          recommendedOptionId: "yes",
+          recommendationReason: "Evidence supports it",
+          evidenceUrl: "https://github.com/acme/repo/issues/1",
+        },
+      },
+    ]) {
+      const result = yield* server
+        .callTool(tool)
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("full-access"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(declaredFailure(result)).toMatchObject({ code: "thread_credential_required" });
+    }
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
+        Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -761,6 +786,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       layerOrchestratorToolkit.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
+        Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -838,6 +864,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
         layerOrchestratorToolkit.pipe(
           Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
           Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
+          Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(
@@ -944,6 +971,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
       layerOrchestratorToolkit.pipe(
         Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
         Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
+        Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(

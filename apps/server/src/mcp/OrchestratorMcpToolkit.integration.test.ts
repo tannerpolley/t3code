@@ -1,5 +1,6 @@
 import * as IssueLinks from "../issues/IssueLinks.ts";
 import * as IssueInbox from "../issues/IssueInbox.ts";
+import * as OwnerDecisions from "../issues/OwnerDecisions.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
@@ -743,6 +744,7 @@ describe("orchestrator MCP toolkit", () => {
           ).pipe(
             Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
             Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
+            Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(layerOrchestration),
             Layer.provide(layerRegistry),
@@ -5096,6 +5098,7 @@ describe("orchestrator MCP toolkit", () => {
         const layerTest = layerOrchestratorToolkit.pipe(
           Layer.provide(Layer.mock(IssueLinks.IssueLinks)({})),
           Layer.provide(Layer.mock(IssueInbox.IssueInbox)({})),
+          Layer.provide(Layer.mock(OwnerDecisions.OwnerDecisions)({})),
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provideMerge(layerOrchestration),
           Layer.provide(

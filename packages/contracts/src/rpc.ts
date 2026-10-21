@@ -1,3 +1,9 @@
+import {
+  OwnerDecision,
+  OwnerDecisionsListInput,
+  OwnerDecisionChooseInput,
+  OwnerDecisionError,
+} from "./ownerDecision.ts";
 import { PROJECT_ARTIFACT_METHODS, projectArtifactRpcs } from "./projectArtifactRpc.ts";
 import { SidebarLayoutRecord, SidebarLayoutUpdate, SidebarLayoutError } from "./sidebarLayout.ts";
 import { ThreadProcesses, ThreadProcessesInput } from "./threadProcesses.ts";
@@ -606,6 +612,9 @@ export const WS_METHODS = {
   issuesRepositoryStatus: "issues.repositoryStatus",
   issuesSetPaused: "issues.setPaused",
   issuesSetWorkerLimit: "issues.setWorkerLimit",
+  ownerDecisionsList: "issues.decisions.list",
+  ownerDecisionsChoose: "issues.decisions.choose",
+  ownerDecisionsSubscribe: "issues.decisions.subscribe",
   issueChangesList: "issues.changes.list",
   issueChangesDecide: "issues.changes.decide",
   issueChangesSubscribe: "issues.changes.subscribe",
@@ -1135,6 +1144,22 @@ const WsIssuesSetPausedRpc = Rpc.make(WS_METHODS.issuesSetPaused, {
   payload: RepositoryWorkControlInput,
   success: RepositoryWorkResult,
   error: IssueRpcError,
+});
+const WsOwnerDecisionsListRpc = Rpc.make(WS_METHODS.ownerDecisionsList, {
+  payload: OwnerDecisionsListInput,
+  success: Schema.Array(OwnerDecision),
+  error: Schema.Union([OwnerDecisionError, EnvironmentAuthorizationError]),
+});
+const WsOwnerDecisionsChooseRpc = Rpc.make(WS_METHODS.ownerDecisionsChoose, {
+  payload: OwnerDecisionChooseInput,
+  success: OwnerDecision,
+  error: Schema.Union([OwnerDecisionError, EnvironmentAuthorizationError]),
+});
+const WsOwnerDecisionsSubscribeRpc = Rpc.make(WS_METHODS.ownerDecisionsSubscribe, {
+  payload: Schema.Struct({}),
+  success: Schema.Number,
+  stream: true,
+  error: EnvironmentAuthorizationError,
 });
 const WsIssueChangesListRpc = Rpc.make(WS_METHODS.issueChangesList, {
   payload: IssueChangesListInput,
@@ -2225,6 +2250,9 @@ const forkWsRpcs = [
   WsIssuesHandoffRpc,
   WsIssuesCancelRequestRpc,
   WsIssuesRestoreRootRpc,
+  WsOwnerDecisionsListRpc,
+  WsOwnerDecisionsChooseRpc,
+  WsOwnerDecisionsSubscribeRpc,
   WsIssueChangesListRpc,
   WsIssueChangesDecideRpc,
   WsIssueChangesSubscribeRpc,
@@ -2466,6 +2494,9 @@ export const UpstreamWsRpcGroup = WsRpcGroup.omit(
   WS_METHODS.issuesHandoff,
   WS_METHODS.issuesCancelRequest,
   WS_METHODS.issuesRestoreRoot,
+  WS_METHODS.ownerDecisionsList,
+  WS_METHODS.ownerDecisionsChoose,
+  WS_METHODS.ownerDecisionsSubscribe,
   WS_METHODS.issueChangesList,
   WS_METHODS.issueChangesDecide,
   WS_METHODS.issueChangesSubscribe,

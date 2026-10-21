@@ -1,4 +1,9 @@
 import {
+  RequestOwnerDecisionTool,
+  ListOwnerDecisionsTool,
+  WithdrawOwnerDecisionTool,
+} from "../../../issues/OwnerDecisionMcpTools.ts";
+import {
   OrchestratorMcpCapabilitiesResult,
   OrchestrationV2StopWorkflowInput,
   OrchestratorMcpCreateThreadsInput,
@@ -299,6 +304,9 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Destructive, true);
 
 export const OrchestratorToolkit = Toolkit.make(
+  RequestOwnerDecisionTool,
+  ListOwnerDecisionsTool,
+  WithdrawOwnerDecisionTool,
   ProposeIssueChangeTool,
   Tool.make("request_repository_handoff", {
     description:

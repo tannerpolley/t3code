@@ -82,3 +82,5 @@ export * from "./clientRpcPermissions.ts";
 
 export * from "./issueLinks.ts";
 export * from "./issueCleanup.ts";
+
+export * from "./ownerDecision.ts";

@@ -34,6 +34,45 @@ import {
 } from "./RpcAuthorization.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
+it.effect(
+  "denies owner choices without the destination operate scope before the handler runs",
+  () =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.ownerDecisionsChoose
+          > => tag !== WS_METHODS.ownerDecisionsChoose,
+        ),
+      );
+      let handled = false;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.ownerDecisionsChoose, () =>
+              Effect.sync(() => {
+                handled = true;
+              }).pipe(Effect.andThen(Effect.never)),
+            ),
+            RpcAuthorization.layer([AuthOrchestrationReadScope]),
+          ),
+        ),
+      );
+      expect(
+        yield* client[WS_METHODS.ownerDecisionsChoose]({ id: "D1", optionId: "adopt" }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthOrchestrationOperateScope,
+      });
+      expect(handled).toBe(false);
+    }).pipe(Effect.scoped),
+);
+
 describe("RPC authorization scopes", () => {
   it("guards issue state writes and unlink separately", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.issuesCleanup)).toBe(AuthSourceControlWriteScope);

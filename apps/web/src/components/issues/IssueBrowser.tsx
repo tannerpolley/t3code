@@ -1,3 +1,5 @@
+import { OwnerDecisionsView } from "./OwnerDecisionCards";
+import { useOwnerDecisions } from "~/state/ownerDecisions";
 import { IssueMilestoneControls, IssueRepositoryControls } from "./IssueMilestoneControls";
 import { IssueInboxSection } from "./IssueInbox";
 import { IssueStateIcon } from "./IssueStateIcon";
@@ -253,6 +255,15 @@ export function IssueBrowser({
     repositoryErrors,
     capabilitiesKnown,
   } = repositories;
+  const decisions = useOwnerDecisions();
+  const [showDecisions, setShowDecisions] = useState(false);
+  const decisionCount = decisions.records.filter(
+    ({ decision }) =>
+      decision.chosenOptionId === null &&
+      decision.state !== "withdrawn" &&
+      (!search.host || decision.host === search.host.toLowerCase()) &&
+      (!search.repository || decision.repository === search.repository.toLowerCase()),
+  ).length;
   const [preferences, setPreferences] = useIssueFilterPreferences();
   const [views, setViews] = useIssueViews();
   const stateFilter = issueStateFilter(preferences);
@@ -904,6 +915,14 @@ export function IssueBrowser({
               />
             </InputGroup>
           </div>
+          <Button
+            size="xs"
+            variant={showDecisions ? "secondary" : "outline"}
+            aria-pressed={showDecisions}
+            onClick={() => setShowDecisions((value) => !value)}
+          >
+            Decisions ({decisionCount})
+          </Button>
           <IssueFilterMenu
             singleRepository={explicitScope}
             host={explicitScope ? "" : (search.host ?? "")}
@@ -935,7 +954,18 @@ export function IssueBrowser({
           ) : null}
         </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto pt-3">{listContent}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto pt-3">
+        {showDecisions ? (
+          <OwnerDecisionsView
+            view={decisions}
+            host={search.host}
+            repository={search.repository}
+            query={query}
+          />
+        ) : (
+          listContent
+        )}
+      </div>
     </section>
   );
 }

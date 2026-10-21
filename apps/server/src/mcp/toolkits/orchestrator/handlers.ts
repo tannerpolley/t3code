@@ -1,3 +1,4 @@
+import { ownerDecisionHandlers } from "../../../issues/OwnerDecisionMcpTools.ts";
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,7 @@ import { issueInboxHandlers } from "../../../issues/IssueInboxMcpTools.ts";
 const handlers = {
   ...issueLinkHandlers,
   ...issueInboxHandlers,
+  ...ownerDecisionHandlers,
   propose_issue_change: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

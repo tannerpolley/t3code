@@ -88,6 +88,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server supports repository-owned issue work starts and status reads. */
   issueWork: Schema.optionalKey(Schema.Boolean),
   issueQueue: Schema.optionalKey(Schema.Boolean),
+  ownerDecisions: Schema.optionalKey(Schema.Boolean),
   issueChanges: Schema.optionalKey(Schema.Boolean),
   issueMilestones: Schema.optionalKey(Schema.Boolean),
   /** Server records external issue activity for repository orchestrators. */

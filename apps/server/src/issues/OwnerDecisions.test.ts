@@ -1,0 +1,488 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { CommandId, ProviderInstanceId, ProviderDriverKind } from "@t3tools/contracts";
+import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import {
+  IssueReadError,
+  ProjectId,
+  ThreadId,
+  type OwnerDecisionRequest,
+  type OrchestrationV2ServerCommand,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as SqlClient from "effect/sql/SqlClient";
+import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as DontAskModeWorker from "../orchestration-v2/DontAskModeWorker.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as IssueService from "./IssueService.ts";
+import * as IssueInbox from "./IssueInbox.ts";
+import * as OwnerDecisions from "./OwnerDecisions.ts";
+
+const threadId = ThreadId.make("requester");
+const otherThreadId = ThreadId.make("other");
+const request: OwnerDecisionRequest = {
+  host: "github.com",
+  repository: "acme/repo",
+  number: 46,
+  clientRequestId: "retry-1",
+  question: "Adopt the optimization?",
+  options: [
+    { id: "adopt", label: "Adopt", consequence: "Enable the optimization" },
+    { id: "defer", label: "Defer", consequence: "Keep the current implementation" },
+  ],
+  recommendedOptionId: "adopt",
+  recommendationReason: "The benchmarks are faster.",
+  evidenceUrl: "https://github.com/acme/repo/issues/45",
+};
+const owner = {
+  kind: "user" as const,
+  subject: "signed-in-owner",
+  scopes: ["orchestration:operate" as const],
+};
+const testLayer = Layer.mergeAll(SqlitePersistence.layerMemory, NodeCrypto.layer);
+const setup = (send?: ThreadManagement.ThreadManagementService["Service"]["dispatch"]) =>
+  Effect.gen(function* () {
+    const comments: Array<{ id: number; body: string; html_url: string }> = [];
+    const labels = new Set<string>();
+    const commands: OrchestrationV2ServerCommand[] = [];
+    let loseCommentResponse = false;
+    let loseDeliveryResponse = false;
+    let unavailable = false;
+    let failLabels = false;
+    let pages = 0;
+    const external = Layer.mergeAll(
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (id) =>
+          Effect.sync(() =>
+            unavailable
+              ? null
+              : {
+                  ...liveThreadShell(id),
+                  projectId: ProjectId.make("science"),
+                  title: "Requester",
+                },
+          ),
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            if (send !== undefined) return yield* send(command);
+            if (loseDeliveryResponse) {
+              loseDeliveryResponse = false;
+              return yield* new Orchestrator.OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: "Lost delivery receipt",
+              });
+            }
+            return { sequence: commands.length, storedEvents: [] };
+          }),
+      }),
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () => Effect.succeed(Option.some({ title: "Science" } as never)),
+      }),
+      Layer.mock(IssueInbox.IssueInbox)({
+        post: (_caller, input) =>
+          Effect.gen(function* () {
+            const id = comments.length + 1;
+            const url = `https://github.com/acme/repo/issues/46#issuecomment-${id}`;
+            comments.push({ id, body: input.body, html_url: url });
+            if (loseCommentResponse) {
+              loseCommentResponse = false;
+              return yield* new IssueReadError({
+                code: "upstream",
+                operation: "detail",
+                message: "Lost comment response",
+              });
+            }
+            return { commentId: String(id), url, issueNumber: 46, crossProject: false, labels: [] };
+          }),
+      }),
+      Layer.mock(IssueService.IssueService)({
+        repositoryRest: (input) =>
+          Effect.gen(function* () {
+            let body: unknown = [];
+            let nextPage: number | null = null;
+            if (input.path.includes("/comments?")) {
+              pages++;
+              const page = Number(new URLSearchParams(input.path.split("?")[1]).get("page"));
+              body = comments.slice((page - 1) * 2, page * 2);
+              nextPage = page * 2 < comments.length ? page + 1 : null;
+            } else if (input.path === "labels?per_page=100") body = [{ name: "decision-needed" }];
+            else if (input.path.includes("/labels")) {
+              if (failLabels)
+                return yield* new IssueReadError({
+                  code: "upstream",
+                  operation: "detail",
+                  message: "Label failure",
+                });
+              if (input.method === "DELETE") labels.delete("decision-needed");
+              else if (input.method === "POST") labels.add("decision-needed");
+              body = [...labels].map((name) => ({ name }));
+            }
+            return { status: 200, body: JSON.stringify(body), nextPage, etag: null };
+          }),
+      }),
+    );
+    const start = Effect.gen(function* () {
+      const context = yield* Layer.build(
+        Layer.fresh(OwnerDecisions.layer.pipe(Layer.provide(external))),
+      );
+      return yield* OwnerDecisions.OwnerDecisions.pipe(Effect.provideContext(context));
+    });
+    return {
+      service: yield* start,
+      start,
+      comments,
+      labels,
+      commands,
+      loseComment: () => {
+        loseCommentResponse = true;
+      },
+      loseDelivery: () => {
+        loseDeliveryResponse = true;
+      },
+      setUnavailable: (value: boolean) => {
+        unavailable = value;
+      },
+      setFailLabels: (value: boolean) => {
+        failLabels = value;
+      },
+      pages: () => pages,
+    };
+  });
+
+it.effect("immutable, idempotent requests derive identity and scope agent listing", () =>
+  Effect.gen(function* () {
+    const { service, start } = yield* setup();
+    const concurrentService = yield* start;
+    const [first, retry] = yield* Effect.all(
+      [service.request(threadId, request), concurrentService.request(threadId, request)],
+      { concurrency: "unbounded" },
+    );
+    assert.equal(first.id, retry.id);
+    assert.equal(first.requestingProjectId, "science");
+    assert.equal(first.requestingThreadId, threadId);
+    assert.equal(first.requestingProjectTitle, "Science");
+    assert.equal(
+      (yield* service.request(threadId, { ...request, question: "Different" }).pipe(Effect.flip))
+        .code,
+      "invalid-request",
+    );
+    const other = yield* service.request(otherThreadId, request);
+    assert.notEqual(other.id, first.id);
+    assert.deepEqual(
+      (yield* service.listForCaller(threadId)).map((record) => record.id),
+      [first.id],
+    );
+    assert.lengthOf(yield* service.list({}), 2);
+    assert.lengthOf(yield* service.list({ repository: "another/repo" }), 0);
+    for (const input of [
+      { ...request, clientRequestId: "bad", recommendedOptionId: "missing" },
+      {
+        ...request,
+        clientRequestId: "duplicate",
+        options: [request.options[0]!, request.options[0]!],
+      },
+    ])
+      assert.equal(
+        (yield* service.request(threadId, input).pipe(Effect.flip)).code,
+        "invalid-request",
+      );
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect(
+  "only the caller can withdraw unanswered requests with a reason; labels remain until all close",
+  () =>
+    Effect.gen(function* () {
+      const { service, labels } = yield* setup();
+      const first = yield* service.request(threadId, request);
+      const second = yield* service.request(threadId, { ...request, clientRequestId: "second" });
+      yield* service.drain;
+      assert.isTrue(labels.has("decision-needed"));
+      assert.equal(
+        (yield* service
+          .withdraw(otherThreadId, { id: first.id, reason: "Changed" })
+          .pipe(Effect.flip)).code,
+        "forbidden",
+      );
+      assert.equal(
+        (yield* service.withdraw(threadId, { id: first.id, reason: " " }).pipe(Effect.flip)).code,
+        "invalid-request",
+      );
+      assert.equal(
+        (yield* service.withdraw(threadId, { id: first.id, reason: "Superseded" })).state,
+        "withdrawn",
+      );
+      yield* service.drain;
+      assert.isTrue(labels.has("decision-needed"));
+      yield* service.choose({ id: second.id, optionId: "defer" }, owner);
+      assert.equal(
+        (yield* service.withdraw(threadId, { id: second.id, reason: "Too late" }).pipe(Effect.flip))
+          .code,
+        "invalid-request",
+      );
+      yield* service.drain;
+      assert.isFalse(labels.has("decision-needed"));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect(
+  "only an authenticated owner can choose, and one concurrent click wins with durable work",
+  () =>
+    Effect.gen(function* () {
+      const { service, comments, commands } = yield* setup();
+      const decision = yield* service.request(threadId, request);
+      assert.equal(
+        (yield* service.choose({ id: decision.id, optionId: "adopt" }, owner).pipe(Effect.flip))
+          .code,
+        "invalid-request",
+      );
+      yield* service.drain;
+      for (const actor of [
+        { ...owner, kind: "agent" as const },
+        { ...owner, scopes: [] },
+        { ...owner, subject: "" },
+      ])
+        assert.equal(
+          (yield* service.choose({ id: decision.id, optionId: "adopt" }, actor).pipe(Effect.flip))
+            .code,
+          "forbidden",
+        );
+      const choices = yield* Effect.all(
+        ["adopt", "defer"].map((optionId) =>
+          service.choose({ id: decision.id, optionId }, owner).pipe(Effect.result),
+        ),
+        { concurrency: "unbounded" },
+      );
+      assert.lengthOf(choices.filter(Result.isSuccess), 1);
+      const chosen = (yield* service.listForCaller(threadId))[0]!;
+      assert.equal(chosen.chosenBy, owner.subject);
+      assert.equal(chosen.pendingPublish, "choice");
+      assert.isTrue(chosen.pendingDelivery);
+      assert.isNotNull(chosen.chosenAt);
+      yield* service.choose({ id: decision.id, optionId: chosen.chosenOptionId! }, owner);
+      yield* service.drain;
+      assert.lengthOf(comments, 2);
+      assert.include(comments[0]!.body, `<!-- t3-decision-request:v1 id=${decision.id} -->`);
+      assert.include(
+        comments[1]!.body,
+        `<!-- t3-decision-choice:v1 id=${decision.id} option=${chosen.chosenOptionId} -->`,
+      );
+      assert.include(comments[1]!.body, chosen.chosenAt!);
+      assert.include(comments[1]!.body, "#issuecomment-1");
+      const command = commands[0]!;
+      assert.equal(command.type, "message.dispatch");
+      if (command.type === "message.dispatch") {
+        assert.deepEqual(command.dispatchMode, { type: "queue_after_active" });
+        assert.deepEqual(command.notification?.source, { kind: "system" });
+        const option = request.options.find((entry) => entry.id === chosen.chosenOptionId)!;
+        assert.equal(
+          command.text,
+          `Owner decision ${decision.id} on acme/repo#46: ${option.label}. Next: ${option.consequence}. Evidence: ${request.evidenceUrl}. Owner record: https://github.com/acme/repo/issues/46#issuecomment-2.`,
+        );
+      }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("reconciles paged markers after lost request and choice responses across restarts", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    h.comments.push(
+      ...[1, 2, 3].map((id) => ({
+        id,
+        body: "Unrelated",
+        html_url: "https://github.com/acme/repo",
+      })),
+    );
+    const decision = yield* h.service.request(threadId, request);
+    h.loseComment();
+    yield* h.service.drain;
+    assert.equal((yield* h.service.listForCaller(threadId))[0]!.state, "publication_failed");
+    assert.lengthOf(h.commands, 0);
+    const restarted = yield* h.start;
+    yield* restarted.drain;
+    assert.equal((yield* restarted.listForCaller(threadId))[0]!.state, "awaiting_choice");
+    assert.lengthOf(h.comments, 4);
+    assert.isAbove(h.pages(), 2);
+    yield* restarted.choose({ id: decision.id, optionId: "adopt" }, owner);
+    h.loseComment();
+    yield* restarted.drain;
+    assert.lengthOf(h.commands, 0, "Unconfirmed comments must never wake the requester");
+    const again = yield* h.start;
+    yield* again.drain;
+    assert.lengthOf(h.comments, 5);
+    assert.lengthOf(h.commands, 1);
+    assert.isNotNull((yield* again.listForCaller(threadId))[0]!.deliveredAt);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("retains visible unavailable delivery and retries a stable command after restart", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const decision = yield* h.service.request(threadId, request);
+    yield* h.service.drain;
+    yield* h.service.choose({ id: decision.id, optionId: "adopt" }, owner);
+    h.setUnavailable(true);
+    yield* h.service.drain;
+    const record = (yield* h.service.listForCaller(threadId))[0]!;
+    assert.isTrue(record.pendingDelivery);
+    assert.include(record.lastError!, "unavailable");
+    assert.isFalse(h.labels.has("decision-needed"));
+    h.setUnavailable(false);
+    h.loseDelivery();
+    const restarted = yield* h.start;
+    yield* restarted.drain;
+    assert.isTrue((yield* restarted.listForCaller(threadId))[0]!.pendingDelivery);
+    const again = yield* h.start;
+    yield* again.drain;
+    assert.lengthOf(h.commands, 2);
+    assert.equal(h.commands[0]!.commandId, h.commands[1]!.commandId);
+    assert.lengthOf(h.comments, 2);
+    assert.isFalse((yield* again.listForCaller(threadId))[0]!.pendingDelivery);
+    yield* again.drain;
+    assert.lengthOf(h.commands, 2);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("label failures cannot prevent confirmed choice delivery", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const decision = yield* h.service.request(threadId, request);
+    yield* h.service.drain;
+    yield* h.service.choose({ id: decision.id, optionId: "defer" }, owner);
+    h.setFailLabels(true);
+    yield* h.service.drain;
+    const record = (yield* h.service.listForCaller(threadId))[0]!;
+    assert.isFalse(record.pendingDelivery);
+    assert.isTrue(record.pendingLabel);
+    h.setFailLabels(false);
+    yield* h.service.drain;
+    assert.isFalse(h.labels.has("decision-needed"));
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect("Ask mode off cannot answer owner decisions, which never enter runtime requests", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    yield* h.service.request(threadId, request);
+    yield* h.service.drain;
+    const dispatched: OrchestrationV2ServerCommand[] = [];
+    const worker = yield* DontAskModeWorker.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ProjectionStore.layer,
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command);
+                return { sequence: 0, storedEvents: [] };
+              }),
+          }),
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getDontAskMode: Effect.succeed(true),
+          }),
+        ),
+      ),
+    );
+    yield* worker.sweep;
+    assert.lengthOf(dispatched, 0);
+    const record = (yield* h.service.listForCaller(threadId))[0]!;
+    assert.equal(record.state, "awaiting_choice");
+    assert.isNull(record.chosenOptionId);
+    const sql = yield* SqlClient.SqlClient;
+    assert.lengthOf(yield* sql`SELECT * FROM orchestration_v2_projection_runtime_requests`, 0);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+it.effect(
+  "a delivery committed before a crash replays its receipt without a second message after restart",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const instanceId = ProviderInstanceId.make("codex");
+      const adapter = {
+        instanceId,
+        driver: ProviderDriverKind.make("codex"),
+        getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+        openSession: () => Effect.die("No provider may start in this test"),
+      } as ProviderAdapter.ProviderAdapterV2["Service"];
+      const runtimeLayer = ProviderReplayHarness.layerWithRegistry(
+        { name: "owner-decision-delivery" },
+        ProviderAdapterRegistry.layerFromAdapters([adapter]),
+        { databaseLayer: Layer.succeed(SqlClient.SqlClient, sql), runEffectWorker: false },
+      );
+      const startRuntime = Effect.gen(function* () {
+        const context = yield* Layer.build(Layer.fresh(runtimeLayer));
+        return yield* Orchestrator.OrchestratorV2.pipe(Effect.provideContext(context));
+      });
+      let orchestrator = yield* startRuntime;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-requester"),
+        threadId,
+        projectId: ProjectId.make("science"),
+        title: "Requester",
+        modelSelection: { instanceId, model: "gpt-6.1-sol" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      let loseResponse = true;
+      const h = yield* setup((command) =>
+        Effect.gen(function* () {
+          const result = yield* orchestrator.dispatch(command);
+          if (loseResponse) {
+            loseResponse = false;
+            return yield* new Orchestrator.OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Crash after command commit",
+            });
+          }
+          return result;
+        }),
+      );
+      const decision = yield* h.service.request(threadId, request);
+      yield* h.service.drain;
+      yield* h.service.choose({ id: decision.id, optionId: "adopt" }, owner);
+      yield* h.service.drain;
+      assert.isTrue((yield* h.service.listForCaller(threadId))[0]!.pendingDelivery);
+      const commandId = h.commands[0]!.commandId;
+      const before =
+        yield* sql`SELECT * FROM orchestration_events WHERE command_id = ${commandId} ORDER BY sequence`;
+      assert.isAbove(before.length, 0, "delivery already committed real orchestration events");
+      assert.lengthOf(
+        yield* sql`SELECT * FROM orchestration_command_receipts WHERE command_id = ${commandId}`,
+        1,
+      );
+      orchestrator = yield* startRuntime;
+      const restarted = yield* h.start;
+      yield* restarted.drain;
+      assert.deepEqual(
+        yield* sql`SELECT * FROM orchestration_events WHERE command_id = ${commandId} ORDER BY sequence`,
+        before,
+      );
+      assert.equal(h.commands[1]!.commandId, commandId);
+      assert.isFalse((yield* restarted.listForCaller(threadId))[0]!.pendingDelivery);
+      const messages =
+        yield* sql`SELECT * FROM orchestration_v2_projection_messages WHERE message_id = ${commandId}`;
+      assert.lengthOf(messages, 1);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(testLayer, NodeServices.layer))),
+);

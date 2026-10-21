@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
 import * as SidebarLayout from "./sidebarLayout.ts";
 import type * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as OwnerDecisions from "./issues/OwnerDecisions.ts";
 import * as IssueCleanup from "./issues/IssueCleanup.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
 import * as IssueLinks from "./issues/IssueLinks.ts";
@@ -41,6 +42,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const issueWork = yield* IssueWorkService.IssueWorkService;
       const issueChanges = yield* IssueChangeService.IssueChangeService;
       const sidebarLayout = yield* SidebarLayout.SidebarLayoutService;
+      const decisions = yield* OwnerDecisions.OwnerDecisions;
       const inbox = yield* IssueInbox.IssueInbox;
       const artifacts = yield* ProjectArtifacts.ProjectArtifacts;
       return {
@@ -75,6 +77,14 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
         [WS_METHODS.issuesCancelRequest]: (input) => issueWork.cancelRequest(input),
         [WS_METHODS.issuesRestoreRoot]: (input) => issueWork.restoreRoot(input),
         [WS_METHODS.issuesHandoff]: (input) => issueWork.handoff(input),
+        [WS_METHODS.ownerDecisionsList]: (input) => decisions.list(input),
+        [WS_METHODS.ownerDecisionsSubscribe]: () => decisions.changes,
+        [WS_METHODS.ownerDecisionsChoose]: (input) =>
+          decisions.choose(input, {
+            kind: "user",
+            subject: currentSession.subject,
+            scopes: currentSession.scopes,
+          }),
         [WS_METHODS.issueChangesList]: (input) => issueChanges.list(input),
         [WS_METHODS.issueChangesSubscribe]: (input) => issueChanges.subscribe(input),
         [WS_METHODS.issueChangesDecide]: (input) =>

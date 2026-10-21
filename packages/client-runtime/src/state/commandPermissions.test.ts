@@ -31,6 +31,7 @@ import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createOwnerDecisionAtoms } from "./ownerDecisions.ts";
 import { createIssueEnvironmentAtoms } from "./issues.ts";
 
 vi.mock("./session.ts", () => ({
@@ -227,6 +228,7 @@ describe("command permissions", () => {
             WS_METHODS.issuesCancelRequest,
             WS_METHODS.issuesRestoreRoot,
             WS_METHODS.issuesInboxMarkRead,
+            WS_METHODS.ownerDecisionsChoose,
             WS_METHODS.issuesSetWorkerLimit,
             WS_METHODS.issuesQueue,
             WS_METHODS.issuesUnqueue,
@@ -253,6 +255,8 @@ describe("command permissions", () => {
         const calls: string[] = [];
         const session = {
           client: {
+            [WS_METHODS.ownerDecisionsChoose]: () =>
+              Effect.sync(() => calls.push(WS_METHODS.ownerDecisionsChoose)),
             [WS_METHODS.issuesCancelRequest]: () =>
               Effect.sync(() => calls.push(WS_METHODS.issuesCancelRequest)),
             [WS_METHODS.issuesQueue]: () => Effect.sync(() => calls.push(WS_METHODS.issuesQueue)),
@@ -268,15 +272,14 @@ describe("command permissions", () => {
           target: { environmentId: env, label: "target" },
           session: yield* SubscriptionRef.make(Option.some(session)),
         } as unknown as EnvironmentSupervisor["Service"];
-        const issues = createIssueEnvironmentAtoms(
-          Atom.runtime(
-            Layer.succeed(EnvironmentRegistry, {
-              run: (_id: EnvironmentId, effect: Effect.Effect<unknown, never, never>) =>
-                Effect.provideService(effect, EnvironmentSupervisor, supervisor),
-            } as unknown as EnvironmentRegistry["Service"]),
-          ),
-          () => Atom.make(null),
+        const issueRuntime = Atom.runtime(
+          Layer.succeed(EnvironmentRegistry, {
+            run: (_id: EnvironmentId, effect: Effect.Effect<unknown, never, never>) =>
+              Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+          } as unknown as EnvironmentRegistry["Service"]),
         );
+        const issues = createIssueEnvironmentAtoms(issueRuntime, () => Atom.make(null));
+        const decisions = createOwnerDecisionAtoms(issueRuntime);
         const scope = {
           host: "github.com",
           repository: "owner/repo",
@@ -298,6 +301,13 @@ describe("command permissions", () => {
         };
         for (const environmentId of [other, env]) {
           const outcome = environmentId === env ? "Success" : "Failure";
+          const chosen = yield* Effect.promise(() =>
+            decisions.choose.run(registry, {
+              environmentId,
+              input: { id: "D1", optionId: "adopt" },
+            }),
+          );
+          expect(chosen._tag).toBe(outcome);
           const cancelled = yield* Effect.promise(() =>
             issues.cancelRequest.run(registry, { environmentId, input: cancel }),
           );
@@ -321,6 +331,7 @@ describe("command permissions", () => {
           );
         }
         expect(calls).toEqual([
+          WS_METHODS.ownerDecisionsChoose,
           WS_METHODS.issuesCancelRequest,
           WS_METHODS.issuesRestoreRoot,
           WS_METHODS.issuesSetWorkerLimit,

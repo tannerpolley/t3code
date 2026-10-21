@@ -835,7 +835,7 @@ export class IssueService extends Context.Service<
       readonly host: string;
       readonly repository: string;
       readonly path: string;
-      readonly method?: "POST";
+      readonly method?: "POST" | "DELETE";
       readonly body?: unknown;
       readonly ifNoneMatch?: string;
     }) => Effect.Effect<

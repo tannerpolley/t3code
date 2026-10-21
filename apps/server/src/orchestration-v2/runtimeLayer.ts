@@ -1,3 +1,4 @@
+import * as OwnerDecisions from "../issues/OwnerDecisions.ts";
 import * as InlineShellStore from "../terminal/InlineShellStore.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueChangeService from "../issues/IssueChangeService.ts";
@@ -329,6 +330,11 @@ const layerIssueChangesProvided = IssueChangeService.layer.pipe(Layer.provide(Ef
 const layerIssueInboxProvided = IssueInbox.layer.pipe(
   Layer.provide(Layer.merge(layerProjectService, layerThreadManagementProvided)),
 );
+const layerOwnerDecisionsProvided = OwnerDecisions.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(layerProjectService, layerThreadManagementProvided, layerIssueInboxProvided),
+  ),
+);
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -394,6 +400,7 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLaunchProvided,
   IssueWorkStore.layer,
   layerIssueInboxProvided,
+  layerOwnerDecisionsProvided,
   IssueWorkService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(

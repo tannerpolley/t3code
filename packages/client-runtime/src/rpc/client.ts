@@ -73,6 +73,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof ORCHESTRATION_V2_WS_METHODS.subscribeBackgroundTaskOutput
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
+  | typeof WS_METHODS.ownerDecisionsSubscribe
   | typeof WS_METHODS.issueChangesSubscribe
   | typeof WS_METHODS.issuesSubscribeLinkRefreshes
   | typeof WS_METHODS.issuesInboxSubscribeUnread

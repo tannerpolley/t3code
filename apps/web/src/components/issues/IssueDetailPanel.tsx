@@ -1,3 +1,4 @@
+import { OwnerDecisionCards } from "./OwnerDecisionCards";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -697,6 +698,7 @@ export function IssueDetailPanel({
         value={{ repositoryUrl: `https://${repository.host}/${repository.repository}`, threadRef }}
       >
         <div className="min-h-0 flex-1 overflow-y-auto" data-pull-request-summary-scroll>
+          <OwnerDecisionCards environmentId={environmentId} input={reference} />
           <IssueChangeCards environmentId={environmentId} input={reference} />
           {staleError ? (
             <div
