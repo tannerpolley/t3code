@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
-import { type ReactNode, type Ref,  useEffect,  useRef, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
 
 import { threadIssueRepository } from "@t3tools/client-runtime/state/issue-work";
 import { cn } from "~/lib/utils";
@@ -148,40 +148,38 @@ export function useIssueRepositoryTargets(preferredEnvironmentId?: EnvironmentId
   const { environments } = useEnvironments();
   const environmentsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const environmentLabels = (() =>
-      new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
-      ))();
+    new Map(
+      environments.map((environment) => [environment.environmentId, environment.label] as const),
+    ))();
   const capableEnvironmentIds = (() =>
-      new Set(
-        environments
-          .filter(
-            (environment) =>
-              environment.serverConfig?.environment.capabilities.githubIssues === true,
-          )
-          .map((environment) => environment.environmentId),
-      ))();
+    new Set(
+      environments
+        .filter(
+          (environment) => environment.serverConfig?.environment.capabilities.githubIssues === true,
+        )
+        .map((environment) => environment.environmentId),
+    ))();
   const capableEnvironmentList = (() =>
-      [...capableEnvironmentIds].toSorted(
-        (left, right) =>
-          Number(right === preferredEnvironmentId) - Number(left === preferredEnvironmentId) ||
-          (environmentLabels.get(left) ?? left).localeCompare(
-            environmentLabels.get(right) ?? right,
-          ),
-      ))();
+    [...capableEnvironmentIds].toSorted(
+      (left, right) =>
+        Number(right === preferredEnvironmentId) - Number(left === preferredEnvironmentId) ||
+        (environmentLabels.get(left) ?? left).localeCompare(environmentLabels.get(right) ?? right),
+    ))();
   const issueRepositories = useIssueRepositories(capableEnvironmentList);
   // Prefer the current thread’s environment when repositories overlap across connections.
   const repositoryTargets = (() =>
-      mergeIssueRepositoryTargets(
-        capableEnvironmentList.flatMap((environmentId) => {
-          const answer = issueRepositories.answers.find(
-            (entry) => entry.environmentId === environmentId,
-          );
-          return answer === undefined
-            ? []
-            : [{ environmentId, repositories: answer.result.repositories }];
-        }),
-      ))();
-  const repositoryErrors = (() => issueRepositories.failures.map((failure) => issueError(failure.cause, null)))();
+    mergeIssueRepositoryTargets(
+      capableEnvironmentList.flatMap((environmentId) => {
+        const answer = issueRepositories.answers.find(
+          (entry) => entry.environmentId === environmentId,
+        );
+        return answer === undefined
+          ? []
+          : [{ environmentId, repositories: answer.result.repositories }];
+      }),
+    ))();
+  const repositoryErrors = (() =>
+    issueRepositories.failures.map((failure) => issueError(failure.cause, null)))();
   const capabilitiesKnown =
     environments.some((environment) => environment.serverConfig !== null) ||
     environmentsBootstrapped;
@@ -243,14 +241,14 @@ export function IssueBrowser({
   const stateFilter = issueStateFilter(preferences);
   const explicitScope = search.repository !== undefined;
   const urlRepository = (() =>
-      search.repository === undefined
-        ? null
-        : (repositoryTargets.find((target) =>
-            sameRepository(target, {
-              host: search.host ?? target.host,
-              repository: search.repository!,
-            }),
-          ) ?? null))();
+    search.repository === undefined
+      ? null
+      : (repositoryTargets.find((target) =>
+          sameRepository(target, {
+            host: search.host ?? target.host,
+            repository: search.repository!,
+          }),
+        ) ?? null))();
   const scopedKey =
     urlRepository === null ? null : repositoryKey(urlRepository.host, urlRepository.repository);
   const explicitScopeMissing =
@@ -273,43 +271,43 @@ export function IssueBrowser({
     );
   })();
   const baseListTargets = (() =>
-      shownRepositories
-        .filter(
-          (target) =>
-            !repositoryKnownEmpty(
-              target,
-              views[repositoryKey(target.host, target.repository)] === "roadmap"
-                ? "all"
-                : (stateFilter ?? "open"),
-            ),
-        )
-        .map((target) => {
-          const roadmapView = views[repositoryKey(target.host, target.repository)] === "roadmap";
-          // Every view reads blockers and live work so issue circles show blocked and in progress.
-          return {
-            environmentId: target.environmentId,
-            roadmapView,
-            live: explicitScope,
-            input: {
-              host: target.host,
-              repository: target.repository,
-              state: issueListStateFor(stateFilter ?? "open", roadmapView),
-              roadmap: true,
-            },
-          };
-        }))();
+    shownRepositories
+      .filter(
+        (target) =>
+          !repositoryKnownEmpty(
+            target,
+            views[repositoryKey(target.host, target.repository)] === "roadmap"
+              ? "all"
+              : (stateFilter ?? "open"),
+          ),
+      )
+      .map((target) => {
+        const roadmapView = views[repositoryKey(target.host, target.repository)] === "roadmap";
+        // Every view reads blockers and live work so issue circles show blocked and in progress.
+        return {
+          environmentId: target.environmentId,
+          roadmapView,
+          live: explicitScope,
+          input: {
+            host: target.host,
+            repository: target.repository,
+            state: issueListStateFor(stateFilter ?? "open", roadmapView),
+            roadmap: true,
+          },
+        };
+      }))();
   const [pagingByKey, setPagingByKey] = useState<Record<string, IssuePagingState>>({});
   const generationRef = useRef(0);
   const listTargets = (() =>
-      baseListTargets.flatMap((target) => {
-        const state = pagingByKey[issueListScopeKey(target)];
-        const cursors = new Set<string | null>([state?.cursor ?? null]);
-        if ((target.roadmapView || target.live) && !state?.refreshing) cursors.add(null);
-        return [...cursors].map((cursor) => ({
-          ...target,
-          input: { ...target.input, ...(cursor === null ? {} : { cursor }) },
-        }));
-      }))();
+    baseListTargets.flatMap((target) => {
+      const state = pagingByKey[issueListScopeKey(target)];
+      const cursors = new Set<string | null>([state?.cursor ?? null]);
+      if ((target.roadmapView || target.live) && !state?.refreshing) cursors.add(null);
+      return [...cursors].map((cursor) => ({
+        ...target,
+        input: { ...target.input, ...(cursor === null ? {} : { cursor }) },
+      }));
+    }))();
   const issueLists = useIssueLists(listTargets);
   const liveIssueWork = useLiveIssueWork();
   const issueErrors = (() => {

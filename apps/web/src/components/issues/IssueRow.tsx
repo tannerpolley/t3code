@@ -1,5 +1,5 @@
 import { IssueHoverCard } from "./IssueHoverCard";
-import { IssueQueueAction } from "./IssueQueueAction";
+import { IssueQueueAction, useIssueQueued } from "./IssueQueueAction";
 import { parseIssueUrl, knownGitHubHosts } from "~/lib/openIssueLink";
 import { useProjects } from "~/state/entities";
 import { startIssueDrag } from "./issueComposerContext";
@@ -70,6 +70,7 @@ export function IssueRow({
 }) {
   const projects = useProjects();
   const reference = parseIssueUrl(issue.url, knownGitHubHosts(projects));
+  const queued = useIssueQueued(environmentId, reference);
   const projectChips = issueProjectChips(issue.projects);
   const assignees = issue.assignees.slice(0, 3);
   const row = (
@@ -91,7 +92,7 @@ export function IssueRow({
         onClick={onSelect}
       >
         <span className="mt-0.75 flex w-4 shrink-0 self-start">
-          <IssueStateIcon issue={issue} />
+          <IssueStateIcon issue={{ ...issue, queued }} />
         </span>
         <PullRequestRowLines
           number={null}
