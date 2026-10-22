@@ -292,7 +292,10 @@ export const CodexDriver: ProviderDriver<
     // its own account under `effectiveHomePath`, while plain instances share
     // the common home. The continuation key would conflate the two.
     const accountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
-    const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = (expected) =>
+    const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = (
+      expected,
+      canRedeem,
+    ) =>
       resetCreditCoordinator
         .redeem(accountKey, (idempotencyKey) =>
           Effect.gen(function* () {
@@ -301,7 +304,7 @@ export const CodexDriver: ProviderDriver<
               (yield* snapshot.getSnapshot).usageLimits?.resetCredits?.nextCreditId !==
                 expected.creditId
             ) {
-              return "noCredit" as const;
+              return "alreadyRedeemed" as const;
             }
             const { client } = yield* withCodexAppServerClient({
               binaryPath: effectiveConfig.binaryPath,
@@ -310,6 +313,7 @@ export const CodexDriver: ProviderDriver<
               cwd: process.cwd(),
               environment: processEnv,
             });
+            if (canRedeem && !(yield* canRedeem)) return "nothingToReset" as const;
             const response = yield* client.request("account/rateLimitResetCredit/consume", {
               idempotencyKey,
               ...(expected ? { creditId: expected.creditId } : {}),

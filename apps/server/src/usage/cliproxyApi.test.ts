@@ -355,6 +355,26 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("checks the redemption precondition after loading the hub account", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const api = yield* test.api;
+      const result = yield* api.consume(
+        config,
+        "second.json",
+        "credit-b",
+        Effect.sync(() => {
+          expect(test.requests.map((request) => request.path)).toEqual([
+            "/v0/management/auth-files",
+          ]);
+          return false;
+        }),
+      );
+      expect(result.outcome).toBe("nothingToReset");
+      expect(test.requests).toHaveLength(1);
+    }),
+  );
+
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
     Effect.gen(function* () {
       const test = fixture();

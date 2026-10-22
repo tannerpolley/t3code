@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { ProviderConsumeResetCreditInput } from "./providerUsageLimits.ts";
 import { ServerProvider, ServerProviderUpdatedPayload } from "./server.ts";
 
 const decodeUpdate = Schema.decodeUnknownSync(ServerProviderUpdatedPayload);
@@ -80,4 +81,13 @@ it("preserves automatic reset results in the existing provider update payload", 
   expect(decodeUpdate(encodeUpdate(update)).providers[0]?.usageLimits?.resetCreditAutoUse).toEqual(
     resetCreditAutoUse,
   );
+});
+
+it("decodes old reset requests and preserves a displayed credit identity", () => {
+  const decode = Schema.decodeUnknownSync(ProviderConsumeResetCreditInput);
+  expect(decode({ instanceId: "codex" })).toEqual({ instanceId: "codex" });
+  expect(decode({ instanceId: "codex", creditId: "credit-a" })).toEqual({
+    instanceId: "codex",
+    creditId: "credit-a",
+  });
 });

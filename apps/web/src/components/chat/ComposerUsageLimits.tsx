@@ -82,7 +82,14 @@ function UsageLimitsBannerBody({
         {report.accounts.map((account) => {
           const resetCreditInput =
             account.resetCreditInput ??
-            (account.instanceId ? { instanceId: account.instanceId } : undefined);
+            (account.instanceId
+              ? {
+                  instanceId: account.instanceId,
+                  ...(account.limits.resetCredits?.nextCreditId
+                    ? { creditId: account.limits.resetCredits.nextCreditId }
+                    : {}),
+                }
+              : undefined);
           const notice = limitsNotice(account.limits);
           const externalUsage = account.limits.externalUsage;
           return (

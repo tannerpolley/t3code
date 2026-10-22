@@ -102,7 +102,10 @@ export type UsageLimitSourceConsumeResetCreditInput =
   typeof UsageLimitSourceConsumeResetCreditInput.Type;
 
 export const ProviderConsumeResetCreditInput = Schema.Union([
-  Schema.Struct({ instanceId: ProviderInstanceId }),
+  Schema.Struct({
+    instanceId: ProviderInstanceId,
+    creditId: Schema.optional(TrimmedNonEmptyString),
+  }),
   UsageLimitSourceConsumeResetCreditInput,
 ]);
 export type ProviderConsumeResetCreditInput = typeof ProviderConsumeResetCreditInput.Type;

@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -80,6 +81,8 @@ const fixture = Effect.fn("ResetCreditExpiryTest.fixture")(function* (
     readonly { creditId: string | undefined; key: string; at: number }[]
   >([]);
   const results = yield* Queue.unbounded<ResetCreditAutoUseResult>();
+  const queued = yield* Deferred.make<void>();
+  const completed = yield* Deferred.make<void>();
   const subscription = Stream.unwrap(
     Effect.gen(function* () {
       const changes = yield* PubSub.subscribe(updates);
@@ -98,31 +101,38 @@ const fixture = Effect.fn("ResetCreditExpiryTest.fixture")(function* (
         Effect.map((all) => all.find((p) => p.instanceId === value.instanceId)!),
       ),
     } as ProviderInstance["snapshot"],
-    consumeResetCredit: (expected) =>
-      coordinator
-        .redeem("shared-account", (key) =>
-          Effect.gen(function* () {
-            const at = yield* Clock.currentTimeMillis;
-            const seen = yield* Ref.updateAndGet(calls, (previous) => [
-              ...previous,
-              { creditId: expected?.creditId, key, at },
-            ]);
-            if (seen.length <= (input.failures ?? 0))
-              return yield* Effect.fail("transient" as const);
-            return input.outcome ?? "reset";
-          }),
-        )
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderDriverError({
-                driver: value.driver,
-                instanceId: value.instanceId,
-                detail: "Could not redeem.",
-                cause,
+    consumeResetCredit: (expected, canRedeem) =>
+      Deferred.succeed(queued, undefined).pipe(
+        Effect.andThen(
+          coordinator
+            .redeem("shared-account", (key) =>
+              Effect.gen(function* () {
+                if (canRedeem && !(yield* canRedeem)) return "nothingToReset" as const;
+                const at = yield* Clock.currentTimeMillis;
+                const seen = yield* Ref.updateAndGet(calls, (previous) => [
+                  ...previous,
+                  { creditId: expected?.creditId, key, at },
+                ]);
+                if (seen.length <= (input.failures ?? 0))
+                  return yield* Effect.fail("transient" as const);
+                return input.outcome ?? "reset";
               }),
-          ),
+            )
+            .pipe(
+              Effect.tap(() => Deferred.succeed(completed, undefined)),
+              Effect.tapError(() => Deferred.succeed(completed, undefined)),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: value.driver,
+                    instanceId: value.instanceId,
+                    detail: "Could not redeem.",
+                    cause,
+                  }),
+              ),
+            ),
         ),
+      ),
     orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
     textGeneration: {} as ProviderInstance["textGeneration"],
   });
@@ -132,10 +142,13 @@ const fixture = Effect.fn("ResetCreditExpiryTest.fixture")(function* (
     Layer.mock(UsageLimitSources.UsageLimitSources)({
       current: Effect.succeed(sourceSnapshots),
       streamChanges: Stream.make(sourceSnapshots),
-      consumeResetCredit: (creditInput) =>
+      consumeResetCredit: (creditInput, canRedeem) =>
         Ref.update(sourceInputs, (previous) => [...previous, creditInput]).pipe(
           Effect.andThen(
-            instance(provider(20 * MINUTE)).consumeResetCredit!({ creditId: creditInput.creditId }),
+            instance(provider(20 * MINUTE)).consumeResetCredit!(
+              { creditId: creditInput.creditId },
+              canRedeem,
+            ),
           ),
           Effect.map((outcome) => ({ outcome })),
           Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not redeem." })),
@@ -178,7 +191,7 @@ const fixture = Effect.fn("ResetCreditExpiryTest.fixture")(function* (
     yield* Ref.set(snapshots, values);
     yield* PubSub.publish(updates, values);
   });
-  return { calls, results, enabled, update, sourceInputs };
+  return { calls, results, enabled, update, sourceInputs, queued, completed };
 });
 
 const test = (
@@ -237,8 +250,8 @@ describe("banked reset auto-use", () => {
         yield* TestClock.adjust(25 * MINUTE);
         assert.strictEqual((yield* Queue.take(f.results)).status, "failed");
         const calls = yield* Ref.get(f.calls);
-        assert.strictEqual(calls.length, 9);
-        assert.strictEqual(calls.at(-1)?.at, 18 * MINUTE);
+        assert.strictEqual(calls.length, 10);
+        assert.strictEqual(calls.at(-1)?.at, 19 * MINUTE);
       }),
     ),
   );
@@ -288,7 +301,7 @@ describe("banked reset auto-use", () => {
   it.effect("does not redeem credits first discovered inside the stop window", () =>
     test(
       Effect.gen(function* () {
-        const f = yield* fixture({ providers: [provider(MINUTE)] });
+        const f = yield* fixture({ providers: [provider(MINUTE - 1)] });
         yield* TestClock.adjust(5 * MINUTE);
         assert.strictEqual((yield* Ref.get(f.calls)).length, 0);
       }),
@@ -416,4 +429,103 @@ it.effect("publishes hub results in the existing source snapshot and retains the
       }).accounts[0]?.usageLimits.resetCreditAutoUse,
     );
   }).pipe(Effect.scoped),
+);
+
+it.effect("waits again after a backwards wall-clock correction", () =>
+  test(
+    Effect.gen(function* () {
+      const clock = yield* Clock.Clock;
+      let drift = 0;
+      const corrected = {
+        ...clock,
+        currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe() - drift,
+        currentTimeMillis: Effect.sync(() => clock.currentTimeMillisUnsafe() - drift),
+      };
+      const f = yield* fixture().pipe(Effect.provideService(Clock.Clock, corrected));
+      yield* TestClock.adjust(5 * MINUTE);
+      drift = 5 * MINUTE;
+      yield* TestClock.adjust(5 * MINUTE);
+      assert.strictEqual((yield* Ref.get(f.calls)).length, 0);
+      yield* TestClock.adjust(5 * MINUTE);
+      assert.strictEqual((yield* Queue.take(f.results)).status, "used");
+      assert.strictEqual((yield* Ref.get(f.calls))[0]?.at, 10 * MINUTE);
+    }),
+  ),
+);
+
+it.effect.each(
+  (["opt-out", "cutoff", "backwards clock"] as const).flatMap((reason) =>
+    [false, true].map((hub) => ({ reason, hub })),
+  ),
+)(
+  "rechecks $reason after queued redemption acquires the account lock (hub: $hub)",
+  ({ reason, hub }) =>
+    test(
+      Effect.gen(function* () {
+        const coordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+        const gate = yield* Deferred.make<void>();
+        const entered = yield* Deferred.make<void>();
+        const holder = yield* coordinator
+          .redeem("shared-account", () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(gate);
+              return "nothingToReset" as const;
+            }),
+          )
+          .pipe(Effect.orDie, Effect.forkChild);
+        yield* Deferred.await(entered);
+        const clock = yield* Clock.Clock;
+        let drift = 0;
+        const value = provider(10 * MINUTE);
+        const f = yield* fixture(
+          hub
+            ? {
+                providers: [],
+                sources: [
+                  {
+                    id: UsageLimitSourceId.make("hub"),
+                    kind: "cliproxy",
+                    label: "Hub",
+                    checkedAt: value.checkedAt,
+                    accounts: [
+                      {
+                        id: "a",
+                        driver: value.driver,
+                        email: value.auth.email,
+                        usageLimits: value.usageLimits!,
+                      },
+                    ],
+                  },
+                ],
+              }
+            : { providers: [value] },
+        ).pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe() - drift,
+            currentTimeMillis: Effect.sync(() => clock.currentTimeMillisUnsafe() - drift),
+          }),
+        );
+        yield* Deferred.await(f.queued);
+        if (reason === "opt-out") yield* Ref.set(f.enabled, false);
+        else if (reason === "cutoff") yield* TestClock.adjust(9 * MINUTE + 1);
+        else drift = MINUTE;
+        yield* Deferred.succeed(gate, undefined);
+        yield* Fiber.join(holder);
+        yield* Deferred.await(f.completed);
+        assert.strictEqual((yield* Ref.get(f.calls)).length, 0);
+      }),
+    ),
+);
+
+it.effect("permits redemption at the exact one-minute boundary", () =>
+  test(
+    Effect.gen(function* () {
+      const f = yield* fixture({ providers: [provider(MINUTE)] });
+      yield* TestClock.adjust(0);
+      assert.strictEqual((yield* Ref.get(f.calls)).length, 1);
+      assert.strictEqual((yield* Queue.take(f.results)).status, "used");
+    }),
+  ),
 );

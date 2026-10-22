@@ -39,7 +39,12 @@ export function collectResetCreditAccounts(
         key,
         label: provider.displayName ?? providerLabel(provider.driver),
         limits: provider.usageLimits,
-        input: { instanceId: provider.instanceId },
+        input: {
+          instanceId: provider.instanceId,
+          ...(provider.usageLimits.resetCredits?.nextCreditId
+            ? { creditId: provider.usageLimits.resetCredits.nextCreditId }
+            : {}),
+        },
       });
   }
   for (const source of sources) {

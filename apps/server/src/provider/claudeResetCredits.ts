@@ -218,6 +218,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   readonly version: string;
   readonly grantId: string;
   readonly requestId: string;
+  readonly canRedeem?: Effect.Effect<boolean>;
 }) {
   if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
     return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
@@ -233,6 +234,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
     return yield* new ClaudeResetCreditError({ reason: "signedOut" });
   }
   const client = yield* HttpClient.HttpClient;
+  if (input.canRedeem && !(yield* input.canRedeem)) return "nothingToReset" as const;
   const response = yield* client
     .execute(
       HttpClientRequest.post(

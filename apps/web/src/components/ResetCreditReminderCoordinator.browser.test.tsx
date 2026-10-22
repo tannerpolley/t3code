@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   providers: [] as readonly ServerProvider[],
   reminders: true,
   autoUse: true,
+  environmentIds: [] as EnvironmentId[],
 }));
 vi.mock("../state/presentation", () => ({
   environmentPresentations: { presentationsWithProvidersAtom: null },
@@ -21,15 +22,15 @@ vi.mock("../state/presentation", () => ({
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
   useAtomValue: () =>
-    new Map([
-      [
-        EnvironmentId.make("reset-test"),
+    new Map(
+      state.environmentIds.map((id) => [
+        id,
         { serverConfig: { providers: state.providers, usageLimitSources: [] } },
-      ],
-    ]),
+      ]),
+    ),
 }));
 vi.mock("../state/environments", () => ({
-  useEnvironmentIds: () => [EnvironmentId.make("reset-test")],
+  useEnvironmentIds: () => state.environmentIds,
 }));
 vi.mock("../hooks/useSettings", () => ({
   useClientSettings: (
@@ -45,9 +46,10 @@ import { ResetCreditReminderCoordinator } from "./ResetCreditReminderCoordinator
 
 const now = Date.parse("2026-10-22T12:00:00Z");
 const expiry = "2026-10-22T12:40:00.000Z";
-const storageKey = `t3:reset-credit:reset-test:codex:reset@example.com::${expiry}:60`;
+const storageKey = `t3:reset-credit:codex:reset@example.com::${expiry}:60`;
 
 function setup() {
+  state.environmentIds = [EnvironmentId.make("reset-test")];
   state.reminders = true;
   state.autoUse = true;
   state.providers = [
@@ -137,11 +139,42 @@ it("leaves an undelivered reminder available until permission is granted and res
   expect(localStorage.getItem(storageKey)).toBeNull();
   permission = "granted";
   state.reminders = false;
-  await screen.rerender(<ResetCreditReminderCoordinator />);
+  await screen.rerender(<ResetCreditReminderCoordinator key={String(state.reminders)} />);
   await navigator.locks.request("t3-reset-credit-reminders", () => {});
   expect(notifications).not.toHaveBeenCalled();
   state.reminders = true;
-  await screen.rerender(<ResetCreditReminderCoordinator />);
+  await screen.rerender(<ResetCreditReminderCoordinator key={String(state.reminders)} />);
   await vi.waitFor(() => expect(notifications).toHaveBeenCalledTimes(1));
   localStorage.removeItem(storageKey);
+});
+
+it("deduplicates the same account and credit across environments for every offset", async () => {
+  setup();
+  state.environmentIds = [
+    EnvironmentId.make("reset-test"),
+    EnvironmentId.make("second-environment"),
+  ];
+  let time = Date.parse(expiry) - 180 * 60_000;
+  using _now = vi.spyOn(Date, "now").mockImplementation(() => time);
+  using notifications = vi.spyOn(window, "Notification").mockImplementation(function () {
+    return { close: vi.fn(), addEventListener: vi.fn() } as unknown as Notification;
+  });
+  Object.defineProperty(notifications, "permission", { get: () => "granted" });
+  for (const offset of [180, 60, 30, 5]) {
+    for (const id of ["reset-test:", "second-environment:", ""]) {
+      localStorage.removeItem(`t3:reset-credit:${id}codex:reset@example.com::${expiry}:${offset}`);
+    }
+  }
+  await using screen = await render(<ResetCreditReminderCoordinator />);
+  for (const [index, offset] of [180, 60, 30, 5].entries()) {
+    time = Date.parse(expiry) - offset * 60_000;
+    await screen.rerender(<ResetCreditReminderCoordinator key={index} />);
+    await navigator.locks.request("t3-reset-credit-reminders", () => {});
+    expect(notifications).toHaveBeenCalledTimes(index + 1);
+  }
+  for (const offset of [180, 60, 30, 5]) {
+    for (const id of ["reset-test:", "second-environment:", ""]) {
+      localStorage.removeItem(`t3:reset-credit:${id}codex:reset@example.com::${expiry}:${offset}`);
+    }
+  }
 });

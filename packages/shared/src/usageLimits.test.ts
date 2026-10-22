@@ -288,7 +288,11 @@ describe("pools", () => {
     const [account] = collectLimitAccounts(input);
     expect(account?.redeem).toEqual({
       environmentId: "env-a",
-      input: { sourceId: "hub", accountId: "claude-same@example.com.json", creditId: "hub-credit" },
+      input: {
+        sourceId: "hub",
+        accountId: "claude-same@example.com.json",
+        creditId: "native-credit",
+      },
     });
     expect(account?.limits.resetCredits?.availableCount).toBe(3);
   });
@@ -990,7 +994,7 @@ describe("/usage-limits", () => {
     expect(report?.accounts[0]?.resetCreditInput).toEqual({
       sourceId: "hub",
       accountId: "duplicate",
-      creditId: "hub-credit",
+      creditId: "native-credit",
     });
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
   });
@@ -1289,4 +1293,82 @@ describe("ChatGPT sharing presentation", () => {
       }),
     ).toBe(false);
   });
+});
+
+it("pins the displayed native reset credit in pooled usage and composer reports", () => {
+  const value = provider({
+    usageLimits: {
+      checkedAt: "2026-09-03T12:00:00.000Z",
+      windows: [window],
+      resetCredits: { availableCount: 2, nextCreditId: "credit-a" },
+    },
+  });
+  const report = collectProviderUsageLimits(value.instanceId, [value], [], now);
+  expect(report?.accounts[0]?.resetCreditInput).toEqual({
+    instanceId: value.instanceId,
+    creditId: "credit-a",
+  });
+  const accounts = collectLimitAccounts(
+    new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          entry: { target: { label: "A" } },
+          serverConfig: { providers: [value], usageLimitSources: [] },
+        },
+      ],
+    ]),
+  );
+  expect(accounts[0]?.redeem?.input).toEqual({
+    instanceId: value.instanceId,
+    creditId: "credit-a",
+  });
+});
+
+it("pins the freshest displayed credit while routing redemption through a stale hub", () => {
+  const value = provider({
+    auth: { status: "authenticated", email: "same@example.com" },
+    usageLimits: {
+      checkedAt: "2026-09-03T12:00:00.000Z",
+      windows: [window],
+      resetCredits: { availableCount: 1, nextCreditId: "displayed-credit" },
+    },
+  });
+  const sources = [
+    {
+      id: UsageLimitSourceId.make("hub"),
+      kind: "cliproxy" as const,
+      label: "Hub",
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      accounts: [
+        {
+          id: "a",
+          driver: value.driver,
+          email: value.auth.email,
+          usageLimits: {
+            checkedAt: "2026-09-03T11:00:00.000Z",
+            windows: [window],
+            resetCredits: { availableCount: 2, nextCreditId: "old-credit" },
+          },
+        },
+      ],
+    },
+  ];
+  const expected = { sourceId: "hub", accountId: "a", creditId: "displayed-credit" };
+  expect(
+    collectProviderUsageLimits(value.instanceId, [value], sources, now)?.accounts[0]
+      ?.resetCreditInput,
+  ).toEqual(expected);
+  const accounts = collectLimitAccounts(
+    new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          entry: { target: { label: "A" } },
+          serverConfig: { providers: [value], usageLimitSources: sources },
+        },
+      ],
+    ]),
+  );
+  expect(accounts[0]?.redeem?.input).toEqual(expected);
 });

@@ -375,6 +375,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     config: UsageLimitSourceConfig,
     accountId: string,
     creditId: string,
+    canRedeem?: Effect.Effect<boolean>,
   ): Effect.fn.Return<ProviderConsumeResetCreditResult, UsageLimitSourceError> {
     const operation = Effect.gen(function* () {
       const account = (yield* authFiles(config)).find((account) => account.id === accountId);
@@ -383,11 +384,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
           detail: "The Codex hub account is missing or disabled.",
         });
       }
+      const requestId = yield* creditRedeemRequestId(
+        account.id_token?.chatgpt_account_id ?? account.id,
+        creditId,
+      ).pipe(Effect.provideService(Crypto.Crypto, crypto));
+      if (canRedeem && !(yield* canRedeem)) return { outcome: "nothingToReset" } as const;
       const body = yield* apiCall(config, account, `${CREDIT_URL}/consume`, {
-        redeem_request_id: yield* creditRedeemRequestId(
-          account.id_token?.chatgpt_account_id ?? account.id,
-          creditId,
-        ).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        redeem_request_id: requestId,
         credit_id: creditId,
       });
       const response = yield* decodeConsumeResponse(body);

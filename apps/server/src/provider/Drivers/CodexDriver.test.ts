@@ -10,9 +10,13 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import { ProviderConsumeResetCreditInput } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -95,7 +99,136 @@ const noSpawn = ChildProcessSpawner.make(() =>
 );
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+const decodeCreditInput = Schema.decodeUnknownEffect(ProviderConsumeResetCreditInput);
+const decodeCreditFrame = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.optional(Schema.Number),
+      method: Schema.String,
+      params: Schema.optional(Schema.Unknown),
+    }),
+  ),
+);
+
+const creditFixture = Effect.fn("CodexDriverTest.creditFixture")(function* () {
+  const requests: unknown[] = [];
+  const initialized = yield* Deferred.make<void>();
+  const spawner = ChildProcessSpawner.make(() =>
+    Effect.gen(function* () {
+      const stdout = yield* Queue.unbounded<Uint8Array>();
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.forEach((chunk: Uint8Array) =>
+          Effect.gen(function* () {
+            const frame = yield* decodeCreditFrame(new TextDecoder().decode(chunk));
+            if (frame.id === undefined) return;
+            if (frame.method === "initialize") yield* Deferred.succeed(initialized, undefined);
+            if (frame.method === "account/rateLimitResetCredit/consume")
+              requests.push(frame.params);
+            const result =
+              frame.method === "initialize"
+                ? {
+                    userAgent: "test",
+                    codexHome: "/tmp/test",
+                    platformFamily: "unix",
+                    platformOs: "linux",
+                  }
+                : { outcome: "reset" };
+            yield* Queue.offer(
+              stdout,
+              new TextEncoder().encode(JSON.stringify({ id: frame.id, result }) + "\n"),
+            );
+          }).pipe(Effect.orDie),
+        ),
+        stdout: Stream.fromQueue(stdout),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+  const config = yield* ServerConfig.ServerConfig;
+  const instance = yield* CodexDriver.create({
+    instanceId: ProviderInstanceId.make("credit-race"),
+    displayName: undefined,
+    enabled: false,
+    environment: [],
+    config: {
+      ...CodexDriver.defaultConfig(),
+      binaryPath: process.execPath,
+      homePath: NodePath.join(config.stateDir, "credit-home"),
+    },
+  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+  const base = yield* instance.snapshot.getSnapshot;
+  const current = yield* Ref.make({
+    ...base,
+    usageLimits: {
+      checkedAt: "2026-10-22T12:00:00.000Z",
+      windows: [],
+      resetCredits: { availableCount: 2, nextCreditId: "credit-a" },
+    },
+  });
+  Object.assign(instance.snapshot, {
+    getSnapshot: Ref.get(current),
+    refresh: Ref.updateAndGet(current, (value) => ({
+      ...value,
+      usageLimits: {
+        ...value.usageLimits,
+        checkedAt: DateTime.formatIso(
+          DateTime.add(DateTime.makeUnsafe(value.usageLimits.checkedAt), { minutes: 1 }),
+        ),
+        resetCredits: { availableCount: 1, nextCreditId: "credit-b" },
+      },
+    })),
+  });
+  return { instance, requests, initialized };
+});
+
 it.layer(layerTest)("CodexDriver", (it) => {
+  it.effect(
+    "a manual confirmation for an auto-redeemed credit never consumes the next credit",
+    () =>
+      Effect.gen(function* () {
+        const { instance, requests } = yield* creditFixture();
+        const displayed = yield* decodeCreditInput({
+          instanceId: instance.instanceId,
+          creditId: "credit-a",
+        });
+        expect(yield* instance.consumeResetCredit!({ creditId: "credit-a" })).toBe("reset");
+        const outcome = yield* instance.consumeResetCredit!(
+          "creditId" in displayed && displayed.creditId
+            ? { creditId: displayed.creditId }
+            : undefined,
+        );
+        expect(outcome).toBe("alreadyRedeemed");
+        expect(requests).toHaveLength(1);
+        expect(requests[0]).toMatchObject({ creditId: "credit-a" });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "checks the redemption precondition after the app-server starts and does not consume",
+    () =>
+      Effect.gen(function* () {
+        const { instance, requests, initialized } = yield* creditFixture();
+        expect(
+          yield* instance.consumeResetCredit!(
+            { creditId: "credit-a" },
+            Effect.gen(function* () {
+              expect(yield* Deferred.isDone(initialized)).toBe(true);
+              return false;
+            }),
+          ),
+        ).toBe("nothingToReset");
+        expect(requests).toHaveLength(0);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");

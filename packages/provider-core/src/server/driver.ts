@@ -52,9 +52,10 @@ export interface ProviderInstance {
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   readonly invalidateCaches?: Effect.Effect<void>;
-  readonly consumeResetCredit?: (expected?: {
-    readonly creditId: string;
-  }) => Effect.Effect<ProviderConsumeResetCreditOutcome, ProviderDriverError>;
+  readonly consumeResetCredit?: (
+    expected?: { readonly creditId: string },
+    canRedeem?: Effect.Effect<boolean>,
+  ) => Effect.Effect<ProviderConsumeResetCreditOutcome, ProviderDriverError>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;

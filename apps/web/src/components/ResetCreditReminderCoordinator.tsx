@@ -58,7 +58,7 @@ function EnvironmentResetCreditReminders({
         let nextAt = Infinity;
         for (const account of accounts) {
           const limits = account.limits;
-          const prefix = `t3:reset-credit:${environmentId}:${account.key}:`;
+          const prefix = `t3:reset-credit:${account.key}:`;
           const label = account.label;
           const nativeAllowed =
             typeof Notification !== "undefined" && Notification.permission === "granted";
@@ -151,6 +151,6 @@ function EnvironmentResetCreditReminders({
       window.removeEventListener("focus", wake);
       document.removeEventListener("visibilitychange", wake);
     };
-  }, [environmentId, accounts, remindersEnabled, autoUse, navigate]);
+  }, [accounts, remindersEnabled, autoUse, navigate]);
   return null;
 }

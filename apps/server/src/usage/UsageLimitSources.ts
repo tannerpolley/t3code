@@ -40,6 +40,7 @@ export class UsageLimitSources extends Context.Service<
     readonly refresh: Effect.Effect<void>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
+      canRedeem?: Effect.Effect<boolean>,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
   }
 >()("t3/usage/UsageLimitSources") {}
@@ -116,6 +117,7 @@ export const make = Effect.gen(function* () {
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
   const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
     input: UsageLimitSourceConsumeResetCreditInput,
+    canRedeem?: Effect.Effect<boolean>,
   ) {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
@@ -126,7 +128,7 @@ export const make = Effect.gen(function* () {
         detail: "The usage limit source is missing or disabled.",
       });
     }
-    const result = yield* api.consume(config, input.accountId, input.creditId);
+    const result = yield* api.consume(config, input.accountId, input.creditId, canRedeem);
     const snapshot = yield* readSource(input.sourceId, config);
     const previous = yield* Ref.get(stateRef);
     yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));

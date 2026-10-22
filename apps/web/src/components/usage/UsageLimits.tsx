@@ -241,16 +241,22 @@ export function useResetCredit(
 ) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
-  const [confirming, setConfirming] = useState(false);
+  const [confirmation, setConfirmation] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly input: ProviderConsumeResetCreditInput;
+  } | null>(null);
+  const confirming = confirmation !== null;
+  const setConfirming = (open: boolean) => setConfirmation(open ? { environmentId, input } : null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
   const redeem = async () => {
+    if (!confirmation) return;
     setConfirming(false);
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    if (!readEnvironmentScope(confirmation.environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input });
+    const result = await consume(confirmation);
     setBusy(false);
     if (result._tag === "Success") {
       setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
