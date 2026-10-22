@@ -173,7 +173,11 @@ export const make = Effect.gen(function* () {
   >();
   const watched = Effect.gen(function* () {
     const repositories = [...(yield* registered)];
-    for (const project of yield* projects.listShells()) {
+    const shells = yield* projects.listShells();
+    const current = new Set<string>(shells.map((project) => project.id));
+    for (const id of discoveryIdentities.keys())
+      if (!current.has(id)) discoveryIdentities.delete(id);
+    for (const project of shells) {
       const identity = project.repositoryIdentity;
       const cached = discoveryIdentities.get(project.id);
       const unchanged =
@@ -318,7 +322,10 @@ export const make = Effect.gen(function* () {
   const lastPolledAt = new Map<string, number>();
   const pollDue = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
-    for (let repo of yield* watched) {
+    const repositories = yield* watched;
+    const current = new Set(repositories.map((repo) => `${repo.host}/${repo.repositoryId}`));
+    for (const key of lastPolledAt.keys()) if (!current.has(key)) lastPolledAt.delete(key);
+    for (let repo of repositories) {
       const key = `${repo.host}/${repo.repositoryId}`;
       const lastPoll = lastPolledAt.get(key);
       const interval =

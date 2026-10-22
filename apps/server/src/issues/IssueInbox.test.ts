@@ -214,6 +214,7 @@ const setupDiscovery = Effect.gen(function* () {
   const github = fakeGitHub();
   const threads = fakeThreads();
   let repository: string | null = "acme/discovery";
+  let present = true;
   const inbox = yield* IssueInbox.make.pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -221,24 +222,28 @@ const setupDiscovery = Effect.gen(function* () {
         threads.service,
         Layer.mock(ProjectService.ProjectService)({
           listShells: () =>
-            Effect.sync(() => [
-              {
-                id: ProjectId.make("discovery"),
-                repositoryIdentity:
-                  repository === null
-                    ? null
-                    : {
-                        provider: "github",
-                        canonicalKey: `github.com/${repository}`,
-                        displayName: repository,
-                        locator: {
-                          source: "git-remote",
-                          remoteName: "origin",
-                          remoteUrl: "git@github.com:x",
-                        },
-                      },
-              } as never,
-            ]),
+            Effect.sync(() =>
+              !present
+                ? []
+                : [
+                    {
+                      id: ProjectId.make("discovery"),
+                      repositoryIdentity:
+                        repository === null
+                          ? null
+                          : {
+                              provider: "github",
+                              canonicalKey: `github.com/${repository}`,
+                              displayName: repository,
+                              locator: {
+                                source: "git-remote",
+                                remoteName: "origin",
+                                remoteUrl: "git@github.com:x",
+                              },
+                            },
+                    } as never,
+                  ],
+            ),
         }),
         Layer.mock(IssueWorkService.IssueWorkService)({
           repositoryStatus: () => Effect.succeed({ rootThreadId: null } as never),
@@ -247,7 +252,12 @@ const setupDiscovery = Effect.gen(function* () {
     ),
   );
   yield* inbox.pollDue;
-  return { inbox, github, setRepository: (value: string | null) => void (repository = value) };
+  return {
+    inbox,
+    github,
+    setRepository: (value: string | null) => void (repository = value),
+    setPresent: (value: boolean) => void (present = value),
+  };
 });
 
 it.effect("polls registered repositories every five minutes", () =>
@@ -295,7 +305,7 @@ it.effect(
   "reuses discovery identity across polls until the project's repository identity changes",
   () =>
     Effect.gen(function* () {
-      const { inbox, github, setRepository } = yield* setupDiscovery;
+      const { inbox, github, setRepository, setPresent } = yield* setupDiscovery;
       for (let pass = 0; pass < 3; pass++) {
         yield* TestClock.adjust("15 minutes");
         yield* inbox.pollDue;
@@ -318,6 +328,14 @@ it.effect(
       yield* TestClock.adjust("15 minutes");
       yield* inbox.pollDue;
       assert.equal(github.identityReads.length, 3);
+      // A removed project leaves the cache, so re-adding it reads its identity again.
+      setPresent(false);
+      yield* TestClock.adjust("15 minutes");
+      yield* inbox.pollDue;
+      setPresent(true);
+      yield* TestClock.adjust("15 minutes");
+      yield* inbox.pollDue;
+      assert.equal(github.identityReads.length, 4);
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
