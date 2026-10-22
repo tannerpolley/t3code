@@ -195,11 +195,11 @@ describe("live roadmap", () => {
     );
     expect(first.map((section) => numbers(section.rows))).toEqual([
       [],
-      [1, 4, 5, 10],
-      [9, 13, 14],
-      [],
-      [3, 6, 8],
       [2, 7, 11, 12],
+      [3, 6, 8],
+      [],
+      [9, 13, 14],
+      [1, 4, 5, 10],
       [],
     ]);
     expect(
@@ -220,16 +220,16 @@ describe("live roadmap", () => {
     expect(refreshed.map((section) => numbers(section.rows))).toEqual([
       [],
       [],
-      [3, 4],
-      [],
       [1, 2],
+      [],
+      [3, 4],
       [],
       [],
     ]);
   });
 });
 
-it("puts queued issues after Ready in insertion order and removes them from their other sections", () => {
+it("puts queued issues above Ready in insertion order and removes them from their other sections", () => {
   const sections = issueRoadmap(
     scope,
     [],
@@ -237,13 +237,13 @@ it("puts queued issues after Ready in insertion order and removes them from thei
     [2, 1, 4],
   );
   expect(sections.map((section) => [section.title, numbers(section.rows)])).toEqual([
-    ["Closed", [4]],
-    ["Blocked", []],
-    ["Ready", [3]],
-    ["Queued", [2, 1]],
-    ["Paused", []],
-    ["In progress", []],
     ["Done", []],
+    ["In progress", []],
+    ["Paused", []],
+    ["Queued", [2, 1]],
+    ["Ready", [3]],
+    ["Blocked", []],
+    ["Closed", [4]],
   ]);
 });
 

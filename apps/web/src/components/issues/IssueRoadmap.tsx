@@ -149,7 +149,7 @@ export function IssueRoadmap({
                   </section>
                 )}
               </IssueSection>
-              {section.id === "blocked"
+              {section.id === "ready"
                 ? (inbox ?? (
                     <IssueInboxSection
                       environmentId={environmentId}
