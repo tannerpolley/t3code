@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import { TestClock } from "effect/testing";
 
 import type * as Electron from "electron";
 
@@ -18,6 +19,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 function layerElectronApp(
   appListeners: Map<string, (...args: readonly unknown[]) => void>,
   quit: Effect.Effect<void> = Effect.void,
+  overrides: Partial<ElectronApp.ElectronApp["Service"]> = {},
 ) {
   const registerListener = (eventName: string, listener: (...args: readonly unknown[]) => void) =>
     Effect.acquireRelease(
@@ -52,6 +54,7 @@ function layerElectronApp(
     onBeforeQuitForUpdate: (listener) => registerListener("before-quit-for-update", listener),
     on: (eventName, listener) =>
       registerListener(eventName, listener as unknown as (...args: readonly unknown[]) => void),
+    ...overrides,
   } satisfies ElectronApp.ElectronApp["Service"]);
 }
 
@@ -61,9 +64,18 @@ const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   onUpdated: () => Effect.void,
 });
 
-function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {
+function layerElectronWindow(
+  destroyAll: Effect.Effect<void> = Effect.void,
+  onProgress: (url: string) => void = () => {},
+) {
   return Layer.succeed(ElectronWindow.ElectronWindow, {
-    create: () => Effect.die("unexpected window creation"),
+    create: () =>
+      Effect.succeed({
+        on: () => {},
+        loadURL: async (url: string) => {
+          onProgress(url);
+        },
+      } as unknown as Electron.BrowserWindow),
     main: Effect.die("unexpected main window read"),
     currentMainOrFirst: Effect.die("unexpected current window read"),
     focusedMainOrFirst: Effect.die("unexpected focused window read"),
@@ -161,7 +173,7 @@ describe("DesktopLifecycle", () => {
     },
   );
 
-  it.effect("destroys windows before waiting for backend shutdown", () =>
+  it.effect("shows shutdown progress until backend shutdown completes", () =>
     Effect.gen(function* () {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
       const shutdownRequested = yield* Deferred.make<void>();
@@ -197,7 +209,7 @@ describe("DesktopLifecycle", () => {
       const layer = DesktopLifecycle.layer.pipe(
         Layer.provideMerge(layerElectronApp(appListeners, quit)),
         Layer.provideMerge(layerElectronTheme),
-        Layer.provideMerge(layerElectronWindow(destroyAll)),
+        Layer.provideMerge(layerElectronWindow(destroyAll, () => events.push("progress"))),
         Layer.provideMerge(layerDesktopWindow({ flushMainWindowBounds })),
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(layerDesktopShutdown),
@@ -217,11 +229,98 @@ describe("DesktopLifecycle", () => {
           yield* Deferred.succeed(allowShutdown, undefined);
           yield* Deferred.await(quitRequested);
 
-          assert.deepEqual(eventsBeforeCleanup, ["flush", "destroy", "request"]);
-          assert.deepEqual(events, ["flush", "destroy", "request", "quit"]);
+          assert.deepEqual(eventsBeforeCleanup, ["flush", "destroy", "progress", "request"]);
+          assert.deepEqual(events, ["flush", "destroy", "progress", "request", "destroy", "quit"]);
         }),
       ).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect.each([
+    "quit",
+    "repeated quit",
+    "SIGTERM",
+    "SIGTERM first",
+    "relaunch",
+    "development relaunch",
+  ] as const)("exits at the original deadline with a stuck provider close after %s", (trigger) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+        const shutdownRequested = yield* Deferred.make<void>();
+        const releaseClose = yield* Deferred.make<void>();
+        let requests = 0;
+        let progressUrl = "";
+        const exits: number[] = [];
+        const relaunches: Electron.RelaunchOptions[] = [];
+        const quit = Effect.sync(() =>
+          appListeners.get("before-quit")?.({ preventDefault: () => {} }),
+        );
+        const layer = DesktopLifecycle.layer.pipe(
+          Layer.provideMerge(
+            layerElectronApp(appListeners, quit, {
+              exit: (code) =>
+                Effect.sync(() => {
+                  exits.push(code);
+                }),
+              relaunch: (options) =>
+                Effect.sync(() => {
+                  relaunches.push(options);
+                }),
+            }),
+          ),
+          Layer.provideMerge(layerElectronTheme),
+          Layer.provideMerge(
+            layerElectronWindow(Effect.void, (url) => {
+              progressUrl = url;
+            }),
+          ),
+          Layer.provideMerge(layerDesktopWindow()),
+          Layer.provideMerge(
+            Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+              platform: "linux",
+              isDevelopment: trigger === "development relaunch",
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+          Layer.provideMerge(
+            Layer.succeed(DesktopShutdown.DesktopShutdown, {
+              request: Effect.sync(() => {
+                requests++;
+              }).pipe(
+                Effect.andThen(Deferred.succeed(shutdownRequested, undefined)),
+                Effect.asVoid,
+              ),
+              awaitRequest: Deferred.await(shutdownRequested),
+              markComplete: Deferred.succeed(releaseClose, undefined).pipe(Effect.asVoid),
+              // Provider scope finalizers can remain uninterruptible indefinitely.
+              awaitComplete: Deferred.await(releaseClose).pipe(Effect.uninterruptible),
+              isComplete: Deferred.isDone(releaseClose),
+            }),
+          ),
+          Layer.provideMerge(DesktopState.layer),
+        );
+        yield* Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.register;
+          if (trigger === "relaunch" || trigger === "development relaunch")
+            yield* lifecycle.relaunch("test");
+          else if (trigger === "SIGTERM first") process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+          else yield* quit;
+          yield* Deferred.await(shutdownRequested);
+          yield* TestClock.adjust("10 seconds");
+          if (trigger === "repeated quit") yield* quit;
+          if (trigger === "SIGTERM") process.listeners("SIGTERM").at(-1)?.("SIGTERM");
+          yield* TestClock.adjust("9999 millis");
+          assert.deepEqual(exits, []);
+          yield* TestClock.adjust("1 millis");
+          assert.deepEqual(exits, [trigger === "development relaunch" ? 75 : 0]);
+          assert.include(decodeURIComponent(progressUrl), "Stopping T3 Code…");
+          assert.equal(requests, 1);
+          assert.equal(relaunches.length, trigger === "relaunch" ? 1 : 0);
+          yield* Deferred.succeed(releaseClose, undefined);
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
   );
 
   it.effect("ignores app activation while quitting", () =>
