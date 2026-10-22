@@ -2316,7 +2316,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 : { output: tracked.aggregatedOutput }),
             };
             if (nativeItemId !== undefined) {
-              const nativeThreadId = yield* getNativeThreadId(context.providerThread);
+              const nativeThreadId = yield* getNativeThreadId(context.providerThread).pipe(
+                Effect.orDie,
+              );
               const turns = stoppedCommandItemsByThread.get(nativeThreadId) ?? new Map();
               const stopped = turns.get(nativeTurnId) ?? new Map();
               stopped.set(tracked.id, turnItem);
