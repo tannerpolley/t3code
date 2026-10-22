@@ -9,19 +9,37 @@
   inherits: true;
   initial-value: 0px;
 }
+@property --sidebar-model-min-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+@property --sidebar-title-reserve-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+@property --sidebar-label-reserve-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
 @utility sidebar-columns-container {
   --sidebar-caret-width: 1.5rem;
   --sidebar-location-width: 0.75rem;
   --sidebar-role-width: 0.75rem;
   --sidebar-provider-width: 1rem;
-  --sidebar-model-width: 8.4ch;
   --sidebar-effort-width: 0.5rem;
-  --sidebar-name-width: 11ch;
   --sidebar-issue-width: 2.25rem;
   --sidebar-pr-width: 2.25rem;
   --sidebar-time-width: 4.4375rem;
   --sidebar-work-width: 0.875rem;
-  --sidebar-column-gap: 3px;
+  --sidebar-model-width: 8.4ch;
+  --sidebar-name-width: 11ch;
+  --sidebar-model-min-width: 4.5ch;
+  --sidebar-title-reserve-width: 6ch;
+  --sidebar-label-reserve-width: 4ch;
+  --sidebar-column-gap: 2px;
   container: sidebar-columns / inline-size;
   min-width: 0;
   font-size: 0.75rem;
@@ -39,28 +57,28 @@
     ) [provider] var(--sidebar-provider-track, var(--sidebar-provider-width)) var(
       --sidebar-provider-gap,
       var(--sidebar-column-gap)
-    ) [model] var(--sidebar-model-track, var(--sidebar-model-width)) var(
-      --sidebar-model-gap,
+    ) [model] var(
+      --sidebar-model-track,
+      var(--sidebar-model-fluid, var(--sidebar-model-width))
+    ) var(--sidebar-model-gap, var(--sidebar-column-gap)) [effort] var(
+      --sidebar-effort-track,
+      var(--sidebar-effort-width)
+    ) var(--sidebar-effort-gap, var(--sidebar-column-gap)) [name] minmax(
+      0,
+      var(--sidebar-name-track, max-content)
+    ) var(--sidebar-name-gap, var(--sidebar-column-gap)) [spacer] minmax(0, 1fr) var(
+      --sidebar-spacer-gap,
       var(--sidebar-column-gap)
-    ) [effort] var(--sidebar-effort-track, var(--sidebar-effort-width)) var(
-      --sidebar-effort-gap,
+    ) [issue] var(--sidebar-issue-track, var(--sidebar-issue-width)) var(
+      --sidebar-issue-gap,
       var(--sidebar-column-gap)
-    ) [name] minmax(0, var(--sidebar-name-track, max-content)) var(
-      --sidebar-name-gap,
+    ) [pr] var(--sidebar-pr-track, var(--sidebar-pr-width)) var(
+      --sidebar-pr-gap,
       var(--sidebar-column-gap)
-    ) [spacer] minmax(0, 1fr) var(--sidebar-spacer-gap, var(--sidebar-column-gap)) [issue] var(
-      --sidebar-issue-track,
-      var(--sidebar-issue-width)
-    ) var(--sidebar-issue-gap, var(--sidebar-column-gap)) [pr] var(
-      --sidebar-pr-track,
-      var(--sidebar-pr-width)
-    ) var(--sidebar-pr-gap, var(--sidebar-column-gap)) [time] var(
-      --sidebar-time-track,
-      var(--sidebar-time-width)
-    ) var(--sidebar-time-gap, var(--sidebar-column-gap)) [work] var(
-      --sidebar-work-track,
-      var(--sidebar-work-width)
-    );
+    ) [time] var(--sidebar-time-track, var(--sidebar-time-width)) var(
+      --sidebar-time-gap,
+      var(--sidebar-column-gap)
+    ) [work] var(--sidebar-work-track, var(--sidebar-work-width));
   column-gap: 0;
 }
 [data-sidebar-role-display="name"]:has(.sidebar-role-title) {
@@ -102,25 +120,33 @@
 .sidebar-thread-work {
   grid-column: work;
 }
-@container sidebar-columns-name (width < calc(14.5625rem + 30px + 19.4ch)) {
+.sidebar-thread-columns[data-sidebar-role-display="name"] {
+  --sidebar-model-fluid: clamp(
+    var(--sidebar-model-min-width),
+    calc(100cqw - 14.5625rem - 20px - var(--sidebar-title-reserve-width)),
+    var(--sidebar-model-width)
+  );
+}
+.sidebar-thread-columns[data-sidebar-role-display="icon"] {
+  --sidebar-model-fluid: clamp(
+    var(--sidebar-model-min-width),
+    calc(100cqw - 15.3125rem - 22px - var(--sidebar-label-reserve-width)),
+    var(--sidebar-model-width)
+  );
+}
+@container sidebar-columns-name (width < calc(14.5625rem + 20px + 10.5ch)) {
   .sidebar-thread-columns {
+    --sidebar-model-track: 0px;
+    --sidebar-model-gap: 0px;
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
   }
+  .sidebar-thread-model,
   .sidebar-thread-effort {
     display: none;
   }
 }
-@container sidebar-columns-name (width < calc(14.0625rem + 27px + 19.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-track: 0px;
-    --sidebar-model-gap: 0px;
-  }
-  .sidebar-thread-model {
-    display: none;
-  }
-}
-@container sidebar-columns-name (width < calc(14.0625rem + 24px + 11ch)) {
+@container sidebar-columns-name (width < calc(14.0625rem + 16px + 6ch)) {
   .sidebar-thread-columns {
     --sidebar-issue-track: 0px;
     --sidebar-issue-gap: 0px;
@@ -132,25 +158,19 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(15.3125rem + 33px + 12.4ch)) {
+@container sidebar-columns (width < calc(15.3125rem + 22px + 8.5ch)) {
   .sidebar-thread-columns {
+    --sidebar-model-track: 0px;
+    --sidebar-model-gap: 0px;
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
   }
+  .sidebar-thread-model,
   .sidebar-thread-effort {
     display: none;
   }
 }
-@container sidebar-columns (width < calc(14.8125rem + 30px + 12.4ch)) {
-  .sidebar-thread-columns {
-    --sidebar-model-track: 0px;
-    --sidebar-model-gap: 0px;
-  }
-  .sidebar-thread-model {
-    display: none;
-  }
-}
-@container sidebar-columns (width < calc(14.8125rem + 27px + 4ch)) {
+@container sidebar-columns (width < calc(14.8125rem + 18px + 4ch)) {
   .sidebar-thread-columns {
     --sidebar-issue-track: 0px;
     --sidebar-issue-gap: 0px;

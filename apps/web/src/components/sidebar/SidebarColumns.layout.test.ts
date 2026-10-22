@@ -32,25 +32,23 @@ const minimumTitlePx = (sidebarRem: number) => {
 };
 
 describe("sidebar width budget", () => {
-  it("budgets for the full role name before admitting optional columns", () => {
+  it("keeps optional columns until the role name would shrink below its reserve", () => {
     expect(optionalColumns(16)).toEqual([]);
-    expect(optionalColumns(23.5)).toEqual([]);
-    expect(optionalColumns(23.6)).toEqual(["issue"]);
-    expect(optionalColumns(27.9)).toEqual(["issue"]);
-    expect(optionalColumns(28)).toEqual(["model", "issue"]);
-    expect(optionalColumns(28.6)).toEqual(["model", "issue"]);
-    expect(optionalColumns(28.7)).toEqual(["model", "effort", "issue"]);
+    expect(optionalColumns(20.5)).toEqual([]);
+    expect(optionalColumns(20.6)).toEqual(["issue"]);
+    expect(optionalColumns(23.5)).toEqual(["issue"]);
+    expect(optionalColumns(23.6)).toEqual(["model", "effort", "issue"]);
   });
 
-  it("admits optional columns sooner with role icons, keeping room for short command labels", () => {
-    expect(optionalColumns(20.9, "icon")).toEqual([]);
-    expect(optionalColumns(21, "icon")).toEqual(["issue"]);
-    expect(optionalColumns(25.3, "icon")).toEqual(["issue"]);
-    expect(optionalColumns(25.4, "icon")).toEqual(["model", "issue"]);
-    expect(optionalColumns(26, "icon")).toEqual(["model", "issue"]);
-    expect(optionalColumns(26.1, "icon")).toEqual(["model", "effort", "issue"]);
-    for (const rem of [21, 25.4, 28.1]) {
-      expect(optionalColumns(rem, "icon").length).toBeGreaterThan(optionalColumns(rem).length);
+  it("never drops a column sooner with role icons", () => {
+    expect(optionalColumns(20.4, "icon")).toEqual([]);
+    expect(optionalColumns(20.5, "icon")).toEqual(["issue"]);
+    expect(optionalColumns(23.4, "icon")).toEqual(["issue"]);
+    expect(optionalColumns(23.5, "icon")).toEqual(["model", "effort", "issue"]);
+    for (let rem = 16; rem <= 30; rem += 0.1) {
+      expect(optionalColumns(rem, "icon").length).toBeGreaterThanOrEqual(
+        optionalColumns(rem).length,
+      );
     }
   });
 
