@@ -9,8 +9,6 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as SqlClient from "effect/sql/SqlClient";
@@ -50,13 +48,6 @@ export const EventStoreV2Error = Schema.Union([
 export type EventStoreV2Error = typeof EventStoreV2Error.Type;
 
 export interface EventStoreV2Shape {
-  /** Pin replay history until the subscriber advances or its scope closes. */
-  readonly retainAfter: (
-    sequence: number,
-  ) => Effect.Effect<{ sequence: number }, never, Scope.Scope>;
-  readonly withCompaction: <A, E, R>(
-    compact: (throughSequence: number) => Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E, R>;
   readonly append: (input: {
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -90,9 +81,6 @@ const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.Orches
     EventStoreV2,
     Effect.gen(function* () {
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
-      const replayCursors = new Set<{ sequence: number }>();
-      // Registration and deletion share a permit so a new subscriber cannot race a delete.
-      const retentionPermit = yield* Semaphore.make(1);
 
       const read: EventStoreV2Shape["read"] = (input) =>
         applicationEvents
@@ -119,26 +107,6 @@ const layerBase: Layer.Layer<EventStoreV2, never, OrchestrationEventStore.Orches
           );
 
       return EventStoreV2.of({
-        retainAfter: (sequence) =>
-          Effect.acquireRelease(
-            Effect.sync(() => {
-              const cursor = { sequence };
-              replayCursors.add(cursor);
-              return cursor;
-            }).pipe(retentionPermit.withPermits(1)),
-            (cursor) =>
-              Effect.sync(() => {
-                replayCursors.delete(cursor);
-              }),
-          ),
-        withCompaction: (compact) =>
-          Effect.suspend(() => {
-            let throughSequence = Number.MAX_SAFE_INTEGER;
-            for (const cursor of replayCursors) {
-              throughSequence = Math.min(throughSequence, cursor.sequence);
-            }
-            return compact(throughSequence);
-          }).pipe(retentionPermit.withPermits(1)),
         append: (input) =>
           applicationEvents.appendAgentEvents(input).pipe(
             Effect.mapError(

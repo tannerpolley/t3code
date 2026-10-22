@@ -239,7 +239,6 @@ const layerBase: Layer.Layer<
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
-    const internalLiveEvents = yield* PubSub.sliding<OrchestrationV2StoredEvent>(256);
     const liveEventsByType = new Map<
       OrchestrationV2DomainEvent["type"],
       PubSub.PubSub<OrchestrationV2StoredEvent>
@@ -248,7 +247,6 @@ const layerBase: Layer.Layer<
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (events: ReadonlyArray<OrchestrationV2StoredEvent>) {
         yield* PubSub.publishAll(liveEvents, events);
-        yield* PubSub.publishAll(internalLiveEvents, events);
         for (const [type, pubsub] of liveEventsByType) {
           yield* PubSub.publishAll(
             pubsub,
@@ -885,69 +883,6 @@ const layerBase: Layer.Layer<
         }).pipe(Stream.filter(matches));
       return Stream.unwrap(
         Effect.gen(function* () {
-          if (input?.bounded !== true) {
-            const cursor = yield* eventStore.retainAfter(afterSequence);
-            const subscription = yield* PubSub.subscribe(internalLiveEvents);
-            let lastSequence = afterSequence;
-            const highWater = yield* eventStore.latestSequence();
-            const resume = (throughSequence: number) =>
-              Stream.unwrap(
-                Effect.gen(function* () {
-                  // Initial history may already be compacted. Above the subscription's
-                  // high-water mark every sequence must still exist, including project events.
-                  const checkAfter = Math.max(lastSequence, highWater);
-                  if (throughSequence > checkAfter) {
-                    const rows = yield* sql<{ readonly count: number }>`
-                      SELECT COUNT(*) AS count FROM orchestration_events
-                      WHERE sequence > ${checkAfter} AND sequence <= ${throughSequence}
-                    `;
-                    if (rows[0]?.count !== throughSequence - checkAfter) {
-                      yield* Effect.logError("Internal event subscription lost replay history.", {
-                        afterSequence: checkAfter,
-                        throughSequence,
-                      });
-                      return yield* new EventSinkStreamError({
-                        afterSequence: checkAfter,
-                      });
-                    }
-                  }
-                  return catchUp({
-                    afterSequence: lastSequence,
-                    throughSequence,
-                    ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
-                    ...(input?.eventType === undefined ? {} : { eventType: input.eventType }),
-                  }).pipe(
-                    Stream.onEnd(
-                      Effect.sync(() => {
-                        // Filtered streams can advance over events they do not consume.
-                        lastSequence = Math.max(lastSequence, throughSequence);
-                        cursor.sequence = lastSequence;
-                      }),
-                    ),
-                  );
-                }),
-              );
-            // Sliding releases events even while the consumer is blocked. Take one
-            // at a time so the live tail cannot hide another unbounded batch.
-            const live = Stream.fromEffectRepeat(PubSub.take(subscription)).pipe(
-              Stream.flatMap((stored) => {
-                if (stored.sequence <= lastSequence) return Stream.empty;
-                return stored.sequence === lastSequence + 1
-                  ? Stream.succeed(stored)
-                  : resume(stored.sequence);
-              }),
-            );
-            return Stream.concat(resume(highWater), live).pipe(
-              Stream.rechunk(1),
-              Stream.map((stored) => {
-                // The previous event is processed once the consumer asks for another.
-                cursor.sequence = lastSequence;
-                lastSequence = stored.sequence;
-                return stored;
-              }),
-              Stream.filter(matches),
-            );
-          }
           let pubsub = liveEvents;
           if (input?.eventType !== undefined) {
             const existing = liveEventsByType.get(input.eventType);
@@ -959,14 +894,23 @@ const layerBase: Layer.Layer<
               liveEventsByType.set(input.eventType, pubsub);
             }
           }
-          return replayAndBufferProjectedLiveEvents({
-            subscribe: PubSub.subscribe(pubsub),
-            latestSequence: eventStore.latestSequence(),
-            afterSequence,
-            filter: matches,
-            replay,
-            project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
-          });
+          if (input?.bounded === true) {
+            return replayAndBufferProjectedLiveEvents({
+              subscribe: PubSub.subscribe(pubsub),
+              latestSequence: eventStore.latestSequence(),
+              afterSequence,
+              filter: matches,
+              replay,
+              project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
+            });
+          }
+          const subscription = yield* PubSub.subscribe(pubsub);
+          const highWater = yield* eventStore.latestSequence();
+          const live = Stream.fromSubscription(subscription).pipe(
+            Stream.filter((stored) => stored.sequence > Math.max(highWater, afterSequence)),
+            Stream.filter(matches),
+          );
+          return Stream.concat(replay(highWater), live);
         }),
       );
     };

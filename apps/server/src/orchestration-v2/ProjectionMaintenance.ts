@@ -357,15 +357,8 @@ export const layer: Layer.Layer<
         // Yield even without deletions for clients using the synchronous fallback.
         yield* Effect.yieldNow;
         if (obsolete.length > 0) {
-          const deleted = yield* eventStore.withCompaction(
-            (lowWater) =>
-              sql`
-              DELETE FROM orchestration_events
-              WHERE sequence IN ${sql.in(obsolete)} AND sequence <= ${lowWater}
-              RETURNING sequence
-            `,
-          );
-          deletedEventCount += deleted.length;
+          yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
+          deletedEventCount += obsolete.length;
           yield* Effect.yieldNow;
         }
         throughSequence = (rows.at(-1)?.sequence ?? 1) - 1;

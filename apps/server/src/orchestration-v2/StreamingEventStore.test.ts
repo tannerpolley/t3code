@@ -1,6 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { vi } from "vite-plus/test";
 import {
   EventId,
   MessageId,
@@ -14,9 +13,6 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
-import * as Fiber from "effect/Fiber";
-import * as PubSub from "effect/PubSub";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -29,8 +25,6 @@ import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
 import { EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
 import { ProjectionMaintenanceV2, layer as maintenanceLayer } from "./ProjectionMaintenance.ts";
 import { ProjectionStoreV2, layer as projectionLayer } from "./ProjectionStore.ts";
-
-vi.mock("effect/PubSub", { spy: true });
 
 const stores = Layer.mergeAll(eventStoreLayer, projectionLayer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -74,7 +68,6 @@ const fixture = (suffix: string, now: DateTime.Utc) => {
     text: string,
     status: "running" | "completed" | "cancelled" = "running",
     itemId = "a",
-    type: "assistant_message" | "command_execution" = "assistant_message",
   ): OrchestrationV2DomainEvent => ({
     id: EventId.make(`event:${suffix}:${itemId}:${index}`),
     type: "turn-item.updated",
@@ -95,186 +88,14 @@ const fixture = (suffix: string, now: DateTime.Utc) => {
       startedAt: now,
       completedAt: status === "running" ? null : now,
       updatedAt: now,
-      ...(type === "assistant_message"
-        ? {
-            type,
-            messageId: MessageId.make(`message:${suffix}:${itemId}`),
-            text,
-            streaming: status === "running",
-          }
-        : { type, input: "echo full payload", output: text }),
+      type: "assistant_message",
+      messageId: MessageId.make(`message:${suffix}:${itemId}`),
+      text,
+      streaming: status === "running",
     },
   });
   return { threadId, created, item };
 };
-
-it.effect.each(["all", "thread", "type"] as const)(
-  "bounds a slow internal %s subscriber and replays every full event in order",
-  (filter) =>
-    Effect.gen(function* () {
-      const sink = yield* EventSinkV2;
-      const store = yield* EventStoreV2;
-      const { threadId, created, item } = fixture(`slow-${filter}`, yield* DateTime.now);
-      const other = fixture(`other-${filter}`, yield* DateTime.now);
-      const initial = yield* sink.write({
-        events: [created, other.created, item(0, "initial", "completed")],
-      });
-      const paused = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      const replayPaused = yield* Deferred.make<void>();
-      const resumeReplay = yield* Deferred.make<void>();
-      const received: Array<(typeof initial)[number]> = [];
-      const burstSize = 768;
-      const expectedCount =
-        filter === "thread" ? burstSize + 2 : burstSize * 2 + (filter === "type" ? 1 : 3);
-      using reads = vi.spyOn(store, "read");
-      const consumer = yield* sink
-        .stream({
-          ...(filter === "thread" ? { threadId } : {}),
-          ...(filter === "type" ? { eventType: "turn-item.updated" as const } : {}),
-        })
-        .pipe(
-          Stream.take(expectedCount),
-          Stream.runForEach((event) =>
-            Effect.gen(function* () {
-              received.push(event);
-              if (received.length === 1) {
-                yield* Deferred.succeed(paused, undefined);
-                yield* Deferred.await(resume);
-              } else if (received.length === 64) {
-                yield* Deferred.succeed(replayPaused, undefined);
-                yield* Deferred.await(resumeReplay);
-              }
-            }),
-          ),
-          Effect.forkScoped,
-        );
-      yield* Deferred.await(paused);
-      const publications = vi.mocked(PubSub.publishAll).mockClear();
-      const burstEvents = (offset: number) =>
-        Array.from({ length: burstSize }, (_, index) =>
-          (index % 2 === 0 ? item : other.item)(
-            offset + index,
-            "full payload " + "x".repeat(1024),
-            "completed",
-            `burst-${offset + index}`,
-            "command_execution",
-          ),
-        );
-      const burst = yield* sink.write({ events: burstEvents(1) });
-      const hubs = new Set(publications.mock.calls.map(([hub]) => hub));
-      assert.isAbove(hubs.size, 0);
-      for (const hub of hubs) assert.isAtMost(yield* PubSub.size(hub), 256);
-      yield* Deferred.succeed(resume, undefined);
-      yield* Deferred.await(replayPaused);
-      const nextBurst = yield* sink.write({ events: burstEvents(burstSize + 1) });
-      for (const hub of hubs) assert.isAtMost(yield* PubSub.size(hub), 256);
-      yield* Deferred.succeed(resumeReplay, undefined);
-      yield* Fiber.join(consumer);
-      const expected = [...initial, ...burst, ...nextBurst].filter(
-        (event) =>
-          (filter !== "type" || event.event.type === "turn-item.updated") &&
-          (filter !== "thread" || event.event.threadId === threadId),
-      );
-      assert.deepEqual(received, expected);
-      assert.isTrue(
-        reads.mock.calls.some(
-          ([input]) =>
-            input?.afterSequence === initial.at(-1)!.sequence &&
-            input.throughSequence! > initial.at(-1)!.sequence,
-        ),
-        "overflow must replay from the last processed sequence",
-      );
-    }).pipe(Effect.scoped, Effect.provide(services)),
-);
-
-it.effect("retains unprocessed settlement events through overflow and compaction", () =>
-  Effect.gen(function* () {
-    const sink = yield* EventSinkV2;
-    const maintenance = yield* ProjectionMaintenanceV2;
-    const now = yield* DateTime.now;
-    const { created, item } = fixture("settlement-compaction", now);
-    yield* sink.write({ events: [created] });
-    const pull = yield* Stream.toPull(sink.stream());
-    const received = [...(yield* pull)];
-    const fastPull = yield* Stream.toPull(sink.stream());
-    const fastReceived = [...(yield* fastPull)];
-    const settled = { ...created.payload, settledOverride: "settled" as const, settledAt: now };
-    const committed = yield* sink.write({
-      events: [
-        {
-          ...created,
-          id: EventId.make("event:compaction:settled"),
-          type: "thread.settled",
-          payload: settled,
-        },
-        {
-          ...created,
-          id: EventId.make("event:compaction:metadata"),
-          type: "thread.metadata-updated",
-          payload: { ...settled, title: "After settlement" },
-        },
-        ...Array.from({ length: 768 }, (_, index) =>
-          item(index, "payload", "completed", `unique-${index}`),
-        ),
-      ],
-    });
-    while (fastReceived.at(-1)!.sequence < committed.at(-1)!.sequence) {
-      fastReceived.push(...(yield* fastPull));
-    }
-    const compacted = yield* maintenance.compactEventStore;
-    while (received.at(-1)!.sequence < committed.at(-1)!.sequence) {
-      received.push(...(yield* pull));
-    }
-    assert.deepEqual(received.slice(1), committed);
-    assert.deepEqual(fastReceived, received);
-    assert.equal(compacted.deletedEventCount, 0);
-    // Asking for the next event acknowledges the final delivered event.
-    const waiting = yield* pull.pipe(Effect.forkScoped);
-    const next = yield* sink.write({ events: [item(769, "next", "completed", "next")] });
-    assert.deepEqual(yield* Fiber.join(waiting), next);
-    assert.equal((yield* maintenance.compactEventStore).deletedEventCount, 1);
-  }).pipe(Effect.scoped, Effect.provide(services)),
-);
-
-it.effect("releases replay retention when a subscription closes before catching up", () =>
-  Effect.gen(function* () {
-    const sink = yield* EventSinkV2;
-    const maintenance = yield* ProjectionMaintenanceV2;
-    const { created } = fixture("closed-subscription", yield* DateTime.now);
-    yield* sink.write({
-      events: [
-        created,
-        { ...created, id: EventId.make("closed:1"), type: "thread.metadata-updated" },
-        { ...created, id: EventId.make("closed:2"), type: "thread.metadata-updated" },
-      ],
-    });
-    yield* sink.stream().pipe(Stream.take(1), Stream.runDrain);
-    assert.equal((yield* maintenance.compactEventStore).deletedEventCount, 1);
-  }).pipe(Effect.provide(services)),
-);
-
-it.effect("fails an internal subscription when retained replay history is missing", () =>
-  Effect.gen(function* () {
-    const sink = yield* EventSinkV2;
-    const sql = yield* SqlClient.SqlClient;
-    const { created, item } = fixture("lost-replay", yield* DateTime.now);
-    yield* sink.write({ events: [created] });
-    const pull = yield* Stream.toPull(sink.stream({ eventType: "turn-item.updated" }));
-    // Start in the live tail before simulating loss beyond its cursor.
-    const first = yield* sink.write({ events: [item(0, "first", "completed", "first")] });
-    assert.deepEqual(yield* pull, first);
-    const burst = yield* sink.write({
-      events: Array.from({ length: 768 }, (_, index) =>
-        item(index, "payload", "completed", `lost-${index}`),
-      ),
-    });
-    yield* sql`DELETE FROM orchestration_events WHERE sequence = ${burst[0]!.sequence}`;
-    const result = yield* pull.pipe(Effect.result);
-    assert.equal(result._tag, "Failure");
-    if (result._tag === "Failure") assert.equal(result.failure._tag, "EventSinkStreamError");
-  }).pipe(Effect.scoped, Effect.provide(services)),
-);
 
 it.effect.each(["completed", "cancelled"] as const)(
   "durably coalesces streaming snapshots through %s, with unchanged replay",

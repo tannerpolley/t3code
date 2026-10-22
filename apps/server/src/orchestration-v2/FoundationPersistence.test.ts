@@ -508,10 +508,8 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             runEvent("event:filtered-worker:live:2", { ...run, status: "failed" }),
           ],
         });
-        const received = [...(yield* pull)];
-        while (received.length < live.length) received.push(...(yield* pull));
         assert.deepEqual(
-          received.map((stored) => stored.sequence),
+          (yield* pull).map((stored) => stored.sequence),
           live.map((stored) => stored.sequence),
         );
       }),
