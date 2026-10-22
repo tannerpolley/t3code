@@ -137,6 +137,11 @@
     --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5833);
   }
 }
+@container sidebar-columns-name (width < calc(14.5625rem + 20px + 10.9ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5357);
+  }
+}
 @container sidebar-columns-name (width < calc(14.5625rem + 20px + 10.5ch)) {
   .sidebar-thread-columns {
     --sidebar-model-track: 0px;
@@ -194,6 +199,11 @@
 @container sidebar-columns (width < calc(15.3125rem + 22px + 9.4ch)) {
   .sidebar-thread-columns {
     --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5833);
+  }
+}
+@container sidebar-columns (width < calc(15.3125rem + 22px + 8.9ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5357);
   }
 }
 @container sidebar-columns (width < calc(15.3125rem + 22px + 8.5ch)) {

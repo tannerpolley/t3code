@@ -104,8 +104,13 @@ export function generateSidebarColumnLayoutCss() {
     const container = roleDisplay === "name" ? "sidebar-columns-name" : "sidebar-columns";
     // The model narrows in half-character steps before its group drops. Named container queries
     // give every row in a list the same step; `cqw` would read a nested thread-row container.
-    for (let ch = tracks.model.ch - modelStepCh; ch >= tracks.model.minCh; ch -= modelStepCh) {
-      const boundary = threshold(hidden, roleDisplay, ch + modelStepCh);
+    // The last step lands on `minCh`, the width the drop threshold budgets for.
+    const modelWidthAt = (step: number) =>
+      Math.max(tracks.model.minCh, +(tracks.model.ch - step * modelStepCh).toFixed(4));
+    const steps = Math.ceil((tracks.model.ch - tracks.model.minCh) / modelStepCh);
+    for (let step = 1; step <= steps; step++) {
+      const ch = modelWidthAt(step);
+      const boundary = threshold(hidden, roleDisplay, modelWidthAt(step - 1));
       const scale = +(ch / tracks.model.ch).toFixed(4);
       css += `@container ${container} (width < ${boundary}) {\n  .sidebar-thread-columns { --sidebar-model-step: calc(var(--sidebar-model-width) * ${scale}); }\n}\n`;
     }
