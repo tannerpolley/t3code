@@ -85,8 +85,7 @@ export function makeIssueWorkCommands({
       if (isReadOnlyIssueRole(thread.role) && thread.lineage.relationshipToParent === "subagent") {
         if (Option.isNone(issueWorkStore)) return true;
         const store = issueWorkStore.value;
-        const config = yield* store.configuration(thread.lineage.rootThreadId);
-        if (config === null) return true;
+        if (!(yield* store.isRepositoryOrchestrator(thread.lineage.rootThreadId))) return true;
         return yield* store.canAdmitReadOnly(thread.lineage.rootThreadId, thread.id);
       }
       const issue = thread.linkedIssue;

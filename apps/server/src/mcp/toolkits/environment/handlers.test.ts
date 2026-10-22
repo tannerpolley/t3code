@@ -1,3 +1,5 @@
+import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
+import * as IssueWorkStore from "../../../issues/IssueWorkStore.ts";
 import * as Sidebar from "../../../sidebarLayout.ts";
 import { EMPTY_SIDEBAR_LAYOUT } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -74,6 +76,16 @@ const callTool = (name: string, args: Record<string, unknown>) =>
     );
   });
 const layerMcpEnvironment = McpHttpServer.layerEnvironmentToolkit.pipe(
+  Layer.provide(
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),
+    }),
+  ),
+  Layer.provide(
+    Layer.mock(IssueWorkStore.IssueWorkStore)({
+      isRepositoryOrchestrator: () => Effect.succeed(false),
+    }),
+  ),
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provide(
     Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -145,6 +157,10 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
         }),
       }),
       ThreadCommandExecutor.layer,
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadShell: () => Ref.get(caller) }),
+      Layer.mock(IssueWorkStore.IssueWorkStore)({
+        isRepositoryOrchestrator: () => Effect.succeed(false),
+      }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId,
         requestNamespace: "provider:preferences",

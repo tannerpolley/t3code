@@ -1,3 +1,4 @@
+import { makeThreadDispatch } from "../../../orchestration-v2/ThreadDispatch.ts";
 import * as Sidebar from "../../../sidebarLayout.ts";
 import {
   editLocalServerHideRules,
@@ -6,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
-import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -69,7 +69,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
   t3_environment_preferences_update: McpToolAccess.writesEnvironment((input, check) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
-      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const executor = yield* makeThreadDispatch;
       const update = Effect.gen(function* () {
         // The turn may have ended, or the thread's modes changed, while this waited for the lock.
         yield* check;

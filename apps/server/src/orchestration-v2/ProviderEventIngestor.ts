@@ -39,7 +39,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { threadDispatchLockKey } from "./IssueWorkDispatch.ts";
+import { makeThreadDispatch } from "./ThreadDispatch.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 import { boundFileChangeForStorage } from "./WireProjection.ts";
 
@@ -309,8 +309,7 @@ export const layer: Layer.Layer<
     const git = yield* GitVcsDriver.GitVcsDriver;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-    const issueWorkStore = yield* IssueWorkStore.IssueWorkStore;
+    const threadDispatch = yield* makeThreadDispatch;
     const analytics = yield* ProviderTurnAnalytics;
     const agentScope = yield* AgentScope;
     const completedTurnAnalytics = new Set<string>();
@@ -424,9 +423,8 @@ export const layer: Layer.Layer<
         );
         const shell = yield* staleThread;
         if (shell === null) return [];
-        const root = yield* issueWorkStore.configuration(shell.lineage.rootThreadId);
-        return yield* threadCommands.withLock(
-          threadDispatchLockKey(childThreadId, shell, root !== null),
+        return yield* threadDispatch.withLock(
+          childThreadId,
           Effect.gen(function* () {
             const thread = yield* staleThread;
             if (thread === null) return [];
@@ -885,29 +883,13 @@ export const layer: Layer.Layer<
                 if (input.event.type !== "app_thread.created") return effect;
                 const thread = input.event.appThread;
                 return Effect.gen(function* () {
-                  const root = yield* issueWorkStore
-                    .configuration(thread.lineage.rootThreadId)
-                    .pipe(Effect.orDie);
-                  const childKey = threadDispatchLockKey(thread.id, thread, root !== null);
-                  const childLocked = threadCommands.withLock(childKey, effect);
+                  const childLocked = threadDispatch.withLock(thread.id, effect, thread);
                   const parentId = thread.lineage.parentThreadId;
-                  if (
-                    !isProviderNativeSubagentThread(thread) ||
-                    parentId === null ||
-                    parentId === thread.id
-                  )
-                    return yield* childLocked;
-                  const parent = yield* projections.getThreadShell(parentId).pipe(Effect.orDie);
-                  const parentRoot =
-                    parent?.lineage.rootThreadId === thread.lineage.rootThreadId
-                      ? root
-                      : yield* issueWorkStore
-                          .configuration(parent?.lineage.rootThreadId ?? parentId)
-                          .pipe(Effect.orDie);
-                  const key = threadDispatchLockKey(parentId, parent, parentRoot !== null);
-                  return yield* key === childKey
+                  return yield* !isProviderNativeSubagentThread(thread) ||
+                  parentId === null ||
+                  parentId === thread.id
                     ? childLocked
-                    : threadCommands.withLock(key, childLocked);
+                    : threadDispatch.withLock(parentId, childLocked);
                 });
               },
             ),

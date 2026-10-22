@@ -11,6 +11,7 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
   ProviderDriverKind,
   ThreadId,
   type ThreadRole,
@@ -687,6 +688,127 @@ it.effect(
       yield* Fiber.join(held);
       yield* Fiber.join(sibling);
       assert.equal((yield* threads.getThreadShell(managerB))?.title, "Independent sibling");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "starts a retired root read-only child follow-up after restoring the repository to another root",
+  () => {
+    const { layer } = fixture();
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const target = ThreadId.make("replacement-root");
+      for (const id of [rootId, target]) {
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create:${id}`),
+          threadId: id,
+          projectId,
+          title: id,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+          ...(id !== rootId
+            ? {}
+            : {
+                repositoryOrchestration: {
+                  ...DEFAULT_REPOSITORY_WORK_SETTINGS,
+                  ...reference,
+                  repositoryId: "repo:read-only",
+                  projectId,
+                  launchCommandId: CommandId.make("initial-registration"),
+                  revision: 1,
+                  paused: false,
+                  publishStatusComments: false,
+                  publishCloseoutComments: false,
+                  milestones: [],
+                  suspendedIssues: [],
+                },
+              }),
+        });
+      }
+      const historicalChild = ThreadId.make("historical-read-only-child");
+      const rootThread = (yield* threads.getThreadRecords(rootId, [])).thread;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("historical-child-created"),
+            type: "thread.created",
+            threadId: historicalChild,
+            occurredAt: now,
+            payload: {
+              ...rootThread,
+              id: historicalChild,
+              title: "Completed review",
+              repositoryOrchestration: undefined,
+              role: "reviewer",
+              lineage: {
+                parentThreadId: rootId,
+                rootThreadId: rootId,
+                relationshipToParent: "subagent",
+              },
+              forkedFrom: { type: "node", nodeId: NodeId.make("historical-task") },
+            },
+          },
+        ],
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        threadId: historicalChild,
+        commandId: CommandId.make("historical-review"),
+        messageId: MessageId.make("historical-review"),
+        text: "Initial review",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* finish(historicalChild);
+      const current = (yield* store.configuration(rootId))!;
+      yield* threads.dispatch({
+        type: "repository.work.update",
+        threadId: rootId,
+        commandId: CommandId.make("pause-before-restore"),
+        expectedRevision: 1,
+        orchestration: { ...current, paused: true },
+      });
+      yield* threads.dispatch({
+        type: "repository.work.restore",
+        threadId: rootId,
+        commandId: CommandId.make("replace-root"),
+        expectedRootThreadId: rootId,
+        expectedRevision: 2,
+        targetThreadId: target,
+        projectId,
+        ...reference,
+        repositoryId: "repo:read-only",
+        reason: "Review membership after restore",
+      });
+      const owner = yield* store.repositoryOwner({ ...reference, repositoryId: "repo:read-only" });
+      const oldConfig = yield* store.configuration(rootId);
+      assert.equal(owner?.rootThreadId, target);
+      assert.equal(oldConfig?.retiredToThreadId, target);
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        threadId: historicalChild,
+        commandId: CommandId.make("resume-historical-review"),
+        messageId: MessageId.make("resume-historical-review"),
+        text: "Review follow-up",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const resumed = (yield* threads.getThreadRecords(historicalChild, ["runs"])).runs.at(-1)!;
+      assert.equal(resumed.status, "starting");
     }).pipe(Effect.provide(layer));
   },
 );

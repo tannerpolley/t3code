@@ -1,3 +1,4 @@
+import * as ProjectionStore from "./ProjectionStore.ts";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -322,7 +323,13 @@ it.effect.each(deliveries)(
             }).pipe(
               Effect.provide(
                 ScheduledTaskService.layer.pipe(
-                  Layer.provide(ThreadManagementService.layer),
+                  Layer.provide(
+                    ThreadManagementService.layer.pipe(
+                      Layer.provide(
+                        ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+                      ),
+                    ),
+                  ),
                   Layer.provide(ServerSettings.layerTest()),
                   Layer.provide(
                     Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({

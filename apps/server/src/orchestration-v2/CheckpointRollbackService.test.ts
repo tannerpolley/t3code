@@ -1,7 +1,10 @@
+import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointId,
+  CommandId,
+  DEFAULT_REPOSITORY_WORK_SETTINGS,
   CheckpointRef,
   EventId,
   MessageId,
@@ -48,6 +51,8 @@ import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import { makeHarness, projectId, modelSelection } from "./ThreadLaunchService.testHarness.ts";
 
 const unrelatedProject = Option.some({
   workspaceRoot: "/nonexistent/t3-rollback-project",
@@ -105,6 +110,7 @@ it.effect.each(["initial", "waiting"])(
           Layer.mock(EventSink.EventSinkV2)({}),
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadShell: () => Effect.succeed(null),
             getThread,
             getCheckpointRollbackContext,
             getShellSnapshot: () =>
@@ -212,6 +218,7 @@ it.effect("rejects a rollback when another provider thread became active", () =>
         Layer.mock(EventSink.EventSinkV2)({}),
         IdAllocator.layer,
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () => Effect.succeed(null),
           getThread: () => Effect.succeed(projection.thread),
           getCheckpointRollbackContext: () => Effect.succeed(projection),
           getShellSnapshot: () =>
@@ -292,6 +299,7 @@ it.effect("rejects a rollback when provider selection changed before execution",
         Layer.mock(EventSink.EventSinkV2)({}),
         IdAllocator.layer,
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () => Effect.succeed(null),
           getThread: () => Effect.succeed(projection.thread),
           getCheckpointRollbackContext: () => Effect.succeed(projection),
           getShellSnapshot: () =>
@@ -369,6 +377,7 @@ it.effect("rejects an unavailable rollback target before opening a session", () 
         Layer.mock(EventSink.EventSinkV2)({}),
         IdAllocator.layer,
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () => Effect.succeed(null),
           getThread: () => Effect.succeed(projection.thread),
           getCheckpointRollbackContext: () => Effect.succeed(projection),
           getShellSnapshot: () =>
@@ -504,6 +513,7 @@ it.effect.each([
           }),
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadShell: () => Effect.succeed(null),
             getThread: () => Effect.succeed(projection.thread),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
             getShellSnapshot: () =>
@@ -695,6 +705,7 @@ it.effect.each([
           }),
           IdAllocator.layer,
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadShell: () => Effect.succeed(null),
             getThread: () => Effect.succeed(projection.thread),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
             getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
@@ -795,8 +806,11 @@ it.effect.skipIf(!symlinksSupported)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-const seedRollbackHistory = Effect.gen(function* () {
+const seedRollbackHistory = Effect.fn("test.seedRollbackHistory")(function* (
+  options: { readonly projectId?: ProjectId; readonly rewindHead?: boolean } = {},
+) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
+  const sharedLocks = yield* Effect.serviceOption(ThreadCommandExecutor.ThreadCommandExecutor);
   const now = yield* DateTime.now;
   const threadId = ThreadId.make("rollback-history");
   const providerThreadId = ProviderThreadId.make("rollback-history-provider");
@@ -829,14 +843,14 @@ const seedRollbackHistory = Effect.gen(function* () {
       id: threadId,
       createdBy: "user",
       creationSource: "web",
-      projectId: ProjectId.make("rollback-history-project"),
+      projectId: options.projectId ?? ProjectId.make("rollback-history-project"),
       title: "Rollback history",
       providerInstanceId,
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
-      worktreePath: process.cwd(),
+      worktreePath: options.rewindHead ? null : process.cwd(),
       activeProviderThreadId: providerThreadId,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
       forkedFrom: null,
@@ -856,7 +870,9 @@ const seedRollbackHistory = Effect.gen(function* () {
     providerSessionId,
     appThreadId: threadId,
     ownerNodeId: null,
-    nativeThreadRef: null,
+    nativeThreadRef: options.rewindHead
+      ? { driver, nativeId: "before-rollback", strength: "strong" as const }
+      : null,
     nativeConversationHeadRef: null,
     status: "idle" as const,
     firstRunOrdinal: 1,
@@ -1013,7 +1029,9 @@ const seedRollbackHistory = Effect.gen(function* () {
   const serviceLayer = layerCheckpointRollbackService.pipe(
     Layer.provide(
       Layer.mergeAll(
-        ThreadCommandExecutor.layer,
+        Option.isSome(sharedLocks)
+          ? Layer.succeed(ThreadCommandExecutor.ThreadCommandExecutor, sharedLocks.value)
+          : ThreadCommandExecutor.layer,
         IdAllocator.layer,
         Layer.mock(CheckpointService.CheckpointServiceV2)({
           restore: ({ checkpoint }) =>
@@ -1047,7 +1065,18 @@ const seedRollbackHistory = Effect.gen(function* () {
               rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
                 Effect.gen(function* () {
                   rollbackCounts.push(yield* resolveCodexRollbackTurnCount(input));
-                  return { providerThread: input.providerThread };
+                  return {
+                    providerThread: options.rewindHead
+                      ? {
+                          ...input.providerThread,
+                          nativeConversationHeadRef: {
+                            driver,
+                            nativeId: "rewound-turn-2",
+                            strength: "weak" as const,
+                          },
+                        }
+                      : input.providerThread,
+                  };
                 }),
             } as never),
         }),
@@ -1055,7 +1084,7 @@ const seedRollbackHistory = Effect.gen(function* () {
       ),
     ),
   );
-  const rollback = (ordinal: number) =>
+  const rollback = (ordinal: number, restoreFiles = true) =>
     Effect.gen(function* () {
       const service = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
       yield* service.execute({
@@ -1063,8 +1092,9 @@ const seedRollbackHistory = Effect.gen(function* () {
         providerThreadId,
         scopeId,
         checkpointId: checkpointId(ordinal),
+        restoreFiles,
       });
-    }).pipe(Effect.provide(serviceLayer));
+    }).pipe(Effect.provide(Layer.fresh(serviceLayer)));
 
   return {
     store,
@@ -1086,7 +1116,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
   (it) => {
     it.effect("rolls back later terminal runs despite obsolete unrelated SQLite payloads", () =>
       Effect.gen(function* () {
-        const history = yield* seedRollbackHistory;
+        const history = yield* seedRollbackHistory();
         const sql = yield* SqlClient.SqlClient;
         const { threadId, runId, nodeId, checkpointId } = history;
         yield* sql`
@@ -1149,7 +1179,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
       "rewinds stopped runs repeatedly without counting discarded provider turns again",
       () =>
         Effect.gen(function* () {
-          const history = yield* seedRollbackHistory;
+          const history = yield* seedRollbackHistory();
           yield* history.rollback(5);
           yield* history.rollback(2);
           yield* history.rollback(0);
@@ -1178,5 +1208,135 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           );
         }),
     );
+  },
+);
+
+it.effect(
+  "preserves the rewound conversation head when a repository child message commits after rollback",
+  () => {
+    const harness = makeHarness();
+    const dependencies = Layer.mergeAll(
+      harness.layer,
+      IssueWorkStore.layer.pipe(Layer.provide(harness.layer)),
+      ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
+      IdAllocator.layer,
+      ThreadCommandExecutor.layer,
+    );
+    return Effect.gen(function* () {
+      const history = yield* seedRollbackHistory({ projectId, rewindHead: true });
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sink = yield* EventSink.EventSinkV2;
+      const rootId = ThreadId.make("rollback-repository-root");
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("rollback-root-create"),
+        threadId: rootId,
+        projectId,
+        title: "Repository root",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+        repositoryOrchestration: {
+          ...DEFAULT_REPOSITORY_WORK_SETTINGS,
+          host: "github.com",
+          repository: "owner/repo",
+          repositoryId: "repo:rollback",
+          projectId,
+          launchCommandId: CommandId.make("rollback-root-create"),
+          revision: 1,
+          paused: false,
+          milestones: [],
+          suspendedIssues: [],
+        },
+      });
+      const child = (yield* history.store.getThreadRecords(history.threadId, [])).thread;
+      yield* history.store.apply({
+        id: EventId.make("rollback-child-lineage"),
+        type: "thread.metadata-updated",
+        threadId: child.id,
+        occurredAt: history.now,
+        payload: {
+          ...child,
+          role: "checker",
+          lineage: {
+            rootThreadId: rootId,
+            parentThreadId: rootId,
+            relationshipToParent: "subagent",
+          },
+          forkedFrom: { type: "node", nodeId: NodeId.make("task:rollback") },
+        },
+      });
+      const planned = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const rollbackWaiting = yield* Deferred.make<void>();
+      const commit = sink.commitCommand.bind(sink);
+      using _commit = vi.spyOn(sink, "commitCommand").mockImplementation((input) =>
+        Effect.gen(function* () {
+          if (input.commandId === "rollback-race-message") {
+            yield* Deferred.succeed(planned, undefined);
+            yield* Deferred.await(release);
+          }
+          return yield* commit(input);
+        }),
+      );
+      const sending = yield* threads
+        .dispatch({
+          type: "message.dispatch",
+          threadId: child.id,
+          commandId: CommandId.make("rollback-race-message"),
+          messageId: MessageId.make("rollback-race-message"),
+          text: "Continue review",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(planned);
+      const locks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const withLock = locks.withLock.bind(locks);
+      using _locks = vi
+        .spyOn(locks, "withLock")
+        .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
+          Effect.gen(function* () {
+            if ((yield* locks.activeKeys).includes(key)) {
+              yield* Deferred.succeed(rollbackWaiting, undefined);
+            }
+            return yield* withLock(key, effect);
+          }),
+        );
+      const rollingBack = yield* history.rollback(2, false).pipe(Effect.forkChild);
+      // Wait for either contention on the message's lock or an independently committed rollback.
+      yield* Effect.raceFirst(Deferred.await(rollbackWaiting), Fiber.join(rollingBack));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(sending);
+      yield* Fiber.join(rollingBack);
+      const providerThread = (yield* history.store.getThreadRecords(child.id, [
+        "providerThreads",
+      ])).providerThreads.find((thread) => thread.id === child.activeProviderThreadId);
+      assert.equal(providerThread?.nativeConversationHeadRef?.nativeId, "rewound-turn-2");
+      const result = yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("after-rollback"),
+        threadId: child.id,
+        messageId: MessageId.make("after-rollback"),
+        text: "Review after rollback",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      assert.isAbove(result.sequence, 0);
+      assert.equal(
+        (yield* history.store.getThreadRecords(child.id, ["providerThreads"])).providerThreads.find(
+          (thread) => thread.id === child.activeProviderThreadId,
+        )?.nativeConversationHeadRef?.nativeId,
+        "rewound-turn-2",
+      );
+    }).pipe(Effect.provide(dependencies));
   },
 );

@@ -62,6 +62,9 @@ export class IssueWorkStore extends Context.Service<
     readonly configuration: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<RepositoryOrchestration | null, IssueWorkError>;
+    readonly isRepositoryOrchestrator: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<boolean, IssueWorkError>;
     readonly slotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
     readonly readOnlySlotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
     readonly admissionThreads: (
@@ -367,6 +370,18 @@ export const layer = Layer.effect(
               ? Effect.succeed(null)
               : decodeConfiguration(rows[0].configuration),
           ),
+          Effect.mapError(mapError),
+        ),
+      isRepositoryOrchestrator: (rootThreadId) =>
+        sql<{ registered: number }>`
+          SELECT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_repository_orchestration owner
+            JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
+            WHERE owner.root_thread_id = ${rootThreadId}
+              AND json_type(root.payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
+          ) AS registered
+        `.pipe(
+          Effect.map((rows) => rows[0]!.registered === 1),
           Effect.mapError(mapError),
         ),
       activeRoots: () =>

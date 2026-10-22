@@ -1,3 +1,4 @@
+import { makeThreadDispatch } from "../orchestration-v2/ThreadDispatch.ts";
 import * as SidebarLayout from "../sidebarLayout.ts";
 import {
   CommandId,
@@ -162,7 +163,7 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-  const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const threadCommands = yield* makeThreadDispatch;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const sidebarLayout = yield* SidebarLayout.SidebarLayoutService;
 
