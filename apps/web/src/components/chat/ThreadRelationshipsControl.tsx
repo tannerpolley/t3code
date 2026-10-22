@@ -7,7 +7,6 @@ import {
 import {
   deriveProviderSubagentStatus,
   formatModelSelectionEffort,
-  shortModelSelectionEffort,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { useAtomValue } from "@effect/atom-react";
 import { pendingBackgroundWorkOfThread } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -781,7 +780,7 @@ export function ThreadRelationshipsPanel(props: {
                         />
                       }
                       model={model ? shortModelName(metadata.modelLabel) : undefined}
-                      effort={shortModelSelectionEffort(effortLabel)}
+                      effort={effortLabel}
                       name={
                         <span className="flex min-w-0 items-center gap-1">
                           <span
