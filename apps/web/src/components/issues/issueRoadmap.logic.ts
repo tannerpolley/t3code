@@ -150,7 +150,7 @@ export function issueRoadmap(
     )) {
     (recentlyDone(issue, now) ? done : closed).rows.push({ issue, cycle: false });
   }
-  return [closed, blocked, readySection, queued, paused, inProgress, done];
+  return [done, inProgress, paused, queued, readySection, blocked, closed];
 }
 
 const RECENTLY_DONE_MS = 24 * 60 * 60 * 1000;
