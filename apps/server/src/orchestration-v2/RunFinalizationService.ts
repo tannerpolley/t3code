@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import {
   CheckpointScopeId,
   ProjectId,
@@ -69,8 +70,8 @@ const make = Effect.gen(function* () {
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;
-  const eventSink = yield* EventSink.EventSinkV2;
-  const ids = yield* IdAllocator.IdAllocatorV2;
+  const eventSink = yield* Effect.serviceOption(EventSink.EventSinkV2);
+  const ids = yield* Effect.serviceOption(IdAllocator.IdAllocatorV2);
 
   const failCheckpointCapture = Effect.fn("RunFinalizationService.failCheckpointCapture")(
     function* (
@@ -83,13 +84,13 @@ const make = Effect.gen(function* () {
         readonly rootNode: OrchestrationV2ExecutionNode | undefined;
       },
     ) {
-      if (run?.status !== "waiting" || run.activeAttemptId === null) return;
+      if (run?.status !== "waiting" || run.activeAttemptId === null || Option.isNone(eventSink) || Option.isNone(ids)) return;
       const completedAt = yield* DateTime.now;
       const { delegatedCompletion: _delegatedCompletion, ...currentRun } = run;
       const nodeEvents: OrchestrationV2DomainEvent[] = [];
       if (rootNode?.status === "waiting") {
         nodeEvents.push({
-          id: yield* ids.allocate.event({ threadId: input.threadId }),
+          id: yield* ids.value.allocate.event({ threadId: input.threadId }),
           type: "node.updated",
           threadId: input.threadId,
           runId: run.id,
@@ -101,14 +102,14 @@ const make = Effect.gen(function* () {
       }
       // Provider success is not run success until its checkpoint commits; exhausted
       // capture must settle the waiting run so delegated requests can reach their owner.
-      yield* eventSink.writeIfRunCurrent({
+      yield* eventSink.value.writeIfRunCurrent({
         threadId: input.threadId,
         runId: run.id,
         activeAttemptId: run.activeAttemptId,
         expectedStatus: "waiting",
         events: [
           {
-            id: yield* ids.allocate.event({ threadId: input.threadId }),
+            id: yield* ids.value.allocate.event({ threadId: input.threadId }),
             type: "turn-item.updated",
             threadId: input.threadId,
             runId: run.id,
@@ -139,7 +140,7 @@ const make = Effect.gen(function* () {
             },
           },
           {
-            id: yield* ids.allocate.event({ threadId: input.threadId }),
+            id: yield* ids.value.allocate.event({ threadId: input.threadId }),
             type: "run.updated",
             threadId: input.threadId,
             runId: run.id,

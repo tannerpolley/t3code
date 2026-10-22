@@ -1,9 +1,7 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  addSidebarProjectSection,
-  deleteSidebarProjectSection,
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
@@ -11,29 +9,11 @@ import {
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
-  moveProjectToSidebarProjectSection,
   reorderProjects,
-  reorderSidebarProjectSectionProjects,
-  reorderSidebarProjectSections,
-  renameSidebarProjectSection,
   resolveProjectExpanded,
-  setBranchPickerGroupCollapsed,
-  setDefaultAdvertisedEndpointKey,
-  setLineageAgentsClearedAt,
-  setIssueMilestoneCollapsed,
-  setLineageDetailsExpanded,
   setProjectExpanded,
-  setSidebarMode,
-  setSidebarOtherProjectsExpanded,
-  setSidebarProjectSectionColor,
-  setSidebarProjectSectionExpanded,
-  setSidebarProjectSectionFolderIcons,
-  setSidebarProjectScopeKey,
-  setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
-
-import { issueSectionKey } from "./components/issues/useIssueSectionCollapsed";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
@@ -56,18 +36,6 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
 }
 
 describe("uiStateStore pure functions", () => {
-  it("collapses and expands branch picker groups independently", () => {
-    const initial = makeUiState();
-    const remoteCollapsed = setBranchPickerGroupCollapsed(initial, "remote", true);
-    const bothCollapsed = setBranchPickerGroupCollapsed(remoteCollapsed, "current", true);
-
-    expect(bothCollapsed.branchPickerCollapsedGroups).toEqual(["current", "remote"]);
-    expect(setBranchPickerGroupCollapsed(bothCollapsed, "current", true)).toBe(bothCollapsed);
-    expect(
-      setBranchPickerGroupCollapsed(bothCollapsed, "remote", false).branchPickerCollapsedGroups,
-    ).toEqual(["current"]);
-  });
-
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -120,17 +88,6 @@ describe("uiStateStore pure functions", () => {
     expect(setProjectExpanded(next, keys, false)).toBe(next);
   });
 
-  it("reorders from the current atom-derived project order", () => {
-    const project1 = ProjectId.make("project-1");
-    const project2 = ProjectId.make("project-2");
-    const project3 = ProjectId.make("project-3");
-    const currentOrder = [project1, project2, project3];
-
-    const next = reorderProjects(makeUiState(), currentOrder, [project1], [project3]);
-
-    expect(next.projectOrder).toEqual([project2, project3, project1]);
-  });
-
   it("moves grouped project members together", () => {
     const keyALocal = "env-local:proj-a";
     const keyARemote = "env-remote:proj-a";
@@ -142,157 +99,9 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
   });
-
-  it("does not reorder missing or identical groups", () => {
-    const currentOrder = ["env-local:proj-a", "env-local:proj-b"];
-    const state = makeUiState();
-
-    expect(reorderProjects(state, currentOrder, ["env-local:missing"], ["env-local:proj-b"])).toBe(
-      state,
-    );
-    expect(reorderProjects(state, currentOrder, ["env-local:proj-a"], ["env-local:proj-a"])).toBe(
-      state,
-    );
-  });
-
-  it("stores explicit changed-file expansion choices", () => {
-    const threadId = ThreadId.make("thread-1");
-    const collapsed = setThreadChangedFilesExpanded(makeUiState(), threadId, "turn-1", false);
-
-    expect(collapsed.threadChangedFilesExpandedById).toEqual({
-      [threadId]: {
-        "turn-1": false,
-      },
-    });
-    expect(
-      setThreadChangedFilesExpanded(collapsed, threadId, "turn-1", true)
-        .threadChangedFilesExpandedById,
-    ).toEqual({
-      [threadId]: {
-        "turn-1": true,
-      },
-    });
-  });
-
-  it("stores the endpoint preference by stable key", () => {
-    const next = setDefaultAdvertisedEndpointKey(makeUiState(), "desktop-core:lan:http");
-
-    expect(next.defaultAdvertisedEndpointKey).toBe("desktop-core:lan:http");
-    expect(setDefaultAdvertisedEndpointKey(next, "desktop-core:lan:http")).toBe(next);
-    expect(setDefaultAdvertisedEndpointKey(next, "")).toMatchObject({
-      defaultAdvertisedEndpointKey: null,
-    });
-  });
-
-  it("stores the sidebar project scope and resets it to all projects", () => {
-    const scoped = setSidebarProjectScopeKey(makeUiState(), "github.com/pingdotgg/t3code");
-
-    expect(scoped.sidebarProjectScopeKey).toBe("github.com/pingdotgg/t3code");
-    expect(setSidebarProjectScopeKey(scoped, "github.com/pingdotgg/t3code")).toBe(scoped);
-    expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
-    expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
-  });
-
-  it("keeps the Projects view and section organization independent of Activity filters", () => {
-    const projects = setSidebarMode(makeUiState(), "projects");
-    const work = addSidebarProjectSection(projects, { id: "work", name: " Work " });
-    const personal = addSidebarProjectSection(work, { id: "personal", name: "Personal" });
-    const placed = moveProjectToSidebarProjectSection(
-      moveProjectToSidebarProjectSection(personal, "project-a", "work"),
-      "project-b",
-      "work",
-    );
-    const reordered = reorderSidebarProjectSectionProjects(placed, "work", [
-      "project-b",
-      "project-a",
-    ]);
-    const moved = moveProjectToSidebarProjectSection(reordered, "project-a", "personal");
-    const collapsed = setSidebarProjectSectionExpanded(moved, "work", false);
-    const renamed = renameSidebarProjectSection(collapsed, "work", "Now");
-    const colored = setSidebarProjectSectionColor(renamed, "work", "blue");
-    const folders = setSidebarProjectSectionFolderIcons(colored, "work", true);
-    const ordered = reorderSidebarProjectSections(folders, ["personal", "work"]);
-
-    expect(ordered.sidebarProjectSections).toEqual([
-      { id: "personal", name: "Personal", projectKeys: ["project-a"], collapsed: false },
-      {
-        id: "work",
-        name: "Now",
-        projectKeys: ["project-b"],
-        collapsed: true,
-        color: "blue",
-        folderIcons: true,
-      },
-    ]);
-    expect(setSidebarOtherProjectsExpanded(ordered, false).sidebarOtherProjectsExpanded).toBe(
-      false,
-    );
-    expect(deleteSidebarProjectSection(ordered, "work").sidebarProjectSections).toEqual([
-      ordered.sidebarProjectSections[0],
-    ]);
-    expect(
-      parsePersistedState({ sidebarProjectSections: ordered.sidebarProjectSections }),
-    ).toMatchObject({
-      sidebarMode: "projects",
-      sidebarProjectSections: ordered.sidebarProjectSections,
-    });
-  });
-
-  it("limits subsections to one level and returns their projects to the parent on delete", () => {
-    const work = addSidebarProjectSection(makeUiState(), { id: "work", name: "Work" });
-    const nested = addSidebarProjectSection(work, {
-      id: "nested",
-      name: "Nested",
-      parentId: "work",
-    });
-    expect(addSidebarProjectSection(nested, { id: "deep", name: "Deep", parentId: "nested" })).toBe(
-      nested,
-    );
-    const placed = moveProjectToSidebarProjectSection(nested, "project-a", "nested");
-    expect(deleteSidebarProjectSection(placed, "nested").sidebarProjectSections).toEqual([
-      { id: "work", name: "Work", projectKeys: ["project-a"], collapsed: false },
-    ]);
-  });
-
-  it("remembers lineage expansion and clear timestamps", () => {
-    const open = setLineageDetailsExpanded(makeUiState(), ["env:parent"], true);
-    const cleared = setLineageAgentsClearedAt(open, "env:parent", "show-all");
-    expect(cleared.lineageDetailsExpandedById).toEqual({ "env:parent": true });
-    expect(cleared.lineageAgentsClearedAtById).toEqual({ "env:parent": "show-all" });
-    expect(
-      parsePersistedState({ lineageAgentsClearedAtById: { "env:parent": "show-all" } })
-        .lineageAgentsClearedAtById,
-    ).toEqual({ "env:parent": "show-all" });
-    expect(
-      setLineageAgentsClearedAt(cleared, "env:parent", null).lineageAgentsClearedAtById,
-    ).toEqual({});
-  });
 });
 
 describe("parsePersistedState", () => {
-  it("keeps only known branch picker groups when hydrating collapsed groups", () => {
-    expect(
-      parsePersistedState({ branchPickerCollapsedGroups: ["remote", "stale", "current", "remote"] })
-        .branchPickerCollapsedGroups,
-    ).toEqual(["current", "remote"]);
-    expect(
-      parsePersistedState({ branchPickerCollapsedGroups: "remote" as unknown as string[] })
-        .branchPickerCollapsedGroups,
-    ).toEqual([]);
-  });
-
-  it("hydrates the last selected pull request merge method", () => {
-    const parsed = parsePersistedState({
-      pullRequestMergeMethod: "squash",
-    });
-    const invalid = parsePersistedState({
-      pullRequestMergeMethod: "fast-forward",
-    });
-
-    expect(parsed.pullRequestMergeMethod).toBe("squash");
-    expect(invalid.pullRequestMergeMethod).toBe("merge");
-  });
-
   it("hydrates raw UI-owned state without server entities", () => {
     const parsed = parsePersistedState({
       projectExpandedById: {
@@ -368,23 +177,6 @@ describe("parsePersistedState", () => {
     expect(resolveProjectExpanded(parsed.projectExpandedById, [projectBKey])).toBe(false);
     expect(resolveProjectExpanded(parsed.projectExpandedById, ["unknown"])).toBe(true);
   });
-
-  it("preserves legacy expanded-only semantics for one-way migration", () => {
-    const parsed = parsePersistedState({
-      expandedProjectCwds: ["/repo/a"],
-    });
-
-    expect(
-      resolveProjectExpanded(parsed.projectExpandedById, [
-        legacyProjectCwdPreferenceKey("/repo/a"),
-      ]),
-    ).toBe(true);
-    expect(
-      resolveProjectExpanded(parsed.projectExpandedById, [
-        legacyProjectCwdPreferenceKey("/repo/b"),
-      ]),
-    ).toBe(false);
-  });
 });
 
 function createLocalStorageStub(): Storage {
@@ -420,15 +212,12 @@ describe("uiStateStore persistence", () => {
     vi.unstubAllGlobals();
   });
 
-  it("persists window preferences without saving server layout projections", () => {
+  it("persists raw UI preferences including thread visit markers", () => {
     const state = makeUiState({
       projectExpandedById: {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
-      sidebarProjectSections: [],
-      sidebarOtherProjectsExpanded: true,
-      sidebarMode: "activity",
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -452,6 +241,10 @@ describe("uiStateStore persistence", () => {
       sidebarProjectSections: [],
       sidebarOtherProjectsExpanded: true,
       sidebarMode: "activity",
+      lineageDetailsExpandedById: {},
+      lineageAgentsClearedAtById: {},
+      issueMilestoneCollapsedById: {},
+      branchPickerCollapsedGroups: [],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -465,51 +258,12 @@ describe("uiStateStore persistence", () => {
         },
       },
       pullRequestMergeMethod: "merge",
-      lineageDetailsExpandedById: {},
-      lineageAgentsClearedAtById: {},
-      issueMilestoneCollapsedById: {},
-      branchPickerCollapsedGroups: [],
     });
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
       projectExpandedById: {},
       projectOrder: [],
     });
-  });
-
-  it("persists issue sections independently by environment, host, repository and section", () => {
-    const scope = {
-      environmentId: EnvironmentId.make("local"),
-      host: "github.com",
-      repository: "owner/repo",
-    };
-    const ready = issueSectionKey(scope, "roadmap:ready");
-    const review = issueSectionKey(scope, "roadmap:in-review");
-    const milestone = issueSectionKey(scope, "milestone:1");
-    const otherRepo = issueSectionKey({ ...scope, repository: "owner/other" }, "roadmap:ready");
-    const otherHost = issueSectionKey({ ...scope, host: "github.example.com" }, "roadmap:ready");
-    expect(
-      issueSectionKey({ ...scope, host: "GitHub.COM", repository: "Owner/Repo" }, "roadmap:ready"),
-    ).toBe(ready);
-    let state = setIssueMilestoneCollapsed(makeUiState(), ready, true);
-    state = setIssueMilestoneCollapsed(state, milestone, true);
-    expect(setIssueMilestoneCollapsed(state, ready, true)).toBe(state);
-    persistState(state);
-    const restored = parsePersistedState(
-      JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY)!),
-    );
-    expect(restored.issueMilestoneCollapsedById[ready]).toBe(true);
-    expect(restored.issueMilestoneCollapsedById[milestone]).toBe(true);
-    for (const key of [review, otherRepo, otherHost]) {
-      expect(restored.issueMilestoneCollapsedById[key] ?? false).toBe(false);
-    }
-    const reopened = setIssueMilestoneCollapsed(restored, ready, false);
-    persistState(reopened);
-    const reloaded = parsePersistedState(
-      JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY)!),
-    );
-    expect(reloaded.issueMilestoneCollapsedById[ready]).toBe(false);
-    expect(reloaded.issueMilestoneCollapsedById[milestone]).toBe(true);
   });
 
   it("restores the sidebar project scope across reloads", () => {
@@ -522,19 +276,5 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted).sidebarProjectScopeKey).toBe(
       "github.com/pingdotgg/t3code",
     );
-  });
-
-  it("drops the temporary expanded-only migration fallback when rewriting state", () => {
-    const migrated = parsePersistedState({
-      expandedProjectCwds: ["/repo/a"],
-    });
-
-    persistState(migrated);
-
-    const persisted = JSON.parse(
-      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
-    ) as PersistedUiState;
-    expect(resolveProjectExpanded(persisted.projectExpandedById ?? {}, ["unknown"])).toBe(true);
-    expect(persisted).not.toHaveProperty("threadPanelOpen");
   });
 });

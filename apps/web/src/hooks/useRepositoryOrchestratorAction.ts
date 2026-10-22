@@ -116,10 +116,11 @@ export function useRepositoryOrchestratorAction(
       });
       const status = await Effect.runPromise(
         Effect.scoped(
-          Effect.gen(function* () {
-            yield* AtomRegistry.mount(appAtomRegistry, atom);
-            return yield* AtomRegistry.getResult(appAtomRegistry, atom, { suspendOnWaiting: true });
-          }),
+          AtomRegistry.mount(appAtomRegistry, atom).pipe(
+            Effect.andThen(
+              AtomRegistry.getResult(appAtomRegistry, atom, { suspendOnWaiting: true }),
+            ),
+          ),
         ).pipe(Effect.timeout(2_000), Effect.option),
       );
       return actionFor(target, status._tag === "Some" ? status.value : null);

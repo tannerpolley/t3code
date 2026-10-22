@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import {
   IssueInboxToolInput,
   IssueInboxToolResult,
@@ -15,7 +16,6 @@ import * as IssueInbox from "./IssueInbox.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  IssueInbox.IssueInbox,
   ThreadManagementService.ThreadManagementService,
 ];
 
@@ -65,13 +65,17 @@ const caller = Effect.gen(function* () {
 export const issueInboxHandlers = {
   t3_issue_post: McpToolAccess.actsAsCaller((input: IssuePostInput) =>
     Effect.gen(function* () {
-      const inbox = yield* IssueInbox.IssueInbox;
+      const available = yield* Effect.serviceOption(IssueInbox.IssueInbox);
+      if (Option.isNone(available)) return yield* new OrchestratorMcpFailure({ code: "orchestration_error", message: "Issue tools are unavailable in this runtime." });
+      const inbox = available.value;
       return yield* inbox.post(yield* caller, input).pipe(Effect.mapError(failure));
     }),
   ),
   t3_issue_inbox: McpToolAccess.actsAsCaller((input: IssueInboxToolInput) =>
     Effect.gen(function* () {
-      const inbox = yield* IssueInbox.IssueInbox;
+      const available = yield* Effect.serviceOption(IssueInbox.IssueInbox);
+      if (Option.isNone(available)) return yield* new OrchestratorMcpFailure({ code: "orchestration_error", message: "Issue tools are unavailable in this runtime." });
+      const inbox = available.value;
       return yield* inbox.forCaller(yield* caller, input).pipe(Effect.mapError(failure));
     }),
   ),

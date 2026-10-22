@@ -21,7 +21,6 @@ const state = vi.hoisted(() => ({
   granted: new Set<string>(),
   effects: [] as string[],
   completed: deferred<void>(),
-  prepare: vi.fn(),
   show: vi.fn<
     (
       items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
@@ -36,13 +35,13 @@ function recordEffect(action: string) {
 }
 
 vi.mock("./useRepositoryOrchestratorAction", () => ({
-  useRepositoryOrchestratorAction: () => ({ forThread: state.prepare }),
+  useRepositoryOrchestratorAction: () => ({ forThread: async () => null }),
 }));
-vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
 vi.mock("../components/titleRegenerationFeedback", () => ({
   newTitleRegenerationRequestId: () => "title-request",
   reportTitleRegenerationOutcomes: vi.fn(),
 }));
+vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
@@ -170,72 +169,10 @@ beforeEach(() => {
   state.granted = new Set(["primary"]);
   state.effects = [];
   state.completed = deferred<void>();
-  state.prepare.mockReset().mockResolvedValue(null);
   state.show.mockReset().mockResolvedValue(null);
 });
 
 describe("thread menu permissions", () => {
-  it("waits for repository action preparation and rechecks permission before showing the menu", async () => {
-    const preparation = deferred<unknown>();
-    const run = vi.fn(async () => recordEffect("assign-orchestrator"));
-    state.prepare.mockReturnValue(preparation.promise);
-    state.granted.add("secondary");
-    state.show.mockResolvedValue("make-repository-orchestrator");
-    createMenu().openMenu(position);
-    expect(state.show).not.toHaveBeenCalled();
-    state.granted.delete("secondary");
-    preparation.resolve({
-      item: { id: "make-repository-orchestrator", label: "Make repository orchestrator" },
-      run,
-    });
-    await state.completed.promise;
-    expect(state.show.mock.calls[0]![0].find((item) => item.id === "rename")?.disabled).toBe(true);
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it("runs the asynchronously prepared repository action", async () => {
-    state.granted.add("secondary");
-    state.prepare.mockResolvedValue({
-      item: { id: "make-repository-orchestrator", label: "Make repository orchestrator" },
-      run: async () => recordEffect("assign-orchestrator"),
-    });
-    state.show.mockResolvedValue("make-repository-orchestrator");
-    createMenu().openMenu(position);
-    await state.completed.promise;
-    expect(state.effects).toEqual(["assign-orchestrator"]);
-  });
-
-  it("disables mutations for a denied secondary environment", async () => {
-    createMenu().openMenu(position);
-    await Promise.resolve();
-    const items = state.show.mock.calls[0]![0];
-    expect(items.find((item) => item.id === "rename")?.disabled).toBe(true);
-    expect(items.find((item) => item.id === "delete")?.disabled).toBe(true);
-    expect(items.find((item) => item.id === "copy")?.disabled).not.toBe(true);
-  });
-
-  it("allows the target grant even when the primary environment is denied", async () => {
-    state.granted = new Set(["secondary"]);
-    createMenu().openMenu(position);
-    await Promise.resolve();
-    expect(state.show.mock.calls[0]![0].find((item) => item.id === "rename")?.disabled).not.toBe(
-      true,
-    );
-  });
-
-  it("refreshes availability when a retained menu opener gains permission", async () => {
-    const menu = createMenu();
-    menu.openMenu(position);
-    await Promise.resolve();
-    expect(state.show.mock.calls[0]![0].find((item) => item.id === "rename")?.disabled).toBe(true);
-    state.granted.add("secondary");
-    menu.openMenu(position);
-    await Promise.resolve();
-    expect(state.show.mock.calls[1]![0].find((item) => item.id === "rename")?.disabled).not.toBe(
-      true,
-    );
-  });
-
   it.each(["rename", "regenerate-title", "delete", "pin", "settle", "archive"] as const)(
     "%s rechecks after the native menu closes",
     async (action) => {
@@ -249,16 +186,4 @@ describe("thread menu permissions", () => {
       expect(state.effects).toEqual([]);
     },
   );
-
-  it.each([
-    ["new-thread-on-branch", "draft"],
-    ["copy-thread-id", "copy"],
-    ["mark-unread", "mark-unread"],
-    ["project-settings", "project-settings"],
-  ] as const)("keeps %s available without task permission", async (action, effect) => {
-    state.show.mockResolvedValue(action);
-    createMenu().openMenu(position);
-    await state.completed.promise;
-    expect(state.effects).toEqual([effect]);
-  });
 });

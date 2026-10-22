@@ -16,14 +16,7 @@ import * as IssueService from "../issues/IssueService.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import { assert, describe, it, vi } from "@effect/vitest";
-import {
-  CommandId,
-  MessageId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  ThreadId,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { CommandId, MessageId, ProviderDriverKind, ProviderInstanceId, ThreadId, type ServerProvider } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -37,20 +30,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import {
-  adapter,
-  createReviewRoot,
-  delegateReviewIssue,
-  launchInput,
-  makeHarness,
-  modelSelection,
-  otherProjectId,
-  projectId,
-  reviewHarness,
-  reviewIssue,
-  reviewRead,
-  suspensionWorkerLayer,
-} from "./ThreadLaunchService.testHarness.ts";
+import { adapter, createReviewRoot, delegateReviewIssue, launchInput, makeHarness, modelSelection, otherProjectId, projectId, reviewHarness, reviewIssue, reviewRead, suspensionWorkerLayer } from "./ThreadLaunchService.testHarness.ts";
 
 describe("managed issue work", () => {
   const exercise = (scenario: "baseline" | "direct-resume" | "deletion") => {

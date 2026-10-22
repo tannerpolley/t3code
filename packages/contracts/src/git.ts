@@ -362,6 +362,8 @@ export const GitCommandFailureReason = Schema.Literals([
   "not_a_repository",
   "path_already_exists",
   "ref_name_conflict",
+  "push_rejected_by_remote",
+  "push_rejected_non_fast_forward",
   "ref_not_found",
   "remote_unreachable",
   "tag_would_be_clobbered",

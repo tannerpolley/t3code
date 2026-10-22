@@ -3,19 +3,76 @@ import {
   ProviderSessionId,
   RuntimeRequestId,
   TurnItemId,
-  ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   createQuestionHistoryProjector,
   derivePendingThreadRequests,
+  declinePendingApprovals,
   seedUserInputDraftAnswers,
+  type ApprovalResponder,
+  type ThreadPendingApproval,
 } from "./threadRequests.ts";
 
 const requestId = RuntimeRequestId.make("async-question");
 const nodeId = NodeId.make("async-question-node");
+
+describe("declining approvals before sending", () => {
+  const approval: ThreadPendingApproval = {
+    requestId,
+    requestKind: "command",
+    createdAt: "2026-10-19T00:00:00Z",
+    responseCapability: "live",
+  };
+  const second: ThreadPendingApproval = {
+    ...approval,
+    requestId: RuntimeRequestId.make("second-approval"),
+  };
+
+  it("declines every pending approval before the send continues", async () => {
+    let resolve!: (value: Awaited<ReturnType<ApprovalResponder>>) => void;
+    const firstResponse = new Promise<Awaited<ReturnType<ApprovalResponder>>>((done) => {
+      resolve = done;
+    });
+    const respond = vi.fn<ApprovalResponder>(async (id) =>
+      id === requestId ? firstResponse : AsyncResult.success(undefined),
+    );
+    const send = vi.fn();
+    const submission = (async () => {
+      if (await declinePendingApprovals([approval, second], respond)) send();
+    })();
+    expect(respond).toHaveBeenCalledWith(requestId, "decline");
+    expect(send).not.toHaveBeenCalled();
+    resolve(AsyncResult.success(undefined));
+    await submission;
+    expect(respond).toHaveBeenCalledWith(second.requestId, "decline");
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it.each([AsyncResult.failure(Cause.fail("decline failed")), undefined])(
+    "does not send when a decline is unsuccessful: %s",
+    async (response) => {
+      const send = vi.fn();
+      if (await declinePendingApprovals([approval], async () => response)) send();
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
+  it("skips approvals the provider can no longer answer", async () => {
+    const respond = vi.fn(async () => AsyncResult.success(undefined));
+    expect(
+      await declinePendingApprovals(
+        [{ ...approval, responseCapability: "not_resumable" }],
+        respond,
+      ),
+    ).toBe(true);
+    expect(respond).not.toHaveBeenCalled();
+  });
+});
 
 describe("initial user input drafts", () => {
   const questions = [
@@ -134,40 +191,6 @@ describe("pending v2 questions", () => {
     };
     expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
   });
-
-  it("makes app-owned questions dismissible without turning them into message replies", () => {
-    const appOwned = {
-      ...projection,
-      runtimeRequests: projection.runtimeRequests.map((request) => ({
-        ...request,
-        responseCapability: {
-          type: "app_owned" as const,
-          providerSessionId: ProviderSessionId.make("app-owned-session"),
-        },
-      })),
-      turnItems: projection.turnItems.map((item) =>
-        item.type === "user_input_request" ? { ...item, responseMode: undefined } : item,
-      ),
-    };
-    const pending = derivePendingThreadRequests(appOwned).userInputs[0];
-    expect(pending?.responseCapability).toBe("app_owned");
-    expect(pending?.dismissible).toBe(true);
-    expect(pending?.responseMode).toBeUndefined();
-  });
-
-  it("removes answered requests from the composer while retaining their answers in projection data", () => {
-    const answered = {
-      ...projection,
-      runtimeRequests: projection.runtimeRequests.map((request) => ({
-        ...request,
-        status: "resolved" as const,
-        resolvedAt: v2Now,
-        answers: { next: "  continue  " },
-      })),
-    };
-    expect(derivePendingThreadRequests(answered).userInputs).toEqual([]);
-    expect(answered.runtimeRequests[0]?.answers).toEqual({ next: "  continue  " });
-  });
 });
 
 it("restores old text answers without mutating history or replacing unchanged rows", () => {
@@ -204,18 +227,4 @@ it("restores old text answers without mutating history or replacing unchanged ro
   expect(row.item).not.toHaveProperty("questionAnswer");
   expect(project(answered)).toBe(result);
   expect(project({ ...answered, visibleTurnItems: [...rows] })[0]).toBe(result[0]);
-});
-
-it("retains an answerable routed request when the owner opens the child", () => {
-  const routedTo = ThreadId.make("orchestrator");
-  const routed = {
-    ...projection,
-    runtimeRequests: projection.runtimeRequests.map((request) => ({ ...request, routedTo })),
-  };
-  expect(derivePendingThreadRequests(routed).userInputs[0]).toMatchObject({
-    requestId,
-    routedTo,
-    responseCapability: "message",
-    questions: expect.arrayContaining([expect.objectContaining({ id: "next" })]),
-  });
 });

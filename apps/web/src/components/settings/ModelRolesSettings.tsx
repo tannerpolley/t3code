@@ -169,8 +169,6 @@ export function ModelRolesSection() {
                             provider={entry.driverKind}
                             models={entry.models}
                             model={target.model}
-                            prompt=""
-                            onPromptChange={() => {}}
                             modelOptions={target.options ?? null}
                             allowPromptInjectedEffort={false}
                             planModeEnabled={settings.planModeEnabled}

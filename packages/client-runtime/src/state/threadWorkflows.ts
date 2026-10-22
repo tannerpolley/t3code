@@ -2,11 +2,12 @@ import type {
   ChatAttachment,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ProviderCapabilities,
-  OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
-type Projection = OrchestrationV2ThreadProjection;
+import type { ThreadStructure } from "./models.ts";
+
+type Projection = ThreadStructure;
 type Run = Projection["runs"][number];
 type Message = Projection["messages"][number];
 type ProviderSession = Projection["providerSessions"][number];
@@ -35,6 +36,7 @@ export interface ThreadQueueWorkflowState {
   readonly canPromoteToSteer: boolean;
   /** Why a queued message cannot be steered into the active run; null when it can. */
   readonly steerBlockedBy: "turn_ended" | "unsupported" | null;
+  readonly canSendNow: boolean;
 }
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
@@ -163,6 +165,10 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     canReorder: capabilities?.supportsQueuedMessages === true,
     canPromoteToSteer: steerBlockedBy === null,
     steerBlockedBy,
+    canSendNow:
+      activeRun === null &&
+      projection.thread.archivedAt == null &&
+      projection.thread.deletedAt == null,
   };
 }
 

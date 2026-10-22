@@ -8,7 +8,8 @@ import { sidebarCaretCount } from "./SidebarColumns.logic";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "~/lib/utils";
 
-if (import.meta.env.DEV) void import("./ForkSidebarDebug");
+// The debug toggles touch `document` on load, which tests running outside a browser lack.
+if (import.meta.env.DEV && typeof document !== "undefined") void import("./ForkSidebarDebug");
 
 /*
  * The Codex-style sidebar's shared columns. Every row (section header, project, thread, subagent,

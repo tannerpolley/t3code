@@ -349,7 +349,7 @@ const classifyResponseError = (
 
 export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const crypto = yield* Crypto.Crypto;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     assignments: new Map(),
@@ -701,9 +701,8 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return result;
   });
 
-  const tabLimitsEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.agentBrowserTabLimits),
-    Effect.orElseSucceed(() => true),
+  const tabLimitsEnabled = Option.isNone(serverSettings) ? Effect.succeed(true) : serverSettings.value.getSettings.pipe(
+    Effect.map((settings) => settings.agentBrowserTabLimits), Effect.orElseSucceed(() => true),
   );
 
   const invoke = <A = unknown>(request: PreviewAutomationInvokeInput) => {

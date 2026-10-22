@@ -53,10 +53,7 @@ const isIssueChangeError = Schema.is(IssueChangeError);
  * "is not active" would drop the outbox item without ever starting the
  * replacement turn.
  */
-export function isNonRetryableProviderTurnControlFailure(
-  effectType: string,
-  errorText: string,
-): boolean {
+function isNonRetryableProviderTurnControlFailure(effectType: string, errorText: string): boolean {
   if (effectType !== "provider-turn.interrupt") {
     return false;
   }
@@ -91,9 +88,6 @@ export const layerExecutor: Layer.Layer<
   | RuntimeRequestService.RuntimeRequestServiceV2
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
-  | ProjectionStore.ProjectionStoreV2
-  | EventSink.EventSinkV2
-  | IdAllocator.IdAllocatorV2
   | ServerSettings.ServerSettingsService
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
@@ -110,9 +104,9 @@ export const layerExecutor: Layer.Layer<
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const issues = yield* Effect.serviceOption(IssueService.IssueService);
     const issueChanges = yield* Effect.serviceOption(IssueChangeService.IssueChangeService);
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const eventSink = yield* EventSink.EventSinkV2;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+    const eventSink = yield* Effect.serviceOption(EventSink.EventSinkV2);
+    const idAllocator = yield* Effect.serviceOption(IdAllocator.IdAllocatorV2);
     const settings = yield* ServerSettings.ServerSettingsService;
     const issueWriteLocks = new Map<string, Semaphore.Semaphore>();
     const issueWriteLockMap = yield* Semaphore.make(1);
@@ -658,10 +652,11 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
-          case "issue.status.refresh":
+          case "issue.status.refresh": {
+            if (Option.isNone(eventSink)) return Effect.fail(new OrchestrationEffectExecutionError({ effectId: effect.id, effectType: effect.request.type, cause: "Issue event sink is unavailable." }));
             return withIssueWriteLock(
               effect.request.issue,
-              eventSink.refreshIssueStatus({
+              eventSink.value.refreshIssueStatus({
                 ...effect.request,
                 threadId: effect.threadId,
               }),
@@ -675,9 +670,10 @@ export const layerExecutor: Layer.Layer<
                   }),
               ),
             );
+          }
           case "issue.github.comment": {
             const request = effect.request;
-            if (Option.isNone(issues)) {
+            if (Option.isNone(issues) || Option.isNone(projections) || Option.isNone(eventSink) || Option.isNone(idAllocator)) {
               return Effect.fail(
                 new OrchestrationEffectExecutionError({
                   effectId: effect.id,
@@ -691,7 +687,7 @@ export const layerExecutor: Layer.Layer<
               Effect.gen(function* () {
                 let commentId: string | undefined;
                 if (request.operation === "status_sync") {
-                  const current = yield* projections.getIssueWorkCommentState({
+                  const current = yield* projections.value.getIssueWorkCommentState({
                     threadId: effect.threadId,
                     host: request.issue.host,
                     repositoryId: request.issue.repositoryId,
@@ -705,11 +701,11 @@ export const layerExecutor: Layer.Layer<
                     current.latestStatusWriteKey !== request.writeKey
                   )
                     return;
-                  const thread = yield* projections.getThread(effect.threadId);
+                  const thread = yield* projections.value.getThread(effect.threadId);
                   if (thread.deletedAt !== null && request.status !== "unavailable") return;
                   commentId = current.statusCommentId ?? undefined;
                 } else {
-                  const receipt = yield* projections.getIssueCommentReceipt({
+                  const receipt = yield* projections.value.getIssueCommentReceipt({
                     threadId: effect.threadId,
                     writeKey: request.writeKey,
                   });
@@ -725,11 +721,11 @@ export const layerExecutor: Layer.Layer<
                 });
                 const commandId = CommandId.make(`command:issue-comment-receipt:${effect.id}`);
                 const now = yield* DateTime.now;
-                const eventId = yield* idAllocator.allocate.event({
+                const eventId = yield* idAllocator.value.allocate.event({
                   threadId: effect.threadId,
                   commandId,
                 });
-                yield* eventSink.commitCommand({
+                yield* eventSink.value.commitCommand({
                   commandId,
                   threadId: effect.threadId,
                   commandType: "issue.github-comment.recorded",

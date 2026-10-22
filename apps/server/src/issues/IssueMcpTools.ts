@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import {
   IssueLinkInput,
   IssueLinkResult,
@@ -14,7 +15,6 @@ import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  IssueLinks.IssueLinks,
   ThreadManagementService.ThreadManagementService,
 ];
 export const LinkIssueTool = Tool.make("link_issue", {
@@ -48,7 +48,9 @@ export const issueLinkHandlers = {
     (input) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
-        const links = yield* IssueLinks.IssueLinks;
+        const available = yield* Effect.serviceOption(IssueLinks.IssueLinks);
+      if (Option.isNone(available)) return yield* new OrchestratorMcpFailure({ code: "orchestration_error", message: "Issue tools are unavailable in this runtime." });
+      const links = available.value;
         return yield* links.link(input, scope.thread?.threadId);
       }),
   ),
@@ -57,7 +59,9 @@ export const issueLinkHandlers = {
     (input) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
-        const links = yield* IssueLinks.IssueLinks;
+        const available = yield* Effect.serviceOption(IssueLinks.IssueLinks);
+      if (Option.isNone(available)) return yield* new OrchestratorMcpFailure({ code: "orchestration_error", message: "Issue tools are unavailable in this runtime." });
+      const links = available.value;
         return yield* links.link(input, scope.thread?.threadId, true);
       }),
   ),

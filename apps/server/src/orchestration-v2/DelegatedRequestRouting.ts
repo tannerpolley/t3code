@@ -14,7 +14,7 @@ import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 type Threads<E> = {
   readonly getThreadShell: (
     threadId: ThreadId,
-  ) => Effect.Effect<OrchestrationV2ThreadShell | null, E>;
+  ) => Effect.Effect<Pick<OrchestrationV2ThreadShell, "lineage" | "forkedFrom" | "archivedAt" | "deletedAt"> | null, E>;
   readonly getThreadRecords: (
     threadId: ThreadId,
     fields: ReadonlyArray<"subagents">,
@@ -51,8 +51,8 @@ const delegatedParent = Effect.fn("delegatedParent")(function* <E>(
 });
 
 /** Only a live app-owned parent receives newly created requests. */
-export const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function* (
-  projections: Projections,
+export const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function* <E>(
+  projections: Threads<E>,
   childThreadId: ThreadId,
   inactiveParents: ReadonlySet<ThreadId> = new Set(),
 ) {
@@ -68,11 +68,10 @@ export const delegatedRequestOwner = Effect.fn("delegatedRequestOwner")(function
 });
 
 /** Records the parent once. Visibility follows its shell, without rewriting the request. */
-export const routeDelegatedRequests = (
+export const routeDelegatedRequests = Effect.fn("routeDelegatedRequests")(function* (
   projections: Projections,
   events: ReadonlyArray<OrchestrationV2DomainEvent>,
-) =>
-  Effect.gen(function* () {
+) {
     const inactiveParents = events.filter(
       (event) =>
         (event.type === "thread.archived" ||
@@ -81,6 +80,14 @@ export const routeDelegatedRequests = (
         (event.payload.archivedAt !== null || event.payload.deletedAt !== null),
     );
     const inactiveParentIds = new Set(inactiveParents.map((event) => event.threadId));
+    const createdThreads = new Map(events.flatMap((event) => event.type === "thread.created" ? [[event.threadId, event.payload] as const] : []));
+    const batchThreads = {
+      ...projections,
+      getThreadShell: (threadId: ThreadId) => {
+        const created = createdThreads.get(threadId);
+        return created === undefined ? projections.getThreadShell(threadId) : Effect.succeed(created);
+      },
+    };
     return yield* Effect.forEach(
       events,
       (event) =>
@@ -91,10 +98,10 @@ export const routeDelegatedRequests = (
             !runtimeRequestNeedsUser(event.payload.kind)
           )
             return event;
-          const existing = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
+          const existing = createdThreads.has(event.threadId) ? null : yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
           const routedTo =
             existing == null
-              ? (yield* delegatedRequestOwner(projections, event.threadId, inactiveParentIds))
+              ? (yield* delegatedRequestOwner(batchThreads, event.threadId, inactiveParentIds))
                   ?.parentThreadId
               : existing.routedTo;
           return {

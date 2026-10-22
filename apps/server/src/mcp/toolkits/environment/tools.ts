@@ -39,7 +39,6 @@ const shared = {
     ThreadManagementService.ThreadManagementService,
     ServerEnvironment.ServerEnvironment,
     Settings.ServerSettingsService,
-    Sidebar.SidebarLayoutService,
     ThreadCommandExecutor.ThreadCommandExecutor,
   ],
 };

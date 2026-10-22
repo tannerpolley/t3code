@@ -5,17 +5,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as IssueLinks from "../issues/IssueLinks.ts";
 import { assert, it, vi } from "@effect/vitest";
-import {
-  CommandId,
-  DEFAULT_REPOSITORY_WORK_SETTINGS,
-  EnvironmentId,
-  EventId,
-  MessageId,
-  NodeId,
-  ProviderDriverKind,
-  ThreadId,
-  type ThreadRole,
-} from "@t3tools/contracts";
+import { CommandId, DEFAULT_REPOSITORY_WORK_SETTINGS, EnvironmentId, EventId, MessageId, NodeId, ProviderDriverKind, ThreadId, type ThreadRole } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -31,12 +21,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import {
-  adapter,
-  makeHarness,
-  modelSelection,
-  projectId,
-} from "./ThreadLaunchService.testHarness.ts";
+import { adapter, makeHarness, modelSelection, projectId } from "./ThreadLaunchService.testHarness.ts";
 
 const reference = { host: "github.com", repository: "owner/repo" };
 const rootId = ThreadId.make("read-only-root");

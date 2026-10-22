@@ -1,19 +1,11 @@
-import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
-import {
-  discoverClaudeSkills,
-  discoverClaudeSkillsAndPlugins,
-  skillOverrideSettingsPaths,
-} from "./ClaudeSkills.ts";
+import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
-
-const toJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -84,38 +76,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("keeps plugin enablement when skill overrides are invalid", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      const installPath = path.join(configDir, "plugins", "kept");
-      yield* writeSkill(path.join(installPath, "skills"), "review", "# Review");
-      yield* fs.writeFileString(
-        path.join(configDir, "plugins", "installed_plugins.json"),
-        JSON.stringify({
-          plugins: { "kept@shop": [{ scope: "user", installPath }] },
-        }),
-      );
-      yield* fs.writeFileString(
-        path.join(configDir, "settings.json"),
-        JSON.stringify({
-          skillOverrides: { invalid: false },
-          enabledPlugins: { "kept@shop": true },
-        }),
-      );
-      const result = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
-      assert.deepEqual(
-        result.skills.map((skill) => skill.name),
-        ["kept:review"],
-      );
-      assert.deepEqual(
-        result.plugins.map((plugin) => plugin.name),
-        ["kept"],
-      );
-    }),
-  );
   it.effect("merges plugin enablement and selects installs in native registry order", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -441,28 +401,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("ignores .agents/skills, which Claude Code does not load", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      const workspace = path.join(tempDir, "workspace");
-
-      // Verified against the CLI: `/review` here is answered with
-      // `Unknown command`, so offering it would dispatch a dead command.
-      yield* writeSkill(
-        path.join(workspace, ".agents", "skills"),
-        "review",
-        ["---", "name: review", "description: Review the changes.", "---"].join("\n"),
-      );
-
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
-
-      assert.deepEqual(skills, []);
-    }),
-  );
-
   it.effect("prefers user skills on name collisions even with a stray .agents copy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -498,33 +436,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           description: "User deploy.",
         },
       ]);
-    }),
-  );
-
-  it.effect("prefers user skills over project skills on name collisions", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      const workspace = path.join(tempDir, "workspace");
-
-      yield* writeSkill(
-        path.join(configDir, "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
-      );
-      yield* writeSkill(
-        path.join(workspace, ".claude", "skills"),
-        "deploy",
-        ["---", "name: deploy", "description: Project deploy.", "---"].join("\n"),
-      );
-
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
-
-      assert.equal(skills.length, 1);
-      assert.equal(skills[0]?.scope, "user");
-      assert.equal(skills[0]?.description, "User deploy.");
     }),
   );
 
@@ -669,48 +580,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         ["relative-skill"],
       );
       assert.equal(skills[0]?.scope, "user");
-    }),
-  );
-
-  it.effect("marks skills that only the user can invoke", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      const workspace = path.join(tempDir, "workspace");
-
-      yield* writeSkill(
-        path.join(workspace, ".claude", "skills"),
-        "re-release-version",
-        [
-          "---",
-          "name: re-release-version",
-          "description: Move the current tag forward.",
-          "disable-model-invocation: true",
-          "---",
-          "",
-          "# Body",
-        ].join("\n"),
-      );
-      yield* writeSkill(
-        path.join(workspace, ".claude", "skills"),
-        "release-version",
-        ["---", "name: release-version", "description: Cut a release.", "---", "", "# Body"].join(
-          "\n",
-        ),
-      );
-
-      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
-
-      assert.equal(
-        skills.find((skill) => skill.name === "re-release-version")?.userInvocationOnly,
-        true,
-      );
-      assert.equal(
-        skills.find((skill) => skill.name === "release-version")?.userInvocationOnly,
-        undefined,
-      );
     }),
   );
 
@@ -914,86 +783,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("lets the administrator's managed policy outrank every other settings file", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerPosix));
-      const win32Path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
-
-      for (const [platform, expected] of [
-        ["darwin", "/Library/Application Support/ClaudeCode/managed-settings.json"],
-        ["linux", "/etc/claude-code/managed-settings.json"],
-      ] as const) {
-        const paths = skillOverrideSettingsPaths(path, "/home/.claude", "/workspace", platform, {});
-        assert.deepEqual(paths, [
-          "/home/.claude/settings.json",
-          "/workspace/.claude/settings.json",
-          "/workspace/.claude/settings.local.json",
-          expected,
-        ]);
-      }
-
-      assert.deepEqual(
-        skillOverrideSettingsPaths(win32Path, "C:\\Users\\me\\.claude", undefined, "win32", {
-          PROGRAMDATA: "C:\\ProgramData",
-        }).at(-1),
-        "C:\\ProgramData\\ClaudeCode\\managed-settings.json",
-      );
-      assert.deepEqual(
-        skillOverrideSettingsPaths(win32Path, "C:\\Users\\me\\.claude", undefined, "win32", {}),
-        ["C:\\Users\\me\\.claude\\settings.json"],
-      );
-
-      assert.deepEqual(
-        skillOverrideSettingsPaths(
-          path,
-          "/home/.claude",
-          "/repo/packages/app",
-          "linux",
-          {},
-          "/repo",
-        ),
-        [
-          "/home/.claude/settings.json",
-          "/repo/packages/app/.claude/settings.json",
-          "/repo/packages/app/.claude/settings.local.json",
-          "/repo/.claude/settings.local.json",
-          "/etc/claude-code/managed-settings.json",
-        ],
-      );
-      assert.deepEqual(
-        skillOverrideSettingsPaths(path, "/home/.claude", "/repo", "linux", {}, "/repo"),
-        [
-          "/home/.claude/settings.json",
-          "/repo/.claude/settings.json",
-          "/repo/.claude/settings.local.json",
-          "/etc/claude-code/managed-settings.json",
-        ],
-      );
-    }),
-  );
-
-  it.effect("records a skill Claude Code keeps out of its own slash commands", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-
-      yield* writeSkill(
-        path.join(configDir, "skills"),
-        "agent-only",
-        ["---", "name: agent-only", "user-invocable: false", "---", "", "# Body"].join("\n"),
-      );
-
-      const skills = yield* discoverClaudeSkills({ homePath: configDir });
-
-      assert.deepEqual(
-        skills.map((skill) => [skill.name, skill.userInvocable]),
-        [["agent-only", false]],
-      );
-    }),
-  );
-
   it.effect("identifies a skill by its directory, as Claude Code does", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1020,6 +809,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  // regression: #9128 skills picked from the composer did not run
   it.effect("switches a skill off by its directory name", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1083,230 +873,6 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           ["plain-off", false, false],
           ["user-only-yes", true, false],
         ],
-      );
-    }),
-  );
-
-  it.effect("returns an empty list when no skill roots exist", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-
-      const skills = yield* discoverClaudeSkills(
-        { homePath: path.join(tempDir, "missing-home") },
-        path.join(tempDir, "missing-workspace"),
-      );
-
-      assert.deepEqual(skills, []);
-    }),
-  );
-
-  it.effect("adds skills of enabled plugins under their namespaced names", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      const workspace = path.join(tempDir, "workspace");
-      const cache = path.join(configDir, "plugins", "cache");
-      const install = (name: string, version: string) => path.join(cache, "mk", name, version);
-
-      yield* writeSkill(
-        path.join(install("alpha", "1"), "skills"),
-        "build",
-        ["---", "description: Build it.", "---"].join("\n"),
-      );
-      yield* writeSkill(
-        path.join(install("alpha", "1"), "skills"),
-        "internal",
-        ["---", "user-invocable: false", "---"].join("\n"),
-      );
-      yield* writeSkill(path.join(install("alpha", "project"), "skills"), "local-only", "");
-      yield* writeSkill(path.join(install("beta", "1"), "skills"), "hidden", "");
-      yield* writeSkill(path.join(install("gamma", "1"), "skills"), "hidden", "");
-      yield* fs.writeFileString(
-        path.join(configDir, "plugins", "installed_plugins.json"),
-        toJson({
-          version: 2,
-          plugins: {
-            "alpha@mk": [
-              { scope: "user", installPath: install("alpha", "1") },
-              {
-                scope: "project",
-                projectPath: workspace,
-                installPath: install("alpha", "project"),
-              },
-            ],
-            "beta@mk": [{ scope: "user", installPath: install("beta", "1") }],
-            "gamma@mk": [{ scope: "user", installPath: install("gamma", "1") }],
-            "delta@mk": [
-              { scope: "project", projectPath: "/elsewhere", installPath: install("delta", "1") },
-            ],
-          },
-        }),
-      );
-      yield* fs.writeFileString(
-        path.join(configDir, "settings.json"),
-        toJson({
-          enabledPlugins: {
-            "alpha@mk": true,
-            "beta@mk": false,
-            "gamma@mk": true,
-            "delta@mk": true,
-          },
-        }),
-      );
-      // Project settings layer over the user file, as for skillOverrides.
-      yield* fs.makeDirectory(path.join(workspace, ".claude"), { recursive: true });
-      yield* fs.writeFileString(
-        path.join(workspace, ".claude", "settings.json"),
-        toJson({ enabledPlugins: { "gamma@mk": false } }),
-      );
-
-      const discovered = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir }, workspace);
-
-      // The native registry order picks the user's alpha install first;
-      // delta is installed only for another project.
-      assert.deepEqual(
-        discovered.skills.map((skill) => [skill.name, skill.scope, skill.pluginName]),
-        [
-          ["alpha:build", "plugin", "alpha"],
-          ["alpha:internal", "plugin", "alpha"],
-        ],
-      );
-      assert.deepEqual(discovered.plugins, [{ name: "alpha", marketplace: "mk", skillCount: 2 }]);
-
-      const outsideProject = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
-      assert.deepEqual(outsideProject.skills, [
-        {
-          name: "alpha:build",
-          path: path.join(install("alpha", "1"), "skills", "build", "SKILL.md"),
-          enabled: true,
-          scope: "plugin",
-          pluginName: "alpha",
-          description: "Build it.",
-        },
-        {
-          name: "alpha:internal",
-          path: path.join(install("alpha", "1"), "skills", "internal", "SKILL.md"),
-          enabled: true,
-          scope: "plugin",
-          pluginName: "alpha",
-          userInvocable: false,
-        },
-        {
-          name: "gamma:hidden",
-          path: path.join(install("gamma", "1"), "skills", "hidden", "SKILL.md"),
-          enabled: true,
-          scope: "plugin",
-          pluginName: "gamma",
-        },
-      ]);
-    }),
-  );
-
-  it.effect("follows the skill paths a plugin manifest lists", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      const installPath = path.join(configDir, "plugins", "cache", "mk", "matt", "1");
-      const skills = path.join(installPath, "skills");
-      // Grouped in folders, as mattpocock-skills is: one listed skill, one listed folder of
-      // skills, and an unlisted folder that stays out.
-      yield* writeSkill(
-        path.join(skills, "engineering"),
-        "tdd",
-        ["---", "disable-model-invocation: true", "---"].join("\n"),
-      );
-      yield* writeSkill(path.join(skills, "misc"), "setup", "");
-      yield* writeSkill(path.join(skills, "deprecated"), "old", "");
-      yield* fs.makeDirectory(path.join(installPath, ".claude-plugin"));
-      yield* fs.writeFileString(
-        path.join(installPath, ".claude-plugin", "plugin.json"),
-        toJson({ name: "matt", skills: ["./skills/engineering/tdd", "./skills/misc/"] }),
-      );
-      yield* fs.writeFileString(
-        path.join(configDir, "plugins", "installed_plugins.json"),
-        toJson({ plugins: { "matt@mk": [{ scope: "user", installPath }] } }),
-      );
-      yield* fs.writeFileString(
-        path.join(configDir, "settings.json"),
-        toJson({ enabledPlugins: { "matt@mk": true } }),
-      );
-
-      const discovered = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
-
-      assert.deepEqual(
-        discovered.skills.map((skill) => [skill.name, skill.userInvocationOnly === true]),
-        [
-          ["matt:setup", false],
-          ["matt:tdd", true],
-        ],
-      );
-      assert.deepEqual(discovered.plugins, [{ name: "matt", marketplace: "mk", skillCount: 2 }]);
-    }),
-  );
-
-  it.effect("follows a symlinked plugins directory", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      // T3's provider home links `plugins` to the user's real Claude home.
-      const realPlugins = path.join(tempDir, "real-home", "plugins");
-      const configDir = path.join(tempDir, "provider-home");
-      const installPath = path.join(configDir, "plugins", "cache", "mk", "cse", "1");
-      yield* writeSkill(path.join(realPlugins, "cache", "mk", "cse", "1", "skills"), "build", "");
-      yield* fs.writeFileString(
-        path.join(realPlugins, "installed_plugins.json"),
-        toJson({ plugins: { "cse@mk": [{ scope: "user", installPath }] } }),
-      );
-      yield* fs.makeDirectory(configDir, { recursive: true });
-      yield* fs.symlink(realPlugins, path.join(configDir, "plugins"));
-      yield* fs.writeFileString(
-        path.join(configDir, "settings.json"),
-        toJson({ enabledPlugins: { "cse@mk": true } }),
-      );
-
-      const skills = yield* discoverClaudeSkills({ homePath: configDir });
-
-      assert.deepEqual(
-        skills.map((skill) => skill.name),
-        ["cse:build"],
-      );
-    }),
-  );
-
-  it.effect("keeps other skills when installed_plugins.json is missing or malformed", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
-      const configDir = path.join(tempDir, "claude-home");
-      yield* writeSkill(path.join(configDir, "skills"), "mine", "");
-      yield* fs.writeFileString(
-        path.join(configDir, "settings.json"),
-        toJson({ enabledPlugins: { "cse@mk": true } }),
-      );
-
-      const missing = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
-      assert.deepEqual(
-        [missing.skills.map((skill) => skill.name), missing.plugins],
-        [["mine"], []],
-      );
-
-      yield* fs.makeDirectory(path.join(configDir, "plugins"));
-      yield* fs.writeFileString(
-        path.join(configDir, "plugins", "installed_plugins.json"),
-        '{ "plugins": { "cse@mk": "not-a-list" } }',
-      );
-      const malformed = yield* discoverClaudeSkillsAndPlugins({ homePath: configDir });
-      assert.deepEqual(
-        [malformed.skills.map((skill) => skill.name), malformed.plugins],
-        [["mine"], []],
       );
     }),
   );

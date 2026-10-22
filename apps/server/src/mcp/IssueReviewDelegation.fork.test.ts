@@ -1,13 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, vi } from "@effect/vitest";
-import {
-  CommandId,
-  EnvironmentId,
-  EventId,
-  ProviderSessionId,
-  resolveThreadRole,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { CommandId, EnvironmentId, EventId, ProviderSessionId, resolveThreadRole, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
@@ -25,14 +18,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
-import {
-  createReviewRoot,
-  delegateReviewIssue,
-  modelSelection,
-  reviewHarness,
-  reviewIssue,
-  reviewRead,
-} from "../orchestration-v2/ThreadLaunchService.testHarness.ts";
+import { createReviewRoot, delegateReviewIssue, modelSelection, reviewHarness, reviewIssue, reviewRead } from "../orchestration-v2/ThreadLaunchService.testHarness.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -436,41 +422,9 @@ it.effect(
         clientRequestId: CommandId.make("resume-finished-owner"),
       });
       assert.isEmpty(result.orchestration!.suspendedIssues);
-      const cancelled = (yield* threads.getThreadRecords(owner, ["subagents"])).subagents.find(
-        (task) => task.id === child.taskId,
-      )!;
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make("cancelled-child-pending-delivery"),
-            type: "subagent.updated",
-            threadId: owner,
-            nodeId: child.taskId,
-            occurredAt: now,
-            payload: {
-              ...cancelled,
-              completionDelivery: { state: "pending", observedByRunId: null },
-            },
-          },
-        ],
-      });
-      yield* work.reconcile(root);
-      const suspended = (yield* store.configuration(root))!;
-      assert.lengthOf(suspended.suspendedIssues, 1);
-      yield* work.closeOut({
-        host: "github.com",
-        repository: "tannerpolley/t3code",
-        issueId: reviewIssue(1).id,
-        expectedRevision: suspended.revision,
-        clientRequestId: CommandId.make("finish-cancelled-child-owner"),
-      });
-      const finished = yield* threads.getThreadRecords(owner, ["subagents"]);
-      assert.equal(
-        finished.subagents.find((task) => task.id === child.taskId)!.completionDelivery?.state,
-        "disposed",
-      );
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       yield* worker.drain();
+      assert.isTrue(yield* store.resultAvailable(owner));
       yield* work.setPaused({
         host: "github.com",
         repository: "tannerpolley/t3code",

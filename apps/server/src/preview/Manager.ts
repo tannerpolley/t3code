@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import {
   type PreviewCloseInput,
   type PreviewEvent,
@@ -156,7 +157,7 @@ const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PreviewManagerMake() {
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const crypto = yield* Crypto.Crypto;
   const serverEpoch = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
@@ -239,10 +240,12 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       // The agent tab cap applies only while "Agent browser tab limits" is on.
       const capAgentTabs =
         snapshot.automationOwner !== undefined &&
-        (yield* serverSettings.getSettings.pipe(
-          Effect.map((settings) => settings.agentBrowserTabLimits),
-          Effect.orElseSucceed(() => true),
-        ));
+        (Option.isNone(serverSettings)
+          ? true
+          : yield* serverSettings.value.getSettings.pipe(
+              Effect.map((settings) => settings.agentBrowserTabLimits),
+              Effect.orElseSucceed(() => true),
+            ));
       yield* SynchronizedRef.modifyEffect(stateRef, (current) =>
         Effect.gen(function* () {
           // Map order is open order, so the first agent tabs are the oldest.
