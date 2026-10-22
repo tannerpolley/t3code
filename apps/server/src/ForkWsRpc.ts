@@ -1,14 +1,17 @@
 /**
  * WebSocket handlers for the fork's own RPCs (`ForkWsRpcGroup`): issues, issue work, issue
- * changes and background-task output. `ws.ts` merges this layer next to upstream's handlers.
+ * changes and background-task output. This module joins them with upstream handlers for `ws.ts`.
  */
 import {
   PROJECT_ARTIFACT_METHODS,
   ForkWsRpcGroup,
+  UpstreamWsRpcGroup,
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as Stream from "effect/Stream";
 
 import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
@@ -26,7 +29,17 @@ import * as ThreadWorkspaceService from "./orchestration-v2/ThreadWorkspaceServi
 import * as BackgroundTasks from "./orchestration-v2/backgroundTaskOutput.ts";
 import { InlineShellRuns } from "./terminal/InlineShellRuns.ts";
 
-export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
+const UpstreamServerWsRpcGroup = UpstreamWsRpcGroup.middleware(RpcInstrumentation);
+type UpstreamRpc = RpcGroup.Rpcs<typeof UpstreamServerWsRpcGroup>;
+
+export const upstreamWsRpcHandlers = UpstreamServerWsRpcGroup.of;
+
+export const layerWsRpcWithFork = <Handlers extends RpcGroup.HandlersFrom<UpstreamRpc>, E, R>(
+  currentSession: EnvironmentAuth.AuthenticatedSession,
+  handlers: Effect.Effect<Handlers, E, R>,
+) => Layer.merge(UpstreamServerWsRpcGroup.toLayer(handlers), layerForkWsRpc(currentSession));
+
+const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
   ForkWsRpcGroup.middleware(RpcInstrumentation).toLayer(
     Effect.gen(function* () {
       const backgroundTasks = yield* BackgroundTasks.BackgroundTasks.pipe(

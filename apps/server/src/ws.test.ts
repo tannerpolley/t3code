@@ -3,10 +3,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  AuthOrchestrationReadScope,
   EnvironmentId,
   ProjectId,
   ThreadId,
   WS_METHODS,
+  WsRpcGroup,
+  type IssueRepositoriesResult,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
   type OrchestrationProjectShell,
@@ -20,9 +23,11 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { Headers } from "effect/http";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { RpcGroup, RpcMessage, RpcServer, RpcTest } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
+import { RpcInstrumentation, rpcInstrumentationLayer } from "./observability/RpcInstrumentation.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as InlineShellRuns from "./terminal/InlineShellRuns.ts";
 import * as IssueChangeService from "./issues/IssueChangeService.ts";
@@ -301,6 +306,14 @@ it.live.each(["thread", "shell"] as const)(
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
+  Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+  Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+  Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+  Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+  Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+  Layer.mock(UsageLimitSources.UsageLimitSources)({}),
   Layer.mock(InlineShellRuns.InlineShellRuns)({}),
   Layer.mock(IssueChangeService.IssueChangeService)({}),
   Layer.mock(IssueInbox.IssueInbox)({}),
@@ -390,6 +403,84 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect.each([false, true])(
+  "serves upstream and fork RPCs through the joined layer (authorized: %s)",
+  (authorized) =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const expectedSettings = ServerSettings.redactServerSettingsForClient(
+        yield* settings.getSettings,
+      );
+      const repositories: IssueRepositoriesResult = {
+        viewer: { accountId: "rpc-test", login: "rpc-test" },
+        repositories: [],
+        complete: true,
+        fetchedAt: "2026-10-22T00:00:00.000Z",
+      };
+      const scopes = authorized ? [AuthOrchestrationReadScope] : [];
+      const methods = [WS_METHODS.serverGetSettings, WS_METHODS.issuesRepositories] as const;
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"], (typeof methods)[number]> =>
+            !(methods as ReadonlyArray<string>).includes(tag),
+        ),
+      ).middleware(RpcInstrumentation);
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerWsRpc(
+              {
+                sessionId: AuthSessionId.make("rpc-test"),
+                subject: "rpc-test",
+                method: "browser-session-cookie",
+                scopes,
+              },
+              {},
+              {},
+              yield* PreviewAutomationBroker.PreviewAutomationBroker,
+              yield* ServerBrowser.ServerBrowser,
+            ).pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  layerUnusedConfigRpcServices,
+                  Layer.mock(IssueService.IssueService)({
+                    repositories: () => Effect.succeed(repositories),
+                  }),
+                ),
+              ),
+            ),
+            RpcAuthorization.layer(scopes),
+            rpcInstrumentationLayer,
+          ),
+        ),
+      );
+      if (authorized) {
+        assert.deepEqual(yield* client[WS_METHODS.serverGetSettings]({}), expectedSettings);
+        assert.deepEqual(yield* client[WS_METHODS.issuesRepositories]({}), repositories);
+      } else {
+        assert.equal(
+          (yield* client[WS_METHODS.serverGetSettings]({}).pipe(Effect.flip))._tag,
+          "EnvironmentAuthorizationError",
+        );
+        assert.equal(
+          (yield* client[WS_METHODS.issuesRepositories]({}).pipe(Effect.flip))._tag,
+          "EnvironmentAuthorizationError",
+        );
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
 );
 
 it.effect(
