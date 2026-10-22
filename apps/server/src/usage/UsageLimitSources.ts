@@ -1,8 +1,10 @@
+import { makeSourceResetCreditExpiryResults } from "../provider/ResetCreditExpiryResults.ts";
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
+  type ResetCreditAutoUseResult,
   type ServerSettings,
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
@@ -27,6 +29,12 @@ import { makeCliproxyApi } from "./cliproxyApi.ts";
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
   {
+    readonly publishResetCreditAutoUse: (
+      sourceId: UsageLimitSourceId,
+      accountId: string,
+      accountKey: string,
+      result: ResetCreditAutoUseResult,
+    ) => Effect.Effect<void>;
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
@@ -57,6 +65,8 @@ export const make = Effect.gen(function* () {
     PubSub.shutdown,
   );
 
+  const resetCreditResults = yield* makeSourceResetCreditExpiryResults(stateRef, changes);
+
   const readSource = Effect.fn("UsageLimitSources.readSource")(function* (
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
@@ -77,6 +87,7 @@ export const make = Effect.gen(function* () {
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
     next: ReadonlyArray<UsageLimitSourceSnapshot>,
   ) {
+    next = next.map(resetCreditResults.decorate);
     const changed = yield* Ref.modify(stateRef, (previous) =>
       Equal.equals(previous, next) ? [false, previous] : [true, next],
     );
@@ -152,6 +163,7 @@ export const make = Effect.gen(function* () {
   yield* refresh.pipe(Effect.forkScoped);
 
   return {
+    publishResetCreditAutoUse: resetCreditResults.publish,
     current: Ref.get(stateRef),
     consumeResetCredit,
     refresh,

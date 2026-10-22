@@ -8,6 +8,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider
 const makeProviderRegistryMock = (
   providers: ReadonlyArray<ServerProvider> = [],
 ): ProviderRegistry.ProviderRegistry["Service"] => ({
+  publishResetCreditAutoUse: () => Effect.void,
   getProviders: Effect.succeed(providers),
   refresh: () => Effect.succeed(providers),
   refreshInstance: () => Effect.succeed(providers),
@@ -17,6 +18,7 @@ const makeProviderRegistryMock = (
     Effect.succeed(makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null })),
   setProviderMaintenanceActionState: () => Effect.succeed(providers),
   streamChanges: Stream.empty,
+  subscribeChanges: Effect.succeed(Stream.empty),
 });
 
 export const layer = (providers: ReadonlyArray<ServerProvider> = []) =>

@@ -1,3 +1,5 @@
+import { collectResetCreditAccounts } from "../ResetCreditAccounts";
+import { ResetCreditAutoUseNotice } from "./ResetCreditAutoUseNotice";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -456,5 +458,23 @@ export function UsageLimitsSection({
       ];
     }),
   );
-  return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
+  return (
+    <>
+      {[...selected].flatMap(([environmentId, presentation]) =>
+        collectResetCreditAccounts(
+          presentation.serverConfig?.providers ?? [],
+          presentation.serverConfig?.usageLimitSources ?? [],
+        )
+          .filter((account) => account.limits.resetCreditAutoUse)
+          .map((account) => (
+            <ResetCreditAutoUseNotice
+              key={`${environmentId}:${account.key}`}
+              environmentId={environmentId}
+              account={account}
+            />
+          )),
+      )}
+      <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />
+    </>
+  );
 }

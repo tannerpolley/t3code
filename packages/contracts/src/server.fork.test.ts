@@ -1,7 +1,10 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ServerProvider } from "./server.ts";
+import { ServerProvider, ServerProviderUpdatedPayload } from "./server.ts";
+
+const decodeUpdate = Schema.decodeUnknownSync(ServerProviderUpdatedPayload);
+const encodeUpdate = Schema.encodeSync(ServerProviderUpdatedPayload);
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 
@@ -53,4 +56,28 @@ describe("ServerProvider", () => {
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
   });
+});
+
+it("preserves automatic reset results in the existing provider update payload", () => {
+  const resetCreditAutoUse = {
+    creditId: "credit-a",
+    expiresAt: "2026-10-23T22:15:00.000Z",
+    attemptedAt: "2026-10-23T22:05:00.000Z",
+    status: "used",
+  };
+  const update = decodeUpdate({
+    providers: [
+      {
+        ...baseProviderSnapshot,
+        usageLimits: {
+          checkedAt: baseProviderSnapshot.checkedAt,
+          windows: [],
+          resetCreditAutoUse,
+        },
+      },
+    ],
+  });
+  expect(decodeUpdate(encodeUpdate(update)).providers[0]?.usageLimits?.resetCreditAutoUse).toEqual(
+    resetCreditAutoUse,
+  );
 });

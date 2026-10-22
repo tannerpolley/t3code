@@ -192,6 +192,7 @@ function makeRegistry(
     });
 
     const registry: ProviderRegistry.ProviderRegistry["Service"] = {
+      publishResetCreditAutoUse: () => Effect.void,
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
@@ -201,6 +202,7 @@ function makeRegistry(
         Effect.succeed(lifecycleFor(provider)),
       setProviderMaintenanceActionState,
       streamChanges: Stream.empty,
+      subscribeChanges: Effect.succeed(Stream.empty),
     };
 
     return {
