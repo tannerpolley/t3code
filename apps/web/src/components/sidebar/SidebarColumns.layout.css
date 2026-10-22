@@ -9,21 +9,6 @@
   inherits: true;
   initial-value: 0px;
 }
-@property --sidebar-model-min-width {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
-@property --sidebar-title-reserve-width {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
-@property --sidebar-label-reserve-width {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
 @utility sidebar-columns-container {
   --sidebar-caret-width: 1.5rem;
   --sidebar-location-width: 0.75rem;
@@ -36,9 +21,6 @@
   --sidebar-work-width: 0.875rem;
   --sidebar-model-width: 8.4ch;
   --sidebar-name-width: 11ch;
-  --sidebar-model-min-width: 4.5ch;
-  --sidebar-title-reserve-width: 6ch;
-  --sidebar-label-reserve-width: 4ch;
   --sidebar-column-gap: 2px;
   container: sidebar-columns / inline-size;
   min-width: 0;
@@ -57,28 +39,28 @@
     ) [provider] var(--sidebar-provider-track, var(--sidebar-provider-width)) var(
       --sidebar-provider-gap,
       var(--sidebar-column-gap)
-    ) [model] var(
-      --sidebar-model-track,
-      var(--sidebar-model-fluid, var(--sidebar-model-width))
-    ) var(--sidebar-model-gap, var(--sidebar-column-gap)) [effort] var(
-      --sidebar-effort-track,
-      var(--sidebar-effort-width)
-    ) var(--sidebar-effort-gap, var(--sidebar-column-gap)) [name] minmax(
-      0,
-      var(--sidebar-name-track, max-content)
-    ) var(--sidebar-name-gap, var(--sidebar-column-gap)) [spacer] minmax(0, 1fr) var(
-      --sidebar-spacer-gap,
+    ) [model] var(--sidebar-model-track, var(--sidebar-model-step, var(--sidebar-model-width))) var(
+      --sidebar-model-gap,
       var(--sidebar-column-gap)
-    ) [issue] var(--sidebar-issue-track, var(--sidebar-issue-width)) var(
-      --sidebar-issue-gap,
+    ) [effort] var(--sidebar-effort-track, var(--sidebar-effort-width)) var(
+      --sidebar-effort-gap,
       var(--sidebar-column-gap)
-    ) [pr] var(--sidebar-pr-track, var(--sidebar-pr-width)) var(
-      --sidebar-pr-gap,
+    ) [name] minmax(0, var(--sidebar-name-track, max-content)) var(
+      --sidebar-name-gap,
       var(--sidebar-column-gap)
-    ) [time] var(--sidebar-time-track, var(--sidebar-time-width)) var(
-      --sidebar-time-gap,
-      var(--sidebar-column-gap)
-    ) [work] var(--sidebar-work-track, var(--sidebar-work-width));
+    ) [spacer] minmax(0, 1fr) var(--sidebar-spacer-gap, var(--sidebar-column-gap)) [issue] var(
+      --sidebar-issue-track,
+      var(--sidebar-issue-width)
+    ) var(--sidebar-issue-gap, var(--sidebar-column-gap)) [pr] var(
+      --sidebar-pr-track,
+      var(--sidebar-pr-width)
+    ) var(--sidebar-pr-gap, var(--sidebar-column-gap)) [time] var(
+      --sidebar-time-track,
+      var(--sidebar-time-width)
+    ) var(--sidebar-time-gap, var(--sidebar-column-gap)) [work] var(
+      --sidebar-work-track,
+      var(--sidebar-work-width)
+    );
   column-gap: 0;
 }
 [data-sidebar-role-display="name"]:has(.sidebar-role-title) {
@@ -120,19 +102,40 @@
 .sidebar-thread-work {
   grid-column: work;
 }
-.sidebar-thread-columns[data-sidebar-role-display="name"] {
-  --sidebar-model-fluid: clamp(
-    var(--sidebar-model-min-width),
-    calc(100cqw - 14.5625rem - 20px - var(--sidebar-title-reserve-width)),
-    var(--sidebar-model-width)
-  );
+@container sidebar-columns-name (width < calc(14.5625rem + 20px + 14.4ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.9405);
+  }
 }
-.sidebar-thread-columns[data-sidebar-role-display="icon"] {
-  --sidebar-model-fluid: clamp(
-    var(--sidebar-model-min-width),
-    calc(100cqw - 15.3125rem - 22px - var(--sidebar-label-reserve-width)),
-    var(--sidebar-model-width)
-  );
+@container sidebar-columns-name (width < calc(14.5625rem + 20px + 13.9ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.881);
+  }
+}
+@container sidebar-columns-name (width < calc(14.5625rem + 20px + 13.4ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.8214);
+  }
+}
+@container sidebar-columns-name (width < calc(14.5625rem + 20px + 12.9ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7619);
+  }
+}
+@container sidebar-columns-name (width < calc(14.5625rem + 20px + 12.4ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7024);
+  }
+}
+@container sidebar-columns-name (width < calc(14.5625rem + 20px + 11.9ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.6429);
+  }
+}
+@container sidebar-columns-name (width < calc(14.5625rem + 20px + 11.4ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5833);
+  }
 }
 @container sidebar-columns-name (width < calc(14.5625rem + 20px + 10.5ch)) {
   .sidebar-thread-columns {
@@ -156,6 +159,41 @@
   .sidebar-thread-issue,
   .sidebar-thread-pr {
     display: none;
+  }
+}
+@container sidebar-columns (width < calc(15.3125rem + 22px + 12.4ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.9405);
+  }
+}
+@container sidebar-columns (width < calc(15.3125rem + 22px + 11.9ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.881);
+  }
+}
+@container sidebar-columns (width < calc(15.3125rem + 22px + 11.4ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.8214);
+  }
+}
+@container sidebar-columns (width < calc(15.3125rem + 22px + 10.9ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7619);
+  }
+}
+@container sidebar-columns (width < calc(15.3125rem + 22px + 10.4ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.7024);
+  }
+}
+@container sidebar-columns (width < calc(15.3125rem + 22px + 9.9ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.6429);
+  }
+}
+@container sidebar-columns (width < calc(15.3125rem + 22px + 9.4ch)) {
+  .sidebar-thread-columns {
+    --sidebar-model-step: calc(var(--sidebar-model-width) * 0.5833);
   }
 }
 @container sidebar-columns (width < calc(15.3125rem + 22px + 8.5ch)) {
