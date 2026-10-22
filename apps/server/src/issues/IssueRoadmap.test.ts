@@ -1,10 +1,20 @@
 import {
   EventId,
+  MessageId,
+  RunId,
+  TurnItemId,
+  type OrchestrationV2Run,
   ThreadId,
   NodeId,
   ProviderDriverKind,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as EventStore from "../orchestration-v2/EventStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Queue from "effect/Queue";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
@@ -259,4 +269,205 @@ it.effect(
         assert.deepEqual(yield* Fiber.join(result), [0, 1, 2, 3]);
       }),
     ),
+);
+
+it.effect("refreshes held queue release and every run admission and activity transition", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* EventStore.EventStoreV2;
+      const links = yield* IssueLinks.IssueLinks;
+      const sql = yield* SqlClient.SqlClient;
+      const changes = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      const now = DateTime.makeUnsafe("2026-10-20T00:00:00Z");
+      const thread = {
+        ...idleThreadProjection(liveThreadShell(ThreadId.make("held"))).thread,
+        linkedIssue: {
+          ...input,
+          number: 13,
+          repositoryId: "repo",
+          id: "13",
+          nodeId: "I_13",
+          title: "Issue",
+          url: "https://github.com/owner/repo/issues/13",
+        },
+      };
+      const apply = Effect.fn("test.applyQueueEvent")(function* (
+        event: OrchestrationV2DomainEvent,
+      ) {
+        yield* events.append({ events: [event] });
+        yield* projections.apply(event);
+      });
+      yield* apply({
+        id: EventId.make("thread"),
+        type: "thread.created",
+        threadId: thread.id,
+        occurredAt: now,
+        payload: thread,
+      });
+      const run: OrchestrationV2Run = {
+        id: RunId.make("held-run"),
+        threadId: thread.id,
+        ordinal: 1,
+        providerInstanceId: thread.providerInstanceId,
+        modelSelection: thread.modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message"),
+        rootNodeId: NodeId.make("root"),
+        activeAttemptId: null,
+        status: "queued",
+        queueHeld: true,
+        requestedAt: now,
+        startedAt: null,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const created = {
+        id: EventId.make("held"),
+        type: "run.created" as const,
+        threadId: thread.id,
+        occurredAt: now,
+        payload: run,
+      };
+      yield* apply(created);
+      const roadmap = yield* IssueRoadmap.IssueRoadmap.pipe(
+        Effect.provide(
+          IssueRoadmap.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(IssueService.IssueService)({}),
+                Layer.succeed(IssueLinks.IssueLinks, links),
+                Layer.mock(Orchestrator.OrchestratorV2)({
+                  streamDomainEvents: Stream.fromQueue(changes),
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const observed: number[] = [];
+      yield* roadmap.linkRefreshes.pipe(
+        Stream.runForEach((revision) =>
+          Effect.sync(() => {
+            observed.push(revision);
+          }),
+        ),
+        Effect.forkChild,
+      );
+      const workInput = { repository: input, issues: [{ number: 13, state: "open" as const }] };
+      const state = Effect.gen(function* () {
+        const enriched = yield* links.enrich(workInput);
+        const [row] = yield* sql<{
+          slots: number;
+        }>`SELECT count(*) AS slots FROM orchestration_v2_projection_runs WHERE status IN ('preparing', 'starting', 'running', 'waiting')`;
+        return { status: enriched.issues[0]!.liveWork![0]!.status, slots: row!.slots };
+      });
+      assert.deepEqual(yield* state, { status: "idle", slots: 0 });
+      yield* Queue.offer(changes, created);
+      yield* TestClock.adjust("250 millis");
+      assert.deepEqual(observed, [0, 1]);
+      let revision = 1;
+      for (const [status, queueHeld, liveWork, slots] of [
+        ["queued", false, "working", 0],
+        ["queued", true, "idle", 0],
+        ["queued", false, "working", 0],
+        ["preparing", false, "working", 1],
+        ["starting", false, "working", 1],
+        ["running", false, "working", 1],
+        ["waiting", false, "working", 1],
+        ["completed", false, "idle", 0],
+        ["running", false, "working", 1],
+        ["failed", false, "idle", 0],
+        ["running", false, "working", 1],
+        ["interrupted", false, "idle", 0],
+        ["running", false, "working", 1],
+        ["cancelled", false, "idle", 0],
+        ["running", false, "working", 1],
+        ["rolled_back", false, "idle", 0],
+      ] as const) {
+        revision++;
+        const event = {
+          ...created,
+          id: EventId.make(`transition-${revision}`),
+          type: "run.updated" as const,
+          payload: { ...run, status, queueHeld },
+        };
+        yield* apply(event);
+        assert.deepEqual(yield* state, { status: liveWork, slots });
+        yield* Queue.offer(changes, event);
+        yield* TestClock.adjust("250 millis");
+        assert.equal(observed.at(-1), revision, `${status}, held=${queueHeld} must refresh`);
+        yield* Queue.offer(changes, {
+          ...event,
+          id: EventId.make(`progress-${revision}`),
+          payload: { ...event.payload, startedAt: now },
+        });
+        yield* TestClock.adjust("250 millis");
+        assert.equal(observed.length, revision + 1, "unchanged work state must not refresh");
+      }
+      const waiting = {
+        ...created,
+        id: EventId.make("waiting-again"),
+        type: "run.updated" as const,
+        payload: { ...run, status: "waiting" as const, queueHeld: false },
+      };
+      yield* apply(waiting);
+      yield* Queue.offer(changes, waiting);
+      yield* TestClock.adjust("250 millis");
+      assert.equal(observed.at(-1), ++revision);
+      const item = {
+        id: TurnItemId.make("background"),
+        threadId: thread.id,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        type: "dynamic_tool" as const,
+        toolName: "background",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      for (const [status, persistent, liveWork] of [
+        ["running", false, "idle"],
+        ["running", true, "working"],
+        ["running", false, "idle"],
+        ["completed", false, "working"],
+      ] as const) {
+        const event = {
+          id: EventId.make(`background-${++revision}`),
+          type: "turn-item.updated" as const,
+          threadId: thread.id,
+          occurredAt: now,
+          payload: { ...item, status, input: { persistent } },
+        };
+        yield* apply(event);
+        assert.deepEqual(yield* state, { status: liveWork, slots: 1 });
+        yield* Queue.offer(changes, event);
+        yield* TestClock.adjust("250 millis");
+        assert.equal(observed.at(-1), revision);
+        yield* Queue.offer(changes, {
+          ...event,
+          id: EventId.make(`item-progress-${revision}`),
+          payload: { ...event.payload, output: "More output" },
+        });
+        yield* TestClock.adjust("250 millis");
+        assert.equal(observed.length, revision + 1, "tool output must not refresh unchanged work");
+      }
+    }),
+  ).pipe(
+    Effect.provide(
+      IssueLinks.layer.pipe(
+        Layer.provideMerge(ProjectionStore.layer),
+        Layer.provideMerge(EventStore.layer),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
 );

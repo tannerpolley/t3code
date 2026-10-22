@@ -1,4 +1,8 @@
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  isBackgroundTurnItemType,
+  pendingBackgroundTurnItems,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import {
   type IssueDetailInput,
@@ -63,8 +67,20 @@ export const layer = Layer.effect(
                           `${event.payload.kind}:${event.payload.status}:${event.payload.responseCapability.type}`,
                         ]
                       : event.type === "run.created" || event.type === "run.updated"
-                        ? [`run:${event.payload.id}`, event.payload.status]
-                        : undefined;
+                        ? [
+                            `run:${event.payload.id}`,
+                            `${event.payload.status}:${event.payload.queueHeld === true}`,
+                          ]
+                        : event.type === "turn-item.updated" &&
+                            isBackgroundTurnItemType(event.payload.type)
+                          ? [
+                              `item:${event.payload.id}`,
+                              String(
+                                pendingBackgroundTurnItems({ turnItems: [event.payload] }).length >
+                                  0,
+                              ),
+                            ]
+                          : undefined;
               if (state !== undefined) {
                 const [key, value] = state;
                 if (workStates.get(key) === value) return false;
@@ -85,12 +101,11 @@ export const layer = Layer.effect(
                 event.type === "runtime-request.updated" ||
                 event.type === "provider-thread.updated" ||
                 event.type === "subagent.updated" ||
-                (event.type === "turn-item.updated" && event.payload.type === "secret_request") ||
+                (event.type === "turn-item.updated" &&
+                  (event.payload.type === "secret_request" ||
+                    isBackgroundTurnItemType(event.payload.type))) ||
                 event.type === "run.created" ||
-                (event.type === "run.updated" &&
-                  ["completed", "failed", "interrupted", "cancelled", "waiting"].includes(
-                    event.payload.status,
-                  ))
+                event.type === "run.updated"
               );
             }),
             Stream.mapError(

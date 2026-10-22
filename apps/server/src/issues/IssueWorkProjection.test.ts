@@ -62,6 +62,9 @@ it.effect(
         "native",
         "observed",
         "limited",
+        "inherited",
+        "explicit",
+        "legacy",
       ] as const;
       const apply = Effect.fn("test.applyIssueWorkEvent")(function* (
         event: OrchestrationV2DomainEvent,
@@ -74,36 +77,55 @@ it.effect(
         const thread = {
           ...idleThreadProjection(liveThreadShell(id)).thread,
           role: "investigator" as const,
-          linkedIssue: {
-            ...reference,
-            repositoryId: "repo",
-            id: "13",
-            nodeId: "I_13",
-            title: "Issue",
-            url: "https://github.com/owner/repo/issues/13",
-          },
+          ...(name === "inherited" || name === "explicit"
+            ? {}
+            : {
+                linkedIssue: {
+                  ...reference,
+                  repositoryId: "repo",
+                  id: "13",
+                  nodeId: "I_13",
+                  title: "Issue",
+                  url: "https://github.com/owner/repo/issues/13",
+                },
+              }),
           ...(name === "archived" ? { archivedAt: now } : {}),
-          pullRequests:
-            name === "monitor"
-              ? [
-                  {
-                    ...pr,
-                    watch: {
-                      startedAt: "2026-10-20T00:00:00Z",
-                      headSha: null,
-                      failedChecks: [],
-                      passed: false,
-                      passedChecks: [],
-                      remarksThrough: "2026-10-20T00:00:00Z",
-                      remarkIds: [],
-                      conflicting: false,
-                      wakes: 0,
-                    },
-                  },
-                ]
-              : [pr],
+          ...(name === "inherited"
+            ? {
+                lineage: {
+                  rootThreadId: ThreadId.make("idle"),
+                  parentThreadId: ThreadId.make("idle"),
+                  relationshipToParent: "subagent" as const,
+                },
+              }
+            : {}),
+          ...(name === "legacy"
+            ? {}
+            : {
+                pullRequests:
+                  name === "inherited" || name === "explicit"
+                    ? []
+                    : name === "monitor"
+                      ? [
+                          {
+                            ...pr,
+                            watch: {
+                              startedAt: "2026-10-20T00:00:00Z",
+                              headSha: null,
+                              failedChecks: [],
+                              passed: false,
+                              passedChecks: [],
+                              remarksThrough: "2026-10-20T00:00:00Z",
+                              remarkIds: [],
+                              conflicting: false,
+                              wakes: 0,
+                            },
+                          },
+                        ]
+                      : [pr],
+              }),
           linkedPullRequest:
-            name === "observed"
+            name === "observed" || name === "inherited" || name === "explicit"
               ? null
               : {
                   projectId: liveThreadShell(id).projectId,
@@ -254,6 +276,8 @@ it.effect(
             },
           });
       }
+      const links = yield* IssueLinks.IssueLinks;
+      yield* links.link(reference, ThreadId.make("explicit"));
       const input = {
         repository: reference,
         issues: [
@@ -275,7 +299,6 @@ it.effect(
       const expected = yield* Effect.flatMap(IssueLinks.IssueLinks, (links) =>
         links.enrich(input),
       ).pipe(Effect.provide(Layer.fresh(IssueLinks.layer).pipe(Layer.provide(fullShells))));
-      const links = yield* IssueLinks.IssueLinks;
       let reads = 0;
       const tracer = Tracer.make({
         span(options) {
@@ -285,6 +308,12 @@ it.effect(
       });
       const first = yield* links.enrich(input).pipe(Effect.withTracer(tracer));
       assert.deepEqual(first, expected);
+      const work = first.issues[0]!.liveWork!;
+      assert.equal(work.find((item) => item.threadId === "inherited")?.inherited, true);
+      assert.equal(work.find((item) => item.threadId === "explicit")?.canUnlink, true);
+      assert.equal(work.find((item) => item.threadId === "archived")?.status, "idle");
+      assert.deepEqual(work.find((item) => item.threadId === "legacy")?.pullRequests, [pr.url]);
+      assert.equal(first.issues[0]!.pullRequestCount, 1);
       assert.equal(
         first.issues[0]?.liveWork?.find((work) => work.threadId === "question")?.status,
         "waiting_on_you",
