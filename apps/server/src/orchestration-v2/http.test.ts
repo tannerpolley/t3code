@@ -1,4 +1,3 @@
-import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   AuthSessionId,
   type AuthEnvironmentScope,
@@ -109,7 +108,6 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       Layer.mergeAll(
         runtime,
         ThreadManagementService.layer.pipe(
-          Layer.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
           Layer.provide(
             Layer.mergeAll(runtime, CommandReceiptStore.layer, ServerSettings.layerTest({})),
           ),

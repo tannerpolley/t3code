@@ -30,7 +30,6 @@ import * as Schema from "effect/Schema";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
-import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as EventSink from "./EventSink.ts";
@@ -39,7 +38,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { makeThreadDispatch } from "./ThreadDispatch.ts";
+import { threadDispatchLockKey } from "./IssueWorkDispatch.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 import { boundFileChangeForStorage } from "./WireProjection.ts";
 
@@ -297,7 +296,6 @@ export const layer: Layer.Layer<
   ProviderEventIngestorV2,
   never,
   | EventSink.EventSinkV2
-  | IssueWorkStore.IssueWorkStore
   | GitVcsDriver.GitVcsDriver
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
@@ -309,7 +307,7 @@ export const layer: Layer.Layer<
     const git = yield* GitVcsDriver.GitVcsDriver;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const threadDispatch = yield* makeThreadDispatch;
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const analytics = yield* ProviderTurnAnalytics;
     const agentScope = yield* AgentScope;
     const completedTurnAnalytics = new Set<string>();
@@ -421,9 +419,8 @@ export const layer: Layer.Layer<
           ),
           Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         );
-        const shell = yield* staleThread;
-        if (shell === null) return [];
-        return yield* threadDispatch.withLock(
+        if ((yield* staleThread) === null) return [];
+        return yield* threadCommands.withLock(
           childThreadId,
           Effect.gen(function* () {
             const thread = yield* staleThread;
@@ -882,14 +879,20 @@ export const layer: Layer.Layer<
               (effect) => {
                 if (input.event.type !== "app_thread.created") return effect;
                 const thread = input.event.appThread;
-                return Effect.gen(function* () {
-                  const childLocked = threadDispatch.withLock(thread.id, effect, thread);
-                  const parentId = thread.lineage.parentThreadId;
-                  return yield* !isProviderNativeSubagentThread(thread) ||
+                const childLocked = threadCommands.withLock(thread.id, effect);
+                const parentId = thread.lineage.parentThreadId;
+                if (
+                  !isProviderNativeSubagentThread(thread) ||
                   parentId === null ||
                   parentId === thread.id
+                )
+                  return childLocked;
+                return Effect.gen(function* () {
+                  const parent = yield* projections.getThreadShell(parentId).pipe(Effect.orDie);
+                  const key = threadDispatchLockKey(parentId, parent);
+                  return yield* key === thread.id
                     ? childLocked
-                    : threadDispatch.withLock(parentId, childLocked);
+                    : threadCommands.withLock(key, childLocked);
                 });
               },
             ),

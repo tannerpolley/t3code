@@ -41,7 +41,6 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
-import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -63,7 +62,6 @@ import { makeHarness } from "./ThreadLaunchService.testHarness.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
-const layerIssueWorkStore = IssueWorkStore.layer.pipe(Layer.provide(layerTestDatabase));
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
   Layer.provide(layerTestDatabase),
 );
@@ -79,7 +77,6 @@ const layerGit = GitVcsDriver.layer.pipe(
 
 const layerTest = Layer.mergeAll(
   layerTestDatabase,
-  layerIssueWorkStore,
   layerTestStores,
   layerTestEventSink,
   IdAllocator.layer,
@@ -88,7 +85,6 @@ const layerTest = Layer.mergeAll(
   ProviderEventIngestor.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        layerIssueWorkStore,
         layerTestStores,
         layerTestEventSink,
         IdAllocator.layer,
@@ -2480,7 +2476,6 @@ it.effect("preserves a native child's rename and runtime mode during model sync"
   const harness = makeHarness();
   const dependencies = Layer.mergeAll(
     harness.layer,
-    IssueWorkStore.layer.pipe(Layer.provide(harness.layer)),
     ProjectionStore.layer.pipe(Layer.provide(harness.layer)),
     IdAllocator.layer,
     ThreadCommandExecutor.layer,
@@ -2546,6 +2541,8 @@ it.effect("preserves a native child's rename and runtime mode during model sync"
         ...rootEvent.payload,
         id: childThreadId,
         title: "review design",
+        creationSource: "provider",
+        role: "reviewer",
         modelSelection: {
           ...modelSelection,
           options: [{ id: "reasoningEffort", value: "xhigh" }],
@@ -2601,8 +2598,8 @@ it.effect("preserves a native child's rename and runtime mode during model sync"
       .spyOn(locks, "withLock")
       .mockImplementation(<A, E, R>(key: ThreadId, effect: Effect.Effect<A, E, R>) =>
         Effect.gen(function* () {
-          // Only the command's planning lock coordinates with a repository model write.
-          if ((yield* UserUpdate) && key === rootEvent.threadId && key === modelLockKey)
+          // The command must wait for the same child lock as the native model write.
+          if ((yield* UserUpdate) && key === modelLockKey)
             yield* Deferred.succeed(updateBlocked, undefined);
           return yield* withLock(key, effect.pipe(Effect.provideService(HeldTestLock, key)));
         }),

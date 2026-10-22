@@ -1,4 +1,3 @@
-import * as ProjectionStore from "./ProjectionStore.ts";
 import { assert, describe, it, vi } from "@effect/vitest";
 import {
   type ChatAttachment,
@@ -59,7 +58,6 @@ function makeHarness(
   );
   const layerServerSettings = ServerSettings.layerTest({});
   const layerThreadManagement = ThreadManagement.layer.pipe(
-    Layer.provide(ProjectionStore.layer.pipe(Layer.provide(layerDatabase))),
     Layer.provide(layerOrchestrator),
     Layer.provide(layerServerSettings),
     Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),

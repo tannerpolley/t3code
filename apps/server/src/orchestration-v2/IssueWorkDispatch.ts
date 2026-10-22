@@ -1,4 +1,10 @@
-import type { IssueWorkRead, ThreadId, ThreadLinkedIssue } from "@t3tools/contracts";
+import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import type {
+  IssueWorkRead,
+  ThreadId,
+  ThreadLinkedIssue,
+  OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -8,7 +14,7 @@ import { sameIssueRepository, isReadOnlyIssueRole } from "../issues/IssueEligibi
 import * as IssueService from "../issues/IssueService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import { makeThreadDispatch } from "./ThreadDispatch.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 /** Issue relationship snapshots read before the planning lock, for the planner to admit work. */
 export class IssueReadSnapshots extends Context.Reference<ReadonlyArray<IssueWorkRead>>(
@@ -33,12 +39,56 @@ export class IssueQueueRefreshRequired extends Schema.TaggedError<IssueQueueRefr
   {},
 ) {}
 
-/** The orchestrator's thread lock and the issue reads that precede it. */
+/** Dispatch lock keys the current fiber already holds. */
+class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
+  "t3/issues/HeldDispatchLocks",
+  {
+    defaultValue: (): ReadonlySet<ThreadId> => new Set(),
+  },
+) {}
+
+// ponytail: Unlinked managers lock themselves, so concurrent read-only delegations can go one over
+// the cap (#91); rollback and model-sync key mismatches on root-keyed threads remain in #97.
+export function threadDispatchLockKey(
+  threadId: ThreadId,
+  shell: OrchestrationV2ThreadShell | null,
+) {
+  return shell?.linkedIssue !== undefined ||
+    (isReadOnlyIssueRole(shell?.role) &&
+      shell?.lineage.relationshipToParent === "subagent" &&
+      !isProviderNativeSubagentThread(shell))
+    ? shell.lineage.rootThreadId
+    : threadId;
+}
+
+/**
+ * The orchestrator's thread lock and the issue reads that precede it. Managed
+ * issue threads plan under their root thread's lock.
+ */
 export const makeIssueWorkDispatch = Effect.gen(function* () {
   const projectionStore = yield* ProjectionStoreV2;
-  const threadDispatch = yield* makeThreadDispatch;
+  const threadExecutor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const issueWorkStore = yield* Effect.serviceOption(IssueWorkStore.IssueWorkStore);
   const issueReads = yield* Effect.serviceOption(IssueService.IssueService);
+
+  const threadDispatch: ThreadCommandExecutor.ThreadCommandExecutor["Service"] = {
+    activeKeys: threadExecutor.activeKeys,
+    withLock: (threadId, effect) =>
+      Effect.gen(function* () {
+        const shell = yield* projectionStore.getThreadShell(threadId).pipe(Effect.orDie);
+        // Run starts across every managed descendant share the root's planning lock.
+        // Whole-thread provider writes use the same key; ordinary provider updates do not plan admissions.
+        const key = threadDispatchLockKey(threadId, shell);
+        // A child's dispatch can nest inside its parent's lock, and both may resolve to
+        // the root. The lock is not reentrant, so a held key is not taken again.
+        const held = yield* HeldDispatchLocks;
+        if (held.has(key)) return yield* effect;
+        return yield* threadExecutor.withLock(
+          key,
+          effect.pipe(Effect.provideService(HeldDispatchLocks, new Set([...held, key]))),
+        );
+      }),
+  };
 
   // Relationship I/O precedes the planning lock. A missing/failed snapshot
   // cannot admit work; ownership, lineage, suspension and capacity are checked
@@ -161,5 +211,5 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     return { reads, queueLength: queue.length };
   });
 
-  return { threadDispatch, readIssueSnapshots, readIssueQueueSnapshots };
+  return { threadExecutor, threadDispatch, readIssueSnapshots, readIssueQueueSnapshots };
 });

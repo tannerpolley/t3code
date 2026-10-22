@@ -989,7 +989,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
-  const { threadDispatch, readIssueSnapshots, readIssueQueueSnapshots } =
+  const { threadExecutor, threadDispatch, readIssueSnapshots, readIssueQueueSnapshots } =
     yield* makeIssueWorkDispatch;
   const issueWorkRecovery = yield* makeIssueWorkRecovery;
 
@@ -12324,7 +12324,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .restoreLockKeys(command)
         .pipe(mapDispatchError(command));
       return yield* keys.reduceRight(
-        (effect, key) => threadDispatch.withLock(key, effect),
+        (effect, key) => threadExecutor.withLock(key, effect),
         dispatchEffect,
       );
     }
@@ -12348,7 +12348,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         return yield* [...new Set([command.threadId, targetId])]
           .sort()
-          .reduceRight((effect, key) => threadDispatch.withLock(key, effect), dispatchEffect);
+          .reduceRight((effect, key) => threadExecutor.withLock(key, effect), dispatchEffect);
       }
     }
     const dispatch = threadDispatch.withLock(commandThreadId(command), dispatchEffect);

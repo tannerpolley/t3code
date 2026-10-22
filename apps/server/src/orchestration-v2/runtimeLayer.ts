@@ -101,7 +101,6 @@ const layerLegacyV1ThreadImporterProvided = LegacyV1ThreadImporter.layer.pipe(
 export const layerProjectService = ProjectService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      IssueWorkStore.layer,
       ProjectStore.layer,
       ProjectionStore.layer,
       layerEventSinkProvided,
@@ -114,7 +113,6 @@ export const layerProjectService = ProjectService.layer.pipe(
 const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      IssueWorkStore.layer,
       layerEventSinkProvided,
       IdAllocator.layer,
       ProjectionStore.layer,
@@ -197,7 +195,6 @@ const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
 const layerCheckpointRollbackServiceProvided = CheckpointRollbackService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      IssueWorkStore.layer,
       ProjectStore.layer,
       layerCheckpointServiceProvided,
       layerEventSinkProvided,
@@ -272,8 +269,6 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
 const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImporter.pipe(
   Layer.provide(
     Layer.mergeAll(
-      IssueWorkStore.layer,
-      ProjectionStore.layer,
       layerOrchestratorProvided,
       layerLegacyV1ThreadImporterProvided,
       layerCommandReceiptStoreProvided,

@@ -1,4 +1,3 @@
-import * as ProjectionStore from "./ProjectionStore.ts";
 import { expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -275,9 +274,8 @@ it("derives thread management messages from structural error attributes", () => 
   );
 });
 
-const layerReceiptsTest = Layer.mergeAll(
-  CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
-  Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) }),
+const layerReceiptsTest = CommandReceiptStore.layer.pipe(
+  Layer.provide(SqlitePersistence.layerMemory),
 );
 
 const layerThreadManagementTest = (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) =>

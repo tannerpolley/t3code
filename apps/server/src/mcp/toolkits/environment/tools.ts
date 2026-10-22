@@ -13,8 +13,6 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
-import * as IssueWorkStore from "../../../issues/IssueWorkStore.ts";
 import * as Sidebar from "../../../sidebarLayout.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -43,8 +41,6 @@ const shared = {
     Settings.ServerSettingsService,
     Sidebar.SidebarLayoutService,
     ThreadCommandExecutor.ThreadCommandExecutor,
-    ProjectionStore.ProjectionStoreV2,
-    IssueWorkStore.IssueWorkStore,
   ],
 };
 const EnvironmentReadTool = Tool.make("t3_environment_read", {

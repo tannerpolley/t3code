@@ -35,7 +35,6 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
-import { makeThreadDispatch } from "./ThreadDispatch.ts";
 
 export const ROLLBACK_FAILED_MESSAGE =
   "The provider could not roll back this conversation. Try again; if it keeps failing, check the provider and server logs.";
@@ -132,7 +131,7 @@ export const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     const projects = yield* ProjectStore.ProjectStoreV2;
     const path = yield* Path.Path;
-    const threadDispatch = yield* makeThreadDispatch;
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
@@ -282,7 +281,7 @@ export const layer: Layer.Layer<
       // Thread commands write full provider thread rows under this lock. Without
       // it, a message sent during the rollback can plan against the old native
       // session and commit after this, undoing the provider's fork.
-      yield* threadDispatch.withLock(
+      yield* threadCommands.withLock(
         input.threadId,
         Effect.gen(function* () {
           const now = yield* DateTime.now;

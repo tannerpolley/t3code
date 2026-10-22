@@ -1,4 +1,3 @@
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -144,7 +143,6 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
       const layerOrchestration = Layer.merge(
         layerOrchestrator,
         ThreadManagementService.layer.pipe(
-          Layer.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
           Layer.provide(layerOrchestrator),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(

@@ -1,4 +1,3 @@
-import * as IssueWorkStore from "../../../issues/IssueWorkStore.ts";
 import * as ProjectArtifacts from "../../../project/ProjectArtifacts.ts";
 import * as Sidebar from "../../../sidebarLayout.ts";
 import { EMPTY_SIDEBAR_LAYOUT } from "@t3tools/contracts";
@@ -45,7 +44,6 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 
 const layerStubServices = Layer.mergeAll(
-  Layer.mock(IssueWorkStore.IssueWorkStore)({}),
   Layer.mock(Sidebar.SidebarLayoutService)({
     get: Effect.succeed({
       revision: 0,

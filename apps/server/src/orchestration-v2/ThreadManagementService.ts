@@ -1,5 +1,3 @@
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import { makeThreadDispatch } from "./ThreadDispatch.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -575,7 +573,7 @@ function latestSteerableRun(
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 
 const make = Effect.gen(function* () {
-  const threadDispatch = yield* makeThreadDispatch;
+  const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -1377,7 +1375,6 @@ export const layer: Layer.Layer<
   ThreadManagementService,
   never,
   | Orchestrator.OrchestratorV2
-  | ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
@@ -1392,7 +1389,6 @@ export const layerWithLegacyImporter: Layer.Layer<
   never,
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | Orchestrator.OrchestratorV2
-  | ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
