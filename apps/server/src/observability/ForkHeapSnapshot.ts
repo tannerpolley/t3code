@@ -4,10 +4,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeV8 from "node:v8";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-// A failed or skipped attempt must not repeatedly stall a process under pressure.
+// A failed snapshot attempt must not repeatedly stall a process under pressure.
 let attempted = false;
 
 export const check = Effect.fn("server.heapPressureSnapshot")(function* (
@@ -19,8 +20,17 @@ export const check = Effect.fn("server.heapPressureSnapshot")(function* (
   if (heapUsedBytes < limit * 0.6) return;
   attempted = true;
   yield* Effect.gen(function* () {
-    const availableMemoryBytes = NodeOS.freemem();
+    const availableMemoryBytes =
+      (yield* HostProcess.Platform) === "linux"
+        ? yield* Effect.tryPromise(async () => {
+            const meminfo = await NodeFSP.readFile("/proc/meminfo", "utf8");
+            const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo);
+            if (available === null) throw new Error("MemAvailable missing from /proc/meminfo");
+            return Number(available[1]) * 1024;
+          })
+        : NodeOS.freemem();
     if (availableMemoryBytes < heapUsedBytes * 1.5) {
+      attempted = false;
       yield* Effect.logWarning("Skipping heap snapshot: insufficient available system memory.", {
         availableMemoryBytes,
         heapUsedBytes,

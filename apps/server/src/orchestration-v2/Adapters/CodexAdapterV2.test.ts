@@ -3116,8 +3116,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         });
         yield* Deferred.await(stopped);
         const cacheWrite = writes.mock.calls.findIndex(([key, value]) => {
-          if (key !== BG_NATIVE_TURN || !(value instanceof Map)) return false;
-          const item = (value as Map<string, unknown>).get(BG_COMMAND_ITEM);
+          if (key !== BG_NATIVE_THREAD || !(value instanceof Map)) return false;
+          const item = (value as Map<string, Map<string, unknown>>)
+            .get(BG_NATIVE_TURN)
+            ?.get(BG_COMMAND_ITEM);
           return (
             typeof item === "object" &&
             item !== null &&
@@ -3126,20 +3128,130 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           );
         });
         assert.isAtLeast(cacheWrite, 0);
-        const cachedTurns = writes.mock.contexts[cacheWrite] as Map<string, Map<string, unknown>>;
+        const cachedThreads = writes.mock.contexts[cacheWrite] as Map<
+          string,
+          Map<string, Map<string, unknown>>
+        >;
         writes.mockRestore();
         const unload = harness.runtime.unloadThread!({ providerThread: harness.providerThread });
         yield* unload;
-        assert.isTrue(
-          cachedTurns.has(BG_NATIVE_TURN),
-          "another thread's closure must preserve this cache",
+        assert.equal(
+          cachedThreads.has(BG_NATIVE_THREAD),
+          !completed,
+          "another thread's closure must preserve an uncompleted snapshot",
         );
-        if (completed) assert.isNull(cachedTurns.get(BG_NATIVE_TURN)?.get(BG_COMMAND_ITEM));
         yield* unload;
         assert.isFalse(
-          cachedTurns.has(BG_NATIVE_TURN),
-          "disposed native threads must release snapshots and tombstones",
+          cachedThreads.has(BG_NATIVE_THREAD),
+          "disposed native threads must release snapshots",
         );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect(
+    "caps tombstones at the most recent 2,000 commands even when a closed turn never idles",
+    () =>
+      Effect.gen(function* () {
+        const count = 2_005;
+        const notification = (method: string, params: unknown) => ({
+          type: "emit_inbound" as const,
+          frame: { method, params },
+        });
+        const unsubscribe = (id: number, notifications: ReturnType<typeof notification>[]) => [
+          {
+            type: "expect_outbound" as const,
+            frame: { id, method: "thread/unsubscribe", params: { threadId: BG_NATIVE_THREAD } },
+          },
+          ...notifications,
+          { type: "emit_inbound" as const, frame: { id, result: { status: "notSubscribed" } } },
+        ];
+        const commandId = (index: number) => `capped-command-${index}`;
+        const transcript = makeCodexReplayTranscript({
+          scenario: "stopped-command-tombstone-cap",
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -2),
+            notification("item/started", {
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              item: {
+                type: "dynamicToolCall",
+                id: "persistent-monitor",
+                namespace: "grok",
+                tool: "monitor",
+                status: "inProgress",
+                arguments: { persistent: true, command: "tail -f" },
+              },
+            }),
+            ...Array.from({ length: count }, (_, index) =>
+              notification("item/started", {
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+                item: {
+                  ...backgroundCommandItem("inProgress"),
+                  id: commandId(index),
+                  processId: String(5000 + index),
+                },
+              }),
+            ),
+            backgroundExecTranscript.entries.at(-2)!,
+            ...unsubscribe(4, [notification("thread/closed", { threadId: BG_NATIVE_THREAD })]),
+            ...unsubscribe(5, [
+              notification("thread/closed", { threadId: BG_NATIVE_THREAD }),
+              notification("item/started", {
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+                item: { ...backgroundCommandItem("inProgress"), id: commandId(count - 1) },
+              }),
+              notification("item/completed", {
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+                item: { ...backgroundCommandItem("completed"), id: commandId(count - 1) },
+              }),
+            ]),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-tombstone-cap"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* harness.firstTerminal;
+        // Observe retention without exposing a cache-inspection API on the adapter.
+        using additions = vi.spyOn(Set.prototype, "add");
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        const tombstoneWrite = additions.mock.calls.findIndex(
+          ([key]) => typeof key === "string" && key.includes(`"${commandId(0)}"`),
+        );
+        assert.isAtLeast(tombstoneWrite, 0);
+        const tombstones = additions.mock.contexts[tombstoneWrite] as Set<string>;
+        additions.mockRestore();
+        assert.equal(tombstones.size, 2_000);
+        assert.isFalse([...tombstones].some((key) => key.includes(`"${commandId(0)}"`)));
+        assert.isTrue([...tombstones].some((key) => key.includes(`"${commandId(count - 1)}"`)));
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        assert.equal(tombstones.size, 2_000, "repeated close must preserve bounded tombstones");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === commandId(count - 1)
+              ? [event.turnItem.status]
+              : [],
+          ),
+          ["running", "interrupted"],
+        );
+        assert.lengthOf(harness.continuationRequests, 0);
       }).pipe(
         Effect.scoped,
         Effect.provide(

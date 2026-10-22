@@ -1192,7 +1192,6 @@ function withCodexManagedFailure(
 }
 
 interface ActiveCodexTurnContext {
-  closedCommandItemIds?: ReadonlySet<string>;
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly nativeCode: string | null;
@@ -1866,12 +1865,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           new Map<ProviderTurnId, ActiveCodexProviderRetry>(),
         );
         const latestProposedPlans = new Map<ThreadId, OrchestrationV2PlanArtifact>();
-        // Keep stopped item snapshots until the native thread closes: completion can arrive
-        // after the turn context is released, and repeated frames must not revive it.
+        // Snapshots enrich late completions until close; small tombstones outlive the thread.
         const stoppedCommandItemsByThread = new Map<
           string,
-          Map<string, Map<string, OrchestrationV2TurnItem | null>>
+          Map<string, Map<string, OrchestrationV2TurnItem>>
         >();
+        const stoppedCommandIds = new Set<string>();
+        const stoppedCommandKey = (threadId: string, turnId: string, itemId: string) =>
+          JSON.stringify([threadId, turnId, itemId]);
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingCodexRuntimeRequest>(),
@@ -2214,15 +2215,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (yield* turnHasRetainedBackgroundWork(nativeTurnId)) {
               return;
             }
-            const context = (yield* Ref.get(settledTurns)).get(nativeTurnId);
-            if (context?.closedCommandItemIds !== undefined) {
-              const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
-              if (nativeThreadId != null) {
-                const turns = stoppedCommandItemsByThread.get(nativeThreadId);
-                turns?.delete(nativeTurnId);
-                if (turns?.size === 0) stoppedCommandItemsByThread.delete(nativeThreadId);
-              }
-            }
             yield* Ref.update(settledTurns, (current) => {
               if (!current.has(nativeTurnId)) {
                 return current;
@@ -2275,6 +2267,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (items === undefined || items.size === 0) {
             return;
           }
+          const nativeThreadId = yield* getNativeThreadId(context.providerThread).pipe(
+            Effect.orDie,
+          );
           for (const tracked of items.values()) {
             if (nativeItemId !== undefined && tracked.id !== nativeItemId) continue;
             const nodeId = idAllocator.derive.nodeFromProviderItem({
@@ -2325,14 +2320,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 : { output: tracked.aggregatedOutput }),
             };
             if (nativeItemId !== undefined) {
-              const nativeThreadId = yield* getNativeThreadId(context.providerThread).pipe(
-                Effect.orDie,
-              );
               const turns = stoppedCommandItemsByThread.get(nativeThreadId) ?? new Map();
               const stopped = turns.get(nativeTurnId) ?? new Map();
               stopped.set(tracked.id, turnItem);
               turns.set(nativeTurnId, stopped);
               stoppedCommandItemsByThread.set(nativeThreadId, turns);
+            }
+            const key = stoppedCommandKey(nativeThreadId, nativeTurnId, tracked.id);
+            stoppedCommandIds.delete(key);
+            stoppedCommandIds.add(key);
+            // shortcut: forget the oldest stopped IDs after 2,000; revisit if late frames exceed this window.
+            if (stoppedCommandIds.size > 2_000) {
+              stoppedCommandIds.delete(stoppedCommandIds.values().next().value!);
             }
             yield* emitProviderEvent({
               type: "node.updated",
@@ -4819,13 +4818,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const completedAt = yield* DateTime.now;
             for (const context of (yield* Ref.get(settledTurns)).values()) {
               if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
-              const commands = (yield* Ref.get(runningCommandItemsByTurn)).get(
-                context.nativeTurnId,
-              );
-              context.closedCommandItemIds = new Set([
-                ...(context.closedCommandItemIds ?? []),
-                ...(commands?.keys() ?? []),
-              ]);
               yield* terminalizeRunningCommandItems(
                 context,
                 context.nativeTurnId,
@@ -4839,22 +4831,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
               yield* releaseSettledTurnIfIdle(context.nativeTurnId);
             }
-            // Terminalization can add snapshots; close releases them while retained turns
-            // keep only the tombstones that prevent late frames from reviving stopped commands.
-            const stoppedTurns = stoppedCommandItemsByThread.get(payload.threadId);
-            const active = yield* Ref.get(activeTurns);
-            const settled = yield* Ref.get(settledTurns);
-            for (const [turnId, items] of stoppedTurns ?? []) {
-              if (!active.has(turnId) && !settled.has(turnId)) stoppedTurns?.delete(turnId);
-              else for (const id of items.keys()) items.set(id, null);
-            }
-            if (stoppedTurns?.size === 0) stoppedCommandItemsByThread.delete(payload.threadId);
+            stoppedCommandItemsByThread.delete(payload.threadId);
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
             if (
+              stoppedCommandIds.has(
+                stoppedCommandKey(payload.threadId, payload.turnId, payload.item.id),
+              ) ||
               stoppedCommandItemsByThread
                 .get(payload.threadId)
                 ?.get(payload.turnId)
@@ -5033,7 +5019,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               .get(payload.threadId)
               ?.get(payload.turnId)
               ?.get(payload.item.id);
-            if (stopped === null) return;
             if (stopped !== undefined && payload.item.type === "commandExecution") {
               // Enrich the stopped card, but never wake the agent or change its terminal status.
               const turnItem = {
@@ -5050,13 +5035,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 turnItem,
               });
               yield* commandOutputLogs.remove(turnItem.threadId, payload.item.id);
-              // Only the tombstone remains; full output belongs in the projection.
-              stoppedCommandItemsByThread
-                .get(payload.threadId)
-                ?.get(payload.turnId)
-                ?.set(payload.item.id, null);
+              const turns = stoppedCommandItemsByThread.get(payload.threadId);
+              const items = turns?.get(payload.turnId);
+              items?.delete(payload.item.id);
+              if (items?.size === 0) turns?.delete(payload.turnId);
+              if (turns?.size === 0) stoppedCommandItemsByThread.delete(payload.threadId);
               return;
             }
+            if (
+              stoppedCommandIds.has(
+                stoppedCommandKey(payload.threadId, payload.turnId, payload.item.id),
+              )
+            )
+              return;
             if (payload.item.type === "contextCompaction")
               // The notification callback runs on the input reader. Let it read
               // the injection response while the session-scoped request waits.
@@ -5107,8 +5098,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
             if (payload.item.type === "commandExecution") {
               yield* commandOutputLogs.remove(context.projectionThreadId, payload.item.id);
-              // Other tools can retain the context after thread closure.
-              if (context.closedCommandItemIds?.has(payload.item.id)) return;
               const turnDrained = yield* clearRunningCommandItem(payload.turnId, payload.item.id);
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
               yield* emitProviderEvent({
