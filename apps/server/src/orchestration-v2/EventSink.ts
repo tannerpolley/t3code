@@ -886,22 +886,46 @@ const layerBase: Layer.Layer<
       return Stream.unwrap(
         Effect.gen(function* () {
           if (input?.bounded !== true) {
+            const cursor = yield* eventStore.retainAfter(afterSequence);
             const subscription = yield* PubSub.subscribe(internalLiveEvents);
             let lastSequence = afterSequence;
             const highWater = yield* eventStore.latestSequence();
             const resume = (throughSequence: number) =>
-              catchUp({
-                afterSequence: lastSequence,
-                throughSequence,
-                ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
-                ...(input?.eventType === undefined ? {} : { eventType: input.eventType }),
-              }).pipe(
-                Stream.onEnd(
-                  Effect.sync(() => {
-                    // Filtered streams and compacted history can have sequence gaps.
-                    lastSequence = Math.max(lastSequence, throughSequence);
-                  }),
-                ),
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  // Initial history may already be compacted. Above the subscription's
+                  // high-water mark every sequence must still exist, including project events.
+                  const checkAfter = Math.max(lastSequence, highWater);
+                  if (throughSequence > checkAfter) {
+                    const rows = yield* sql<{ readonly count: number }>`
+                      SELECT COUNT(*) AS count FROM orchestration_events
+                      WHERE sequence > ${checkAfter} AND sequence <= ${throughSequence}
+                    `;
+                    if (rows[0]?.count !== throughSequence - checkAfter) {
+                      yield* Effect.logError("Internal event subscription lost replay history.", {
+                        afterSequence: checkAfter,
+                        throughSequence,
+                      });
+                      return yield* new EventSinkStreamError({
+                        afterSequence: checkAfter,
+                      });
+                    }
+                  }
+                  return catchUp({
+                    afterSequence: lastSequence,
+                    throughSequence,
+                    ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
+                    ...(input?.eventType === undefined ? {} : { eventType: input.eventType }),
+                  }).pipe(
+                    Stream.onEnd(
+                      Effect.sync(() => {
+                        // Filtered streams can advance over events they do not consume.
+                        lastSequence = Math.max(lastSequence, throughSequence);
+                        cursor.sequence = lastSequence;
+                      }),
+                    ),
+                  );
+                }),
               );
             // Sliding releases events even while the consumer is blocked. Take one
             // at a time so the live tail cannot hide another unbounded batch.
@@ -916,6 +940,8 @@ const layerBase: Layer.Layer<
             return Stream.concat(resume(highWater), live).pipe(
               Stream.rechunk(1),
               Stream.map((stored) => {
+                // The previous event is processed once the consumer asks for another.
+                cursor.sequence = lastSequence;
                 lastSequence = stored.sequence;
                 return stored;
               }),

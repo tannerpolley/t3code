@@ -2214,6 +2214,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (yield* turnHasRetainedBackgroundWork(nativeTurnId)) {
               return;
             }
+            const context = (yield* Ref.get(settledTurns)).get(nativeTurnId);
+            if (context?.closedCommandItemIds !== undefined) {
+              const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
+              if (nativeThreadId != null) {
+                const turns = stoppedCommandItemsByThread.get(nativeThreadId);
+                turns?.delete(nativeTurnId);
+                if (turns?.size === 0) stoppedCommandItemsByThread.delete(nativeThreadId);
+              }
+            }
             yield* Ref.update(settledTurns, (current) => {
               if (!current.has(nativeTurnId)) {
                 return current;
@@ -4807,17 +4816,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // their command items, while the shared provider session stays alive.
         yield* client.handleServerNotification("thread/closed", (payload) =>
           Effect.gen(function* () {
-            stoppedCommandItemsByThread.get(payload.threadId)?.clear();
-            stoppedCommandItemsByThread.delete(payload.threadId);
             const completedAt = yield* DateTime.now;
             for (const context of (yield* Ref.get(settledTurns)).values()) {
               if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
               const commands = (yield* Ref.get(runningCommandItemsByTurn)).get(
                 context.nativeTurnId,
               );
-              if (commands !== undefined) {
-                context.closedCommandItemIds = new Set(commands.keys());
-              }
+              context.closedCommandItemIds = new Set([
+                ...(context.closedCommandItemIds ?? []),
+                ...(commands?.keys() ?? []),
+              ]);
               yield* terminalizeRunningCommandItems(
                 context,
                 context.nativeTurnId,
@@ -4831,6 +4839,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
               yield* releaseSettledTurnIfIdle(context.nativeTurnId);
             }
+            // Terminalization can add snapshots; close releases them while retained turns
+            // keep only the tombstones that prevent late frames from reviving stopped commands.
+            const stoppedTurns = stoppedCommandItemsByThread.get(payload.threadId);
+            const active = yield* Ref.get(activeTurns);
+            const settled = yield* Ref.get(settledTurns);
+            for (const [turnId, items] of stoppedTurns ?? []) {
+              if (!active.has(turnId) && !settled.has(turnId)) stoppedTurns?.delete(turnId);
+              else for (const id of items.keys()) items.set(id, null);
+            }
+            if (stoppedTurns?.size === 0) stoppedCommandItemsByThread.delete(payload.threadId);
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 

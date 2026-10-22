@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - V8 snapshots and filesystem free space have no Effect equivalents.
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeV8 from "node:v8";
 
@@ -15,9 +16,17 @@ export const check = Effect.fn("server.heapPressureSnapshot")(function* (
 ) {
   if (attempted) return;
   const limit = NodeV8.getHeapStatistics().heap_size_limit;
-  if (heapUsedBytes < limit * 0.75) return;
+  if (heapUsedBytes < limit * 0.6) return;
   attempted = true;
   yield* Effect.gen(function* () {
+    const availableMemoryBytes = NodeOS.freemem();
+    if (availableMemoryBytes < heapUsedBytes * 1.5) {
+      yield* Effect.logWarning("Skipping heap snapshot: insufficient available system memory.", {
+        availableMemoryBytes,
+        heapUsedBytes,
+      });
+      return;
+    }
     const disk = yield* Effect.tryPromise(() => NodeFSP.statfs(logsDir));
     // Leave room for a snapshot larger than the heap, plus ordinary log writes.
     if (disk.bavail * disk.bsize < limit * 2 + 1024 ** 3) {

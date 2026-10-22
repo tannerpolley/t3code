@@ -188,6 +188,94 @@ it.effect.each(["all", "thread", "type"] as const)(
     }).pipe(Effect.scoped, Effect.provide(services)),
 );
 
+it.effect("retains unprocessed settlement events through overflow and compaction", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSinkV2;
+    const maintenance = yield* ProjectionMaintenanceV2;
+    const now = yield* DateTime.now;
+    const { created, item } = fixture("settlement-compaction", now);
+    yield* sink.write({ events: [created] });
+    const pull = yield* Stream.toPull(sink.stream());
+    const received = [...(yield* pull)];
+    const fastPull = yield* Stream.toPull(sink.stream());
+    const fastReceived = [...(yield* fastPull)];
+    const settled = { ...created.payload, settledOverride: "settled" as const, settledAt: now };
+    const committed = yield* sink.write({
+      events: [
+        {
+          ...created,
+          id: EventId.make("event:compaction:settled"),
+          type: "thread.settled",
+          payload: settled,
+        },
+        {
+          ...created,
+          id: EventId.make("event:compaction:metadata"),
+          type: "thread.metadata-updated",
+          payload: { ...settled, title: "After settlement" },
+        },
+        ...Array.from({ length: 768 }, (_, index) =>
+          item(index, "payload", "completed", `unique-${index}`),
+        ),
+      ],
+    });
+    while (fastReceived.at(-1)!.sequence < committed.at(-1)!.sequence) {
+      fastReceived.push(...(yield* fastPull));
+    }
+    const compacted = yield* maintenance.compactEventStore;
+    while (received.at(-1)!.sequence < committed.at(-1)!.sequence) {
+      received.push(...(yield* pull));
+    }
+    assert.deepEqual(received.slice(1), committed);
+    assert.deepEqual(fastReceived, received);
+    assert.equal(compacted.deletedEventCount, 0);
+    // Asking for the next event acknowledges the final delivered event.
+    const waiting = yield* pull.pipe(Effect.forkScoped);
+    const next = yield* sink.write({ events: [item(769, "next", "completed", "next")] });
+    assert.deepEqual(yield* Fiber.join(waiting), next);
+    assert.equal((yield* maintenance.compactEventStore).deletedEventCount, 1);
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
+it.effect("releases replay retention when a subscription closes before catching up", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSinkV2;
+    const maintenance = yield* ProjectionMaintenanceV2;
+    const { created } = fixture("closed-subscription", yield* DateTime.now);
+    yield* sink.write({
+      events: [
+        created,
+        { ...created, id: EventId.make("closed:1"), type: "thread.metadata-updated" },
+        { ...created, id: EventId.make("closed:2"), type: "thread.metadata-updated" },
+      ],
+    });
+    yield* sink.stream().pipe(Stream.take(1), Stream.runDrain);
+    assert.equal((yield* maintenance.compactEventStore).deletedEventCount, 1);
+  }).pipe(Effect.provide(services)),
+);
+
+it.effect("fails an internal subscription when retained replay history is missing", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSinkV2;
+    const sql = yield* SqlClient.SqlClient;
+    const { created, item } = fixture("lost-replay", yield* DateTime.now);
+    yield* sink.write({ events: [created] });
+    const pull = yield* Stream.toPull(sink.stream({ eventType: "turn-item.updated" }));
+    // Start in the live tail before simulating loss beyond its cursor.
+    const first = yield* sink.write({ events: [item(0, "first", "completed", "first")] });
+    assert.deepEqual(yield* pull, first);
+    const burst = yield* sink.write({
+      events: Array.from({ length: 768 }, (_, index) =>
+        item(index, "payload", "completed", `lost-${index}`),
+      ),
+    });
+    yield* sql`DELETE FROM orchestration_events WHERE sequence = ${burst[0]!.sequence}`;
+    const result = yield* pull.pipe(Effect.result);
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") assert.equal(result.failure._tag, "EventSinkStreamError");
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
 it.effect.each(["completed", "cancelled"] as const)(
   "durably coalesces streaming snapshots through %s, with unchanged replay",
   (status) =>

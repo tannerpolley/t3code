@@ -2942,6 +2942,117 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   };
 
+  it.effect(
+    "keeps a stopped command interrupted after close while a persistent tool retains its turn",
+    () =>
+      Effect.gen(function* () {
+        const notification = (method: string, params: unknown) => ({
+          type: "emit_inbound" as const,
+          frame: { method, params },
+        });
+        const monitor = (status: "inProgress" | "completed") =>
+          notification(status === "inProgress" ? "item/started" : "item/completed", {
+            threadId: BG_NATIVE_THREAD,
+            turnId: BG_NATIVE_TURN,
+            item: {
+              type: "dynamicToolCall",
+              id: "persistent-monitor",
+              namespace: "grok",
+              tool: "monitor",
+              status,
+              arguments: { persistent: true, command: "tail -f" },
+            },
+          });
+        const unsubscribe = (
+          id: number,
+          notifications: ReadonlyArray<ReturnType<typeof notification>>,
+        ) => [
+          {
+            type: "expect_outbound" as const,
+            frame: { id, method: "thread/unsubscribe", params: { threadId: BG_NATIVE_THREAD } },
+          },
+          ...notifications,
+          { type: "emit_inbound" as const, frame: { id, result: { status: "notSubscribed" } } },
+        ];
+        const transcript = makeCodexReplayTranscript({
+          scenario: "stopped-close-late-completion",
+          entries: [
+            ...backgroundExecTranscript.entries.slice(0, -2),
+            monitor("inProgress"),
+            backgroundExecTranscript.entries.at(-2)!,
+            {
+              type: "expect_outbound",
+              frame: {
+                id: 4,
+                method: "thread/backgroundTerminals/terminate",
+                params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+              },
+            },
+            { type: "emit_inbound", frame: { id: 4, result: { terminated: true } } },
+            ...unsubscribe(5, [notification("thread/closed", { threadId: BG_NATIVE_THREAD })]),
+            ...unsubscribe(6, [
+              notification("item/completed", {
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+                item: backgroundCommandItem("completed"),
+              }),
+              monitor("completed"),
+            ]),
+          ],
+        });
+        const monitorDone = yield* Deferred.make<void>();
+        const stopped = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "persistent-monitor" &&
+          event.turnItem.status === "completed"
+            ? Deferred.succeed(monitorDone, undefined)
+            : event.type === "turn_item.updated" &&
+                event.turnItem.nativeItemRef?.nativeId === BG_COMMAND_ITEM &&
+                event.turnItem.status === "interrupted"
+              ? Deferred.succeed(stopped, undefined)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("stop-close-late"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* harness.firstTerminal;
+        const commandStatus = () =>
+          harness.events
+            .flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === BG_COMMAND_ITEM
+                ? [event.turnItem.status]
+                : [],
+            )
+            .at(-1);
+        const statuses = [commandStatus()];
+        yield* harness.runtime.stopBackgroundTask!({
+          providerThread: harness.providerThread,
+          taskId: BG_COMMAND_ITEM,
+        });
+        yield* Deferred.await(stopped);
+        statuses.push(commandStatus());
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        yield* Deferred.await(monitorDone);
+        statuses.push(commandStatus());
+        assert.deepEqual(statuses, ["running", "interrupted", "interrupted"]);
+        assert.lengthOf(harness.continuationRequests, 0);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect.each([false, true])(
     "releases stopped-command entries on native thread disposal (completed: %s)",
     (completed) =>
