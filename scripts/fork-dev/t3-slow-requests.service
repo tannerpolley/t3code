@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep T3 Code slow request evidence
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/lib/t3-code/slow-requests.py
+Restart=on-failure
+RestartSec=5
+Nice=10
+UMask=0077
+
+[Install]
+WantedBy=default.target

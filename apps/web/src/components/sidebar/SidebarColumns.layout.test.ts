@@ -38,8 +38,8 @@ describe("sidebar width budget", () => {
     expect(optionalColumns(23.6)).toEqual(["issue"]);
     expect(optionalColumns(27.9)).toEqual(["issue"]);
     expect(optionalColumns(28)).toEqual(["model", "issue"]);
-    expect(optionalColumns(30.6)).toEqual(["model", "issue"]);
-    expect(optionalColumns(30.7)).toEqual(["model", "effort", "issue"]);
+    expect(optionalColumns(28.6)).toEqual(["model", "issue"]);
+    expect(optionalColumns(28.7)).toEqual(["model", "effort", "issue"]);
   });
 
   it("admits optional columns sooner with role icons, keeping room for short command labels", () => {
@@ -47,7 +47,8 @@ describe("sidebar width budget", () => {
     expect(optionalColumns(21, "icon")).toEqual(["issue"]);
     expect(optionalColumns(25.3, "icon")).toEqual(["issue"]);
     expect(optionalColumns(25.4, "icon")).toEqual(["model", "issue"]);
-    expect(optionalColumns(28.1, "icon")).toEqual(["model", "effort", "issue"]);
+    expect(optionalColumns(26, "icon")).toEqual(["model", "issue"]);
+    expect(optionalColumns(26.1, "icon")).toEqual(["model", "effort", "issue"]);
     for (const rem of [21, 25.4, 28.1]) {
       expect(optionalColumns(rem, "icon").length).toBeGreaterThan(optionalColumns(rem).length);
     }
@@ -134,10 +135,12 @@ it("fits every elapsed label up to ten days inside the time track", () => {
   expect(formatElapsedSeconds(141 * 3600 + 22 * 60 + 10)).toBe("5d 21h 22m");
 });
 
-it("fits six-character model names, their versions and every effort label", () => {
-  fits(["Opus", "Sonnet", "Haiku", "Sol", "Luna", "Astra", "GPT"], 11, tracks.model.ch * ch);
-  fits(["5.5", "6.1", "8.8"], 11, tracks.version.ch * ch);
-  fits(["Low", "Med", "High", "XHigh", "Max"], 11, tracks.effort * 16);
+it("fits six-character model names with their versions", () => {
+  fits(
+    ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Sol 6.1", "Luna 6", "Astra 6", "GPT 8.8"],
+    11,
+    tracks.model.ch * ch,
+  );
 });
 
 it("reserves the role track and its gap only for icons", () => {

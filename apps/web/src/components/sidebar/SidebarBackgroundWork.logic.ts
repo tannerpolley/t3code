@@ -103,17 +103,13 @@ export function sidebarThreadTitle(thread: RoleDisplayThread): string {
 }
 
 /**
- * A short model label split for the sidebar's aligned model columns: the name, cut to six
- * characters, and the version number ("Opus 5.5" → Opus, 5.5; "GPT-5.4" → GPT, 5.4). Text after
- * the version, such as "Codex" or "(High)", shows only on hover; a label without a version keeps
- * its name alone.
+ * A short model label as the sidebar's model cell shows it: the name and version number ("GPT-5.3
+ * Codex" → "GPT 5.3"). Text after the version, such as "Codex" or "(High)", shows only on hover; a
+ * label without a version keeps its name alone.
  */
-export function splitSidebarModelLabel(label: string): {
-  readonly name: string;
-  readonly version: string;
-} {
+export function sidebarModelCellLabel(label: string): string {
   const match = /^(.*?)[\s-]+(\d+(?:\.\d+)*)/.exec(label);
-  return { name: (match ? match[1]! : label).trim().slice(0, 6), version: match?.[2] ?? "" };
+  return match ? `${match[1]!.trim()} ${match[2]}` : label.trim();
 }
 
 /** Separates subagent threads from other pending work without changing either group's order. */
