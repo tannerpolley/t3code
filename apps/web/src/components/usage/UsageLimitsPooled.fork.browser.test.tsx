@@ -25,7 +25,11 @@ vi.mock("../settings/RedactedSensitiveText", () => ({ RedactedSensitiveText: () 
 
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 
-const presentations = (resetsAt: string | undefined, availableCount: number): LimitPresentations =>
+const presentations = (
+  resetsAt: string | undefined,
+  availableCount: number,
+  creditId = "credit-a",
+): LimitPresentations =>
   new Map([
     [
       EnvironmentId.make("env-a"),
@@ -49,7 +53,7 @@ const presentations = (resetsAt: string | undefined, availableCount: number): Li
               skills: [],
               usageLimits: {
                 checkedAt: "2026-09-03T11:00:00Z",
-                resetCredits: { availableCount },
+                resetCredits: { availableCount, nextCreditId: creditId },
                 windows: [
                   {
                     id: "five_hour",
@@ -129,4 +133,28 @@ it.each([
   expect(using?.disabled).toBe(true);
   await act(async () => answer(result));
   expect(status?.textContent).toBe(`Alpha ${text}`);
+});
+
+it("confirms the displayed credit even if auto-use refreshes the account while the dialog is open", async () => {
+  setup();
+  consume.mockResolvedValue({ _tag: "Success", value: { outcome: "alreadyRedeemed" } });
+  await using screen = await render(initial());
+  await click("Alpha:");
+  await clickInPopover("Use reset");
+  await screen.rerender(
+    <UsageLimitsPooled
+      presentations={presentations("2026-09-03T14:00:00Z", 1, "credit-b")}
+      now={0}
+    />,
+  );
+  await click("Use credit");
+  expect(consume).toHaveBeenCalledWith({
+    environmentId: "env-a",
+    input: { instanceId: "alpha", creditId: "credit-a" },
+  });
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector('[role="status"]')?.textContent).toContain(
+      "That credit was already redeemed.",
+    ),
+  );
 });

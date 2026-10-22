@@ -1,8 +1,10 @@
+import { makeSourceResetCreditExpiryResults } from "../provider/ResetCreditExpiryResults.ts";
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
+  type ResetCreditAutoUseResult,
   type ServerSettings,
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
@@ -27,11 +29,18 @@ import { makeCliproxyApi } from "./cliproxyApi.ts";
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
   {
+    readonly publishResetCreditAutoUse: (
+      sourceId: UsageLimitSourceId,
+      accountId: string,
+      accountKey: string,
+      result: ResetCreditAutoUseResult,
+    ) => Effect.Effect<void>;
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
+      canRedeem?: Effect.Effect<boolean>,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
   }
 >()("t3/usage/UsageLimitSources") {}
@@ -57,6 +66,8 @@ export const make = Effect.gen(function* () {
     PubSub.shutdown,
   );
 
+  const resetCreditResults = yield* makeSourceResetCreditExpiryResults(stateRef, changes);
+
   const readSource = Effect.fn("UsageLimitSources.readSource")(function* (
     id: UsageLimitSourceId,
     config: UsageLimitSourceConfig,
@@ -77,6 +88,7 @@ export const make = Effect.gen(function* () {
   const publish = Effect.fn("UsageLimitSources.publish")(function* (
     next: ReadonlyArray<UsageLimitSourceSnapshot>,
   ) {
+    next = next.map(resetCreditResults.decorate);
     const changed = yield* Ref.modify(stateRef, (previous) =>
       Equal.equals(previous, next) ? [false, previous] : [true, next],
     );
@@ -105,6 +117,7 @@ export const make = Effect.gen(function* () {
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
   const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
     input: UsageLimitSourceConsumeResetCreditInput,
+    canRedeem?: Effect.Effect<boolean>,
   ) {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
@@ -115,7 +128,7 @@ export const make = Effect.gen(function* () {
         detail: "The usage limit source is missing or disabled.",
       });
     }
-    const result = yield* api.consume(config, input.accountId, input.creditId);
+    const result = yield* api.consume(config, input.accountId, input.creditId, canRedeem);
     const snapshot = yield* readSource(input.sourceId, config);
     const previous = yield* Ref.get(stateRef);
     yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
@@ -152,6 +165,7 @@ export const make = Effect.gen(function* () {
   yield* refresh.pipe(Effect.forkScoped);
 
   return {
+    publishResetCreditAutoUse: resetCreditResults.publish,
     current: Ref.get(stateRef),
     consumeResetCredit,
     refresh,

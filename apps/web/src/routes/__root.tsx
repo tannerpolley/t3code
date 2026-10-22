@@ -1,3 +1,4 @@
+import { ResetCreditReminderCoordinator } from "../components/ResetCreditReminderCoordinator";
 import { SidebarLayoutSync } from "../components/SidebarLayoutSync";
 import { PermissionUpdateNotice } from "../components/PermissionUpdateNotice";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
@@ -246,6 +247,7 @@ function RootRouteView() {
           <SshPasswordPromptDialog />
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
+          <ResetCreditReminderCoordinator />
           <QuestionPopup />
           <ReopenClosedViewShortcut />
           <ConfirmDialogHost />

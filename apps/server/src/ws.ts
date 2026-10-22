@@ -2343,17 +2343,20 @@ export const layerWsRpc = (
                   detail: "This provider does not bank reset credits.",
                 });
               }
-              const outcome = yield* instance.consumeResetCredit().pipe(
-                Effect.mapError(
-                  (error) =>
-                    new ProviderSetupError({
-                      instanceId: input.instanceId,
-                      operation: "consume-reset-credit",
-                      detail: error.detail,
-                      cause: error,
-                    }),
-                ),
-              );
+              // Old clients omit the ID; accept their open-confirmation race with auto-use to preserve upstream's unpinned behavior.
+              const outcome = yield* instance
+                .consumeResetCredit(input.creditId ? { creditId: input.creditId } : undefined)
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new ProviderSetupError({
+                        instanceId: input.instanceId,
+                        operation: "consume-reset-credit",
+                        detail: error.detail,
+                        cause: error,
+                      }),
+                  ),
+                );
               return { outcome };
             }),
           [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),

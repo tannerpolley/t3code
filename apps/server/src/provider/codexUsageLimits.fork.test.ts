@@ -26,3 +26,17 @@ describe("codexResetCreditsToContract", () => {
     expect(convert(null)).toBeUndefined();
   });
 });
+
+it("pins the soonest available credit, excluding spent credits and credits without an expiry", () => {
+  expect(
+    convert({
+      availableCount: 3,
+      credits: [
+        { id: "later", status: "available", expiresAt: 1_784_500_000 },
+        { id: "spent", status: "redeemed", expiresAt: 1_700_000_000 },
+        { id: "no-expiry", status: "available" },
+        { id: "first", status: "available", expiresAt: 1_784_000_000 },
+      ],
+    })?.nextCreditId,
+  ).toBe("first");
+});

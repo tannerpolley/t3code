@@ -159,6 +159,20 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
   });
 
 effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
+  it.effect("returns without a request when the redemption precondition no longer permits it", () =>
+    Effect.gen(function* () {
+      const login = yield* writeLogin;
+      const result = yield* ClaudeResetCredits.consumeClaudeResetCredit({
+        ...login,
+        version: "2.1.0",
+        grantId: "grant_a",
+        requestId: "r-1",
+        canRedeem: Effect.succeed(false),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, refuseRequests));
+      expect(result).toBe("nothingToReset");
+    }),
+  );
+
   it.effect("claims the grant for the organization", () =>
     Effect.gen(function* () {
       const client = HttpClient.make((request) =>

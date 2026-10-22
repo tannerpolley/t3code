@@ -214,6 +214,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ];
     const winner = fresher ? next : previous;
     const creditSource = creditSources.get(key);
+    const redeem =
+      hubRedeems.get(key)?.redeem ??
+      (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem));
+    const creditId = creditSource?.limits.resetCredits?.nextCreditId;
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
@@ -221,9 +225,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
-      redeem:
-        hubRedeems.get(key)?.redeem ??
-        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+      redeem: redeem && creditId ? { ...redeem, input: { ...redeem.input, creditId } } : redeem,
       limits: {
         ...winner.limits,
         ...(creditSource?.limits.resetCredits
@@ -253,7 +255,15 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         accentColor: provider.accentColor,
         environments: [{ environmentId, label }],
         sourceLabel: null,
-        redeem: { environmentId, input: { instanceId: provider.instanceId } },
+        redeem: {
+          environmentId,
+          input: {
+            instanceId: provider.instanceId,
+            ...(provider.usageLimits.resetCredits?.nextCreditId
+              ? { creditId: provider.usageLimits.resetCredits.nextCreditId }
+              : {}),
+          },
+        },
         limits: provider.usageLimits,
       });
     }
@@ -750,9 +760,12 @@ export function collectProviderUsageLimits(
           ? {
               sourceId: hubCredits.source.id,
               accountId: hubCredits.account.id,
-              creditId: hubCreditId,
+              creditId: shownCredits?.nextCreditId ?? hubCreditId,
             }
-          : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
+          : {
+              instanceId: credits?.provider.instanceId ?? provider.instanceId,
+              ...(shownCredits?.nextCreditId ? { creditId: shownCredits.nextCreditId } : {}),
+            },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),

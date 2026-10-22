@@ -1,3 +1,4 @@
+import { useResetCreditUsageNavigation } from "../ResetCreditUsageNavigation";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -243,6 +244,11 @@ export function UsagePage() {
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
   };
+  useResetCreditUsageNavigation(() => {
+    setSelectedEnvironmentIds(null);
+    setLimitsNow(Date.now());
+    updatePreferences({ metric: "limits", hiddenProviders: [] });
+  });
   const selectWindow = (days: number) => {
     if (!isUsageWindowDays(days)) return;
     updatePreferences({ windowDays: days });

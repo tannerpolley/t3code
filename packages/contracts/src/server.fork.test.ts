@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ServerProvider } from "./server.ts";
+import { ProviderConsumeResetCreditInput } from "./providerUsageLimits.ts";
+import { ServerProvider, ServerProviderUpdatedPayload } from "./server.ts";
+
+const decodeUpdate = Schema.decodeUnknownSync(ServerProviderUpdatedPayload);
+const encodeUpdate = Schema.encodeSync(ServerProviderUpdatedPayload);
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 
@@ -52,5 +56,38 @@ describe("ServerProvider", () => {
     expect(parsed.supportedRuntimeModes).toEqual(["approval-required", "full-access"]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+  });
+});
+
+it("preserves automatic reset results in the existing provider update payload", () => {
+  const resetCreditAutoUse = {
+    creditId: "credit-a",
+    expiresAt: "2026-10-23T22:15:00.000Z",
+    attemptedAt: "2026-10-23T22:05:00.000Z",
+    status: "used",
+  };
+  const update = decodeUpdate({
+    providers: [
+      {
+        ...baseProviderSnapshot,
+        usageLimits: {
+          checkedAt: baseProviderSnapshot.checkedAt,
+          windows: [],
+          resetCreditAutoUse,
+        },
+      },
+    ],
+  });
+  expect(decodeUpdate(encodeUpdate(update)).providers[0]?.usageLimits?.resetCreditAutoUse).toEqual(
+    resetCreditAutoUse,
+  );
+});
+
+it("decodes old reset requests and preserves a displayed credit identity", () => {
+  const decode = Schema.decodeUnknownSync(ProviderConsumeResetCreditInput);
+  expect(decode({ instanceId: "codex" })).toEqual({ instanceId: "codex" });
+  expect(decode({ instanceId: "codex", creditId: "credit-a" })).toEqual({
+    instanceId: "codex",
+    creditId: "credit-a",
   });
 });

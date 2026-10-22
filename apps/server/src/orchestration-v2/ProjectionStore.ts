@@ -1,3 +1,4 @@
+import { readIssueWorkThreads, type IssueWorkThread } from "../issues/IssueWorkProjection.ts";
 import {
   USAGE_LIMIT_SWITCH_RESUME_PREFIX,
   USAGE_LIMIT_SWITCH_HOLD_MS,
@@ -488,6 +489,10 @@ export interface ProjectionStoreV2Shape {
     Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>,
     ProjectionStoreV2Error
   >;
+  readonly issueWorkRevision: Effect.Effect<number, ProjectionStoreV2Error>;
+  readonly getIssueWorkThreads: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyArray<IssueWorkThread>, ProjectionStoreV2Error>;
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
@@ -5195,7 +5200,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const runtimeRequests = (yield* decodeRows(
               decodeRuntimeRequestPayload,
               threadId,
-            )(rows)).filter((request) => (request.responseCapability.type === "live" || request.responseCapability.type === "not_resumable"));
+            )(rows)).filter(
+              (request) =>
+                request.responseCapability.type === "live" ||
+                request.responseCapability.type === "not_resumable",
+            );
             if (runtimeRequests.length === 0) return { runtimeRequests, nodes: [], turnItems: [] };
             const nodeRows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_nodes
@@ -7145,6 +7154,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]!.count),
         Effect.mapError(shellSnapshotReadError),
       ),
+      issueWorkRevision: sql<{
+        revision: number;
+      }>`SELECT COALESCE(MAX(sequence), 0) AS revision FROM orchestration_events`.pipe(
+        NodeSqliteClient.readOnly,
+        Effect.map((rows) => rows[0]!.revision),
+        Effect.mapError(shellSnapshotReadError),
+      ),
+      getIssueWorkThreads: (ids) =>
+        readIssueWorkThreads(sql, ids).pipe(
+          NodeSqliteClient.readOnly,
+          Effect.mapError(shellSnapshotReadError),
+        ),
       readShellSnapshot,
       getThreadShell,
       getThread,
@@ -7317,6 +7338,23 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
       }),
       readShellSnapshot: (options) =>
         service.getShellSnapshot(options).pipe(Effect.map(Effect.succeed)),
+      issueWorkRevision: Ref.get(sequence),
+      getIssueWorkThreads: Effect.fn("ProjectionStore.getIssueWorkThreads")(function* (
+        ids: ReadonlyArray<ThreadId>,
+      ) {
+        const state = yield* Ref.get(replayState);
+        return ids.flatMap((id) => {
+          const projection = state.projections.get(id);
+          return projection === undefined || projection.thread.deletedAt !== null
+            ? []
+            : [
+                threadShellFromProjection(
+                  projection,
+                  nativeSubagentForChild(state.projections, projection),
+                ),
+              ];
+        });
+      }),
       getThreadShell: Effect.fn("ProjectionStore.getThreadShell")(function* (threadId) {
         const existing = (yield* Ref.get(replayState)).projections;
         if (!existing.has(threadId)) {
@@ -7527,7 +7565,8 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               request.providerTurnId === providerTurnId &&
               request.kind === "user_input" &&
               request.status === "pending" &&
-              (request.responseCapability.type === "live" || request.responseCapability.type === "not_resumable"),
+              (request.responseCapability.type === "live" ||
+                request.responseCapability.type === "not_resumable"),
           );
           const requestIds = new Set(runtimeRequests.map((request) => request.id));
           const nodeIds = new Set(runtimeRequests.map((request) => request.nodeId));

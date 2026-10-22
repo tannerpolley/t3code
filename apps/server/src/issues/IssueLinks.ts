@@ -7,10 +7,9 @@ import {
   type IssuePullRequestStatus,
   type IssueSummary,
   ThreadId,
-  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Arr from "effect/Array";
+import type { IssueWorkThread } from "./IssueWorkProjection.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -32,6 +31,7 @@ import { issueWorkThreadIds } from "./IssueWorkQuery.ts";
 const key = (issue: IssueRef) =>
   `${issue.host.toLowerCase()}/${issue.repository.toLowerCase()}#${issue.number}`;
 const isIssueRef = Schema.is(IssueRef);
+const encodeMemoKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodePrRefs = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(IssueRef)));
 const storageError = (cause: unknown) => new IssueLinkError({ code: "storage", cause });
 
@@ -100,6 +100,13 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const refreshes = yield* SubscriptionRef.make(0);
+  const workByRepository = new Map<
+    string,
+    {
+      revision: number;
+      queries: Map<string, Effect.Effect<ReadonlyArray<IssueWorkThread>, IssueLinkError>>;
+    }
+  >();
   const link: IssueLinks["Service"]["link"] = Effect.fn("IssueLinks.link")(function* (
     input,
     callerThreadId,
@@ -135,43 +142,50 @@ const make = Effect.gen(function* () {
     const issueNumbers = list.issues.map((issue) => issue.number);
     const prRefs = list.issues.flatMap((issue) => issue.pullRequestRefs ?? []);
     const prRefsJson = yield* encodePrRefs(prRefs).pipe(Effect.mapError(storageError));
-    // Only candidate IDs and their descendants leave SQLite. Shell decoding and activity reads
-    // are restricted to those threads, rather than the environment's entire active snapshot.
-    const candidates =
-      issueNumbers.length === 0
-        ? []
-        : yield* issueWorkThreadIds(
-            sql,
-            list.repository,
-            issueNumbers,
-            rows
-              .filter((row) => issueNumbers.includes(row.issue_number))
-              .map((row) => row.thread_id),
-            prRefsJson,
-            prRefs.length > 0,
-            list.issues.some((issue) => issue.state === "closed"),
-          ).pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
-    // Commit each reader transaction before decoding so writers and WAL truncation can proceed.
-    const snapshots = yield* Effect.forEach(Arr.chunksOf(candidates, 32), (chunk) =>
-      sql
-        .withTransaction(
-          projections.readShellSnapshot({
-            threadIds: chunk.map(({ thread_id }) => ThreadId.make(thread_id)),
-          }),
-        )
-        .pipe(NodeSqliteClient.readOnly, Effect.flatten, Effect.mapError(storageError)),
-    );
-    const shells = new Map(
-      snapshots.flatMap((snapshot) =>
-        [...snapshot.threads, ...snapshot.archivedThreads].map(
-          (thread) => [thread.id, thread] as const,
-        ),
-      ),
-    );
-    const threads = candidates.flatMap(({ thread_id }) => {
-      const thread = shells.get(ThreadId.make(thread_id));
-      return thread === undefined || thread.deletedAt !== null ? [] : [thread];
-    });
+    const revision = yield* projections.issueWorkRevision.pipe(Effect.mapError(storageError));
+    const repositoryKey = `${host}/${repository}`;
+    let memo = workByRepository.get(repositoryKey);
+    if (memo === undefined || memo.revision !== revision) {
+      memo = { revision, queries: new Map() };
+      workByRepository.set(repositoryKey, memo);
+    }
+    // Link rows are outside the event projection. Include them and the GitHub candidate set so
+    // explicit unlinking, paging and newly discovered closing PRs invalidate their own reads.
+    const queryKey = encodeMemoKey([
+      issueNumbers,
+      prRefsJson,
+      list.issues.some((issue) => issue.state === "closed"),
+      rows,
+    ]);
+    const queries = memo.queries;
+    let read = queries.get(queryKey);
+    if (read === undefined) {
+      read = yield* Effect.cached(
+        Effect.gen(function* () {
+          const candidates =
+            issueNumbers.length === 0
+              ? []
+              : yield* issueWorkThreadIds(
+                  sql,
+                  list.repository,
+                  issueNumbers,
+                  rows
+                    .filter((row) => issueNumbers.includes(row.issue_number))
+                    .map((row) => row.thread_id),
+                  prRefsJson,
+                  prRefs.length > 0,
+                  list.issues.some((issue) => issue.state === "closed"),
+                ).pipe(NodeSqliteClient.readOnly, Effect.mapError(storageError));
+          return yield* projections
+            .getIssueWorkThreads(candidates.map(({ thread_id }) => ThreadId.make(thread_id)))
+            .pipe(Effect.mapError(storageError));
+        }).pipe(Effect.tapError(() => Effect.sync(() => queries.delete(queryKey)))),
+      );
+      // Keep only recent issue pages for this revision, rather than every search ever opened.
+      if (memo.queries.size >= 32) memo.queries.delete(memo.queries.keys().next().value!);
+      memo.queries.set(queryKey, read);
+    }
+    const threads = yield* read;
     const issues = new Map(
       list.issues.map((issue) => [key({ ...list.repository, number: issue.number }), issue.number]),
     );
@@ -193,15 +207,8 @@ const make = Effect.gen(function* () {
     // Shells may expose observed PR arrays instead of the legacy owned link. Read the owned
     // link from the selected projection rows; observed PRs must never associate issue work.
     const ownedPrByThread = new Map(
-      candidates.flatMap((row) =>
-        row.pr_repository === null || row.pr_number === null || row.pr_url === null
-          ? []
-          : [
-              [
-                row.thread_id,
-                { repository: row.pr_repository, number: row.pr_number, url: row.pr_url },
-              ] as const,
-            ],
+      threads.flatMap((thread) =>
+        thread.linkedPullRequest == null ? [] : [[thread.id, thread.linkedPullRequest] as const],
       ),
     );
     for (const thread of threads) {
@@ -310,7 +317,7 @@ const make = Effect.gen(function* () {
 });
 
 function workState(
-  thread: OrchestrationV2ThreadShell,
+  thread: IssueWorkThread,
 ): NonNullable<IssueSummary["liveWork"]>[number]["status"] {
   if (thread.archivedAt !== null) return "idle";
   if (

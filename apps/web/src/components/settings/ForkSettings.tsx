@@ -251,6 +251,7 @@ function CustomizationsGroup({
 }
 
 type ServerSwitchKey =
+  | "autoUseExpiringResetCredits"
   | "autoOrganizeByFolder"
   | "keepThreadTitlesCurrent"
   | "agentBrowserTabLimits"
@@ -533,6 +534,22 @@ function ForkGeneralSettings() {
       <CustomizationsGroup title="Composer & chat" section="composer" />
       <CustomizationsGroup title="Usage" section="usage">
         <UsageLimitRecoverySettings />
+        <SettingsRow
+          {...searchableSetting("reset-credit-reminders")}
+          description="Native reminders with sound at 24, 12, 6, 3 and 1 hour, then 30, 10, 5 and 1 minute before a banked reset expires. Allow desktop notifications in notification settings."
+          control={
+            <Switch
+              checked={settings.resetCreditReminders}
+              onCheckedChange={(checked) => updateSettings({ resetCreditReminders: checked })}
+              aria-label="Banked reset reminders"
+            />
+          }
+        />
+        <ServerSwitchRow
+          settingKey="autoUseExpiringResetCredits"
+          searchId="auto-use-expiring-reset-credits"
+          description="Use a banked reset 10 minutes before it expires, even with no window open. Retry until 1 minute before expiry. The server must be running."
+        />
       </CustomizationsGroup>
       <ForkGeneralBehaviorRows />
     </>

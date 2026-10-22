@@ -1,7 +1,14 @@
 import {
+  backgroundWorkHoldsCompletion,
+  isBackgroundTurnItemType,
+  pendingBackgroundTurnItems,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import {
   type IssueDetailInput,
   type IssueDetailResult,
   type IssueReadError,
+  IssueWorkError,
   type IssueListInput,
   type IssueListResult,
   type IssueStatusBatchInput,
@@ -10,7 +17,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
 import * as IssueService from "./IssueService.ts";
 import * as IssueLinks from "./IssueLinks.ts";
 
@@ -18,7 +25,7 @@ import * as IssueLinks from "./IssueLinks.ts";
 export class IssueRoadmap extends Context.Service<
   IssueRoadmap,
   {
-    readonly linkRefreshes: Stream.Stream<number>;
+    readonly linkRefreshes: Stream.Stream<number, IssueWorkError>;
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueReadError>;
     /** The issue with the same local work its list row carries. */
     readonly detail: (input: IssueDetailInput) => Effect.Effect<IssueDetailResult, IssueReadError>;
@@ -33,8 +40,91 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const issues = yield* IssueService.IssueService;
     const links = yield* IssueLinks.IssueLinks;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
     return IssueRoadmap.of({
-      linkRefreshes: links.refreshes,
+      linkRefreshes: Stream.merge(
+        links.refreshes.pipe(Stream.drop(1)),
+        Stream.suspend(() => {
+          const workStates = new Map<string, string>();
+          return orchestrator.streamDomainEvents.pipe(
+            Stream.filter((event) => {
+              const state: readonly [string, string] | undefined =
+                event.type === "provider-thread.updated"
+                  ? [
+                      `provider:${event.payload.id}`,
+                      String(
+                        backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? []),
+                      ),
+                    ]
+                  : event.type === "subagent.updated"
+                    ? [
+                        `subagent:${event.payload.id}`,
+                        `${event.payload.status}:${event.payload.childThreadId ?? ""}`,
+                      ]
+                    : event.type === "runtime-request.updated"
+                      ? [
+                          `request:${event.payload.id}`,
+                          `${event.payload.kind}:${event.payload.status}:${event.payload.responseCapability.type}`,
+                        ]
+                      : event.type === "run.created" || event.type === "run.updated"
+                        ? [
+                            `run:${event.payload.id}`,
+                            `${event.payload.status}:${event.payload.queueHeld === true}`,
+                          ]
+                        : event.type === "turn-item.updated" &&
+                            isBackgroundTurnItemType(event.payload.type)
+                          ? [
+                              `item:${event.payload.id}`,
+                              String(
+                                pendingBackgroundTurnItems({ turnItems: [event.payload] }).length >
+                                  0,
+                              ),
+                            ]
+                          : undefined;
+              if (state !== undefined) {
+                const [key, value] = state;
+                if (workStates.get(key) === value) return false;
+                workStates.set(key, value);
+              }
+              return (
+                event.type === "thread.created" ||
+                event.type === "thread.metadata-updated" ||
+                event.type === "thread.archived" ||
+                event.type === "thread.unarchived" ||
+                event.type === "thread.deleted" ||
+                event.type === "thread.pull-request-synced" ||
+                event.type === "thread.pull-request-link-updated" ||
+                event.type === "issue.work.requested" ||
+                event.type === "issue.work.cancelled" ||
+                event.type === "issue.queue.updated" ||
+                event.type === "repository.work.restored" ||
+                event.type === "runtime-request.updated" ||
+                event.type === "provider-thread.updated" ||
+                event.type === "subagent.updated" ||
+                (event.type === "turn-item.updated" &&
+                  (event.payload.type === "secret_request" ||
+                    isBackgroundTurnItemType(event.payload.type))) ||
+                event.type === "run.created" ||
+                event.type === "run.updated"
+              );
+            }),
+            Stream.mapError(
+              () =>
+                new IssueWorkError({
+                  code: "orchestration-error",
+                  message: "Could not follow issue work changes.",
+                }),
+            ),
+          );
+        }),
+      ).pipe(
+        // One command often commits ownership, thread and run events together.
+        Stream.groupedWithin(128, "250 millis"),
+        Stream.scan(
+          () => 0,
+          (revision) => revision + 1,
+        ),
+      ),
       statusBatch: Effect.fn("IssueRoadmap.statusBatch")(function* (input) {
         const statuses = yield* issues.statusBatch(input);
         const repositories = new Map<string, (typeof statuses)[number][]>();

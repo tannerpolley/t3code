@@ -1,3 +1,4 @@
+import { makeResetCreditExpiryResults } from "./ResetCreditExpiryResults.ts";
 import {
   defaultInstanceIdForDriver,
   isProviderWorkspaceSnapshotCurrent,
@@ -5,6 +6,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUpdateState,
+  type ResetCreditAutoUseResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -18,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
@@ -49,6 +52,11 @@ export type ProviderMaintenanceActionKind = "update";
 export class ProviderRegistry extends Context.Service<
   ProviderRegistry,
   {
+    readonly publishResetCreditAutoUse: (
+      instanceId: ProviderInstanceId,
+      accountKey: string,
+      result: ResetCreditAutoUseResult,
+    ) => Effect.Effect<void>;
     readonly getProviders: Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly refresh: (
@@ -89,6 +97,11 @@ export class ProviderRegistry extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly streamChanges: Stream.Stream<ReadonlyArray<ServerProvider>>;
+    readonly subscribeChanges: Effect.Effect<
+      Stream.Stream<ReadonlyArray<ServerProvider>>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/provider/ProviderRegistry") {}
 
@@ -422,6 +435,7 @@ export const layer = Layer.effect(
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
+    const resetCreditResults = yield* makeResetCreditExpiryResults(providersRef, changesPubSub);
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, symbol>>
     >(new Map());
@@ -481,7 +495,7 @@ export const layer = Layer.effect(
       const manifest = yield* manifestService.current;
       const nextProvidersWithUpdateState = yield* Effect.forEach(
         nextProviders,
-        applyProviderUpdateState,
+        (provider) => applyProviderUpdateState(resetCreditResults.decorate(provider)),
         {
           concurrency: "unbounded",
         },
@@ -1009,6 +1023,7 @@ export const layer = Layer.effect(
     });
 
     return {
+      publishResetCreditAutoUse: resetCreditResults.publish,
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
@@ -1021,6 +1036,15 @@ export const layer = Layer.effect(
       setProviderMaintenanceActionState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
+      },
+      get subscribeChanges() {
+        return Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(changesPubSub);
+          return Stream.concat(
+            Stream.fromEffect(Ref.get(providersRef)),
+            Stream.fromSubscription(subscription),
+          );
+        });
       },
     } satisfies ProviderRegistry["Service"];
   }),
