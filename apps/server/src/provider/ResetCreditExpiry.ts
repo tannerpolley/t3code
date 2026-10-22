@@ -61,7 +61,7 @@ const make = Effect.gen(function* () {
   const providerCredits = (providers: readonly ServerProvider[]): ExpiringCredit[] =>
     providers.flatMap((provider) => {
       const credits = provider.usageLimits?.resetCredits;
-      const expiresAt = credits?.expiries?.[0];
+      const expiresAt = credits?.nextExpiresAt;
       if (
         !provider.enabled ||
         provider.auth.status === "unauthenticated" ||
@@ -87,7 +87,7 @@ const make = Effect.gen(function* () {
             if (
               resetCreditAccountKey(current) !== accountKey ||
               current.usageLimits?.resetCredits?.nextCreditId !== creditId ||
-              current.usageLimits.resetCredits.expiries?.[0] !== expiresAt
+              current.usageLimits.resetCredits.nextExpiresAt !== expiresAt
             )
               return "stale" as const;
             return yield* instance.consumeResetCredit({ creditId }, canRedeem);
@@ -101,7 +101,7 @@ const make = Effect.gen(function* () {
     snapshots.flatMap((source) =>
       source.accounts.flatMap((account) => {
         const credits = account.usageLimits.resetCredits;
-        const expiresAt = credits?.expiries?.[0];
+        const expiresAt = credits?.nextExpiresAt;
         if (!credits?.availableCount || !credits.nextCreditId || !expiresAt) return [];
         const creditId = credits.nextCreditId;
         const accountKey = resetCreditSourceAccountKey(source.id, account);
@@ -121,7 +121,7 @@ const make = Effect.gen(function* () {
                 !current ||
                 resetCreditSourceAccountKey(source.id, current) !== accountKey ||
                 current.usageLimits.resetCredits?.nextCreditId !== creditId ||
-                current.usageLimits.resetCredits.expiries?.[0] !== expiresAt
+                current.usageLimits.resetCredits.nextExpiresAt !== expiresAt
               )
                 return "stale" as const;
               const result = yield* sources.consumeResetCredit(

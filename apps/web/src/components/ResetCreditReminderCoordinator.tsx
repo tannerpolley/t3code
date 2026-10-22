@@ -33,6 +33,7 @@ function EnvironmentResetCreditReminders({
   const accounts = collectResetCreditAccounts(
     presentation?.serverConfig?.providers ?? [],
     presentation?.serverConfig?.usageLimitSources ?? [],
+    environmentId,
   );
   const remindersEnabled = useClientSettings((settings) => settings.resetCreditReminders);
   const autoUse = useEnvironmentSettings(

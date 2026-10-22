@@ -16,7 +16,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import { ProviderConsumeResetCreditInput } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -99,7 +98,6 @@ const noSpawn = ChildProcessSpawner.make(() =>
 );
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const decodeCreditInput = Schema.decodeUnknownEffect(ProviderConsumeResetCreditInput);
 const decodeCreditFrame = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -191,20 +189,13 @@ const creditFixture = Effect.fn("CodexDriverTest.creditFixture")(function* () {
 
 it.layer(layerTest)("CodexDriver", (it) => {
   it.effect(
-    "a manual confirmation for an auto-redeemed credit never consumes the next credit",
+    "a pinned manual confirmation for an auto-redeemed credit never consumes the next credit",
     () =>
       Effect.gen(function* () {
         const { instance, requests } = yield* creditFixture();
-        const displayed = yield* decodeCreditInput({
-          instanceId: instance.instanceId,
-          creditId: "credit-a",
-        });
+        const displayed = { creditId: "credit-a" };
         expect(yield* instance.consumeResetCredit!({ creditId: "credit-a" })).toBe("reset");
-        const outcome = yield* instance.consumeResetCredit!(
-          "creditId" in displayed && displayed.creditId
-            ? { creditId: displayed.creditId }
-            : undefined,
-        );
+        const outcome = yield* instance.consumeResetCredit!(displayed);
         expect(outcome).toBe("alreadyRedeemed");
         expect(requests).toHaveLength(1);
         expect(requests[0]).toMatchObject({ creditId: "credit-a" });

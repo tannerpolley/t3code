@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   ProviderConsumeResetCreditInput,
   ServerProvider,
   ServerProviderUsageLimits,
@@ -18,6 +19,7 @@ const providerLabel = (driver: string) =>
 export function collectResetCreditAccounts(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
+  environmentId: EnvironmentId,
 ): readonly ResetCreditAccount[] {
   const accounts = new Map<string, ResetCreditAccount>();
   for (const provider of providers) {
@@ -32,7 +34,7 @@ export function collectResetCreditAccounts(
       provider.usageLimits.credentialFingerprint ??
       provider.auth.profileId ??
       provider.auth.email ??
-      provider.instanceId;
+      `${environmentId}/${provider.instanceId}`;
     const key = `${provider.driver}:${identity}:${provider.auth.workspaceId ?? ""}`;
     if (!accounts.has(key))
       accounts.set(key, {
@@ -49,7 +51,7 @@ export function collectResetCreditAccounts(
   }
   for (const source of sources) {
     for (const account of source.accounts) {
-      const key = `${account.driver}:${account.email ?? `${source.id}/${account.id}`}:${account.workspaceId ?? ""}`;
+      const key = `${account.driver}:${account.email ?? `${environmentId}/${source.id}/${account.id}`}:${account.workspaceId ?? ""}`;
       const existing = accounts.get(key);
       if (existing) {
         const result = account.usageLimits.resetCreditAutoUse;

@@ -470,6 +470,7 @@ export function UsageLimitsSection({
         collectResetCreditAccounts(
           presentation.serverConfig?.providers ?? [],
           presentation.serverConfig?.usageLimitSources ?? [],
+          environmentId,
         )
           .filter((account) => account.limits.resetCreditAutoUse)
           .map((account) => (

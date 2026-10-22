@@ -31,6 +31,7 @@ import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
+import { claudeResetCreditsToContract } from "./claudeResetCredits.ts";
 import {
   makeResetCreditExpiryResults,
   resetCreditAccountKey,
@@ -57,6 +58,7 @@ const provider = (expiresAt: number, instanceId = "codex", creditId = "credit-a"
       resetCredits: {
         availableCount: 1,
         nextCreditId: creditId,
+        nextExpiresAt: DateTime.formatIso(DateTime.makeUnsafe(expiresAt)),
         expiries: [DateTime.formatIso(DateTime.makeUnsafe(expiresAt))],
       },
     },
@@ -203,6 +205,103 @@ const test = (
 ) => program.pipe(Effect.scoped, Effect.provide(ResetCreditCoordinator.layerTest));
 
 describe("banked reset auto-use", () => {
+  it.effect.each([false, true])(
+    "schedules the selected Claude grant at its own expiry minus ten minutes (hub: %s)",
+    (hub) =>
+      test(
+        Effect.gen(function* () {
+          const selectedExpiry = 24 * 60 * MINUTE;
+          const value = provider(selectedExpiry, "claude", "later");
+          const credits = claudeResetCreditsToContract(
+            {
+              eligible: true,
+              next_grant_id: "later",
+              grants: [
+                {
+                  id: "earlier",
+                  resets_left: 1,
+                  usable_now: true,
+                  ends_at: DateTime.formatIso(DateTime.makeUnsafe(20 * MINUTE)),
+                },
+                {
+                  id: "later",
+                  resets_left: 1,
+                  usable_now: true,
+                  ends_at: DateTime.formatIso(DateTime.makeUnsafe(selectedExpiry)),
+                },
+              ],
+            },
+            0,
+          )!;
+          const claude = {
+            ...value,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            usageLimits: { ...value.usageLimits!, resetCredits: credits },
+          };
+          const f = yield* fixture(
+            hub
+              ? {
+                  providers: [],
+                  sources: [
+                    {
+                      id: UsageLimitSourceId.make("hub"),
+                      kind: "cliproxy",
+                      label: "Hub",
+                      checkedAt: value.checkedAt,
+                      accounts: [
+                        { id: "a", driver: claude.driver, usageLimits: claude.usageLimits },
+                      ],
+                    },
+                  ],
+                }
+              : { providers: [claude] },
+          );
+          yield* TestClock.adjust(10 * MINUTE);
+          assert.strictEqual((yield* Ref.get(f.calls)).length, 0);
+          yield* TestClock.adjust(selectedExpiry - 20 * MINUTE - 1);
+          assert.strictEqual((yield* Ref.get(f.calls)).length, 0);
+          yield* TestClock.adjust(1);
+          const result = yield* Queue.take(f.results);
+          assert.strictEqual(result.status, "used");
+          assert.strictEqual(result.expiresAt, credits.nextExpiresAt);
+          const calls = yield* Ref.get(f.calls);
+          assert.strictEqual(calls.length, 1);
+          assert.strictEqual(calls[0]?.creditId, "later");
+          assert.strictEqual(calls[0]?.at, selectedExpiry - 10 * MINUTE);
+        }),
+      ),
+  );
+
+  it.effect.each([false, true])(
+    "does not schedule an ID without its selected expiry (hub: %s)",
+    (hub) =>
+      test(
+        Effect.gen(function* () {
+          const value = provider(20 * MINUTE);
+          const { nextExpiresAt: _expiry, ...credits } = value.usageLimits!.resetCredits!;
+          const limits = { ...value.usageLimits!, resetCredits: credits };
+          const f = yield* fixture(
+            hub
+              ? {
+                  providers: [],
+                  sources: [
+                    {
+                      id: UsageLimitSourceId.make("hub"),
+                      kind: "cliproxy",
+                      label: "Hub",
+                      checkedAt: value.checkedAt,
+                      accounts: [{ id: "a", driver: value.driver, usageLimits: limits }],
+                    },
+                  ],
+                }
+              : { providers: [{ ...value, usageLimits: limits }] },
+          );
+          yield* TestClock.adjust(20 * MINUTE);
+          assert.strictEqual((yield* Ref.get(f.calls)).length, 0);
+        }),
+      ),
+  );
+
   it.effect(
     "redeems at ten minutes through the coordinator and pins the credit only once across instances and updates",
     () =>

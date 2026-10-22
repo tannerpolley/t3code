@@ -2343,6 +2343,7 @@ export const layerWsRpc = (
                   detail: "This provider does not bank reset credits.",
                 });
               }
+              // Old clients omit the ID; accept their open-confirmation race with auto-use to preserve upstream's unpinned behavior.
               const outcome = yield* instance
                 .consumeResetCredit(input.creditId ? { creditId: input.creditId } : undefined)
                 .pipe(

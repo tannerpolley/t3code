@@ -1,4 +1,9 @@
-import { ProviderDriverKind, ProviderInstanceId, UsageLimitSourceId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
 import { collectResetCreditAccounts } from "./ResetCreditAccounts";
 import { describe, expect, it } from "vite-plus/test";
 import {
@@ -116,6 +121,7 @@ it("includes hub expiries when the same direct account reports no credits", () =
         ],
       },
     ],
+    EnvironmentId.make("reset-test"),
   );
   expect(accounts).toHaveLength(1);
   expect(accounts[0]?.limits.resetCredits?.expiries).toEqual([expiry]);

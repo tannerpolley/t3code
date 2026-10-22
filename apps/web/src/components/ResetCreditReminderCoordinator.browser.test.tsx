@@ -178,3 +178,31 @@ it("deduplicates the same account and credit across environments for every offse
     }
   }
 });
+
+it("gives environments without account identity their own reminders", async () => {
+  setup();
+  state.environmentIds = [EnvironmentId.make("anonymous-a"), EnvironmentId.make("anonymous-b")];
+  state.providers = state.providers.map((provider) => ({
+    ...provider,
+    auth: { status: "authenticated" },
+  }));
+  const keys = state.environmentIds.map((id) => `t3:reset-credit:codex:${id}/codex::${expiry}:60`);
+  for (const key of keys) localStorage.removeItem(key);
+  using _cleanup = {
+    [Symbol.dispose]: () => {
+      for (const key of keys) localStorage.removeItem(key);
+    },
+  };
+  using _now = vi.spyOn(Date, "now").mockReturnValue(now);
+  using notifications = vi.spyOn(window, "Notification").mockImplementation(function () {
+    return { close: vi.fn(), addEventListener: vi.fn() } as unknown as Notification;
+  });
+  Object.defineProperty(notifications, "permission", { get: () => "granted" });
+  await using screen = await render(<ResetCreditReminderCoordinator />);
+  await navigator.locks.request("t3-reset-credit-reminders", () => {});
+  expect(notifications).toHaveBeenCalledTimes(2);
+  for (const key of keys) expect(localStorage.getItem(key)).toBe("shown");
+  await screen.rerender(<ResetCreditReminderCoordinator key="remounted" />);
+  await navigator.locks.request("t3-reset-credit-reminders", () => {});
+  expect(notifications).toHaveBeenCalledTimes(2);
+});
