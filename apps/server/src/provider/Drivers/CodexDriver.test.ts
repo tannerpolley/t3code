@@ -5,12 +5,24 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
+import * as PubSub from "effect/PubSub";
+import * as TestClock from "effect/testing/TestClock";
+import * as ResetCreditExpiry from "../ResetCreditExpiry.ts";
+import * as ProviderRegistry from "../ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "../ProviderInstanceRegistry.ts";
+import * as UsageLimitSources from "../../usage/UsageLimitSources.ts";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -108,8 +120,11 @@ const decodeCreditFrame = Schema.decodeUnknownEffect(
   ),
 );
 
-const creditFixture = Effect.fn("CodexDriverTest.creditFixture")(function* () {
+const creditFixture = Effect.fn("CodexDriverTest.creditFixture")(function* (
+  pauseInitialize = false,
+) {
   const requests: unknown[] = [];
+  const releaseInitialize = yield* Deferred.make<void>();
   const initialized = yield* Deferred.make<void>();
   const spawner = ChildProcessSpawner.make(() =>
     Effect.gen(function* () {
@@ -124,7 +139,10 @@ const creditFixture = Effect.fn("CodexDriverTest.creditFixture")(function* () {
           Effect.gen(function* () {
             const frame = yield* decodeCreditFrame(new TextDecoder().decode(chunk));
             if (frame.id === undefined) return;
-            if (frame.method === "initialize") yield* Deferred.succeed(initialized, undefined);
+            if (frame.method === "initialize") {
+              yield* Deferred.succeed(initialized, undefined);
+              if (pauseInitialize) yield* Deferred.await(releaseInitialize);
+            }
             if (frame.method === "account/rateLimitResetCredit/consume")
               requests.push(frame.params);
             const result =
@@ -168,7 +186,11 @@ const creditFixture = Effect.fn("CodexDriverTest.creditFixture")(function* () {
     usageLimits: {
       checkedAt: "2026-10-22T12:00:00.000Z",
       windows: [],
-      resetCredits: { availableCount: 2, nextCreditId: "credit-a" },
+      resetCredits: {
+        availableCount: 2,
+        nextCreditId: "credit-a",
+        nextExpiresAt: "1970-01-01T00:20:00.000Z",
+      },
     },
   });
   Object.assign(instance.snapshot, {
@@ -180,14 +202,92 @@ const creditFixture = Effect.fn("CodexDriverTest.creditFixture")(function* () {
         checkedAt: DateTime.formatIso(
           DateTime.add(DateTime.makeUnsafe(value.usageLimits.checkedAt), { minutes: 1 }),
         ),
-        resetCredits: { availableCount: 1, nextCreditId: "credit-b" },
+        resetCredits: {
+          availableCount: 1,
+          nextCreditId: "credit-b",
+          nextExpiresAt: "1970-01-01T00:30:00.000Z",
+        },
       },
     })),
   });
-  return { instance, requests, initialized };
+  return { instance, requests, initialized, current, releaseInitialize };
 });
 
 it.layer(layerTest)("CodexDriver", (it) => {
+  it.effect(
+    "reschedules the selected credit when it changes during auto-use app-server startup",
+    () =>
+      Effect.gen(function* () {
+        const minute = 60_000;
+        const f = yield* creditFixture(true);
+        yield* Ref.update(f.current, (value) => ({ ...value, enabled: true }));
+        const updates = yield* PubSub.unbounded<readonly ServerProvider[]>();
+        const ready = yield* Deferred.make<void>();
+        const completed = yield* Deferred.make<void>();
+        const deps = Layer.mergeAll(
+          ServerSettings.layerTest({ autoUseExpiringResetCredits: true }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Ref.get(f.current).pipe(Effect.map((value) => [value])),
+            subscribeChanges: Effect.succeed(
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  const subscription = yield* PubSub.subscribe(updates);
+                  yield* Deferred.succeed(ready, undefined);
+                  return Stream.concat(
+                    Stream.fromEffect(Ref.get(f.current).pipe(Effect.map((value) => [value]))),
+                    Stream.fromSubscription(subscription),
+                  );
+                }),
+              ),
+            ),
+            publishResetCreditAutoUse: () => Effect.void,
+          }),
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            getInstance: () =>
+              Effect.succeed({
+                ...f.instance,
+                enabled: true,
+                consumeResetCredit: (expected, canRedeem) =>
+                  f.instance.consumeResetCredit!(expected, canRedeem).pipe(
+                    Effect.tap(() => Deferred.succeed(completed, undefined)),
+                  ),
+              }),
+          }),
+          Layer.mock(UsageLimitSources.UsageLimitSources)({
+            current: Effect.succeed([]),
+            streamChanges: Stream.make([]),
+          }),
+        );
+        const scheduler = yield* ResetCreditExpiry.ResetCreditExpiry.pipe(
+          Effect.provide(ResetCreditExpiry.layer.pipe(Layer.provide(deps))),
+        );
+        yield* scheduler.start;
+        yield* Deferred.await(ready);
+        yield* TestClock.adjust(10 * minute);
+        yield* Deferred.await(f.initialized);
+        yield* Ref.update(f.current, (value) => ({
+          ...value,
+          usageLimits: {
+            ...value.usageLimits!,
+            resetCredits: {
+              availableCount: 2,
+              nextCreditId: "credit-b",
+              nextExpiresAt: "1970-01-01T00:30:00.000Z",
+            },
+          },
+        }));
+        yield* PubSub.publish(updates, [yield* Ref.get(f.current)]);
+        yield* TestClock.adjust(0);
+        yield* Deferred.succeed(f.releaseInitialize, undefined);
+        yield* Deferred.await(completed);
+        expect(f.requests).toHaveLength(0);
+        yield* TestClock.adjust(10 * minute - 1);
+        expect(f.requests).toHaveLength(0);
+        yield* TestClock.adjust(1);
+        expect(f.requests).toEqual([expect.objectContaining({ creditId: "credit-b" })]);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "a pinned manual confirmation for an auto-redeemed credit never consumes the next credit",
     () =>

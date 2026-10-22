@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
@@ -27,6 +28,7 @@ interface ExpiringCredit {
   readonly owner: string;
   readonly creditId: string;
   readonly expiresAt: string;
+  readonly isCurrent: Effect.Effect<boolean>;
   readonly redeem: (
     canRedeem: Effect.Effect<boolean>,
   ) => Effect.Effect<
@@ -72,24 +74,29 @@ const make = Effect.gen(function* () {
         return [];
       const creditId = credits.nextCreditId;
       const accountKey = resetCreditAccountKey(provider);
+      const isCurrent = Effect.gen(function* () {
+        const instance = yield* instances.getInstance(provider.instanceId);
+        if (!instance?.enabled || !instance.consumeResetCredit) return false;
+        const current = yield* instance.snapshot.getSnapshot;
+        return (
+          resetCreditAccountKey(current) === accountKey &&
+          current.usageLimits?.resetCredits?.nextCreditId === creditId &&
+          current.usageLimits.resetCredits.nextExpiresAt === expiresAt
+        );
+      });
       return [
         {
           accountKey,
           owner: provider.instanceId,
           creditId,
           expiresAt,
+          isCurrent,
           redeem: Effect.fn("ResetCreditExpiry.redeemProvider")(function* (
             canRedeem: Effect.Effect<boolean>,
           ) {
             const instance = yield* instances.getInstance(provider.instanceId);
             if (!instance?.enabled || !instance.consumeResetCredit) return "stale" as const;
-            const current = yield* instance.snapshot.getSnapshot;
-            if (
-              resetCreditAccountKey(current) !== accountKey ||
-              current.usageLimits?.resetCredits?.nextCreditId !== creditId ||
-              current.usageLimits.resetCredits.nextExpiresAt !== expiresAt
-            )
-              return "stale" as const;
+            if (!(yield* isCurrent)) return "stale" as const;
             return yield* instance.consumeResetCredit({ creditId }, canRedeem);
           }),
           publish: (result: ResetCreditAutoUseResult) =>
@@ -105,25 +112,28 @@ const make = Effect.gen(function* () {
         if (!credits?.availableCount || !credits.nextCreditId || !expiresAt) return [];
         const creditId = credits.nextCreditId;
         const accountKey = resetCreditSourceAccountKey(source.id, account);
+        const isCurrent = Effect.gen(function* () {
+          const current = (yield* sources.current)
+            .find((value) => value.id === source.id)
+            ?.accounts.find((value) => value.id === account.id);
+          return (
+            current !== undefined &&
+            resetCreditSourceAccountKey(source.id, current) === accountKey &&
+            current.usageLimits.resetCredits?.nextCreditId === creditId &&
+            current.usageLimits.resetCredits.nextExpiresAt === expiresAt
+          );
+        });
         return [
           {
             accountKey,
             owner: `${source.id}/${account.id}`,
             creditId,
             expiresAt,
+            isCurrent,
             redeem: Effect.fn("ResetCreditExpiry.redeemSource")(function* (
               canRedeem: Effect.Effect<boolean>,
             ) {
-              const current = (yield* sources.current)
-                .find((value) => value.id === source.id)
-                ?.accounts.find((value) => value.id === account.id);
-              if (
-                !current ||
-                resetCreditSourceAccountKey(source.id, current) !== accountKey ||
-                current.usageLimits.resetCredits?.nextCreditId !== creditId ||
-                current.usageLimits.resetCredits.nextExpiresAt !== expiresAt
-              )
-                return "stale" as const;
+              if (!(yield* isCurrent)) return "stale" as const;
               const result = yield* sources.consumeResetCredit(
                 {
                   sourceId: source.id,
@@ -143,9 +153,10 @@ const make = Effect.gen(function* () {
 
   const start = Effect.gen(function* () {
     const scope = yield* Effect.scope;
-    let providers: readonly ExpiringCredit[] = [];
-    let hubAccounts: readonly ExpiringCredit[] = [];
+    const reschedule = yield* Effect.acquireRelease(Queue.unbounded<void>(), Queue.shutdown);
     const reconcile = Effect.fn("ResetCreditExpiry.reconcile")(function* () {
+      const providers = providerCredits(yield* registry.getProviders);
+      const hubAccounts = sourceCredits(yield* sources.current);
       const candidates = new Map<string, ExpiringCredit>();
       for (const credit of [...providers, ...hubAccounts]) {
         if (!candidates.has(credit.accountKey)) candidates.set(credit.accountKey, credit);
@@ -200,6 +211,7 @@ const make = Effect.gen(function* () {
             );
             if (!enabled) return false;
             redemption.active = true;
+            let stale = false;
             const result = yield* credit
               .redeem(
                 Effect.gen(function* () {
@@ -207,8 +219,11 @@ const make = Effect.gen(function* () {
                   const currentSettings = yield* settings.getSettings.pipe(
                     Effect.orElseSucceed(() => null),
                   );
+                  // The hub reads under its refresh lock; direct drivers read after provider setup.
+                  stale = !(yield* credit.isCurrent);
                   const currentTime = yield* Clock.currentTimeMillis;
                   const permitted =
+                    !stale &&
                     currentSettings?.autoUseExpiringResetCredits === true &&
                     currentTime >= expiry - 10 * MINUTE &&
                     currentTime <= expiry - MINUTE;
@@ -218,7 +233,12 @@ const make = Effect.gen(function* () {
               )
               .pipe(Effect.result);
             redemption.active = false;
-            if (result._tag === "Success" && result.success === "stale") return true;
+            if (stale || (result._tag === "Success" && result.success === "stale")) {
+              jobs.delete(accountKey);
+              // Reconcile on the subscription fiber so concurrent jobs cannot race scheduling.
+              yield* Queue.offer(reschedule, undefined);
+              return true;
+            }
             if (
               result._tag === "Success" &&
               (result.success === "reset" || result.success === "alreadyRedeemed")
@@ -243,18 +263,11 @@ const make = Effect.gen(function* () {
       }
     });
     const changes = yield* registry.subscribeChanges;
-    yield* Stream.merge(
-      changes.pipe(
-        Stream.map((values) => {
-          providers = providerCredits(values);
-        }),
-      ),
-      sources.streamChanges.pipe(
-        Stream.map((values) => {
-          hubAccounts = sourceCredits(values);
-        }),
-      ),
-    ).pipe(Stream.runForEach(reconcile), Effect.forkScoped);
+    yield* Stream.merge(changes, sources.streamChanges).pipe(
+      Stream.merge(Stream.fromQueue(reschedule)),
+      Stream.runForEach(reconcile),
+      Effect.forkScoped,
+    );
   });
   return { start };
 });
