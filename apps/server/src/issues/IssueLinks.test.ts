@@ -1,3 +1,4 @@
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeSqlite from "node:sqlite";
@@ -16,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -29,8 +31,18 @@ const ref = { host: "github.com", repository: "owner/repo", number: 13 };
 const threadId = ThreadId.make("ordinary-builder");
 function harness(initial: OrchestrationV2ThreadShell[]) {
   let shells = initial;
+  let revision = 0;
   const lookups: string[] = [];
   const projections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
+    issueWorkRevision: Effect.sync(() => revision),
+    getIssueWorkThreads: (ids) =>
+      Effect.sync(() => {
+        lookups.push(...ids);
+        return ids.flatMap((id) => {
+          const shell = shells.find((shell) => shell.id === id);
+          return shell === undefined ? [] : [shell];
+        });
+      }),
     getThreadShell: (id) =>
       Effect.sync(() => {
         lookups.push(id);
@@ -72,6 +84,7 @@ function harness(initial: OrchestrationV2ThreadShell[]) {
     layer,
     setShells: (next: OrchestrationV2ThreadShell[]) => {
       shells = next;
+      revision++;
     },
     lookups,
   };
@@ -166,6 +179,7 @@ it.effect(
     const ordinary = liveThreadShell(threadId);
     const h = harness([managed, ordinary]);
     const layer = IssueRoadmap.layer.pipe(
+      Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
       Layer.provideMerge(h.layer),
       Layer.provide(
         Layer.mock(IssueService.IssueService)({
@@ -729,95 +743,119 @@ it.effect("reports whether a closed issue's preserved worktree path still exists
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("allows writes during enrich reads and WAL truncation between bounded batches", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-issue-enrich-" });
-    const filename = `${directory}/state.sqlite`;
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      const links = yield* IssueLinks.IssueLinks;
-      yield* sql`CREATE TABLE contention_probe (value INTEGER)`;
-      for (let index = 0; index < 100; index++) {
-        const thread = idleThreadProjection(
-          liveThreadShell(ThreadId.make(`batch-${index}`)),
-        ).thread;
-        yield* sql`
+it.effect(
+  "allows writes during the lightweight projection and truncation after its reader ends",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-issue-enrich-" });
+      const filename = `${directory}/state.sqlite`;
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const links = yield* IssueLinks.IssueLinks;
+        yield* sql`CREATE TABLE contention_probe (value INTEGER)`;
+        for (let index = 0; index < 100; index++) {
+          const thread = idleThreadProjection(
+            liveThreadShell(ThreadId.make(`batch-${index}`)),
+          ).thread;
+          yield* sql`
         INSERT INTO orchestration_v2_projection_threads(
           thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
           created_at, updated_at, archived_at, deleted_at, payload_json
         ) VALUES (${thread.id}, ${thread.projectId}, ${thread.title}, 'codex', 'full-access', 'default',
           '2026-10-13', '2026-10-13', NULL, NULL, ${JSON.stringify(thread)})`;
-        yield* sql`INSERT INTO issue_thread_links(host, repository, issue_number, thread_id)
+          yield* sql`INSERT INTO issue_thread_links(host, repository, issue_number, thread_id)
         VALUES (${ref.host}, ${ref.repository}, ${ref.number}, ${thread.id})`;
-      }
-      const other = yield* Effect.acquireRelease(
-        Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
-        (db) => Effect.sync(() => db.close()),
-      );
-      other.exec("PRAGMA busy_timeout = 0");
-      let writerResult: unknown;
-      let checkpointResult: unknown;
-      let batches = 0;
-      let checkpointAfterBatch = 0;
-      let statements = 0;
-      const connections: unknown[] = [];
-      const tracer = Tracer.make({
-        span(options) {
-          const span = new Tracer.NativeSpan(options);
-          if (span.name === "sqlite") statements++;
-          const end = span.end.bind(span);
-          span.end = (time, exit) => {
-            end(time, exit);
-            if (span.name === "sql.transaction")
-              connections.push(span.attributes.get("db.connection"));
-            if (
-              span.name === "sqlite" &&
-              String(span.attributes.get("db.query.text")).includes("native_subagent_payload_json")
-            ) {
-              batches++;
-              if (writerResult === undefined) {
-                try {
-                  other.exec("INSERT INTO contention_probe VALUES (1)");
-                  writerResult = true;
-                } catch (error) {
-                  writerResult = error;
+        }
+        const other = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+          (db) => Effect.sync(() => db.close()),
+        );
+        other.exec("PRAGMA busy_timeout = 0");
+        let writerResult: unknown;
+        let checkpointResult: unknown;
+        let batches = 0;
+
+        let statements = 0;
+        const connections: unknown[] = [];
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options);
+            if (span.name === "sqlite") statements++;
+            const end = span.end.bind(span);
+            span.end = (time, exit) => {
+              end(time, exit);
+              if (span.name === "sqlite") connections.push(span.attributes.get("db.connection"));
+              if (
+                span.name === "sqlite" &&
+                String(span.attributes.get("db.query.text")).includes("AS thread_json")
+              ) {
+                batches++;
+                if (writerResult === undefined) {
+                  try {
+                    other.exec("INSERT INTO contention_probe VALUES (1)");
+                    writerResult = true;
+                  } catch (error) {
+                    writerResult = error;
+                  }
                 }
               }
-            }
-            if (
-              span.name === "ProjectionStore.decodeShellSnapshot" &&
-              checkpointResult === undefined
-            ) {
-              checkpointAfterBatch = batches;
-              try {
-                checkpointResult = other.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
-              } catch (error) {
-                checkpointResult = error;
+              if (span.name === "IssueLinks.readWorkProjection" && checkpointResult === undefined) {
+                try {
+                  checkpointResult = other.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+                } catch (error) {
+                  checkpointResult = error;
+                }
               }
-            }
-          };
-          return span;
-        },
-      });
-      const enriched = yield* links.enrich(list()).pipe(Effect.withTracer(tracer));
-      assert.sameMembers(
-        enriched.issues[0]?.liveWork?.map((work) => work.threadId) ?? [],
-        Array.from({ length: 100 }, (_, index) => `batch-${index}`),
-      );
-      assert.strictEqual(writerResult, true);
-      assert.deepEqual(checkpointResult, { busy: 0, log: 0, checkpointed: 0 });
-      assert.isAbove(checkpointAfterBatch, 0);
-      assert.isAbove(batches, checkpointAfterBatch, "more batches must run after truncation");
-      assert.isTrue(connections.every((connection) => connection === "reader"));
-      assert.isAtMost(statements, 30, "shell reads must stay batched, not per thread");
-    }).pipe(
-      Effect.provide(
-        IssueLinks.layer.pipe(
-          Layer.provide(ProjectionStore.layer),
-          Layer.provideMerge(SqlitePersistence.layerFromPath(filename)),
+            };
+            return span;
+          },
+        });
+        const enriched = yield* links
+          .enrich(list())
+          .pipe(
+            Effect.provideService(Statement.SpanPropagationEnabled, true),
+            Effect.withTracer(tracer),
+          );
+        assert.sameMembers(
+          enriched.issues[0]?.liveWork?.map((work) => work.threadId) ?? [],
+          Array.from({ length: 100 }, (_, index) => `batch-${index}`),
+        );
+        assert.strictEqual(writerResult, true);
+        assert.deepEqual(checkpointResult, { busy: 0, log: 0, checkpointed: 0 });
+        assert.equal(batches, 1, "one lightweight projection covers all candidates");
+        assert.isNotEmpty(connections);
+        assert.deepEqual(
+          connections,
+          Array.from({ length: connections.length }, () => "reader"),
+        );
+        assert.isAtMost(statements, 5, "work reads must not grow with the number of threads");
+      }).pipe(
+        Effect.provide(
+          IssueLinks.layer.pipe(
+            Layer.provide(ProjectionStore.layer),
+            Layer.provideMerge(SqlitePersistence.layerFromPath(filename)),
+          ),
         ),
-      ),
-    );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("memoizes unchanged work and invalidates it on the next projected thread change", () => {
+  const thread = liveThreadShell(threadId);
+  const h = harness([thread]);
+  return Effect.gen(function* () {
+    const links = yield* IssueLinks.IssueLinks;
+    yield* links.link(ref, threadId);
+    h.lookups.length = 0;
+    const first = yield* links.enrich(list());
+    const reads = h.lookups.length;
+    assert.isAbove(reads, 0);
+    assert.deepEqual(yield* links.enrich(list()), first);
+    assert.equal(h.lookups.length, reads, "unchanged projections must not be read again");
+    h.setShells([{ ...thread, title: "Changed", status: "completed", activeRunId: null }]);
+    const next = yield* links.enrich(list());
+    assert.equal(next.issues[0]?.liveWork?.[0]?.title, "Changed");
+    assert.equal(next.issues[0]?.liveWork?.[0]?.status, "idle");
+  }).pipe(Effect.provide(h.layer));
+});

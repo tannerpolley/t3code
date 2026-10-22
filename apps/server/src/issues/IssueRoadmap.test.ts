@@ -1,3 +1,16 @@
+import {
+  EventId,
+  ThreadId,
+  NodeId,
+  ProviderDriverKind,
+  type OrchestrationV2DomainEvent,
+} from "@t3tools/contracts";
+import * as Queue from "effect/Queue";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
+import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as Stream from "effect/Stream";
 import { assert, it } from "@effect/vitest";
 import { IssueLinkError, IssueReadError, type IssueListResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -42,6 +55,7 @@ it.effect(
   () => {
     let reads = 0;
     const layer = IssueRoadmap.layer.pipe(
+      Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(IssueService.IssueService)({ list: () => Effect.succeed(list) }),
@@ -77,6 +91,7 @@ it.effect("preserves an underlying GitHub read failure", () => {
     message: "GitHub unavailable",
   });
   const layer = IssueRoadmap.layer.pipe(
+    Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(IssueService.IssueService)({ list: () => Effect.fail(error) }),
@@ -124,6 +139,7 @@ it.effect("gives an issue's detail the live work its row has, matched by closing
   };
   let enrichedRefs: IssueListResult["issues"][number]["pullRequestRefs"];
   const layer = IssueRoadmap.layer.pipe(
+    Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty })),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(IssueService.IssueService)({ detail: () => Effect.succeed(detail) }),
@@ -149,3 +165,98 @@ it.effect("gives an issue's detail the live work its row has, matched by closing
     assert.equal(result.linkedPullRequests.length, 2);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "coalesces metadata bursts and ignores subagent progress without a work-state change",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const changes = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const roadmap = yield* IssueRoadmap.IssueRoadmap.pipe(
+          Effect.provide(
+            IssueRoadmap.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.mock(IssueService.IssueService)({}),
+                  Layer.mock(IssueLinks.IssueLinks)({ refreshes: Stream.make(0) }),
+                  Layer.mock(Orchestrator.OrchestratorV2)({
+                    streamDomainEvents: Stream.fromQueue(changes),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+        const observed: number[] = [];
+        const result = yield* roadmap.linkRefreshes.pipe(
+          Stream.tap((revision) =>
+            Effect.sync(() => {
+              observed.push(revision);
+            }),
+          ),
+          Stream.take(4),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        const thread = idleThreadProjection(liveThreadShell(ThreadId.make("root"))).thread;
+        for (const id of ["ownership", "queue"]) {
+          yield* Queue.offer(changes, {
+            id: EventId.make(id),
+            type: "thread.metadata-updated",
+            threadId: thread.id,
+            occurredAt: thread.updatedAt,
+            payload: thread,
+          });
+        }
+        yield* TestClock.adjust("250 millis");
+        assert.deepEqual(observed, [0, 1]);
+        const nodeId = NodeId.make("worker");
+        const subagent = {
+          id: nodeId,
+          threadId: thread.id,
+          runId: null,
+          parentNodeId: nodeId,
+          origin: "provider_native" as const,
+          createdBy: "agent" as const,
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: thread.providerInstanceId,
+          providerThreadId: null,
+          childThreadId: ThreadId.make("worker"),
+          nativeTaskRef: null,
+          prompt: "Inspect",
+          title: null,
+          model: null,
+          status: "running" as const,
+          result: null,
+          startedAt: thread.updatedAt,
+          completedAt: null,
+          updatedAt: thread.updatedAt,
+        };
+        const event = {
+          id: EventId.make("running"),
+          type: "subagent.updated" as const,
+          threadId: thread.id,
+          nodeId,
+          occurredAt: thread.updatedAt,
+          payload: subagent,
+        };
+        yield* Queue.offer(changes, event);
+        yield* TestClock.adjust("250 millis");
+        assert.deepEqual(observed, [0, 1, 2]);
+        yield* Queue.offer(changes, {
+          ...event,
+          id: EventId.make("progress"),
+          payload: { ...subagent, progress: "Still inspecting" },
+        });
+        yield* TestClock.adjust("250 millis");
+        assert.deepEqual(observed, [0, 1, 2]);
+        yield* Queue.offer(changes, {
+          ...event,
+          id: EventId.make("completed"),
+          payload: { ...subagent, status: "completed" },
+        });
+        yield* TestClock.adjust("250 millis");
+        assert.deepEqual(yield* Fiber.join(result), [0, 1, 2, 3]);
+      }),
+    ),
+);
