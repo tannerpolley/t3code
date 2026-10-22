@@ -217,8 +217,7 @@ const make = Effect.gen(function* () {
     // Delegated and native child shells inherit associations from their ancestors. A visited set
     // bounds corrupt lineage; each selected shell is read once, never per issue.
     const byId = new Map(threads.map((thread) => [thread.id, thread]));
-    const work = new Map<number, NonNullable<IssueSummary["liveWork"]>[number][]>();
-    for (const thread of threads) {
+    const linked = threads.flatMap((thread) => {
       const refs = new Set(refsByThread.get(thread.id));
       const visited = new Set<string>([thread.id]);
       let parent = thread.lineage.parentThreadId;
@@ -227,7 +226,27 @@ const make = Effect.gen(function* () {
         for (const number of refsByThread.get(parent) ?? []) refs.add(number);
         parent = byId.get(parent)?.lineage.parentThreadId ?? null;
       }
-      if (refs.size === 0) continue;
+      return refs.size === 0 ? [] : [{ thread, refs }];
+    });
+    // Children usually share an ancestor's worktree, and every check waits on Node's file thread
+    // pool, which startup work saturates, so each distinct path is checked once, concurrently.
+    const worktreePaths = new Set(
+      linked.flatMap(({ thread }) => (thread.worktreePath === null ? [] : [thread.worktreePath])),
+    );
+    const existingWorktrees = new Set<string>();
+    yield* Effect.forEach(
+      worktreePaths,
+      (path) =>
+        fs.exists(path).pipe(
+          Effect.orElseSucceed(() => false),
+          Effect.map((exists) => {
+            if (exists) existingWorktrees.add(path);
+          }),
+        ),
+      { concurrency: 16, discard: true },
+    );
+    const work = new Map<number, NonNullable<IssueSummary["liveWork"]>[number][]>();
+    for (const { thread, refs } of linked) {
       const state = workState(thread);
       const ownedPr = ownedPrByThread.get(thread.id);
       const item = {
@@ -235,9 +254,7 @@ const make = Effect.gen(function* () {
         title: thread.title,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
-        worktreeExists:
-          thread.worktreePath !== null &&
-          (yield* fs.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => false))),
+        worktreeExists: thread.worktreePath !== null && existingWorktrees.has(thread.worktreePath),
         pullRequests: ownedPr === undefined ? [] : [ownedPr.url],
         status: state,
       };
