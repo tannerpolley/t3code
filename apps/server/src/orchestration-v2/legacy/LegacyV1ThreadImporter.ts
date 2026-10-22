@@ -120,6 +120,7 @@ export class LegacyV1ThreadImporter extends Context.Service<
   LegacyV1ThreadImporterShape
 >()("t3/orchestration-v2/legacy/LegacyV1ThreadImporter") {}
 
+const MAX_CONFIRMED_TRANSCRIPT_THREADS = 50_000;
 const decodeModelSelection = Schema.decodeUnknownOption(ModelSelection);
 const decodeAttachments = Schema.decodeUnknownOption(Schema.Array(ChatAttachment));
 const decodePullRequests = Schema.decodeUnknownOption(Schema.Array(ThreadPullRequestLink));
@@ -436,6 +437,13 @@ const make = Effect.gen(function* () {
   // Only reconcileShells inserts import rows, during startup before requests run.
   // Missing rows and completed imports stay valid until reconciliation runs again.
   const confirmedTranscriptThreadIds = new Set<ThreadId>();
+  // Lookups of thread ids that don't exist also land here while an import is pending, so cap it;
+  // clearing only costs a fresh lookup.
+  const confirmTranscript = (threadId: ThreadId) => {
+    if (confirmedTranscriptThreadIds.size >= MAX_CONFIRMED_TRANSCRIPT_THREADS)
+      confirmedTranscriptThreadIds.clear();
+    confirmedTranscriptThreadIds.add(threadId);
+  };
   let noPendingTranscripts = false;
 
   const reconcileShellsBase = Effect.gen(function* () {
@@ -699,7 +707,7 @@ const make = Effect.gen(function* () {
         `;
         const imported = imports[0];
         if (imported === undefined || imported.transcript_imported_at !== null) {
-          confirmedTranscriptThreadIds.add(threadId);
+          confirmTranscript(threadId);
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
         const messages = yield* listMessages(threadId);
@@ -748,7 +756,7 @@ const make = Effect.gen(function* () {
             last_error = NULL
           WHERE thread_id = ${threadId}
         `;
-        confirmedTranscriptThreadIds.add(threadId);
+        confirmTranscript(threadId);
         return {
           importedThreadCount: 1,
           importedMessageCount: missing.length,
