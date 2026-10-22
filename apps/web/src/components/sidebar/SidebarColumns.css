@@ -32,23 +32,13 @@
   justify-content: center;
   min-width: 0;
 }
-/*
- * The model's name and version in fixed parts with no gap, so every version starts at the same x.
- * The parts' ch widths resolve in the container's font, like the model track itself.
- */
-/* The model's name and its version sit in their own columns, so every version starts at the same x. */
 @utility sidebar-thread-model {
   @apply min-w-0 truncate;
   font-size: 0.6875rem;
 }
-@utility sidebar-thread-version {
-  @apply min-w-0 truncate;
-  font-size: 0.6875rem;
-  font-variant-numeric: tabular-nums;
-}
+/* Effort dots stack bottom-up, so the lowest dot fills first. */
 @utility sidebar-thread-effort {
-  font-size: 0.6875rem;
-  @apply min-w-0 truncate;
+  @apply flex min-w-0 flex-col-reverse items-center justify-center gap-px;
 }
 @utility sidebar-thread-name {
   @apply min-w-0 truncate;

@@ -4,11 +4,6 @@
   inherits: true;
   initial-value: 0px;
 }
-@property --sidebar-version-width {
-  syntax: "<length>";
-  inherits: true;
-  initial-value: 0px;
-}
 @property --sidebar-name-width {
   syntax: "<length>";
   inherits: true;
@@ -19,9 +14,8 @@
   --sidebar-location-width: 0.75rem;
   --sidebar-role-width: 0.75rem;
   --sidebar-provider-width: 1rem;
-  --sidebar-model-width: 5.65ch;
-  --sidebar-version-width: 2.35ch;
-  --sidebar-effort-width: 2.5rem;
+  --sidebar-model-width: 8.4ch;
+  --sidebar-effort-width: 0.5rem;
   --sidebar-name-width: 11ch;
   --sidebar-issue-width: 2.25rem;
   --sidebar-pr-width: 2.25rem;
@@ -47,9 +41,6 @@
       var(--sidebar-column-gap)
     ) [model] var(--sidebar-model-track, var(--sidebar-model-width)) var(
       --sidebar-model-gap,
-      var(--sidebar-column-gap)
-    ) [version] var(--sidebar-version-track, var(--sidebar-version-width)) var(
-      --sidebar-version-gap,
       var(--sidebar-column-gap)
     ) [effort] var(--sidebar-effort-track, var(--sidebar-effort-width)) var(
       --sidebar-effort-gap,
@@ -90,9 +81,6 @@
 .sidebar-thread-model {
   grid-column: model;
 }
-.sidebar-thread-version {
-  grid-column: version;
-}
 .sidebar-thread-effort {
   grid-column: effort;
 }
@@ -114,7 +102,7 @@
 .sidebar-thread-work {
   grid-column: work;
 }
-@container sidebar-columns-name (width < calc(16.5625rem + 33px + 19ch)) {
+@container sidebar-columns-name (width < calc(14.5625rem + 30px + 19.4ch)) {
   .sidebar-thread-columns {
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
@@ -123,15 +111,12 @@
     display: none;
   }
 }
-@container sidebar-columns-name (width < calc(14.0625rem + 30px + 19ch)) {
+@container sidebar-columns-name (width < calc(14.0625rem + 27px + 19.4ch)) {
   .sidebar-thread-columns {
     --sidebar-model-track: 0px;
     --sidebar-model-gap: 0px;
-    --sidebar-version-track: 0px;
-    --sidebar-version-gap: 0px;
   }
-  .sidebar-thread-model,
-  .sidebar-thread-version {
+  .sidebar-thread-model {
     display: none;
   }
 }
@@ -147,7 +132,7 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(17.3125rem + 36px + 12ch)) {
+@container sidebar-columns (width < calc(15.3125rem + 33px + 12.4ch)) {
   .sidebar-thread-columns {
     --sidebar-effort-track: 0px;
     --sidebar-effort-gap: 0px;
@@ -156,15 +141,12 @@
     display: none;
   }
 }
-@container sidebar-columns (width < calc(14.8125rem + 33px + 12ch)) {
+@container sidebar-columns (width < calc(14.8125rem + 30px + 12.4ch)) {
   .sidebar-thread-columns {
     --sidebar-model-track: 0px;
     --sidebar-model-gap: 0px;
-    --sidebar-version-track: 0px;
-    --sidebar-version-gap: 0px;
   }
-  .sidebar-thread-model,
-  .sidebar-thread-version {
+  .sidebar-thread-model {
     display: none;
   }
 }

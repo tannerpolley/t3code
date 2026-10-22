@@ -15,7 +15,7 @@ import { makeThreadFixture } from "../../test-fixtures";
 import {
   childWorktreeLabel,
   sidebarThreadTitle,
-  splitSidebarModelLabel,
+  sidebarModelCellLabel,
   sameSidebarSubagentTree,
   describeSidebarBackgroundWork,
   groupBackgroundWorkTaskRows,
@@ -409,15 +409,12 @@ describe("sidebarThreadTitle", () => {
   });
 });
 
-describe("splitSidebarModelLabel", () => {
-  it("splits short labels into a name of up to six characters and a version", () => {
-    const split = (label: string) => Object.values(splitSidebarModelLabel(label));
-    expect(split("Opus 5.5")).toEqual(["Opus", "5.5"]);
-    expect(split("Sonnet 5")).toEqual(["Sonnet", "5"]);
-    expect(split("GPT-5.3 Codex")).toEqual(["GPT", "5.3"]);
-    expect(split("Flash 3.8 (High)")).toEqual(["Flash", "3.8"]);
-    expect(split("Codestral 25")).toEqual(["Codest", "25"]);
-    expect(split("Default")).toEqual(["Defaul", ""]);
+describe("sidebarModelCellLabel", () => {
+  it("keeps a short label's name and version and drops text after the version", () => {
+    expect(sidebarModelCellLabel("Opus 5.5")).toBe("Opus 5.5");
+    expect(sidebarModelCellLabel("GPT-5.3 Codex")).toBe("GPT 5.3");
+    expect(sidebarModelCellLabel("Flash 3.8 (High)")).toBe("Flash 3.8");
+    expect(sidebarModelCellLabel("Default")).toBe("Default");
   });
 });
 

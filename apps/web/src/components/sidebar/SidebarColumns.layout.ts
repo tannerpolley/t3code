@@ -13,11 +13,10 @@ export const sidebarColumnLayout = {
     location: 0.75,
     role: 0.75,
     provider: 1,
-    // "Sonnet" at the 11px model size in OpenDyslexic (5.28ch) plus a narrow space, then its own
-    // column for the version, such as 8.8, so versions align.
-    model: { ch: 5.65 },
-    version: { ch: 2.35 },
-    effort: 2.5,
+    // "Sonnet 5.5" at the 11px model size in OpenDyslexic (7.98ch) plus a narrow space.
+    model: { ch: 8.4 },
+    // One column of 3px effort dots.
+    effort: 0.5,
     // A role-name title: "Orchestrator" is 10.625ch at 12px in OpenDyslexic Bold, plus a narrow
     // space. Other titles take their text's width. Spare width goes to the spacer so
     // badges, time and status stay right-aligned.
@@ -35,7 +34,7 @@ export const sidebarColumnLayout = {
    * Optional columns in the order a narrowing sidebar drops them; a group drops together. The badge
    * slots go last, so a very narrow sidebar still has room for its title, time and status.
    */
-  dropOrder: [["effort"], ["model", "version"], ["issue", "pr"]],
+  dropOrder: [["effort"], ["model"], ["issue", "pr"]],
   rowPaddingRem: 1,
   titleCh,
   titleFontRem: 0.75,
