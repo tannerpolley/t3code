@@ -4,6 +4,7 @@ import type {
   ServerProvider,
   UsageLimitSourceError,
   UsageLimitSourceSnapshot,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import type { ProviderDriverError } from "./Errors.ts";
 import * as Clock from "effect/Clock";
@@ -20,7 +21,11 @@ import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as Settings from "../serverSettings.ts";
-import { resetCreditAccountKey, resetCreditSourceAccountKey } from "./ResetCreditExpiryResults.ts";
+import {
+  resetCreditAccountKey,
+  resetCreditSourceAccountKey,
+  resetCreditAutoUseStatus,
+} from "./ResetCreditExpiryResults.ts";
 
 const MINUTE = 60_000;
 interface ExpiringCredit {
@@ -29,6 +34,8 @@ interface ExpiringCredit {
   readonly creditId: string;
   readonly expiresAt: string;
   readonly isCurrent: Effect.Effect<boolean>;
+  readonly refresh: Effect.Effect<unknown>;
+  readonly usage: Effect.Effect<ServerProviderUsageLimits | undefined>;
   readonly redeem: (
     canRedeem: Effect.Effect<boolean>,
   ) => Effect.Effect<
@@ -57,8 +64,6 @@ const make = Effect.gen(function* () {
       readonly redemption: { active: boolean };
     }
   >();
-  // A successful response can precede a refresh that still reports the same credit.
-  const finished = new Set<string>();
 
   const providerCredits = (providers: readonly ServerProvider[]): ExpiringCredit[] =>
     providers.flatMap((provider) => {
@@ -91,6 +96,17 @@ const make = Effect.gen(function* () {
           creditId,
           expiresAt,
           isCurrent,
+          refresh: registry.refreshInstance(provider.instanceId),
+          usage: registry.getProviders.pipe(
+            Effect.map(
+              (values) =>
+                values.find(
+                  (value) =>
+                    value.instanceId === provider.instanceId &&
+                    resetCreditAccountKey(value) === accountKey,
+                )?.usageLimits,
+            ),
+          ),
           redeem: Effect.fn("ResetCreditExpiry.redeemProvider")(function* (
             canRedeem: Effect.Effect<boolean>,
           ) {
@@ -130,6 +146,19 @@ const make = Effect.gen(function* () {
             creditId,
             expiresAt,
             isCurrent,
+            refresh: sources.refresh,
+            usage: sources.current.pipe(
+              Effect.map(
+                (values) =>
+                  values
+                    .find((value) => value.id === source.id)
+                    ?.accounts.find(
+                      (value) =>
+                        value.id === account.id &&
+                        resetCreditSourceAccountKey(source.id, value) === accountKey,
+                    )?.usageLimits,
+              ),
+            ),
             redeem: Effect.fn("ResetCreditExpiry.redeemSource")(function* (
               canRedeem: Effect.Effect<boolean>,
             ) {
@@ -175,8 +204,6 @@ const make = Effect.gen(function* () {
       for (const [accountKey, credit] of candidates) {
         if (jobs.has(accountKey)) continue;
         const { creditId, expiresAt } = credit;
-        const creditKey = creditSignature([accountKey, creditId, expiresAt]);
-        if (finished.has(creditKey)) continue;
         const expiry = Date.parse(expiresAt);
         if (!Number.isFinite(expiry) || expiry - (yield* Clock.currentTimeMillis) < MINUTE)
           continue;
@@ -184,15 +211,16 @@ const make = Effect.gen(function* () {
         const redemption = { active: false };
         const run = Effect.gen(function* () {
           let attempted = false;
-          const report = Effect.fn("ResetCreditExpiry.report")(function* (
-            status: "used" | "failed",
-          ) {
-            yield* credit.publish({
-              creditId,
-              expiresAt,
-              attemptedAt: DateTime.formatIso(yield* DateTime.now),
-              status,
-            });
+          const report = Effect.fn("ResetCreditExpiry.report")(function* () {
+            const now = yield* Clock.currentTimeMillis;
+            const status = resetCreditAutoUseStatus(yield* credit.usage, creditId, expiresAt, now);
+            if (status)
+              yield* credit.publish({
+                creditId,
+                expiresAt,
+                attemptedAt: DateTime.formatIso(yield* DateTime.now),
+                status,
+              });
           });
           const attempt = Effect.gen(function* () {
             const wait = expiry - 10 * MINUTE - (yield* Clock.currentTimeMillis);
@@ -201,8 +229,7 @@ const make = Effect.gen(function* () {
             // Wall time can move backwards independently of the timer. Retry without spending.
             if (now < expiry - 10 * MINUTE) return false;
             if (now > expiry - MINUTE) {
-              if (attempted) yield* report("failed");
-              finished.add(creditKey);
+              if (attempted) yield* report();
               return true;
             }
             const enabled = yield* settings.getSettings.pipe(
@@ -211,8 +238,8 @@ const make = Effect.gen(function* () {
             );
             if (!enabled) return false;
             redemption.active = true;
-            let stale = false;
-            const result = yield* credit
+            attempted = true;
+            yield* credit
               .redeem(
                 Effect.gen(function* () {
                   // This runs inside the redemption lock, after provider setup, at the spend boundary.
@@ -220,39 +247,28 @@ const make = Effect.gen(function* () {
                     Effect.orElseSucceed(() => null),
                   );
                   // The hub reads under its refresh lock; direct drivers read after provider setup.
-                  stale = !(yield* credit.isCurrent);
+                  const current = yield* credit.isCurrent;
                   const currentTime = yield* Clock.currentTimeMillis;
                   const permitted =
-                    !stale &&
+                    current &&
                     currentSettings?.autoUseExpiringResetCredits === true &&
                     currentTime >= expiry - 10 * MINUTE &&
                     currentTime <= expiry - MINUTE;
-                  if (permitted) attempted = true;
                   return permitted;
                 }),
               )
-              .pipe(Effect.result);
+              .pipe(Effect.ignoreCause({ log: true }));
+            // Every outcome, including a skipped spend or an error, must re-read provider truth.
+            yield* credit.refresh;
+            yield* report();
             redemption.active = false;
-            if (stale || (result._tag === "Success" && result.success === "stale")) {
+            if (!(yield* credit.isCurrent)) {
               jobs.delete(accountKey);
               // Reconcile on the subscription fiber so concurrent jobs cannot race scheduling.
               yield* Queue.offer(reschedule, undefined);
               return true;
             }
-            if (
-              result._tag === "Success" &&
-              (result.success === "reset" || result.success === "alreadyRedeemed")
-            ) {
-              finished.add(creditKey);
-              yield* report("used");
-              return true;
-            }
-            if (result._tag === "Success" && result.success === "noCredit") {
-              finished.add(creditKey);
-              yield* report("failed");
-              return true;
-            }
-            return false;
+            return (yield* Clock.currentTimeMillis) >= expiry - MINUTE;
           });
           yield* attempt.pipe(
             Effect.repeat({ schedule: Schedule.spaced("1 minute"), until: (done) => done }),

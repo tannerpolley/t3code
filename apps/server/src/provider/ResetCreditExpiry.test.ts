@@ -70,6 +70,7 @@ const fixture = Effect.fn("ResetCreditExpiryTest.fixture")(function* (
     readonly sources?: readonly UsageLimitSourceSnapshot[];
     readonly failures?: number;
     readonly outcome?: ProviderConsumeResetCreditOutcome;
+    readonly removeAfterRefreshes?: number;
   } = {},
 ) {
   const coordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
@@ -138,12 +139,40 @@ const fixture = Effect.fn("ResetCreditExpiryTest.fixture")(function* (
     orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
     textGeneration: {} as ProviderInstance["textGeneration"],
   });
-  const sourceSnapshots = input.sources ?? [];
+  const sourceSnapshots = yield* Ref.make(input.sources ?? []);
+  const refreshes = yield* Ref.make(0);
+  const refresh = Effect.gen(function* () {
+    const count = yield* Ref.updateAndGet(refreshes, (n) => n + 1);
+    const callsSoFar = yield* Ref.get(calls);
+    const remove =
+      input.removeAfterRefreshes !== undefined
+        ? count >= input.removeAfterRefreshes
+        : (input.outcome ?? "reset") === "reset" && callsSoFar.length > (input.failures ?? 0);
+    if (remove) {
+      yield* Ref.update(snapshots, (values) =>
+        values.map((value) => ({
+          ...value,
+          usageLimits: { ...value.usageLimits!, resetCredits: { availableCount: 0 } },
+        })),
+      );
+      yield* Ref.update(sourceSnapshots, (values) =>
+        values.map((source) => ({
+          ...source,
+          accounts: source.accounts.map((account) => ({
+            ...account,
+            usageLimits: { ...account.usageLimits, resetCredits: { availableCount: 0 } },
+          })),
+        })),
+      );
+    }
+    yield* PubSub.publish(updates, yield* Ref.get(snapshots));
+  });
   const sourceInputs = yield* Ref.make<readonly UsageLimitSourceConsumeResetCreditInput[]>([]);
   const deps = Layer.mergeAll(
     Layer.mock(UsageLimitSources.UsageLimitSources)({
-      current: Effect.succeed(sourceSnapshots),
-      streamChanges: Stream.make(sourceSnapshots),
+      current: Ref.get(sourceSnapshots),
+      streamChanges: Stream.fromEffect(Ref.get(sourceSnapshots)),
+      refresh,
       consumeResetCredit: (creditInput, canRedeem) =>
         Ref.update(sourceInputs, (previous) => [...previous, creditInput]).pipe(
           Effect.andThen(
@@ -160,6 +189,7 @@ const fixture = Effect.fn("ResetCreditExpiryTest.fixture")(function* (
     }),
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Ref.get(snapshots),
+      refreshInstance: () => refresh.pipe(Effect.andThen(Ref.get(snapshots))),
       subscribeChanges: Effect.succeed(subscription),
       publishResetCreditAutoUse: (_instanceId, _account, result) =>
         Queue.offer(results, result).pipe(Effect.asVoid),
@@ -193,7 +223,7 @@ const fixture = Effect.fn("ResetCreditExpiryTest.fixture")(function* (
     yield* Ref.set(snapshots, values);
     yield* PubSub.publish(updates, values);
   });
-  return { calls, results, enabled, update, sourceInputs, queued, completed };
+  return { calls, results, enabled, update, sourceInputs, queued, completed, refreshes };
 });
 
 const test = (
@@ -302,24 +332,50 @@ describe("banked reset auto-use", () => {
       ),
   );
 
-  it.effect(
-    "redeems at ten minutes through the coordinator and pins the credit only once across instances and updates",
-    () =>
+  it.effect.each(
+    (["reset", "alreadyRedeemed", "noCredit", "nothingToReset", "error"] as const).flatMap(
+      (outcome) => [false, true].map((hub) => ({ outcome, hub })),
+    ),
+  )(
+    "refreshes and retries a listed credit after $outcome, reporting used only when it disappears (hub: $hub)",
+    ({ outcome, hub }) =>
       test(
         Effect.gen(function* () {
           const f = yield* fixture({
+            ...(outcome === "error" ? { failures: 10 } : { outcome }),
+            removeAfterRefreshes: 2,
             providers: [provider(20 * MINUTE), provider(20 * MINUTE, "second")],
+            ...(hub
+              ? {
+                  providers: [],
+                  sources: [
+                    {
+                      id: UsageLimitSourceId.make("hub"),
+                      kind: "cliproxy" as const,
+                      label: "Hub",
+                      checkedAt: provider(20 * MINUTE).checkedAt,
+                      accounts: [
+                        {
+                          id: "a",
+                          driver: ProviderDriverKind.make("codex"),
+                          usageLimits: provider(20 * MINUTE).usageLimits!,
+                        },
+                      ],
+                    },
+                  ],
+                }
+              : {}),
           });
-          yield* TestClock.adjust(10 * MINUTE - 1);
-          assert.strictEqual((yield* Ref.get(f.calls)).length, 0);
-          yield* TestClock.adjust(1);
-          assert.strictEqual((yield* Queue.take(f.results)).status, "used");
-          yield* f.update([provider(20 * MINUTE), provider(20 * MINUTE, "second")]);
           yield* TestClock.adjust(10 * MINUTE);
-          const calls = yield* Ref.get(f.calls);
-          assert.strictEqual(calls.length, 1);
-          assert.strictEqual(calls[0]?.creditId, "credit-a");
-          assert.strictEqual(calls[0]?.at, 10 * MINUTE);
+          assert.strictEqual(yield* Ref.get(f.refreshes), 1);
+          assert.strictEqual((yield* Ref.get(f.calls)).length, 1);
+          assert.strictEqual(yield* Queue.size(f.results), 0);
+          yield* TestClock.adjust(MINUTE);
+          assert.strictEqual(yield* Ref.get(f.refreshes), 2);
+          assert.strictEqual((yield* Ref.get(f.calls)).length, 2);
+          assert.strictEqual((yield* Queue.take(f.results)).status, "used");
+          yield* TestClock.adjust(MINUTE);
+          assert.strictEqual((yield* Ref.get(f.calls)).length, 2);
         }),
       ),
   );
@@ -346,7 +402,7 @@ describe("banked reset auto-use", () => {
     test(
       Effect.gen(function* () {
         const f = yield* fixture({ outcome: "nothingToReset" });
-        yield* TestClock.adjust(25 * MINUTE);
+        yield* TestClock.adjust(19 * MINUTE);
         assert.strictEqual((yield* Queue.take(f.results)).status, "failed");
         const calls = yield* Ref.get(f.calls);
         assert.strictEqual(calls.length, 10);
@@ -472,16 +528,20 @@ it.effect(
     ),
 );
 
-it.effect("does not retry a permanent no-credit outcome", () =>
-  test(
-    Effect.gen(function* () {
-      const f = yield* fixture({ outcome: "noCredit" });
-      yield* TestClock.adjust(10 * MINUTE);
-      assert.strictEqual((yield* Queue.take(f.results)).status, "failed");
-      yield* TestClock.adjust(10 * MINUTE);
-      assert.strictEqual((yield* Ref.get(f.calls)).length, 1);
-    }),
-  ),
+it.effect(
+  "retries no-credit while the snapshot lists the credit and reports failure at cutoff",
+  () =>
+    test(
+      Effect.gen(function* () {
+        const f = yield* fixture({ outcome: "noCredit" });
+        yield* TestClock.adjust(10 * MINUTE);
+        assert.strictEqual(yield* Queue.size(f.results), 0);
+        yield* TestClock.adjust(10 * MINUTE);
+        assert.strictEqual((yield* Queue.take(f.results)).status, "failed");
+        assert.strictEqual((yield* Ref.get(f.calls)).length, 10);
+        assert.strictEqual(yield* Ref.get(f.refreshes), 10);
+      }),
+    ),
 );
 
 it.effect("publishes hub results in the existing source snapshot and retains them on refresh", () =>

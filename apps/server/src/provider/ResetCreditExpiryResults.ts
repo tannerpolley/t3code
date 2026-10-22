@@ -2,6 +2,7 @@ import type {
   ProviderInstanceId,
   ResetCreditAutoUseResult,
   ServerProvider,
+  ServerProviderUsageLimits,
   UsageLimitSourceAccount,
   UsageLimitSourceSnapshot,
   UsageLimitSourceId,
@@ -108,3 +109,17 @@ export const makeSourceResetCreditExpiryResults = Effect.fn("ResetCreditExpiryRe
     });
   },
 );
+
+export function resetCreditAutoUseStatus(
+  usage: ServerProviderUsageLimits | undefined,
+  creditId: string,
+  expiresAt: string,
+  now: number,
+): ResetCreditAutoUseResult["status"] | undefined {
+  if (!usage || usage.unavailable) return;
+  const credits = usage.resetCredits;
+  const listed = credits?.nextCreditId === creditId || credits?.expiries?.includes(expiresAt);
+  if (listed) return now >= Date.parse(expiresAt) - 60_000 ? "failed" : undefined;
+  // A different selection alone cannot prove removal when the provider omits the expiry list.
+  if (!credits?.availableCount || credits.expiries !== undefined) return "used";
+}
