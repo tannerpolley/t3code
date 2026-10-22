@@ -29,6 +29,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import type * as CodexSchema from "effect-codex-app-server/schema";
@@ -2940,6 +2941,101 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ],
     });
   };
+
+  it.effect.each([false, true])(
+    "releases stopped-command entries on native thread disposal (completed: %s)",
+    (completed) =>
+      Effect.gen(function* () {
+        const unsubscribe = (
+          id: number,
+          notifications: ReadonlyArray<{ method: string; params: unknown }>,
+        ) => [
+          {
+            type: "expect_outbound" as const,
+            frame: { id, method: "thread/unsubscribe", params: { threadId: BG_NATIVE_THREAD } },
+          },
+          ...notifications.map((frame) => ({ type: "emit_inbound" as const, frame })),
+          { type: "emit_inbound" as const, frame: { id, result: { status: "notSubscribed" } } },
+        ];
+        const transcript = makeCodexReplayTranscript({
+          scenario: `codex-stopped-command-disposal-${completed}`,
+          entries: [
+            ...makeBackgroundStopTranscript(true).entries.slice(0, -1),
+            ...unsubscribe(5, [
+              ...(completed
+                ? [
+                    {
+                      method: "item/completed",
+                      params: {
+                        threadId: BG_NATIVE_THREAD,
+                        turnId: BG_NATIVE_TURN,
+                        item: backgroundCommandItem("completed"),
+                      },
+                    },
+                  ]
+                : []),
+              { method: "thread/closed", params: { threadId: "unrelated-thread" } },
+            ]),
+            ...unsubscribe(6, [
+              { method: "thread/closed", params: { threadId: BG_NATIVE_THREAD } },
+            ]),
+          ],
+        });
+        const stopped = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+          event.type === "turn_item.updated" && event.turnItem.status === "interrupted"
+            ? Deferred.succeed(stopped, undefined)
+            : Effect.void,
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-stopped-command-disposal"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* harness.firstTerminal;
+        // Observe the actual retaining map without adding a cache-inspection API to the adapter.
+        using writes = vi.spyOn(Map.prototype, "set");
+        yield* harness.runtime.stopBackgroundTask!({
+          providerThread: harness.providerThread,
+          taskId: BG_COMMAND_ITEM,
+        });
+        yield* Deferred.await(stopped);
+        const cacheWrite = writes.mock.calls.findIndex(([key, value]) => {
+          if (key !== BG_NATIVE_TURN || !(value instanceof Map)) return false;
+          const item = (value as Map<string, unknown>).get(BG_COMMAND_ITEM);
+          return (
+            typeof item === "object" &&
+            item !== null &&
+            "type" in item &&
+            item.type === "command_execution"
+          );
+        });
+        assert.isAtLeast(cacheWrite, 0);
+        const cachedTurns = writes.mock.contexts[cacheWrite] as Map<string, Map<string, unknown>>;
+        writes.mockRestore();
+        const unload = harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        yield* unload;
+        assert.isTrue(
+          cachedTurns.has(BG_NATIVE_TURN),
+          "another thread's closure must preserve this cache",
+        );
+        if (completed) assert.isNull(cachedTurns.get(BG_NATIVE_TURN)?.get(BG_COMMAND_ITEM));
+        yield* unload;
+        assert.isFalse(
+          cachedTurns.has(BG_NATIVE_TURN),
+          "disposed native threads must release snapshots and tombstones",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   it.effect.each(backgroundStopCases)(
     "stops a command after root completion when termination returns %s",
