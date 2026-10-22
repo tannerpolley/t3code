@@ -1,13 +1,43 @@
-import type { IssueMilestone, IssueRepositoryRef, IssueSummary } from "@t3tools/contracts";
+import {
+  THREAD_ROLE_LABELS,
+  type IssueMilestone,
+  type IssueRepositoryRef,
+  type IssueSummary,
+} from "@t3tools/contracts";
 import { groupIssuesByMilestone } from "./issueTree.logic";
 import { issuePriorityRank } from "./issueProjects.logic";
 import { issueProgress } from "./IssueStateIcon";
 
 export function issueLiveStatus(issue: IssueSummary) {
   const work = issue.liveWork ?? [];
-  if (work.some((thread) => thread.status === "working")) return "working";
-  if (work.some((thread) => thread.status === "waiting_on_you")) return "waiting_on_you";
-  return work.length > 0 ? "idle" : null;
+  if (work.some((thread) => thread.status === "working")) return "working" as const;
+  if (work.some((thread) => thread.status === "waiting_on_you")) return "waiting_on_you" as const;
+  return work.length > 0 ? ("idle" as const) : null;
+}
+
+export const LIVE_WORK_STATUS_LABELS = {
+  working: "Working",
+  waiting_on_you: "Waiting on you",
+  idle: "Idle",
+} as const;
+
+/** The row names the first thread in the issue's status; the popup lists every thread. */
+export function issueLiveWorkSummary(issue: IssueSummary) {
+  const status = issueLiveStatus(issue);
+  if (status === null) return null;
+  const work = [...(issue.liveWork ?? [])].sort(
+    (a, b) =>
+      Number(b.status === status) - Number(a.status === status) || a.title.localeCompare(b.title),
+  );
+  const first = work[0]!;
+  const agent =
+    first.role === undefined ? first.title : `${THREAD_ROLE_LABELS[first.role]}: ${first.title}`;
+  return {
+    status,
+    work,
+    label: `${LIVE_WORK_STATUS_LABELS[status]} · ${agent}`,
+    more: work.length - 1,
+  };
 }
 export function openIssueBlockers(issue: IssueSummary) {
   return (issue.blockedBy ?? []).filter((blocker) => blocker.state === "open");
