@@ -483,16 +483,17 @@ export function IssueDetailPanel({
       ? issuePanelError(result.cause, query.error)
       : null;
 
+  const refreshQuery = query.refresh;
   useEffect(() => {
     if (
       refreshToken !== undefined &&
       lastRefreshToken.current !== undefined &&
       refreshToken !== lastRefreshToken.current
     ) {
-      query.refresh();
+      refreshQuery();
     }
     lastRefreshToken.current = refreshToken;
-  }, [query.refresh, refreshToken]);
+  }, [refreshQuery, refreshToken]);
 
   // GitHub's `/issues/n` address can name a pull request; the reader then opens it where pull
   // requests open, once per issue address.
