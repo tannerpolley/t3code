@@ -27,6 +27,7 @@ import * as Socket from "effect/socket/Socket";
 
 import {
   AVAILABLE_CONNECTION_STATE,
+  BearerConnectionTarget,
   ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
@@ -288,9 +289,9 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
-  it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
+  it.effect.each([false, true])("owns the socket lifecycle (localPrimary=%s)", (localPrimary) =>
     Effect.gen(function* () {
-      const { factory, sockets } = yield* makeFactory();
+      const { factory, sockets } = yield* makeFactory({ localPrimary });
       const session = yield* factory.connect(PREPARED);
       const readyFiber = yield* Effect.forkChild(session.ready);
       const socket = yield* awaitSocket(sockets);
@@ -1084,47 +1085,59 @@ describe("RpcSessionFactory", () => {
     }),
   );
 
-  // Over T3 Connect too: the socket opened, so blaming DNS or a firewall misleads.
   it.effect.each([
-    { relay: false, label: "direct" },
-    { relay: true, label: "relay" },
-  ])("closes the $label session after 15 seconds without a frame from the server", ({ relay }) =>
-    Effect.gen(function* () {
-      const { factory, sockets } = yield* makeFactory();
-      const session = yield* factory.connect({
-        ...PREPARED,
-        target: relay
-          ? new RelayConnectionTarget({
-              environmentId: TARGET.environmentId,
-              label: TARGET.label,
-            })
-          : TARGET,
-      });
-      const readyFiber = yield* Effect.forkChild(session.ready);
-      const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
-      const socket = yield* awaitSocket(sockets);
+    { target: TARGET, localPrimary: false, label: "remote primary", timeoutSeconds: 15 },
+    { target: TARGET, localPrimary: true, label: "local primary", timeoutSeconds: 60 },
+    {
+      target: new RelayConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+      }),
+      localPrimary: true,
+      label: "relay on desktop",
+      timeoutSeconds: 15,
+    },
+    {
+      target: new BearerConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: "local:secondary",
+      }),
+      localPrimary: true,
+      label: "secondary on desktop",
+      timeoutSeconds: 15,
+    },
+  ])(
+    "closes the $label session after $timeoutSeconds seconds without a server frame",
+    ({ target, localPrimary, timeoutSeconds }) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory({ localPrimary });
+        const session = yield* factory.connect({ ...PREPARED, target });
+        const readyFiber = yield* Effect.forkChild(session.ready);
+        const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+        const socket = yield* awaitSocket(sockets);
 
-      socket.open();
-      yield* completeInitialConfig(socket);
-      yield* Fiber.join(readyFiber);
+        socket.open();
+        yield* completeInitialConfig(socket);
+        yield* Fiber.join(readyFiber);
 
-      yield* TestClock.adjust("15 seconds");
-      expect(closedFiber.pollUnsafe()).toBeUndefined();
-      expect(socket.sent.map((message) => decodeJson(message)).filter(isPing)).toEqual([
-        { _tag: "Ping" },
-        { _tag: "Ping" },
-        { _tag: "Ping" },
-      ]);
+        for (const seconds of timeoutSeconds === 60 ? [20, 35, 5] : [15]) {
+          yield* TestClock.adjust(`${seconds} seconds`);
+          expect(closedFiber.pollUnsafe()).toBeUndefined();
+        }
+        expect(socket.sent.map((message) => decodeJson(message)).filter(isPing)).toHaveLength(
+          timeoutSeconds / 5,
+        );
 
-      yield* TestClock.adjust("5 seconds");
-      const error = yield* Fiber.join(closedFiber);
-      expect(error).toBeInstanceOf(ConnectionTransientError);
-      expect(error).toMatchObject({
-        reason: "transport",
-        detail:
-          "Test environment stopped responding for 15s. It may be overloaded, asleep, or off the network.",
-      });
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+        // Effect checks for silence strictly greater than the timeout on each 5-second tick.
+        yield* TestClock.adjust("5 seconds");
+        const error = yield* Fiber.join(closedFiber);
+        expect(error).toBeInstanceOf(ConnectionTransientError);
+        expect(error).toMatchObject({
+          reason: "transport",
+          detail: `Test environment stopped responding for ${timeoutSeconds}s. It may be overloaded, asleep, or off the network.`,
+        });
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("keeps reading replies after closing a stream with a full buffer", () =>
