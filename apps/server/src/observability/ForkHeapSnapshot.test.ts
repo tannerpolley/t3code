@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - mock the native snapshot and free-space APIs.
-import * as NodeFS from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeV8 from "node:v8";
 
 import { it } from "@effect/vitest";
@@ -17,13 +17,13 @@ it.effect.each(["available", "low", "unreadable"] as const)(
       vi.mocked(NodeV8.getHeapStatistics).mockReturnValue({
         heap_size_limit: 4 * 1024 ** 3,
       } as ReturnType<typeof NodeV8.getHeapStatistics>);
-      const statfs = vi.mocked(NodeFS.statfs).mockReset();
+      const statfs = vi.mocked(NodeFSP.statfs).mockReset();
       if (space === "unreadable") statfs.mockRejectedValue(new Error("disk unavailable"));
       else
         statfs.mockResolvedValue({
           bavail: space === "low" ? 1 : 20 * 1024 ** 2,
           bsize: 1024,
-        } as Awaited<ReturnType<typeof NodeFS.statfs>>);
+        } as Awaited<ReturnType<typeof NodeFSP.statfs>>);
       const write = vi.mocked(NodeV8.writeHeapSnapshot).mockReset();
       const snapshot = yield* Effect.promise(() => import("./ForkHeapSnapshot.ts"));
       yield* snapshot.check(2 * 1024 ** 3, "/test/logs");
