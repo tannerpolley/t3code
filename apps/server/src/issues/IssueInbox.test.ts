@@ -82,6 +82,7 @@ interface Request {
  */
 function fakeGitHub(pageSize = 2) {
   const requests: Request[] = [];
+  const identityReads: Array<{ host: string; repository: string }> = [];
   const data = {
     issues: [] as Item[],
     comments: [] as Item[],
@@ -91,6 +92,11 @@ function fakeGitHub(pageSize = 2) {
   const newest = (key: string) => (left: Item, right: Item) =>
     String(right[key]).localeCompare(String(left[key]));
   const service = Layer.mock(IssueService.IssueService)({
+    repositoryIdentity: (input) =>
+      Effect.sync(() => {
+        identityReads.push(input);
+        return { ...input, repositoryId: input.repository };
+      }),
     repositoryRest: (input) =>
       Effect.sync(() => {
         requests.push(input);
@@ -136,7 +142,7 @@ function fakeGitHub(pageSize = 2) {
           : { status: 200, body, etag, nextPage: page * pageSize < list.length ? page + 1 : null };
       }),
   });
-  return { requests, data, service };
+  return { requests, identityReads, data, service };
 }
 
 function fakeThreads(onDispatch: () => Effect.Effect<void> = () => Effect.void) {
@@ -204,8 +210,119 @@ const setup = (github = fakeGitHub(), threads = fakeThreads()) =>
     return { inbox, github, threads };
   });
 
+const setupDiscovery = Effect.gen(function* () {
+  const github = fakeGitHub();
+  const threads = fakeThreads();
+  let repository: string | null = "acme/discovery";
+  const inbox = yield* IssueInbox.make.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        github.service,
+        threads.service,
+        Layer.mock(ProjectService.ProjectService)({
+          listShells: () =>
+            Effect.sync(() => [
+              {
+                id: ProjectId.make("discovery"),
+                repositoryIdentity:
+                  repository === null
+                    ? null
+                    : {
+                        provider: "github",
+                        canonicalKey: `github.com/${repository}`,
+                        displayName: repository,
+                        locator: {
+                          source: "git-remote",
+                          remoteName: "origin",
+                          remoteUrl: "git@github.com:x",
+                        },
+                      },
+              } as never,
+            ]),
+        }),
+        Layer.mock(IssueWorkService.IssueWorkService)({
+          repositoryStatus: () => Effect.succeed({ rootThreadId: null } as never),
+        }),
+      ),
+    ),
+  );
+  yield* inbox.pollDue;
+  return { inbox, github, setRepository: (value: string | null) => void (repository = value) };
+});
+
+it.effect("polls registered repositories every five minutes", () =>
+  Effect.gen(function* () {
+    const { inbox, github } = yield* setup();
+    const polls = () =>
+      github.requests.filter((request) => request.path.startsWith("issues/events")).length;
+    assert.equal(polls(), 1);
+    yield* TestClock.adjust("2 minutes");
+    yield* inbox.pollDue;
+    assert.equal(polls(), 1);
+    yield* TestClock.adjust("179999 millis");
+    yield* inbox.pollDue;
+    assert.equal(polls(), 1);
+    yield* TestClock.adjust("1 millis");
+    yield* inbox.pollDue;
+    assert.equal(polls(), 2);
+    yield* TestClock.adjust("5 minutes");
+    yield* inbox.pollDue;
+    assert.equal(polls(), 3);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("polls discovery-only repositories every fifteen minutes", () =>
+  Effect.gen(function* () {
+    const { inbox, github } = yield* setupDiscovery;
+    const polls = () =>
+      github.requests.filter((request) => request.path.startsWith("issues/events")).length;
+    assert.equal(polls(), 1);
+    for (const advance of ["5 minutes", "5 minutes", "299999 millis"] as const) {
+      yield* TestClock.adjust(advance);
+      yield* inbox.pollDue;
+      assert.equal(polls(), 1);
+    }
+    yield* TestClock.adjust("1 millis");
+    yield* inbox.pollDue;
+    assert.equal(polls(), 2);
+    yield* TestClock.adjust("15 minutes");
+    yield* inbox.pollDue;
+    assert.equal(polls(), 3);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "reuses discovery identity across polls until the project's repository identity changes",
+  () =>
+    Effect.gen(function* () {
+      const { inbox, github, setRepository } = yield* setupDiscovery;
+      for (let pass = 0; pass < 3; pass++) {
+        yield* TestClock.adjust("15 minutes");
+        yield* inbox.pollDue;
+      }
+      assert.deepEqual(github.identityReads, [
+        { host: "github.com", repository: "acme/discovery" },
+      ]);
+      setRepository("acme/renamed");
+      yield* TestClock.adjust("15 minutes");
+      yield* inbox.pollDue;
+      assert.deepEqual(github.identityReads, [
+        { host: "github.com", repository: "acme/discovery" },
+        { host: "github.com", repository: "acme/renamed" },
+      ]);
+      assert.isTrue(github.requests.some((request) => request.repository === "acme/renamed"));
+      setRepository(null);
+      yield* TestClock.adjust("15 minutes");
+      yield* inbox.pollDue;
+      setRepository("acme/renamed");
+      yield* TestClock.adjust("15 minutes");
+      yield* inbox.pollDue;
+      assert.equal(github.identityReads.length, 3);
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 const nextPoll = (inbox: IssueInbox.IssueInbox["Service"]) =>
-  TestClock.adjust("2 minutes").pipe(Effect.andThen(inbox.pollDue));
+  TestClock.adjust("5 minutes").pipe(Effect.andThen(inbox.pollDue));
 
 const listed = (inbox: IssueInbox.IssueInbox["Service"]) =>
   inbox
@@ -451,7 +568,7 @@ it.effect(
 
       // 16 minutes after the first digest the next one commits and dispatches, then the server
       // stops before recording the delivery.
-      yield* TestClock.adjust("14 minutes");
+      yield* TestClock.adjust("11 minutes");
       threads.failNext();
       yield* inbox.pollDue;
       yield* record("c", 63, true);
@@ -724,11 +841,11 @@ it.effect("overlapping digest attempts retain new events and deliver once per 15
     );
     const { inbox, github } = yield* setup(fakeGitHub(), threads);
     github.data.issues = [issue(5, amineMarker)];
-    yield* TestClock.adjust("2 minutes");
+    yield* TestClock.adjust("5 minutes");
     const first = yield* inbox.pollDue.pipe(Effect.forkScoped);
     yield* Deferred.await(dispatching);
-    github.data.comments = [comment(1, 5, amineMarker, { created_at: at(3), updated_at: at(3) })];
-    yield* TestClock.adjust("2 minutes");
+    github.data.comments = [comment(1, 5, amineMarker, { created_at: at(6), updated_at: at(6) })];
+    yield* TestClock.adjust("5 minutes");
     const second = yield* inbox.pollDue.pipe(Effect.forkScoped);
     yield* TestClock.adjust("0 millis");
     assert.lengthOf(threads.dispatched, 1, "only one dispatch is in flight");
@@ -737,10 +854,10 @@ it.effect("overlapping digest attempts retain new events and deliver once per 15
     yield* Fiber.join(second);
     assert.lengthOf(threads.dispatched, 1);
     assert.lengthOf((yield* inbox.list(repo)).events, 2, "the racing comment was polled");
-    yield* TestClock.adjust("14 minutes");
+    yield* TestClock.adjust("10 minutes");
     yield* inbox.pollDue;
     assert.lengthOf(threads.dispatched, 1, "cooldown starts at acceptance, not creation");
-    yield* TestClock.adjust("2 minutes");
+    yield* TestClock.adjust("5 minutes");
     yield* inbox.pollDue;
     assert.lengthOf(threads.dispatched, 2);
     const digest = threads.dispatched[1]!;
@@ -756,25 +873,25 @@ it.effect("a delayed digest retry starts the next cooldown at successful deliver
     const { inbox, github, threads } = yield* setup();
     github.data.issues = [issue(5, amineMarker)];
     threads.failNext();
-    yield* nextPoll(inbox); // fails at t=2, leaves created_at=t=2
+    yield* nextPoll(inbox); // fails at t=5, leaves created_at=t=5
     yield* TestClock.adjust("16 minutes");
-    yield* inbox.pollDue; // succeeds at t=18
-    github.data.comments = [comment(1, 5, amineMarker, { created_at: at(19), updated_at: at(19) })];
-    yield* nextPoll(inbox); // t=20: two minutes after the retry succeeded
+    yield* inbox.pollDue; // succeeds at t=21
+    github.data.comments = [comment(1, 5, amineMarker, { created_at: at(22), updated_at: at(22) })];
+    yield* nextPoll(inbox); // t=26: five minutes after the retry succeeded
     assert.equal(threads.dispatched.length, 2);
-    yield* TestClock.adjust("12 minutes");
-    yield* inbox.pollDue; // t=32: still before the cooldown ends
+    yield* TestClock.adjust("5 minutes");
+    yield* inbox.pollDue; // t=31: still before the cooldown ends
     assert.equal(threads.dispatched.length, 2);
-    yield* TestClock.adjust("2 minutes");
-    yield* inbox.pollDue; // t=34: polling resumes after the 15-minute cooldown
+    yield* TestClock.adjust("5 minutes");
+    yield* inbox.pollDue; // t=36: polling resumes after the 15-minute cooldown
     assert.equal(threads.dispatched.length, 3);
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql<{
       delivered_at: string;
     }>`SELECT delivered_at FROM issue_inbox_digests ORDER BY digest_id`;
     assert.equal(rows.length, 2);
-    assert.equal(Date.parse(rows[0]!.delivered_at), Date.parse(at(18)));
-    assert.equal(Date.parse(rows[1]!.delivered_at), Date.parse(at(34)));
+    assert.equal(Date.parse(rows[0]!.delivered_at), Date.parse(at(21)));
+    assert.equal(Date.parse(rows[1]!.delivered_at), Date.parse(at(36)));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
@@ -791,7 +908,7 @@ it.effect(
           const id = String(threads.dispatched.at(-1)!.commandId);
           yield* sql`INSERT OR IGNORE INTO orchestration_command_receipts
           (command_id, aggregate_kind, aggregate_id, accepted_at, result_sequence, status)
-          VALUES (${id}, 'thread', ${root}, ${at(2)}, 1, 'accepted')`.pipe(Effect.orDie);
+          VALUES (${id}, 'thread', ${root}, ${at(5)}, 1, 'accepted')`.pipe(Effect.orDie);
           if (crash) {
             crash = false;
             return yield* Effect.die("server stopped before recording the delivery");
@@ -800,17 +917,17 @@ it.effect(
       );
       const { inbox, github } = yield* setup(fakeGitHub(), threads);
       github.data.issues = [issue(5, amineMarker)];
-      yield* nextPoll(inbox); // t=2: accepted, then the crash
+      yield* nextPoll(inbox); // t=5: accepted, then the crash
       const restarted = yield* IssueInbox.make.pipe(
         Effect.provide(Layer.mergeAll(github.service, threads.service, projects)),
       );
       yield* restarted.markRead(repo);
-      yield* restarted.pollDue; // the emptied pending digest counts as delivered at t=2
-      github.data.comments = [comment(1, 5, amineMarker, { created_at: at(3), updated_at: at(3) })];
-      yield* nextPoll(restarted); // t=4
-      assert.equal(threads.dispatched.length, 1, "accepted at t=2, so t=4 waits");
-      yield* TestClock.adjust("14 minutes");
-      yield* restarted.pollDue; // t=18
+      yield* restarted.pollDue; // the emptied pending digest counts as delivered at t=5
+      github.data.comments = [comment(1, 5, amineMarker, { created_at: at(6), updated_at: at(6) })];
+      yield* nextPoll(restarted); // t=10
+      assert.equal(threads.dispatched.length, 1, "accepted at t=5, so t=10 waits");
+      yield* TestClock.adjust("10 minutes");
+      yield* restarted.pollDue; // t=20
       assert.equal(threads.dispatched.length, 2);
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

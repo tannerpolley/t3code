@@ -10,6 +10,7 @@ import {
   SourceControlProviderKind,
   IssueWorkError,
   MessageId,
+  RepositoryIdentity,
   ThreadId,
   type IssueInboxEvent,
   type IssueInboxEventKind,
@@ -53,7 +54,9 @@ import { IssueWorkService } from "./IssueWorkService.ts";
 import { IssueService } from "./IssueService.ts";
 import * as Watcher from "./IssueInboxWatcher.ts";
 
-const POLL_INTERVAL_MS = 2 * 60_000;
+const REGISTERED_POLL_INTERVAL_MS = 5 * 60_000;
+const DISCOVERY_POLL_INTERVAL_MS = 15 * 60_000;
+const sameRepositoryIdentity = Schema.toEquivalence(RepositoryIdentity);
 const RawCreated = Schema.Struct({
   id: Schema.Number,
   number: Schema.optional(Schema.Number),
@@ -108,7 +111,7 @@ const storageError = (cause: unknown) =>
 export class IssueInbox extends Context.Service<
   IssueInbox,
   {
-    /** Polls every managed repository at most every two minutes, then delivers due digests. */
+    /** Polls repositories at their registered or discovery interval, then delivers due digests. */
     readonly pollDue: Effect.Effect<void>;
     readonly list: (
       input: IssueRepositoryRef,
@@ -164,10 +167,20 @@ export const make = Effect.gen(function* () {
     ),
   );
 
+  const discoveryIdentities = new Map<
+    string,
+    { identity: RepositoryIdentity; repository: Watcher.WatchedRepository }
+  >();
   const watched = Effect.gen(function* () {
     const repositories = [...(yield* registered)];
     for (const project of yield* projects.listShells()) {
       const identity = project.repositoryIdentity;
+      const cached = discoveryIdentities.get(project.id);
+      const unchanged =
+        cached !== undefined &&
+        identity != null &&
+        sameRepositoryIdentity(cached.identity, identity);
+      if (!unchanged) discoveryIdentities.delete(project.id);
       if (identity?.provider !== "github") continue;
       const host = pullRequestHostOf(
         identity,
@@ -184,8 +197,21 @@ export const make = Effect.gen(function* () {
         continue;
       // A paused or archived owner must not be replaced or woken by Inbox discovery.
       if ((yield* issueWork.repositoryStatus({ host, repository })).rootThreadId !== null) continue;
+      if (cached !== undefined && unchanged) {
+        repositories.push(cached.repository);
+        continue;
+      }
       yield* issues.repositoryIdentity({ host, repository }).pipe(
-        Effect.tap((repo) => Effect.sync(() => repositories.push({ ...repo, rootThreadId: null }))),
+        Effect.tap((repo) =>
+          Effect.sync(() => {
+            const watchedRepository = { ...repo, rootThreadId: null };
+            discoveryIdentities.set(project.id, {
+              identity,
+              repository: watchedRepository,
+            });
+            repositories.push(watchedRepository);
+          }),
+        ),
         Effect.catchCause((cause) =>
           Effect.logWarning("Issue inbox repository discovery failed", { repository, cause }),
         ),
@@ -289,12 +315,16 @@ export const make = Effect.gen(function* () {
     (effect, repo) => deliveries.withLock(`${repo.host}/${repo.repositoryId}`, effect),
   );
 
-  let nextPollAt = 0;
+  const lastPolledAt = new Map<string, number>();
   const pollDue = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
-    if (now < nextPollAt) return;
-    nextPollAt = now + POLL_INTERVAL_MS;
     for (let repo of yield* watched) {
+      const key = `${repo.host}/${repo.repositoryId}`;
+      const lastPoll = lastPolledAt.get(key);
+      const interval =
+        repo.rootThreadId === null ? DISCOVERY_POLL_INTERVAL_MS : REGISTERED_POLL_INTERVAL_MS;
+      if (lastPoll !== undefined && now < lastPoll + interval) continue;
+      lastPolledAt.set(key, now);
       yield* Effect.gen(function* () {
         if ((yield* watcher.poll(repo)) > 0) yield* changed;
         if (repo.rootThreadId === null) {
